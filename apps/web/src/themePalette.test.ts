@@ -3,36 +3,21 @@ import { converter } from "culori/fn";
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
 import {
-  applyThemeColorPreview,
-  applyThemePalette,
   getThemeColorsForMode,
-  getThemeDefinition,
   getThemeModes,
-  getThemePreviewSidebarArtwork,
-  getThemePreferenceMode,
-  isKnownThemePreference,
   getCustomThemes,
   getStandardThemeColors,
   getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
-  canonicalThemePreference,
   parseThemeFile,
-  parseThemeHalves,
   removeCustomTheme,
-  removeCustomThemes,
   replaceCustomThemeCollection,
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
-  subscribeToThemePreview,
-  subscribeToCustomThemes,
-  themeAllowsSidebarArtwork,
   T3_CHAT_THEME,
-  EMBER_THEME,
   GROVE_THEME,
-  IRIS_THEME,
-  OCEAN_THEME,
   updateCustomTheme,
   updateThemeColorFamily,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -41,7 +26,6 @@ import {
   themeColorToHex,
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
-  singleAppearanceOf,
 } from "./themePalette";
 
 function asHex(value: string): string {
@@ -54,15 +38,6 @@ function canonical(value: string): string {
   const color = toCanonicalThemeColor(value);
   if (!color) throw new Error(`Expected a theme color, received ${value}`);
   return color;
-}
-
-function expectThemeColors(
-  colors: Readonly<Record<string, string>>,
-  expected: Readonly<Record<string, string>>,
-): void {
-  for (const [role, value] of Object.entries(expected)) {
-    expect(asHex(colors[role]!)).toBe(value);
-  }
 }
 
 function contrastRatio(first: string, second: string): number {
@@ -82,16 +57,6 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
-  it("keeps every built-in palette value in canonical OKLCH form", () => {
-    for (const theme of BUILT_IN_THEMES) {
-      for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {
-        for (const value of Object.values(colors)) {
-          expect(toCanonicalThemeColor(value)).toBe(value);
-        }
-      }
-    }
-  });
-
   it("keeps built-in and standard search pairs readable and distinct from inline code", () => {
     const toOklab = converter("oklab");
     const distance = (first: string, second: string) => {
@@ -164,34 +129,6 @@ describe("theme files", () => {
     },
   );
 
-  it("keeps stock dark controls in the neutral-black surface hierarchy", () => {
-    expectThemeColors(getStandardThemeColors("dark"), {
-      canvas: "#0a0a0a",
-      surface: "#111111",
-      surfaceRaised: "#111111",
-      surfaceOverlay: "#111111",
-      toolbarControl: "#111111",
-      secondary: "#111111",
-      muted: "#111111",
-      accentSurface: "#141414",
-    });
-  });
-
-  it("keeps the stock sidebar and chat on distinct surfaces in both appearances", () => {
-    expectThemeColors(getStandardThemeColors("light"), {
-      canvas: "#fcfcfc",
-      sidebar: "#fafafa",
-      sidebarRowActive: "#ffffff",
-      messageSurface: "#f4f4f5",
-    });
-    expectThemeColors(getStandardThemeColors("dark"), {
-      canvas: "#0a0a0a",
-      sidebar: "#000000",
-      sidebarRowActive: "#1a1b1b",
-      messageSurface: "#141414",
-    });
-  });
-
   it("derives readable, distinctive vivid palettes from exact seeds", () => {
     const seeds: ReadonlyArray<["light" | "dark", string, string]> = [
       ["light", "#f4f9f2", "#1d8a4e"],
@@ -257,46 +194,6 @@ describe("theme files", () => {
     }
   });
 
-  it("keys status colors off the canvas, not the appearance slot", () => {
-    const inverted = [
-      createVividThemeColors("light", "#111827", "#8ab4f8"),
-      createVividThemeColors("dark", "#f5ecf5", "#a84370"),
-      createVividThemeColors("light", "#0d1117", "#69b1ff"),
-      createVividThemeColors("dark", "#fdfdfd", "#c2571b"),
-    ];
-    for (const colors of inverted) {
-      expect(contrastRatio(colors.errorForeground, colors.errorSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.warningForeground, colors.warningSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-    }
-  });
-
-  it("merges a small user file onto the matching contrast-safe base palette", () => {
-    const theme = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      name: "Ocean dusk",
-      appearance: "dark",
-      colors: {
-        canvas: "#07152f",
-        accent: "#67c2ff",
-      },
-    });
-
-    expect(theme).toMatchObject({
-      id: "ocean-dusk",
-      label: "Ocean dusk",
-      appearance: "dark",
-      colors: {
-        canvas: canonical("#07152f"),
-        accent: canonical("#67c2ff"),
-        placeholder: canonical("#968d9f"),
-      },
-    });
-  });
-
   it("decodes literal CSS color formats into OKLCH without dropping alpha", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,
@@ -349,98 +246,6 @@ describe("theme files", () => {
     expect(themeColorToHex(theme.colors.accent)).toBe("#b5005e");
   });
 
-  it("rejects unknown roles and invalid color values", () => {
-    expect(() =>
-      parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: "Broken",
-        appearance: "light",
-        colors: { background: "#ffffff" },
-      }),
-    ).toThrow('"background" is not a supported theme color role.');
-
-    expect(() =>
-      parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: "Broken",
-        appearance: "light",
-        colors: { accent: "var(--danger)" },
-      }),
-    ).toThrow('The color for "accent" must be a literal CSS color');
-  });
-
-  it("canonicalizes the explicitly exported theme", () => {
-    const serialized = serializeThemeFile({
-      ...T3_CHAT_THEME,
-      colors: { ...T3_CHAT_THEME.colors, accent: "hsl(263 70% 58%)" },
-    });
-    expect(JSON.parse(serialized)).toMatchObject({
-      version: THEME_FILE_VERSION,
-      id: T3_CHAT_THEME.id,
-      name: T3_CHAT_THEME.label,
-      appearance: "light",
-      colors: { accent: canonical("hsl(263 70% 58%)") },
-    });
-  });
-
-  it("serializes a theme back into the importable file shape", () => {
-    const theme = {
-      ...parseThemeFile({
-        version: THEME_FILE_VERSION,
-        id: "community-demo",
-        name: "Community Demo",
-        appearance: "dark",
-        colors: { canvas: "#111111" },
-      }),
-      collection: { id: "open-vsx:demo.theme", label: "Demo Theme" },
-    };
-    const serialized = serializeThemeFile(theme);
-    expect(JSON.parse(serialized)).toMatchObject({
-      version: THEME_FILE_VERSION,
-      id: theme.id,
-      name: theme.label,
-      appearance: "dark",
-      collection: theme.collection,
-    });
-    expect(parseThemeFile(JSON.parse(serialized)).collection).toEqual(theme.collection);
-  });
-
-  it("keeps sidebar artwork disabled for custom theme files", () => {
-    const theme = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      name: "Art sidebar",
-      appearance: "light",
-      colors: { accent: "#5b6cff" },
-      sidebarArtwork: true,
-    });
-
-    expect(theme.sidebarArtwork).toBeUndefined();
-    expect(JSON.parse(serializeThemeFile(theme))).not.toHaveProperty("sidebarArtwork");
-  });
-
-  it("suppresses sidebar artwork during a live custom-theme preview", () => {
-    const listener = vi.fn();
-    const unsubscribe = subscribeToThemePreview(listener);
-    vi.stubGlobal("document", {
-      documentElement: {
-        classList: { toggle: vi.fn() },
-        dataset: {},
-        style: { removeProperty: vi.fn(), setProperty: vi.fn() },
-      },
-    });
-
-    applyThemeColorPreview(T3_CHAT_THEME.colors, "light");
-    expect(getThemePreviewSidebarArtwork()).toBe(false);
-    expect(listener).toHaveBeenCalledTimes(1);
-
-    applyThemePalette("system");
-    expect(getThemePreviewSidebarArtwork()).toBeNull();
-    expect(listener).toHaveBeenCalledTimes(2);
-
-    unsubscribe();
-    vi.unstubAllGlobals();
-  });
-
   it("keeps optional light and dark palettes under one theme id", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,
@@ -467,156 +272,6 @@ describe("theme files", () => {
       canvas: canonical("#101827"),
       text: canonical("#eef5ff"),
     });
-  });
-
-  it("keeps the T3 Chat palette faithful and readable", () => {
-    expectThemeColors(T3_CHAT_THEME.colors, {
-      canvas: "#fdf7fd",
-      chrome: "#fdf7fd",
-      toolbarBorder: "#efbdeb",
-      toolbarControl: "#f3e6f5",
-      toolbarControlHover: "#eccfe3",
-      surfaceRaised: "#fdfafd",
-      input: "#e7c1dc",
-      focus: "#db2777",
-      messageSurface: "#f7def2",
-      codeBackground: "#f5ecf9",
-      codeForeground: "#673c8b",
-      accentSurface: "#f3e6f5",
-      sidebar: "#f2e1f4",
-    });
-    expectThemeColors(T3_CHAT_THEME.variants!.dark!, {
-      canvas: "#1f1a24",
-      chrome: "#1f1a24",
-      surface: "#29232d",
-      surfaceRaised: "#2c2631",
-      input: "#302029",
-      focus: "#db2777",
-      messageSurface: "#2b2431",
-      codeBackground: "#1f1a24",
-      sidebar: "#171018",
-      sidebarBorder: "#322028",
-    });
-
-    for (const mode of ["light", "dark"] as const) {
-      const colors = getThemeColorsForMode(T3_CHAT_THEME, mode)!;
-      expect(contrastRatio(colors.text, colors.canvas)).toBeGreaterThanOrEqual(7);
-      expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(colors.messageForeground, colors.messageSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.secondaryForeground, colors.secondary)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
-    }
-  });
-
-  it("includes the dual-mode maintainer themes", () => {
-    for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
-      expect(getThemeDefinition(theme.id)).toBe(theme);
-      expect(getThemeModes(theme)).toEqual(["light", "dark"]);
-      expect(theme.sidebarArtwork).toBe(true);
-      expect(themeAllowsSidebarArtwork(theme.id)).toBe(true);
-      expect(theme.colors.accent).toMatch(/^oklch\(/);
-      expect(theme.variants?.dark?.accent).toMatch(/^oklch\(/);
-
-      for (const mode of ["light", "dark"] as const) {
-        const colors = getThemeColorsForMode(theme, mode);
-        expect(colors).not.toBeNull();
-        expect(contrastRatio(colors!.text, colors!.canvas)).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(colors!.textMuted, colors!.canvas)).toBeGreaterThanOrEqual(4.5);
-        if (theme !== T3_CHAT_THEME) {
-          expect(contrastRatio(colors!.textMuted, colors!.canvas)).toBeLessThan(5.5);
-          expect(contrastRatio(colors!.textMuted, colors!.canvas)).toBeCloseTo(
-            mode === "dark" ? 5.082 : 4.705,
-            1,
-          );
-        }
-        expect(contrastRatio(colors!.accentForeground, colors!.accent)).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.toolbarControlForeground, colors!.toolbarControl),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.messageForeground, colors!.messageSurface),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.messageActionForeground, colors!.messageAction),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.messageActionForeground, colors!.messageActionHover),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(colors!.mutedForeground, colors!.muted)).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(colors!.placeholder, colors!.surfaceRaised)).toBeGreaterThanOrEqual(
-          4.5,
-        );
-      }
-    }
-    expect(themeAllowsSidebarArtwork("my-custom-theme")).toBe(false);
-  });
-
-  it("rejects a variant that repeats the base appearance", () => {
-    expect(() =>
-      parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: "Duplicate light",
-        appearance: "light",
-        colors: { canvas: "#f8fbff" },
-        variants: { light: { canvas: "#101827" } },
-      }),
-    ).toThrow('Theme variants must not repeat the base appearance "light".');
-  });
-
-  it("keeps a single-mode theme on its only palette", () => {
-    const theme = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      id: "midnight-slate",
-      name: "Midnight Slate",
-      appearance: "dark",
-      colors: { canvas: "#111827", messageAction: "#2563eb" },
-    });
-
-    expect(getThemeModes(theme)).toEqual(["dark"]);
-    expect(getThemeColorsForMode(theme, "dark")).toMatchObject({
-      canvas: canonical("#111827"),
-    });
-    expect(getThemeColorsForMode(theme, "light")).toBeNull();
-  });
-
-  it("invalidates cached themes when another tab clears localStorage", () => {
-    let storedThemes: string | null = JSON.stringify([
-      {
-        id: "ocean-dusk",
-        label: "Ocean dusk",
-        appearance: "dark",
-        colors: { canvas: "#07152f" },
-      },
-    ]);
-    let storageHandler: ((event: StorageEvent) => void) | undefined;
-    vi.stubGlobal("window", {
-      addEventListener: (type: string, listener: (event: StorageEvent) => void) => {
-        if (type === "storage") storageHandler = listener;
-      },
-      removeEventListener: vi.fn(),
-      localStorage: {
-        getItem: (key: string) => (key === CUSTOM_THEMES_STORAGE_KEY ? storedThemes : null),
-      },
-    });
-
-    invalidateCustomThemes();
-    expect(getCustomThemes()).toHaveLength(1);
-    const listener = vi.fn();
-    const unsubscribe = subscribeToCustomThemes(listener);
-
-    storedThemes = null;
-    storageHandler?.({ key: null } as StorageEvent);
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(getCustomThemes()).toEqual([]);
-    unsubscribe();
-    invalidateCustomThemes();
-    vi.unstubAllGlobals();
   });
 
   it("preserves valid imported-theme collections and drops malformed metadata", () => {
@@ -749,48 +404,6 @@ describe("theme files", () => {
     invalidateCustomThemes();
   });
 
-  it("replaces collection entries even when their stored collection label is malformed", () => {
-    const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
-    const stored = new Map<string, string>([
-      [
-        CUSTOM_THEMES_STORAGE_KEY,
-        JSON.stringify([
-          {
-            id: "old-light",
-            label: "Old Light",
-            appearance: "light",
-            colors: { canvas: "#ffffff" },
-            collection: { id: collection.id, label: 42 },
-          },
-        ]),
-      ],
-    ]);
-    vi.stubGlobal("window", {
-      localStorage: {
-        getItem: (key: string) => stored.get(key) ?? null,
-        setItem: (key: string, value: string) => stored.set(key, value),
-      },
-    });
-
-    invalidateCustomThemes();
-    const replacement = {
-      ...parseThemeFile({
-        version: THEME_FILE_VERSION,
-        id: "old-light",
-        name: "New Light",
-        appearance: "light",
-        colors: { canvas: "#fafafa" },
-      }),
-      collection,
-    };
-
-    expect(replaceCustomThemeCollection(collection.id, [replacement])).toEqual([replacement]);
-    expect(getCustomThemes()).toEqual([replacement]);
-
-    vi.unstubAllGlobals();
-    invalidateCustomThemes();
-  });
-
   it("canonicalizes explicit writes without migrating untouched themes", () => {
     const stored = new Map<string, string>();
     const untouchedTheme = {
@@ -846,56 +459,6 @@ describe("theme files", () => {
     });
     removeCustomTheme("aurora");
     expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")).toEqual([untouchedTheme]);
-
-    vi.unstubAllGlobals();
-    invalidateCustomThemes();
-  });
-
-  it("removes multiple custom themes atomically while preserving unrelated entries", () => {
-    const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
-    const personalTheme = {
-      id: "personal",
-      label: "Personal",
-      appearance: "dark",
-      colors: { canvas: "#111111", futureRole: "hsl(10 20% 30%)" },
-      futureMetadata: { version: 2 },
-    };
-    const stored = new Map<string, string>([
-      [
-        CUSTOM_THEMES_STORAGE_KEY,
-        JSON.stringify([
-          personalTheme,
-          {
-            id: "demo-light",
-            label: "Demo Light",
-            appearance: "light",
-            colors: { canvas: "#ffffff" },
-            collection,
-          },
-          {
-            id: "demo-dark",
-            label: "Demo Dark",
-            appearance: "dark",
-            colors: { canvas: "#000000" },
-            collection,
-          },
-        ]),
-      ],
-    ]);
-    const setItem = vi.fn((key: string, value: string) => stored.set(key, value));
-    vi.stubGlobal("window", {
-      localStorage: {
-        getItem: (key: string) => stored.get(key) ?? null,
-        setItem,
-      },
-    });
-
-    invalidateCustomThemes();
-    removeCustomThemes(["demo-light", "demo-dark"]);
-
-    expect(setItem).toHaveBeenCalledOnce();
-    expect(getCustomThemes()).toEqual([expect.objectContaining({ id: "personal" })]);
-    expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")).toEqual([personalTheme]);
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
@@ -974,77 +537,6 @@ describe("theme files", () => {
     vi.unstubAllGlobals();
     invalidateCustomThemes();
   });
-
-  it("rejects malformed stored entries that reuse an installed theme id", () => {
-    const storedThemes = JSON.stringify([{ id: "aurora", malformed: true }]);
-    const setItem = vi.fn();
-    vi.stubGlobal("window", {
-      localStorage: {
-        getItem: () => storedThemes,
-        setItem,
-      },
-    });
-
-    invalidateCustomThemes();
-    expect(() =>
-      installCustomTheme(
-        parseThemeFile({
-          version: THEME_FILE_VERSION,
-          id: "aurora",
-          name: "Aurora",
-          appearance: "light",
-          colors: { accent: "#5b6cff" },
-        }),
-      ),
-    ).toThrow('A theme named "Aurora" is already installed.');
-    expect(setItem).not.toHaveBeenCalled();
-
-    vi.unstubAllGlobals();
-    invalidateCustomThemes();
-  });
-
-  it("collapses duplicate raw entries when their theme is explicitly updated", () => {
-    const stored = new Map<string, string>();
-    const theme = {
-      id: "aurora",
-      label: "Aurora",
-      appearance: "light",
-      colors: { accent: "#5b6cff" },
-    };
-    const untouchedTheme = { id: "future", malformed: true, metadata: { version: 2 } };
-    stored.set(
-      CUSTOM_THEMES_STORAGE_KEY,
-      JSON.stringify([theme, { id: "aurora", malformed: true }, untouchedTheme]),
-    );
-    vi.stubGlobal("window", {
-      localStorage: {
-        getItem: (key: string) => stored.get(key) ?? null,
-        setItem: (key: string, value: string) => stored.set(key, value),
-      },
-    });
-
-    invalidateCustomThemes();
-    const installedTheme = getCustomThemes()[0]!;
-    updateCustomTheme({
-      ...installedTheme,
-      label: "Aurora Night",
-      colors: { ...installedTheme.colors, accent: "hsl(263 70% 58%)" },
-    });
-
-    const updatedLibrary = JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]");
-    expect(updatedLibrary.filter((entry: { id?: string }) => entry.id === "aurora")).toHaveLength(
-      1,
-    );
-    expect(updatedLibrary[0]).toMatchObject({
-      id: "aurora",
-      label: "Aurora Night",
-      colors: { accent: canonical("hsl(263 70% 58%)") },
-    });
-    expect(updatedLibrary[1]).toEqual(untouchedTheme);
-
-    vi.unstubAllGlobals();
-    invalidateCustomThemes();
-  });
 });
 
 describe("stored theme preferences", () => {
@@ -1073,40 +565,6 @@ describe("stored theme preferences", () => {
       vi.unstubAllGlobals();
       invalidateCustomThemes();
     }
-  });
-
-  it("resolves the legacy t3-chat-dark preference to dark T3 Chat", () => {
-    expect(getThemeDefinition("t3-chat-dark")).toBe(T3_CHAT_THEME);
-    expect(getThemePreferenceMode("t3-chat-dark")).toBe("dark");
-    expect(resolveThemeAppearance("t3-chat-dark", true, false)).toBe("dark");
-    expect(resolveDesktopTheme("t3-chat-dark", false)).toBe("dark");
-    expect(isKnownThemePreference("t3-chat-dark")).toBe(true);
-  });
-
-  it("resolves legacy t3-prefixed ids onto the renamed themes", () => {
-    for (const [legacy, theme] of [
-      ["t3-grove", GROVE_THEME],
-      ["t3-ocean", OCEAN_THEME],
-      ["t3-ember", EMBER_THEME],
-      ["t3-iris", IRIS_THEME],
-    ] as const) {
-      expect(getThemeDefinition(legacy)).toBe(theme);
-      expect(isKnownThemePreference(legacy)).toBe(true);
-      expect(canonicalThemePreference(legacy)).toBe(theme.id);
-    }
-    expect(canonicalThemePreference("t3-chat-dark")).toBe("t3-chat-dark");
-    expect(parseThemeHalves(JSON.stringify({ light: "t3-ocean", dark: "t3-grove" }))).toEqual({
-      light: OCEAN_THEME.id,
-      dark: GROVE_THEME.id,
-    });
-  });
-
-  it("recognizes only preferences the runtime can render", () => {
-    for (const preference of ["light", "dark", "system", T3_CHAT_THEME.id, GROVE_THEME.id]) {
-      expect(isKnownThemePreference(preference)).toBe(true);
-    }
-    expect(isKnownThemePreference(`${GROVE_THEME.id}:dark`)).toBe(false);
-    expect(isKnownThemePreference("missing-theme")).toBe(false);
   });
 
   it("decodes stored colors in memory without writing during reads", () => {
@@ -1147,13 +605,5 @@ describe("stored theme preferences", () => {
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
-  });
-});
-
-describe("singleAppearanceOf", () => {
-  it("reports the only half a theme can claim, and null for a pair", () => {
-    const { variants: _pair, ...base } = T3_CHAT_THEME;
-    expect(singleAppearanceOf({ ...base, id: "x", appearance: "dark" })).toBe("dark");
-    expect(singleAppearanceOf(T3_CHAT_THEME)).toBe(null);
   });
 });

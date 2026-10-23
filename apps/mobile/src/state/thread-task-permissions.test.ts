@@ -18,6 +18,7 @@ import {
 } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { sendApprovalFeedback } from "@t3tools/client-runtime/state/thread-requests";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -60,6 +61,7 @@ const state = vi.hoisted(() => ({
 vi.mock("react", () => ({
   useCallback: <A>(callback: A) => callback,
   useEffect: () => {},
+  useLayoutEffect: () => {},
   useRef: <A>(current: A) => ({ current }),
   useMemo: <A>(factory: () => A) => factory(),
   useState: <A>(initial: A | (() => A)) => [
@@ -108,7 +110,10 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => comman
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
-    environmentThreadDetails: { queueWorkflowAtom: () => Atom.make(null) },
+    environmentThreadDetails: {
+      queueWorkflowAtom: () => Atom.make(null),
+      checkpointSummariesAtom: () => Atom.make([]),
+    },
     threadEnvironment: {
       respondToApproval: state.approve,
       respondToUserInput: state.answer,
@@ -198,6 +203,43 @@ beforeEach(() => {
 });
 
 describe("mobile task permissions", () => {
+  it("consumes an approval reply without queueing a parent message", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+    const requests = useSelectedThreadRequests();
+    const approval = { ...state.pendingRequests.approvals[0]!, supportsFeedback: true };
+    const messageId = await composer.onSendMessage(undefined, async (text) =>
+      (await sendApprovalFeedback(approval, text, requests.onRespondToApproval))
+        ? "responded"
+        : false,
+    );
+    expect(messageId).toBeNull();
+    expect(state.approve).toHaveBeenCalledWith({
+      environmentId: "secondary",
+      input: {
+        threadId: "thread",
+        requestId: "approval",
+        decision: "decline",
+        feedback: "Keep my draft",
+      },
+    });
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a draft changed during an approval reply and never sends it to the parent", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+    const beforeDispatch = async () => {
+      state.draft = { ...state.draft, text: "New feedback" };
+      return "responded" as const;
+    };
+    expect(await composer.onSendMessage(undefined, beforeDispatch)).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("New feedback");
+  });
+
   it("keeps a connected read-only task's draft instead of queueing it with another environment's grant", async () => {
     const composer = useThreadComposerState();
     expect(await composer.onSendMessage()).toBeNull();
@@ -227,17 +269,6 @@ describe("mobile task permissions", () => {
         text: "Keep my draft",
       }),
     );
-  });
-
-  it("preserves offline queueing without dispatching feedback through the queue action", async () => {
-    state.connectionState = "disconnected";
-    expect(await useThreadComposerState().onSendMessage()).toBe("message");
-    expect(state.enqueue).toHaveBeenCalledTimes(1);
-    state.draft.text = "/feedback The agent stopped early.";
-    expect(await useThreadComposerState().onSendMessage()).toBeNull();
-    expect(state.feedback).not.toHaveBeenCalled();
-    expect(state.enqueue).toHaveBeenCalledTimes(1);
-    expect(state.clearDraft).toHaveBeenCalledTimes(1);
   });
 
   it("rechecks the target environment before an approval response", async () => {

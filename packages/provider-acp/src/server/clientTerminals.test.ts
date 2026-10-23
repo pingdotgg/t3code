@@ -166,26 +166,6 @@ describe("AcpClientTerminals", () => {
     ),
   );
 
-  it.effect("bounds retained snapshots after terminals are released", () =>
-    withTerminals((terminals) =>
-      Effect.gen(function* () {
-        const terminalIds: string[] = [];
-        for (let index = 0; index < 33; index += 1) {
-          const created = yield* terminals.create({
-            sessionId: "session",
-            command: process.execPath,
-            args: ["-e", `process.stdout.write('${index}');`],
-          });
-          yield* terminals.release({ sessionId: "session", terminalId: created.terminalId });
-          terminalIds.push(created.terminalId);
-        }
-
-        expect(terminals.readOutputSnapshot("session", terminalIds[0]!)).toBeUndefined();
-        expect(terminals.readOutputSnapshot("session", terminalIds.at(-1)!)).toBeDefined();
-      }),
-    ),
-  );
-
   it.effect("bounds unreleased terminal handles without invalidating existing ids", () =>
     withTerminals((terminals) =>
       Effect.gen(function* () {

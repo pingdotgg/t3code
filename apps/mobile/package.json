@@ -40,15 +40,16 @@
     "config:preview": "APP_VARIANT=preview expo config",
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
+    "sync:chip-icons": "node scripts/sync-context-chip-icons.mjs",
     "sync:pierre-icons": "node scripts/sync-pierre-file-icons.mjs",
     "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "test": "vp test run --project unit --project react",
-    "typecheck": "tsc-rs --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@clerk/expo": "catalog:",
-    "@clerk/expo-native-components": "0.2.0",
+    "@clerk/expo-native-components": "0.4.0",
     "@effect/atom-react": "catalog:",
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo/metro-runtime": "~58.0.14",
@@ -133,7 +134,7 @@
     "react-native-pdf-jsi": "5.0.0",
     "react-native-reanimated": "4.7.1",
     "react-native-safe-area-context": "~5.10.1",
-    "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.29.tgz",
+    "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.36.tgz",
     "react-native-shiki-engine": "^0.3.12",
     "react-native-svg": "15.16.0",
     "react-native-webview": "14.0.1",
@@ -143,7 +144,7 @@
     "shiki": "4.2.0",
     "tailwind-merge": "^3.5.0",
     "unified": "catalog:",
-    "uniwind": "1.12.1"
+    "uniwind": "1.13.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

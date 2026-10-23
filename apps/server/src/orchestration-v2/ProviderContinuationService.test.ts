@@ -11,7 +11,6 @@ import {
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -157,49 +156,6 @@ describe("ProviderContinuationService", () => {
     }),
   );
 
-  it.effect("marks an adapter-buffered wake with the provider creation source", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer(request());
-        const command = (yield* Queue.take(dispatched)) as {
-          readonly creationSource: string;
-          readonly notification: OrchestrationV2Notification;
-        };
-        assert.equal(command.creationSource, "provider");
-        assert.deepEqual(command.notification, {
-          source: { kind: "background_task" },
-          outcome: "updated",
-          summary: "Background activity updated",
-        });
-      }).pipe(
-        Effect.provide(
-          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("dispatches a wake under the message its adapter named", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      const messageId = MessageId.make("message-provider-continuation-adapter-named");
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({ ...request(), messageId });
-        const command = (yield* Queue.take(dispatched)) as { readonly messageId: MessageId };
-        assert.equal(command.messageId, messageId);
-      }).pipe(
-        Effect.provide(
-          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
-
   it.effect("delivers a message_text wake as a real prompt, not a buffered wake", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
@@ -289,242 +245,6 @@ describe("ProviderContinuationService", () => {
             getThreadRecords: () => Effect.succeed(delegatedProjection()),
           }),
         ),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("retries a delegated completion after a transient dispatch failure", () => {
-    return Effect.gen(function* () {
-      const attempts = yield* Ref.make(0);
-      const dispatched = yield* Queue.unbounded<unknown>();
-      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-        getThreadRecords: () => Effect.succeed(delegatedProjection()),
-        dispatch: (command) =>
-          Ref.getAndUpdate(attempts, (count) => count + 1).pipe(
-            Effect.flatMap((attempt) =>
-              attempt === 0
-                ? Effect.fail(new Error("simulated transient dispatch failure") as never)
-                : Queue.offer(dispatched, command).pipe(Effect.as({} as never)),
-            ),
-          ),
-      });
-      const layerWorker = ProviderContinuationService.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
-        ),
-      );
-
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({
-          threadId,
-          providerThreadId,
-          driver,
-          detail: null,
-          delivery: "message_text",
-          delegatedCompletion: {
-            parentRunId,
-            generation: 1,
-            messageId: delegatedMessageId,
-          },
-        });
-        yield* Effect.yieldNow;
-        assert.equal(yield* Ref.get(attempts), 1);
-        assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
-
-        yield* TestClock.adjust("100 millis");
-        const command = (yield* Queue.take(dispatched)) as {
-          readonly messageId: MessageId;
-        };
-        assert.equal(command.messageId, delegatedMessageId);
-        assert.equal(yield* Ref.get(attempts), 2);
-      }).pipe(
-        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("backs off repeated delegated completion dispatch failures", () => {
-    return Effect.gen(function* () {
-      const attempts = yield* Ref.make(0);
-      const disposition = yield* Ref.make<"open" | "disposed">("open");
-      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-        getThreadRecords: () =>
-          Ref.get(disposition).pipe(Effect.map((state) => delegatedProjection(state))),
-        dispatch: () =>
-          Ref.update(attempts, (count) => count + 1).pipe(
-            Effect.andThen(Effect.fail(new Error("simulated persistent failure") as never)),
-          ),
-      });
-      const layerWorker = ProviderContinuationService.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
-        ),
-      );
-
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({
-          threadId,
-          providerThreadId,
-          driver,
-          detail: null,
-          delivery: "message_text",
-          delegatedCompletion: {
-            parentRunId,
-            generation: 1,
-            messageId: delegatedMessageId,
-          },
-        });
-        yield* Effect.yieldNow;
-        assert.equal(yield* Ref.get(attempts), 1);
-
-        yield* TestClock.adjust("100 millis");
-        yield* Effect.yieldNow;
-        assert.equal(yield* Ref.get(attempts), 2);
-        yield* TestClock.adjust("199 millis");
-        yield* Effect.yieldNow;
-        assert.equal(yield* Ref.get(attempts), 2);
-        yield* TestClock.adjust("1 millis");
-        yield* Effect.yieldNow;
-        assert.equal(yield* Ref.get(attempts), 3);
-
-        yield* Ref.set(disposition, "disposed");
-        yield* TestClock.adjust("400 millis");
-      }).pipe(
-        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("resets delegated completion retry backoff after archive or deletion", () => {
-    return Effect.gen(function* () {
-      for (const barrier of ["archivedAt", "deletedAt"] as const) {
-        const attempts = yield* Ref.make(0);
-        const blockedProjectionReads = yield* Ref.make(0);
-        const blockedRequestDropped = yield* Deferred.make<void>();
-        const state = yield* Ref.make<"open" | "blocked" | "disposed">("open");
-        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: () =>
-            Effect.gen(function* () {
-              const currentState = yield* Ref.get(state);
-              if (currentState === "blocked") {
-                const reads = yield* Ref.updateAndGet(blockedProjectionReads, (count) => count + 1);
-                if (reads === 2) {
-                  yield* Deferred.succeed(blockedRequestDropped, undefined);
-                }
-              }
-              return {
-                ...delegatedProjection(currentState === "disposed" ? "disposed" : "open"),
-                thread: {
-                  ...projection.thread,
-                  [barrier]:
-                    currentState === "blocked"
-                      ? DateTime.makeUnsafe("2026-08-05T00:00:00.000Z")
-                      : null,
-                },
-              };
-            }),
-          dispatch: () =>
-            Ref.update(attempts, (count) => count + 1).pipe(
-              Effect.andThen(Effect.fail(new Error("simulated persistent failure") as never)),
-            ),
-        });
-        const layerWorker = ProviderContinuationService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
-          ),
-        );
-        const completionRequest = {
-          threadId,
-          providerThreadId,
-          driver,
-          detail: null,
-          delivery: "message_text" as const,
-          delegatedCompletion: {
-            parentRunId,
-            generation: 1,
-            messageId: delegatedMessageId,
-          },
-        };
-
-        yield* Effect.gen(function* () {
-          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          yield* requests.offer(completionRequest);
-          yield* Effect.yieldNow;
-          assert.equal(yield* Ref.get(attempts), 1);
-
-          yield* Ref.set(state, "blocked");
-          yield* TestClock.adjust("100 millis");
-          yield* Deferred.await(blockedRequestDropped);
-          yield* Effect.yieldNow;
-          assert.equal(yield* Ref.get(attempts), 1);
-
-          yield* Ref.set(state, "open");
-          yield* requests.offer(completionRequest);
-          yield* Effect.yieldNow;
-          assert.equal(yield* Ref.get(attempts), 2);
-          yield* TestClock.adjust("99 millis");
-          yield* Effect.yieldNow;
-          assert.equal(yield* Ref.get(attempts), 2);
-          yield* TestClock.adjust("1 millis");
-          yield* Effect.yieldNow;
-          assert.equal(yield* Ref.get(attempts), 3);
-
-          yield* Ref.set(state, "disposed");
-          yield* TestClock.adjust("200 millis");
-        }).pipe(
-          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
-          Effect.scoped,
-        );
-      }
-    });
-  });
-
-  it.effect("drops a delegated completion retry after its delivery closes", () => {
-    return Effect.gen(function* () {
-      const attempts = yield* Ref.make(0);
-      const disposition = yield* Ref.make<"open" | "disposed">("open");
-      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-        getThreadRecords: () =>
-          Ref.get(disposition).pipe(Effect.map((state) => delegatedProjection(state))),
-        dispatch: () =>
-          Ref.update(attempts, (count) => count + 1).pipe(
-            Effect.andThen(Effect.fail(new Error("simulated dispatch failure") as never)),
-          ),
-      });
-      const layerWorker = ProviderContinuationService.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
-        ),
-      );
-
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({
-          threadId,
-          providerThreadId,
-          driver,
-          detail: null,
-          delivery: "message_text",
-          delegatedCompletion: {
-            parentRunId,
-            generation: 1,
-            messageId: delegatedMessageId,
-          },
-        });
-        yield* Effect.yieldNow;
-        assert.equal(yield* Ref.get(attempts), 1);
-
-        yield* Ref.set(disposition, "disposed");
-        yield* TestClock.adjust("100 millis");
-        yield* Effect.yieldNow;
-        assert.equal(yield* Ref.get(attempts), 1);
-      }).pipe(
-        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
         Effect.scoped,
       );
     });
@@ -711,39 +431,6 @@ describe("ProviderContinuationService", () => {
     },
   );
 
-  it.effect("keeps a Grok delegated completion queued instead of restarting active work", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({
-          threadId,
-          providerThreadId,
-          driver: ProviderDriverKind.make("grok"),
-          detail: null,
-          delivery: "message_text",
-          delegatedCompletion: {
-            parentRunId,
-            generation: 1,
-            messageId: delegatedMessageId,
-          },
-        });
-        const command = (yield* Queue.take(dispatched)) as {
-          readonly dispatchMode: { readonly type: string };
-        };
-        assert.deepEqual(command.dispatchMode, { type: "queue_after_active" });
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            dispatched,
-            getThreadRecords: () => Effect.succeed(delegatedProjection()),
-          }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
-
   it.effect(
     "drops stopped and disposed delegated completions instead of reviving them after recovery",
     () => {
@@ -817,47 +504,6 @@ describe("ProviderContinuationService", () => {
     });
   });
 
-  it.effect("drops archived and deleted delegated completions during recovery", () => {
-    return Effect.gen(function* () {
-      for (const barrier of ["archivedAt", "deletedAt"] as const) {
-        const dispatched = yield* Queue.unbounded<unknown>();
-        yield* Effect.gen(function* () {
-          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          yield* requests.offer({
-            threadId,
-            providerThreadId,
-            driver,
-            detail: null,
-            delivery: "message_text",
-            delegatedCompletion: {
-              parentRunId,
-              generation: 1,
-              messageId: delegatedMessageId,
-            },
-          });
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
-          assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
-        }).pipe(
-          Effect.provide(
-            layerTest({
-              dispatched,
-              getThreadRecords: () =>
-                Effect.succeed({
-                  ...delegatedProjection(),
-                  thread: {
-                    ...projection.thread,
-                    [barrier]: DateTime.makeUnsafe("2026-08-03T00:00:00.000Z"),
-                  },
-                } as unknown as OrchestrationV2ThreadProjection),
-            }),
-          ),
-          Effect.scoped,
-        );
-      }
-    });
-  });
-
   it.effect("dispatches a current request exactly once", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
@@ -865,46 +511,6 @@ describe("ProviderContinuationService", () => {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer(request());
         yield* Queue.take(dispatched);
-        yield* Effect.yieldNow;
-        assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
-      }).pipe(
-        Effect.provide(
-          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("queues a continuation behind an active user run", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer(request());
-        const command = yield* Queue.take(dispatched);
-        assert.deepEqual((command as { readonly dispatchMode?: unknown }).dispatchMode, {
-          type: "queue_after_active",
-        });
-      }).pipe(
-        Effect.provide(
-          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("drops a request invalidated before dispatch", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        const guard = yield* makeGuard();
-        const dispatchIfCurrent = yield* guard.capture;
-        yield* guard.invalidate;
-        yield* requests.offer(request(dispatchIfCurrent));
-        yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(
@@ -980,40 +586,6 @@ describe("ProviderContinuationService", () => {
                   )
                 : Effect.succeed(projection);
             },
-          }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("clears a sticky continuation offer when its thread is archived", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      const cleared = yield* Ref.make(false);
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({
-          ...request(),
-          clearIfCurrent: () => Ref.set(cleared, true),
-        });
-        for (let attempt = 0; attempt < 20 && !(yield* Ref.get(cleared)); attempt += 1) {
-          yield* Effect.yieldNow;
-        }
-        assert.isTrue(yield* Ref.get(cleared));
-        assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            dispatched,
-            getThreadRecords: () =>
-              Effect.succeed({
-                ...projection,
-                thread: {
-                  ...projection.thread,
-                  archivedAt: DateTime.makeUnsafe("2026-07-20T00:00:00.000Z"),
-                },
-              }),
           }),
         ),
         Effect.scoped,

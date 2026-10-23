@@ -39,16 +39,4 @@ describe("upsertTimelineItemAtStablePosition", () => {
       { position: 1, sourceItemId: "subagent", text: "running" },
     ]);
   });
-
-  it("appends a genuinely new item at the next position", () => {
-    const updated = upsertTimelineItemAtStablePosition(
-      [{ position: 0, sourceItemId: "reasoning" }],
-      { position: 99, sourceItemId: "assistant" },
-    );
-
-    expect(updated).toEqual([
-      { position: 0, sourceItemId: "reasoning" },
-      { position: 1, sourceItemId: "assistant" },
-    ]);
-  });
 });

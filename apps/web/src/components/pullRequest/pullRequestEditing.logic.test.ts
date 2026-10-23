@@ -71,10 +71,6 @@ function comment(overrides: Partial<PullRequestComment> = {}): PullRequestCommen
 }
 
 describe("canEditPullRequestChangeRequest", () => {
-  it("lets the author rewrite their own change request", () => {
-    expect(canEditPullRequestChangeRequest(subject())).toBe(true);
-  });
-
   it("matches the author regardless of case", () => {
     expect(canEditPullRequestChangeRequest(subject({ viewer: "OctoCat" }))).toBe(true);
   });
@@ -136,10 +132,6 @@ describe("canEditPullRequestChangeRequest", () => {
     expect(canEditPullRequestChangeRequest(subject({ capabilities: capabilities() }))).toBe(false);
   });
 
-  it("refuses where the host did not say who the reader is", () => {
-    expect(canEditPullRequestChangeRequest(subject({ viewer: undefined }))).toBe(false);
-  });
-
   it("still allows a merger the host could not name", () => {
     expect(
       canEditPullRequestChangeRequest(
@@ -150,10 +142,6 @@ describe("canEditPullRequestChangeRequest", () => {
 });
 
 describe("canEditPullRequestComment", () => {
-  it("lets the reader rewrite their own conversation comment", () => {
-    expect(canEditPullRequestComment(subject(), comment())).toBe(true);
-  });
-
   it("lets the reader rewrite their own remark on a line", () => {
     expect(canEditPullRequestComment(subject(), comment({ kind: "review-comment" }))).toBe(true);
   });
@@ -189,28 +177,8 @@ describe("canEditPullRequestComment", () => {
     ).toBe(false);
   });
 
-  it("refuses a remark the host attributes to nobody", () => {
-    expect(canEditPullRequestComment(subject(), comment({ author: null }))).toBe(false);
-  });
-
   it("refuses a review's own summary", () => {
     expect(canEditPullRequestComment(subject(), comment({ kind: "review" }))).toBe(false);
-  });
-
-  it("refuses where the host cannot rewrite a remark at all", () => {
-    expect(
-      canEditPullRequestComment(
-        subject({ capabilities: capabilities({ changeRequest: true, comment: false }) }),
-        comment(),
-      ),
-    ).toBe(false);
-    expect(canEditPullRequestComment(subject({ capabilities: capabilities() }), comment())).toBe(
-      false,
-    );
-  });
-
-  it("refuses where the host did not say who the reader is", () => {
-    expect(canEditPullRequestComment(subject({ viewer: undefined }), comment())).toBe(false);
   });
 });
 

@@ -94,7 +94,15 @@ export function AssistantCitationChip({
         contextElement: activeSourceAnchor.source,
         getBoundingClientRect: () => {
           const rects = activeSourceAnchor.range.getClientRects();
-          return rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          const rect =
+            rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          // Code blocks and tables scroll sideways inside the message, so the cited
+          // text can end in their hidden overflow. Base UI only shifts the popup while
+          // it still touches the anchor, so clamp the anchor to the message's width.
+          const bounds = activeSourceAnchor.source.getBoundingClientRect();
+          const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
+          const right = Math.max(Math.min(rect.right, bounds.right), left);
+          return new DOMRect(left, rect.top, right - left, rect.height);
         },
       }
     : undefined;

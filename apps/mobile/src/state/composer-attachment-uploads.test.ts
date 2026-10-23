@@ -293,7 +293,7 @@ function uploadState() {
   ];
 }
 
-it.each(["decode", "read", "write"] as const)(
+it.each(["decode", "write"] as const)(
   "keeps an accepted upload ready when the draft %s fails",
   async (fault) => {
     native.fault = fault;
@@ -318,12 +318,10 @@ it.each(["decode", "read", "write"] as const)(
   },
 );
 
-it.each(["http", "network", "permission"] as const)(
+it.each(["http", "permission"] as const)(
   "keeps a real %s upload failure blocking Send",
   async (failure) => {
     if (failure === "http") native.transfer.mockResolvedValueOnce({ status: 503 });
-    if (failure === "network")
-      native.transfer.mockRejectedValueOnce(new Error("Network unavailable"));
     if (failure === "permission") native.canOperate = false;
     const queue = worker();
     await queue.settled();

@@ -82,7 +82,6 @@ describe("DesktopBrowserHost", () => {
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* command(2, "DOM.enable");
       debuggee.release();
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
       const [, reply] = yield* Fiber.join(reader);
 
       expect(reply).toMatchObject({ type: "cdp" });

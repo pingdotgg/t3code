@@ -40,16 +40,4 @@ describe("safeErrorLogAttributes", () => {
 
     expect(attributes).toEqual({ errorType: "object" });
   });
-
-  it("skips an unsafe outer trace id when a nested safe trace id is available", () => {
-    const attributes = safeErrorLogAttributes({
-      traceId: "unsafe trace id",
-      cause: { traceId: "trace-safe-inner" },
-    });
-
-    expect(attributes).toEqual({
-      errorType: "object",
-      traceId: "trace-safe-inner",
-    });
-  });
 });

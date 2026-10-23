@@ -19,9 +19,13 @@ https://<environment-address>/mcp
 The copied URL uses the route this device is connected over, so an agent on the
 same device can reach it.
 
-- **An agent on your own computers** can use any address that computer reaches
-  the environment at: a LAN or Tailscale address, T3 Connect, or `localhost` on
-  the host. See [remote access](./remote-access.md).
+- **An agent on your own computers** can use `localhost` on the host, T3
+  Connect, or any `https` address, such as
+  [Tailscale HTTPS](./remote-access.md#tailscale-https). Signing in sends the
+  agent's credentials to the environment, and agents only do that over `https`
+  or to `localhost`. A plain-`http` LAN or Tailscale address, like
+  `http://100.x.y.z:3773`, lets an agent find the environment but not finish
+  signing in.
 - **A hosted agent**, such as ChatGPT or a bot running in the cloud, must reach
   the environment from the internet. Use the T3 Connect address. A Tailscale
   address only works from your own tailnet.
@@ -87,6 +91,28 @@ Add the environment as a custom MCP app in ChatGPT's apps settings:
 Any agent that supports remote MCP servers over HTTP with OAuth can connect. Give
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
+
+## Scripts on the host
+
+On the machine that runs the environment, `t3 thread` uses the same tools
+without a sign-in:
+
+```sh
+id=$(t3 thread start . "Find why the tests are slow")
+t3 thread send "$id" "Now fix it" --wait
+t3 thread show "$id"
+t3 thread list
+```
+
+`.` means the project that contains the current folder; a project id also
+works. A new thread uses the project's default model and permission mode, and
+runs in the project folder unless you pass `--worktree <base-branch>`. `send`
+never interrupts: a busy thread gets the message as its next turn. Pass `-` as
+the message to read it from stdin.
+
+`--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
+2 when the agent waits for an answer you give in the app. Add `--json` for a
+result that always includes the thread id.
 
 ## Remove an agent
 

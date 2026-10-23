@@ -219,13 +219,9 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     return null;
   }
 
-  // fill_to_context_window uses zero components and synthetic totals, then offsets future totals.
-  if (
-    cumulative !== null &&
-    last.input_tokens + last.output_tokens === 0 &&
-    cumulative.input_tokens + cumulative.output_tokens === 0 &&
-    cumulative.total_tokens === infoRecord["model_context_window"]
-  ) {
+  // Zero-component counters report context size, not a request: fill_to_context_window, or the
+  // post-compaction marker whose total is the new context size (its cumulative may reset to zero).
+  if (last.input_tokens + last.output_tokens === 0) {
     state.lastUsageSignature = null;
     return null;
   }
@@ -245,9 +241,17 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   const signature = JSON.stringify(last);
   if (cumulative !== null) {
-    if (
-      !CODEX_USAGE_FIELDS.every((key) => cumulative[key] - (previous?.[key] ?? 0) === last[key])
-    ) {
+    // A session resumed in a new Codex process restarts its cumulative counters at this request.
+    const restarted = CODEX_USAGE_FIELDS.every((key) => cumulative[key] === last[key]);
+    // Forks and paginated continuations can inherit totals without copying a counter snapshot.
+    // Only bill the latest request, and require the unseen prefix to be valid usage too.
+    const reconciled =
+      previous === null
+        ? readCodexTokenUsage(
+            Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, cumulative[key] - last[key]])),
+          ) !== null
+        : CODEX_USAGE_FIELDS.every((key) => cumulative[key] - previous[key] === last[key]);
+    if (!restarted && !reconciled) {
       state.malformedRecords += 1;
       return null;
     }
@@ -325,7 +329,7 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
       thread_settings: { service_tier: true },
       forked_from_id: true,
       source: { subagent: { thread_spawn: { parent_thread_id: true } } },
-      info: { last_token_usage: true, total_token_usage: true, model_context_window: true },
+      info: { last_token_usage: true, total_token_usage: true },
     },
   },
   // `turn_context`, `thread_settings_applied` and `session_meta` lines hold no

@@ -56,7 +56,7 @@ export interface FileContextMenuCapabilities {
   readonly editorIds: ReadonlyArray<EditorId>;
 }
 
-export function buildFileContextMenuItems(input: {
+function buildFileContextMenuItems(input: {
   readonly hasAbsolutePath: boolean;
   readonly capabilities: FileContextMenuCapabilities;
 }): readonly ContextMenuItem<FileContextMenuAction>[] {

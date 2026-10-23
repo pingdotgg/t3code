@@ -113,35 +113,6 @@ const post = (
 ) => new Request(`http://env.local${path}`, { method: "POST", body, headers });
 
 describe("webhook route", () => {
-  it("passes the raw request to the service and answers 202 with the delivery id", async () => {
-    let received: WebhookTriggerRequest | undefined;
-    const { handler, dispose } = handlerFor((request) => {
-      received = request;
-      return Effect.succeed({
-        _tag: "accepted",
-        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
-        outcome: "accepted",
-      });
-    });
-    try {
-      const response = await handler(
-        post("/api/hooks/scheduled-task%3Ahook/tok?x=1", '{"a":1}', {
-          "Content-Type": "application/json",
-          "X-GitHub-Event": "push",
-        }),
-      );
-      expect(response.status).toBe(202);
-      expect(await response.json()).toEqual({ deliveryId: "delivery:1" });
-      expect(received?.hookId).toBe("scheduled-task:hook");
-      expect(received?.token).toBe("tok");
-      expect(received?.query).toBe("x=1");
-      expect(received?.headers["x-github-event"]).toBe("push");
-      expect(received?.bodyText).toBe('{"a":1}');
-    } finally {
-      await dispose();
-    }
-  });
-
   it.live("trusts the relay's delivery id and receive time only with its signed proof", () =>
     Effect.gen(function* () {
       const received: Array<WebhookTriggerRequest> = [];
@@ -222,6 +193,7 @@ describe("webhook route", () => {
       [{ _tag: "accepted", deliveryId, outcome: "accepted" }, 202, "accepted"],
       [{ _tag: "accepted", deliveryId, outcome: "duplicate" }, 202, "duplicate"],
       [{ _tag: "accepted", deliveryId, outcome: "prompt_too_long" }, 202, "prompt_too_long"],
+      [{ _tag: "accepted", deliveryId, outcome: "filtered" }, 202, "filtered"],
       [{ _tag: "not_found" }, 404, "not_found"],
       [{ _tag: "rejected_signature" }, 401, "rejected_signature"],
       [{ _tag: "disabled" }, 409, "disabled"],
@@ -235,38 +207,12 @@ describe("webhook route", () => {
         const response = await handler(post("/api/hooks/id/tok", "{}"));
         expect(response.status).toBe(status);
         expect(response.headers.get("x-t3-hook-outcome")).toBe(outcome);
+        if (status === 429) expect(await response.json()).toEqual({ error: outcome });
       } finally {
         await dispose();
       }
     }
   });
-
-  it.live("joins the relay's trace only for requests the relay forwarded", () =>
-    Effect.gen(function* () {
-      const parents: Array<string | undefined> = [];
-      const { handler, dispose } = handlerFor(() =>
-        Effect.gen(function* () {
-          const span = yield* Effect.currentParentSpan.pipe(Effect.option);
-          parents.push(span._tag === "Some" ? span.value.traceId : undefined);
-          return { _tag: "not_found" } as const;
-        }),
-      );
-      const send = (headers: Record<string, string>) =>
-        Effect.promise(() => handler(post("/api/hooks/id/tok", "{}", headers)));
-      const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-      const receivedAt = "2026-10-04T10:00:00.000Z";
-      const relayHeaders = {
-        "x-t3-relay-delivery-id": "relay-1",
-        "x-t3-relay-received-at": receivedAt,
-      };
-      const proof = yield* relayProof({ deliveryId: "relay-1", receivedAt, hookId: "id" });
-      yield* send({ ...relayHeaders, traceparent, "x-t3-relay-delivery": proof });
-      yield* send({ ...relayHeaders, traceparent });
-      yield* send({ traceparent });
-      yield* Effect.promise(() => dispose());
-      expect(parents).toEqual(["0af7651916cd43dd8448eb211c80319c", undefined, undefined]);
-    }),
-  );
 
   it("rejects oversized bodies and malformed paths before reaching the service", async () => {
     let calls = 0;

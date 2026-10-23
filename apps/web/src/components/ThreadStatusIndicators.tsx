@@ -23,18 +23,13 @@ import { useProject } from "../state/entities";
 import {
   pullRequestListLines,
   resolveThreadCurrentPullRequestLink,
+  resolveThreadPullRequestBadge,
   resolveThreadPullRequestChains,
   type ThreadPullRequestBadge,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
 import { useRender } from "@base-ui/react/use-render";
-import {
-  type ReactNode,
-  type AnimationEvent,
-  type MouseEvent,
-  type ReactElement,
-  type ComponentProps,
-} from "react";
+import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
@@ -164,7 +159,7 @@ export interface ThreadPullRequestBadgePresentation {
   readonly text: string | number;
 }
 
-export function resolveThreadPullRequestBadgePresentation({
+function resolveThreadPullRequestBadgePresentation({
   badge,
   number,
   url,
@@ -715,7 +710,7 @@ export function terminalStatusFromRunningIds(
   };
 }
 
-export function synchronizeTerminalPulse(event: AnimationEvent<SVGSVGElement>) {
+function synchronizeTerminalPulse(event: AnimationEvent<SVGSVGElement>) {
   if (event.animationName !== "status-pulse") return;
 
   for (const animation of event.currentTarget.getAnimations()) {
@@ -1019,24 +1014,11 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   );
 }
 
-function ThreadPullRequestNumber({
-  number,
-  className,
-  ...props
-}: ComponentProps<"span"> & { number: number }) {
-  return (
-    <span {...props} className={cn("shrink-0 text-xs tabular-nums", className)}>
-      #{number}
-    </span>
-  );
-}
-
-function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"], isDraft = false): string {
+function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"]): string {
   switch (state) {
+    case "draft":
+      return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
     case "open":
-      if (isDraft) {
-        return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
-      }
       return "group-hover/sidebar-row:text-emerald-600 dark:group-hover/sidebar-row:text-emerald-300/90";
     case "merged":
       return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
@@ -1045,6 +1027,7 @@ function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"], isDraft
   }
 }
 
+// Search rows are already buttons, so this renders the sidebar badge's look without its controls.
 export function ThreadSearchPullRequestNumber({
   thread,
   query,
@@ -1056,40 +1039,58 @@ export function ThreadSearchPullRequestNumber({
   enabled?: boolean;
   settled?: boolean;
 }) {
-  const matchedLink = visibleThreadPullRequests(thread.pullRequests).find((pr) =>
-    pullRequestMatchesSearchQuery({ pullRequests: [pr] }, query),
-  );
-  const fallbackCandidates =
-    thread.pullRequests.length === 0
-      ? [thread.linkedPullRequest, thread.branchPullRequest]
-      : [thread.branchPullRequest];
-  const legacyReference = matchedLink
-    ? undefined
-    : fallbackCandidates.find(
-        (pr) => pr != null && pullRequestMatchesSearchQuery({ linkedPullRequest: pr }, query),
-      );
-  const legacyStatus = useLinkedThreadPullRequest(
+  const matched = pullRequestMatchesSearchQuery(thread, query);
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
+  const linked = useLinkedThreadPullRequest(
     thread.environmentId,
-    legacyReference,
-    enabled,
-    undefined,
-    legacyReference,
+    thread.linkedPullRequest,
+    enabled && matched,
+    thread.pullRequests,
+    thread.branchPullRequest,
   );
-  const reference = matchedLink ?? legacyReference;
-  const linked = matchedLink ? linkedPullRequestSnapshotStatus(matchedLink) : legacyStatus;
-  const status = prStatusIndicator(linked?.pr ?? null, linked?.sourceControlProvider);
-  return reference ? (
-    <ThreadPullRequestNumber
-      number={reference.number}
-      className={
+  if (!matched) return null;
+  const badge = supportsMultiplePullRequests
+    ? resolveThreadPullRequestBadge(thread.pullRequests)
+    : null;
+  const current = supportsMultiplePullRequests
+    ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
+    : null;
+  const pr = linked?.pr ?? null;
+  // Stored references already carry a number, so the badge shows before PR details load.
+  const stored =
+    current ??
+    [thread.linkedPullRequest, thread.branchPullRequest].find(
+      (reference) =>
+        reference != null && pullRequestMatchesSearchQuery({ linkedPullRequest: reference }, query),
+    );
+  const presentation = resolveThreadPullRequestBadgePresentation({
+    badge,
+    number: pr?.number ?? stored?.number,
+    url: pr?.url ?? stored?.url,
+    status: prStatusIndicator(pr, linked?.sourceControlProvider),
+  });
+  if (presentation === null) return null;
+  const aggregate = badge !== null && (badge.kind === "stack" || badge.others > 0);
+  const state = aggregate
+    ? badge.state
+    : pr === null
+      ? null
+      : pr.state === "open" && pr.isDraft
+        ? "draft"
+        : pr.state;
+  return (
+    <span
+      aria-label={presentation.label}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums",
         settled
-          ? cn(
-              "text-secondary-label transition-colors",
-              linked?.pr && settledPrHoverColorClass(linked.pr.state, linked.pr.isDraft),
-            )
-          : (status?.colorClass ?? "text-secondary-label")
-      }
-      aria-label={status?.tooltip ?? `Pull request #${reference.number}`}
-    />
-  ) : null;
+          ? cn("text-secondary-label transition-colors", state && settledPrHoverColorClass(state))
+          : presentation.toneClassName,
+      )}
+    >
+      {/* text-current opts out of the command palette's muted icon color. */}
+      <presentation.Icon aria-hidden className="size-3 shrink-0 text-current" />
+      <span>{presentation.text}</span>
+    </span>
+  );
 }

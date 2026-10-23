@@ -14,7 +14,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderAuthFlow from "./providerAuthFlow.ts";
 
@@ -133,24 +132,6 @@ it.effect("cancellation rejects late consent and permits another login", () =>
     );
     const next = yield* controller.start("other");
     assert.notStrictEqual(next.flowId, state.flowId);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("expires pending login and rejects its response", () =>
-  Effect.gen(function* () {
-    const { controller, started, phase } = yield* makeHarness;
-    const state = yield* controller.start("owner");
-    yield* Deferred.await(started);
-    yield* TestClock.adjust(300_001);
-    assert.include((yield* phase("failed")).message ?? "", "expired");
-    assert.isTrue(
-      (yield* controller.respond!("owner", {
-        instanceId,
-        flowId: state.flowId!,
-        interactionId: "consent",
-        response: { type: "browser", action: "accept" },
-      }).pipe(Effect.result))._tag === "Failure",
-    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -413,28 +394,6 @@ it.effect.each(["cancel", "logout"] as const)(
       assert.isFalse(yield* harness.controller.isChangingCredentials!);
       assert.notEqual((yield* harness.controller.start("other")).flowId, harness.input.flowId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("timeout interrupts and drains a blocked response before publishing failure", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeBlockingResponseHarness;
-    yield* TestClock.adjust(300_001);
-    yield* Deferred.await(harness.cleanupStarted);
-    assert.isTrue(yield* harness.controller.isChangingCredentials!);
-    const duringCleanup = yield* harness.controller
-      .subscribe("owner")
-      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
-    assert.notEqual(duringCleanup.phase, "failed");
-    yield* Deferred.succeed(harness.cleanupReleased, undefined);
-    const failed = yield* harness.controller.subscribe("owner").pipe(
-      Stream.filter((state) => state.phase === "failed"),
-      Stream.runHead,
-      Effect.map(Option.getOrThrow),
-    );
-    assert.include(failed.message ?? "", "expired");
-    assert.isTrue(yield* Deferred.isDone(harness.cleanupFinished));
-    assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(

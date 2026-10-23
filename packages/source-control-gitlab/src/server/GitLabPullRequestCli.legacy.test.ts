@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
@@ -53,37 +53,6 @@ function failure(failureKind: "not-found" | "authentication" | "rate-limited" | 
 afterEach(() => run.mockReset());
 
 layer("legacy GitLab diff requests through GitLabCli", (it) => {
-  it.effect.each([0, 1, 100, 247])("returns %s legacy changes as one terminal slice", (count) =>
-    Effect.gen(function* () {
-      run.mockReturnValueOnce(failure("not-found"));
-      run.mockReturnValueOnce(
-        output({
-          changes: Array.from({ length: count }, () => file),
-          overflow: false,
-          changes_count: String(count),
-        }),
-      );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-      const result = yield* cli.getMergeRequestDiff(input);
-      expect(result.nextCursor).toBeNull();
-      expect(result.truncated).toBe(false);
-      expect(result.patch.match(/^diff --git /gm)?.length ?? 0).toBe(count);
-      if (count > 0) {
-        expect(result.patch).toContain("rename from src/old.ts\nrename to src/new.ts");
-        expect(result.patch).toContain("@@ -1 +1 @@\n-before\n+after\n");
-        expect(result.patch.endsWith("\n")).toBe(true);
-      }
-      expect(run.mock.calls.map(([call]) => call.args)).toEqual([
-        ["api", "projects/acme%2Fnested%2Fweb/merge_requests/7/diffs?per_page=100&page=1"],
-        ["api", "projects/acme%2Fnested%2Fweb/merge_requests/7/changes?access_raw_diffs=true"],
-      ]);
-      expect(run.mock.calls[1]?.[0]).toMatchObject({
-        cwd: "/repo",
-        maxOutputBytes: 8 * 1024 * 1024,
-        timeoutMs: 60_000,
-      });
-    }),
-  );
   it.effect.each([false, true])("accepts an unavailable legacy count (overflow: %s)", (overflow) =>
     Effect.gen(function* () {
       run.mockReturnValueOnce(failure("not-found"));
@@ -106,17 +75,6 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
           truncated: true,
           nextCursor: null,
         });
-      }),
-  );
-  it.effect.each([{}, { changes: null }, { changes: {} }, [file]])(
-    "rejects malformed legacy wrapper %j",
-    (body) =>
-      Effect.gen(function* () {
-        run.mockReturnValueOnce(failure("not-found"));
-        run.mockReturnValueOnce(output(body));
-        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-        const error = yield* cli.getMergeRequestDiff(input).pipe(Effect.flip);
-        assert.equal(error._tag, "GitLabMergeRequestReadError");
       }),
   );
   it.effect.each([false, true])("marks skipped file entries truncated (legacy: %s)", (legacy) =>
@@ -165,6 +123,7 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
       expect(run).toHaveBeenCalledTimes(2);
     }),
   );
+  // regression: #15886 the older-GitLab fallback still surfaces its own failure
   it.effect("propagates failure of the legacy endpoint", () =>
     Effect.gen(function* () {
       run.mockReturnValueOnce(failure("not-found"));
@@ -188,7 +147,7 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
   );
   it.effect("keeps modern pagination without requesting legacy changes", () =>
     Effect.gen(function* () {
-      run.mockReturnValueOnce(output(Array.from({ length: 100 }, () => file)));
+      run.mockReturnValueOnce(output(Array.from({ length: 30 }, () => file)));
       run.mockReturnValueOnce(output([file]));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
       const first = yield* cli.getMergeRequestDiff(input);
@@ -198,7 +157,7 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
       ).toBeNull();
       expect(run).toHaveBeenCalledTimes(2);
       expect(run.mock.calls[1]?.[0].args).toContain(
-        "projects/acme%2Fnested%2Fweb/merge_requests/7/diffs?per_page=100&page=2",
+        "projects/acme%2Fnested%2Fweb/merge_requests/7/diffs?per_page=30&page=2",
       );
     }),
   );

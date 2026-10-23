@@ -94,30 +94,6 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
     }),
   );
 
-  it.effect("names the interaction mode when that is what was raised", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("thread:limit-plan");
-      yield* createThread(threadId);
-      const refused = yield* orchestrator
-        .dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make("rename-plan"),
-          threadId,
-          title: "After",
-        })
-        .pipe(
-          Effect.provideService(DispatchModeLimit, {
-            runtimeMode: "full-access",
-            interactionMode: "plan",
-          }),
-          Effect.flip,
-        );
-      assert.ok(refused._tag === "OrchestratorThreadAboveModeLimitError");
-      assert.equal(refused.mode, "interaction");
-    }),
-  );
-
   it.effect("refuses to fork a source thread its user raised", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -1,7 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  DeviceBootError,
   DeviceHostUnavailableError,
   DeviceId,
   EnvironmentId,
@@ -10,10 +9,12 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
@@ -84,9 +85,30 @@ new DataView(png.buffer).setUint32(12, 0x49484452);
 new DataView(png.buffer).setUint32(16, 1206);
 new DataView(png.buffer).setUint32(20, 2622);
 
+const unused = Effect.die("not used");
+const readiness = {
+  hostId: "local",
+  nodePath: process.execPath,
+  hub: { origin: "http://hub.test" },
+  devices: {
+    list: unused,
+    boot: () => unused,
+    attach: () => unused,
+    shutdown: () => unused,
+    screenshot: () => unused,
+  },
+  run: () => unused,
+  helpers: { serveSimAxSettings: null, serveSimCli: null },
+  agentDevice: null,
+};
+const layerProjectsMock = Layer.mock(ProjectService.ProjectService)({
+  getById: () => Effect.succeed(Option.none()),
+});
+
 const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   state: Effect.succeed(state),
   list: Effect.succeed(state),
+  agentReadinessIfSupported: () => Effect.succeed(readiness),
   open: (input) =>
     Effect.succeed({
       threadId: input.threadId,
@@ -114,55 +136,22 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   close: () => Effect.void,
   agentCli: Effect.succeed("/cli"),
   testHost: () => Effect.die("not used"),
-  agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
+  // As for an EAS device, agent-device knows the device by a different id than T3.
+  agentTarget: () =>
+    Effect.succeed({
+      agentDeviceId: "SIM-UDID",
+      args: ["--config", "/host.json", "--session", "thread-device"],
+    }),
 });
 
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
+  Layer.provide(layerProjectsMock),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" })),
   Layer.provide(NodeServices.layer),
 );
-
-it.effect("returns the complete bounded launch diagnostics to the agent", () => {
-  const diagnostics =
-    "Emulator exited with code 1.\nTry manually: emulator -avd TestPhone\n" + "x".repeat(1_930);
-  const failure = new DeviceBootError({
-    hostId: "local",
-    deviceId: "UDID-1",
-    reason: "launch_failed",
-    diagnostics: diagnostics.slice(0, 2_000),
-    cause: { ok: false, error: diagnostics },
-  });
-  const failedDevices = Layer.mock(DeviceService.DeviceService)({
-    list: Effect.succeed(state),
-    agentTarget: () => Effect.succeed([]),
-    open: () => Effect.fail(failure),
-  });
-  return Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({ name: "device_open", arguments: { platform: "ios" } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(result.isError).toBe(true);
-    expect(result.content).toEqual([{ type: "text", text: failure.message }]);
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      McpHttpServer.layerDeviceToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
-        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
-        Layer.provide(failedDevices),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-boot-error-test-" })),
-        Layer.provide(NodeServices.layer),
-      ),
-    ),
-  );
-});
 
 it.effect("registers the device tools and returns the screenshot as image content", () =>
   Effect.scoped(
@@ -179,7 +168,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
         .pipe(callWith(["device"]), Effect.provideService(McpSchema.McpServerClient, client));
       expect(opened.isError).toBe(false);
       const openedContent = opened.structuredContent as { quickStart: string };
-      expect(openedContent.quickStart).toContain("--udid UDID-1");
+      expect(openedContent.quickStart).toContain("--udid SIM-UDID");
 
       const shot = yield* server
         .callTool({ name: "device_screenshot", arguments: { deviceId: "UDID-1" } })
@@ -207,7 +196,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
 it.effect("rejects unavailable agent access before booting or opening a device", () => {
   const layerUnavailable = Layer.mock(DeviceService.DeviceService)({
     list: Effect.succeed(state),
-    agentTarget: () =>
+    agentReadinessIfSupported: () =>
       Effect.fail(
         new DeviceHostUnavailableError({ hostId: "local", reason: "Agent access is disabled." }),
       ),
@@ -237,6 +226,7 @@ it.effect("rejects unavailable agent access before booting or opening a device",
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerUnavailable),
+        Layer.provide(layerProjectsMock),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
         ),

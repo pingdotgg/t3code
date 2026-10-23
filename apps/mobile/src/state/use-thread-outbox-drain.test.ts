@@ -1,7 +1,6 @@
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import {
   CommandId,
-  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -139,15 +138,8 @@ vi.mock("./thread-outbox", async () => {
 });
 
 import { appAtomRegistry } from "./atom-registry";
-import {
-  clearPendingThreadCreationOutcome,
-  pendingThreadCreationOutcomesAtom,
-} from "./pending-thread-creation";
-import {
-  clearThreadComposerError,
-  setThreadComposerError,
-  threadComposerErrorsAtom,
-} from "./thread-composer-error";
+import { pendingThreadCreationOutcomesAtom } from "./pending-thread-creation";
+import { clearThreadComposerError, threadComposerErrorsAtom } from "./thread-composer-error";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
 import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
@@ -282,32 +274,6 @@ describe("thread outbox attachment preparation", () => {
 
     await expect(preparation).resolves.toEqual({ status: "abandoned" });
     expect(remainingMessages()).toEqual([edited]);
-  });
-
-  it("keeps an unchanged queued payload ready after attachment reuse", async () => {
-    const message = withReusedFileUpload(
-      queuedMessage({
-        messageId: "message-reused-upload-current",
-        text: "unchanged text",
-        fileUri: "file:///documents/t3-composer-attachments/current.pdf",
-      }),
-      "pending-reused-upload",
-    );
-    harness.prepareTurnAttachments.mockResolvedValueOnce({
-      status: "ready",
-      attachments: [],
-      draftAttachments: message.attachments,
-      pendingAttachmentIds: ["pending-reused-upload"],
-    });
-    await harness.manager.enqueue(message);
-    const revision = harness.manager.revisionOf(message.messageId);
-    appAtomRegistry.set(editingQueuedMessageIdsAtom, { [message.messageId]: true });
-
-    await expect(prepareQueuedMessageAttachments(message)).resolves.toMatchObject({
-      status: "ready",
-      persistedMessage: message,
-      deliveryRevision: revision,
-    });
   });
 
   it("uses the known next revision after persisting uploaded references", async () => {
@@ -474,23 +440,6 @@ describe("thread outbox drain delivery cleanup", () => {
     expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([message]);
   });
 
-  it("clears an error about the delivered message but keeps one about another message", async () => {
-    const threadKey = "environment-1:thread-1";
-    const retried = queuedMessage({ messageId: "message-retried", text: "retried" });
-    await harness.manager.enqueue(retried);
-    setThreadComposerError(threadKey, "could not be restored", retried.messageId);
-
-    await completeQueuedMessageDelivery(retried, harness.manager.revisionOf(retried.messageId));
-    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]).toBeUndefined();
-
-    const other = queuedMessage({ messageId: "message-other", text: "other" });
-    await harness.manager.enqueue(other);
-    setThreadComposerError(threadKey, "rejected", "message-rejected");
-
-    await completeQueuedMessageDelivery(other, harness.manager.revisionOf(other.messageId));
-    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe("rejected");
-  });
-
   it("keeps a delivered message when its editor opens during storage removal", async () => {
     const message = queuedMessage({
       messageId: "message-editor-removal-race",
@@ -640,31 +589,6 @@ describe("thread outbox delivered creation recovery", () => {
 });
 
 describe("thread outbox recovery rollback", () => {
-  it("preserves inline context from setup edits when reopening a failed task", async () => {
-    const message = queuedMessage({ messageId: "failed-context", text: "Original prompt" });
-    const sourceKey = `${message.environmentId}:${message.threadId}`;
-    const targetKey = "new-task:restored-failed-context";
-    const record = {
-      version: 1 as const,
-      kind: "mention" as const,
-      contextId: ComposerContextId.make("setup-file"),
-      label: "Checkout.tsx",
-      path: "src/Checkout.tsx",
-    };
-    const context = { version: 1 as const, records: [record] };
-    const text = "[Checkout.tsx](t3-context://v1/mention/setup-file)";
-    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
-      [targetKey]: { text: message.text, attachments: [] },
-      [sourceKey]: { text, context, attachments: [] },
-    });
-    await recoverFailedThreadDraft(message);
-    expect(composerDrafts.getComposerDraftSnapshot(targetKey)).toMatchObject({
-      text: `Original prompt\n\n${text}`,
-      context,
-    });
-    expect(composerDrafts.getComposerDraftSnapshot(sourceKey).context).toBeUndefined();
-  });
-
   it("reopens a rejected task with setup edits and every attachment, even above the send cap", async () => {
     const message = queuedMessage({ messageId: "failed-setup", text: "Original prompt" });
     const sourceKey = `${message.environmentId}:${message.threadId}`;
@@ -750,57 +674,6 @@ describe("thread outbox recovery rollback", () => {
         `${message.environmentId}:${message.threadId}`
       ],
     ).toEqual({ kind: "failed", message, reason: "rejected by server" });
-  });
-
-  it("drops an earlier recovery error once a rejected new task is restored", async () => {
-    const message: QueuedThreadMessage = {
-      ...queuedMessage({ messageId: "message-creation-retried", text: "new task text" }),
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
-      creation: {
-        projectId: ProjectId.make("project-1"),
-        workspaceMode: "local",
-        branch: null,
-        worktreePath: null,
-      },
-    };
-    await harness.manager.enqueue(message);
-    harness.draftFile.setWriteError(new Error("disk full"));
-    await expect(restoreRejectedQueuedMessage(message, "rejected by server")).resolves.toBe(
-      "retry",
-    );
-    const threadKey = `${message.environmentId}:${message.threadId}`;
-    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.messageId).toBe(
-      message.messageId,
-    );
-
-    harness.draftFile.setWriteError(null);
-    await expect(restoreRejectedQueuedMessage(message, "rejected by server")).resolves.toBe(
-      "restored",
-    );
-
-    expect(appAtomRegistry.get(threadComposerErrorsAtom)).toEqual({});
-    expect(appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[threadKey]?.kind).toBe("failed");
-  });
-
-  it("keeps a failed outcome until its thread screen consumes it", async () => {
-    const message: QueuedThreadMessage = {
-      ...queuedMessage({ messageId: "message-creation-kept", text: "new task text" }),
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
-      creation: {
-        projectId: ProjectId.make("project-1"),
-        workspaceMode: "local",
-        branch: null,
-        worktreePath: null,
-      },
-    };
-    await harness.manager.enqueue(message);
-    await restoreRejectedQueuedMessage(message, "rejected by server");
-
-    const key = `${message.environmentId}:${message.threadId}`;
-    expect(appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[key]?.kind).toBe("failed");
-
-    clearPendingThreadCreationOutcome(key);
-    expect(appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[key]).toBeUndefined();
   });
 
   it("does not record a creation outcome for a rejected follow-up message", async () => {

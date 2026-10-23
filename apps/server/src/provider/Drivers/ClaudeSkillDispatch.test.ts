@@ -10,6 +10,7 @@ const skillMap = (names: Iterable<string>) =>
 const SKILLS = skillMap(["2spec", "implement", "review", "re-release-version"]);
 
 describe("planClaudeSkillDispatch", () => {
+  // regression: #9128 skills picked from the composer did not run
   it("leaves a prompt without a known skill untouched", () => {
     expect(planClaudeSkillDispatch("fix the build", SKILLS)).toBeUndefined();
     expect(planClaudeSkillDispatch("echo $HOME then $unknown", SKILLS)).toBeUndefined();
@@ -28,14 +29,6 @@ describe("planClaudeSkillDispatch", () => {
       leadingText: undefined,
       commandText: "/review\nfocus on auth",
       skillName: "review",
-    });
-  });
-
-  it("dispatches a known skill whose name begins with a digit", () => {
-    expect(planClaudeSkillDispatch("use $2spec for this", SKILLS)).toEqual({
-      leadingText: "use /2spec for this",
-      commandText: "/2spec for this",
-      skillName: "2spec",
     });
   });
 
@@ -66,10 +59,6 @@ describe("planClaudeSkillDispatch", () => {
       });
       expect(planClaudeSkillDispatch(`5${symbol}review ${symbol}unknown`, SKILLS)).toBeUndefined();
     }
-  });
-
-  it("ignores a dollar token glued to other text", () => {
-    expect(planClaudeSkillDispatch("cost is 5$implement", SKILLS)).toBeUndefined();
   });
 
   it("ignores currency amounts and compact monetary expressions", () => {

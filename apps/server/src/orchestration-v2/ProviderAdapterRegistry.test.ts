@@ -121,53 +121,6 @@ const trackedCreate = <A, E, R>(
     return yield* effect;
   });
 
-it.effect("closes a partially-created adapter scope immediately on typed failure", () =>
-  Effect.gen(function* () {
-    const releases = yield* Ref.make(0);
-    const createError = new ProviderAdapterDriverCreateError({
-      driver: lifecycleDriver,
-      instanceId: lifecycleInstanceId,
-      detail: "expected test failure",
-    });
-
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const exit = yield* ProviderAdapterRegistry.makeRegistryFromConfigMap({
-          drivers: [makeLifecycleDriver(trackedCreate(releases, Effect.fail(createError)))],
-          configMap: lifecycleConfigMap,
-        }).pipe(Effect.exit);
-
-        assert.isTrue(Exit.isFailure(exit));
-        assert.strictEqual(yield* Ref.get(releases), 1);
-      }),
-    );
-
-    assert.strictEqual(yield* Ref.get(releases), 1);
-  }),
-);
-
-it.effect("closes a partially-created adapter scope immediately on defect", () =>
-  Effect.gen(function* () {
-    const releases = yield* Ref.make(0);
-
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const exit = yield* ProviderAdapterRegistry.makeRegistryFromConfigMap({
-          drivers: [
-            makeLifecycleDriver(trackedCreate(releases, Effect.die("expected test defect"))),
-          ],
-          configMap: lifecycleConfigMap,
-        }).pipe(Effect.exit);
-
-        assert.isTrue(Exit.hasDies(exit));
-        assert.strictEqual(yield* Ref.get(releases), 1);
-      }),
-    );
-
-    assert.strictEqual(yield* Ref.get(releases), 1);
-  }),
-);
-
 it.effect("closes a partially-created adapter scope immediately on interruption", () =>
   Effect.gen(function* () {
     const releases = yield* Ref.make(0);

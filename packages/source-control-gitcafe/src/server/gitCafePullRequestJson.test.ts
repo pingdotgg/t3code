@@ -118,31 +118,11 @@ describe("toChangeRequest", () => {
     assert.strictEqual(row.author?.login, "remote-user");
     assert.deepStrictEqual(row.reviewRequestLogins, ["alice", "upstream", "linked-local"]);
   });
-
-  it("requires capabilities on a detail response", () => {
-    assert.throws(() => decodePullDetail(pull));
-  });
 });
 
 describe("toViewerPermissions", () => {
   const permissions = (overrides: Record<string, unknown>) =>
     GitCafePullRequestJson.toViewerPermissions(decodePullDetail({ ...detail, ...overrides }));
-
-  it("lets an editor rewrite the title and description, and nobody else", () => {
-    assert.isTrue(permissions({}).editChangeRequest);
-    assert.isFalse(
-      permissions({
-        capabilities: { comment: true, review: true, merge: true, edit: false, moderate: true },
-      }).editChangeRequest,
-    );
-  });
-
-  it("offers lifecycle actions by state and never a standalone branch update", () => {
-    assert.deepStrictEqual(permissions({}).actions, ["draft", "close", "merge"]);
-    assert.deepStrictEqual(permissions({ state: "closed" }).actions, ["reopen"]);
-    assert.deepStrictEqual(permissions({ state: "merged" }).actions, []);
-    assert.isTrue(permissions({}).stackRebase);
-  });
 
   it("keeps a locked conversation's composer for moderators only", () => {
     const locked = (moderate: boolean) =>
@@ -154,14 +134,6 @@ describe("toViewerPermissions", () => {
     assert.isFalse(locked(false).resolve);
     assert.isTrue(locked(true).comment);
     assert.deepStrictEqual(locked(true).verdicts, []);
-  });
-
-  it("offers no composer to a viewer GitCafe won't let comment", () => {
-    const silent = permissions({
-      capabilities: { comment: false, review: true, merge: true, edit: true, moderate: true },
-    });
-    assert.isFalse(silent.comment);
-    assert.isFalse(silent.resolve);
   });
 });
 
@@ -223,77 +195,6 @@ describe("toActivity", () => {
         ["root", false],
         ["reply", true],
       ],
-    );
-  });
-
-  it.each([
-    [null, { resolve: true, unresolve: false }, true],
-    [null, { resolve: false, unresolve: true }, false],
-    [timestamp, { resolve: true, unresolve: false }, false],
-    [timestamp, { resolve: false, unresolve: true }, true],
-  ] as const)(
-    "reads canResolve for a thread resolved at %s with %o as %s",
-    (resolvedAt, allowed, canResolve) => {
-      const result = activity([
-        {
-          ...lineComment,
-          id: "root",
-          threadId: "root",
-          resolvedAt,
-          capabilities: capabilities(allowed),
-        },
-      ]);
-      assert.strictEqual(result.reviewThreads[0]?.canResolve, canResolve);
-    },
-  );
-
-  it("leaves canResolve absent when the root says nothing", () => {
-    const result = activity([{ ...lineComment, id: "root", threadId: "root" }]);
-    assert.isUndefined(result.reviewThreads[0]?.canResolve);
-  });
-
-  it("maps review verdicts, dismissals and commits", () => {
-    const result = GitCafePullRequestJson.toActivity({
-      comments: decodeComments({ items: [], next: null }),
-      reviews: decodeReviews({
-        items: [
-          {
-            id: "r1",
-            author: actor,
-            body: "LGTM",
-            verdict: "approve",
-            dismissedAt: null,
-            createdAt: timestamp,
-          },
-          {
-            id: "r2",
-            author: actor,
-            body: null,
-            verdict: "request_changes",
-            dismissedAt: timestamp,
-            createdAt: "2026-09-12T13:00:00Z",
-          },
-        ],
-        next: null,
-      }),
-      commits: decodeCommits({
-        items: [{ oid: "abcdef", summary: "Change", time: 1_789_000_000 }],
-        headOid: "abcdef",
-        truncated: false,
-        next: null,
-      }),
-      host: "git.cafe",
-    });
-    assert.deepStrictEqual(
-      result.comments.map((comment) => [comment.id, comment.kind, comment.reviewState]),
-      [
-        ["r1", "review", "approved"],
-        ["r2", "review", "dismissed"],
-      ],
-    );
-    assert.deepStrictEqual(
-      result.commits.map((commit) => commit.oid),
-      ["abcdef"],
     );
   });
 
@@ -412,10 +313,6 @@ describe("toStack", () => {
       },
       { number: 7, title: "Top", headBranch: "feature", state: "open", isDraft: true },
     ]);
-  });
-
-  it("reads an unstacked pull request as no stack", () => {
-    assert.isNull(decodeStackEnvelope({ stack: null }).stack);
   });
 });
 

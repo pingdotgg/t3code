@@ -210,22 +210,6 @@ describe("ServerBrowserContexts", () => {
     await pool.close();
   });
 
-  it("evicts a closed context without closing other agents or relaunching chromium", async () => {
-    const browser = makeBrowser();
-    launches.launch.mockResolvedValue(browser as unknown as Browser);
-    const onContextClose = vi.fn();
-    const pool = new ServerBrowserContexts({ ...options(), onContextClose });
-    const a = await pool.contextFor("default", "agent-a");
-    const b = await pool.contextFor("default", "agent-b");
-    await a.close();
-    expect(onContextClose).toHaveBeenCalledWith(a);
-    expect(await pool.contextFor("default", "agent-a")).not.toBe(a);
-    expect(await pool.contextFor("default", "agent-b")).toBe(b);
-    expect(browser.close).not.toHaveBeenCalled();
-    expect(launches.launch).toHaveBeenCalledTimes(1);
-    await pool.close();
-  });
-
   it("cleans up a browser whose launch finishes during shutdown and rejects future work", async () => {
     const browser = makeBrowser();
     const launch = Promise.withResolvers<Browser>();

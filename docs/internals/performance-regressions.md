@@ -98,10 +98,7 @@ viewport, including a small overscan region. Cached badges remain available whil
 released. Local Git status reads skip divergence calculations; callers that need ahead/behind
 counts keep the full status path. Cached fetch failures share the existing backoff and log only
 the actual failed attempt. Unchanged desktop environment bootstrap reads retain their array
-identity so polling does not invalidate subscribers. The desktop preload keeps the synchronous
-startup snapshot, while topology polling refreshes it through asynchronous IPC. Recurring
-`sendSync` calls block the renderer behind unrelated main-process work, even when the returned
-snapshot is unchanged.
+identity so polling does not invalidate subscribers.
 
 Local trace records and provider event logs use asynchronous, serialized file writes and rotation.
 Batching synchronous appends still stalls the server event loop on slow storage, especially on
@@ -119,5 +116,18 @@ After the budget is exhausted, publication waits for another relevant event inst
 continuous traffic during an outage.
 
 Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.ts`,
-`runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`,
-`ThreadStatusIndicators.subscriptions.browser.test.tsx`, and `desktopLocal.test.ts`.
+`runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`, and
+`desktopLocal.test.ts`.
+
+## Mobile looping animations
+
+`apps/mobile/package.json` sets Reanimated's `DISABLE_COMMIT_PAUSING_MECHANISM` so keyboard avoiding
+animates on iOS. Reanimated documents that flag as safe only alongside React Native's
+`preventShadowTreeCommitExhaustion`, which defaults to off and needs React Native built from source,
+so our builds run without it. Reanimated commits each animation frame to the shadow tree, and
+without commit pausing those commits can starve React's: the JS thread keeps retrying its commit,
+the screen freezes, and back does nothing. Release builds retry forever; dev builds abort with
+`ShadowTree.cpp: assertion failed (attempts < 1024)`. Looping animations that stay on screen while
+heavy content renders should use React Native's `Animated` with `useNativeDriver: true`, which
+updates views without commits, not Reanimated's `withRepeat`. The running-thread shimmer in
+`thread-work-log.tsx` is the example.

@@ -1,4 +1,5 @@
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -9,6 +10,7 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
+  PlusIcon,
   ScaleIcon,
 } from "lucide-react";
 import {
@@ -27,6 +29,7 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
 import {
+  ADD_TO_MACHINE_LABEL_CLASS,
   type EnvMode,
   type EnvironmentOption,
   resolveContextStripLabelsCompact,
@@ -42,7 +45,8 @@ import {
   type BranchToolbarBranchSelectorHandle,
 } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
-import type { PendingServerUpdate } from "./ServerUpdateAction";
+import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
+import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
@@ -55,10 +59,14 @@ import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
@@ -103,7 +111,6 @@ interface BranchToolbarProps {
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   composerControlsHostRef?: (element: HTMLDivElement | null) => void;
   contextStripVisible?: boolean;
-  serverUpdate?: PendingServerUpdate | null;
 }
 
 function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string) {
@@ -118,13 +125,14 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
     })
     .then((action) => {
       if (action !== "copy-path") return;
-      void writeTextToClipboard(workspacePath, "workspace path").then(
+      const clipboardPath = formatFilePathForClipboard(workspacePath);
+      void writeTextToClipboard(clipboardPath, "workspace path").then(
         (didCopy) => {
           if (didCopy) {
             toastManager.add({
               type: "success",
               title: "Path copied",
-              description: workspacePath,
+              description: clipboardPath,
             });
           }
         },
@@ -160,6 +168,8 @@ interface RunContextSelectorProps {
   previousWorktreeLabel: string | null;
   previousWorktreeBranch: string | null;
   onUsePreviousWorktree: () => void;
+  addTargets: readonly AddProjectTarget[];
+  onAddToMachine: (environmentId: EnvironmentId) => void;
 }
 
 const RunContextSelector = memo(function RunContextSelector({
@@ -181,6 +191,8 @@ const RunContextSelector = memo(function RunContextSelector({
   previousWorktreeLabel,
   previousWorktreeBranch,
   onUsePreviousWorktree,
+  addTargets,
+  onAddToMachine,
 }: RunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment =
@@ -316,7 +328,8 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         {...(!isPanel ? composerFloatingLayerProps : {})}
       >
-        {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
+        {availableEnvironments &&
+        ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0) ? (
           <>
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
@@ -325,7 +338,7 @@ const RunContextSelector = memo(function RunContextSelector({
                 onValueChange={(value) =>
                   value === "auto"
                     ? onAutoEnvironment?.()
-                    : onEnvironmentChange(value as EnvironmentId)
+                    : onEnvironmentChange?.(value as EnvironmentId)
                 }
               >
                 {onAutoEnvironment && (
@@ -348,7 +361,9 @@ const RunContextSelector = memo(function RunContextSelector({
                 {availableEnvironments.map((env) => (
                   <MenuRadioItem
                     key={env.environmentId}
-                    disabled={envLocked}
+                    disabled={
+                      envLocked || (!onEnvironmentChange && env.environmentId !== environmentId)
+                    }
                     value={env.environmentId}
                     closeOnClick
                   >
@@ -359,6 +374,29 @@ const RunContextSelector = memo(function RunContextSelector({
                   </MenuRadioItem>
                 ))}
               </MenuRadioGroup>
+              {addTargets.length > 0 ? (
+                <MenuSub>
+                  <MenuSubTrigger>
+                    <span className={ADD_TO_MACHINE_LABEL_CLASS}>
+                      <PlusIcon className="size-3" />
+                      <span className="min-w-0 truncate">Add to another machine</span>
+                    </span>
+                  </MenuSubTrigger>
+                  <MenuSubPopup {...(!isPanel ? composerFloatingLayerProps : {})}>
+                    {addTargets.map((target) => (
+                      <MenuItem
+                        key={target.environmentId}
+                        onClick={() => onAddToMachine(target.environmentId)}
+                      >
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <EnvironmentMachineIcon kind={target.machine} className="size-3" />
+                          <span className="min-w-0 truncate">{target.label}</span>
+                        </span>
+                      </MenuItem>
+                    ))}
+                  </MenuSubPopup>
+                </MenuSub>
+              ) : null}
             </MenuGroup>
             <MenuSeparator />
           </>
@@ -594,7 +632,6 @@ export const BranchToolbar = memo(function BranchToolbar({
   onEnvironmentChange,
   composerControlsHostRef,
   contextStripVisible = true,
-  serverUpdate = null,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -647,7 +684,11 @@ export const BranchToolbar = memo(function BranchToolbar({
     ],
   );
 
-  const hasMultipleEnvironments = (availableEnvironments?.length ?? 0) > 1;
+  const addTargets = useAddProjectTargets(activeProject, availableEnvironments);
+  const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
+    openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
+  // A project on one machine still gets the picker when it can be added to another.
+  const hasMultipleEnvironments = (availableEnvironments?.length ?? 0) > 1 || addTargets.length > 0;
   const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
@@ -656,7 +697,6 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
     canPickEnvironment: hasMultipleEnvironments,
-    serverUpdateAvailable: serverUpdate !== null,
   });
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
@@ -686,6 +726,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            addTargets={addTargets}
+            onAddToMachine={onAddToMachine}
           />
         ) : null}
         {panelSection !== "workspace" ? (
@@ -721,17 +763,6 @@ export const BranchToolbar = memo(function BranchToolbar({
         !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
       )}
     >
-      {serverUpdate && availableEnvironments ? (
-        <BranchToolbarEnvironmentSelector
-          autoEnvironmentLabel={autoEnvironmentLabel}
-          onAutoEnvironment={onAutoEnvironment}
-          envLocked={envLocked}
-          environmentId={environmentId}
-          availableEnvironments={availableEnvironments}
-          {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
-          serverUpdate={serverUpdate}
-        />
-      ) : null}
       {showGitControls ? (
         <div className="contents @3xl/composer-surface:hidden">
           <RunContextSelector
@@ -742,8 +773,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             envModeLocked={envModeLocked}
             environmentId={environmentId}
             availableEnvironments={availableEnvironments}
-            showEnvironmentPicker={showEnvironmentPicker && serverUpdate === null}
-            showEnvironmentIndicator={showEnvironmentIndicator && serverUpdate === null}
+            showEnvironmentPicker={showEnvironmentPicker}
+            showEnvironmentIndicator={showEnvironmentIndicator}
             onEnvironmentChange={onEnvironmentChange}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
@@ -751,10 +782,12 @@ export const BranchToolbar = memo(function BranchToolbar({
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            addTargets={addTargets}
+            onAddToMachine={onAddToMachine}
           />
         </div>
       ) : null}
-      {showGitControls || (showEnvironmentIndicator && serverUpdate === null) ? (
+      {showGitControls || showEnvironmentIndicator ? (
         <div
           className={cn(
             "min-h-7 min-w-10 items-center gap-1 sm:min-h-6",
@@ -764,16 +797,15 @@ export const BranchToolbar = memo(function BranchToolbar({
         >
           {showEnvironmentIndicator && availableEnvironments && (
             <>
-              {serverUpdate === null ? (
-                <BranchToolbarEnvironmentSelector
-                  autoEnvironmentLabel={autoEnvironmentLabel}
-                  onAutoEnvironment={onAutoEnvironment}
-                  envLocked={envLocked}
-                  environmentId={environmentId}
-                  availableEnvironments={availableEnvironments}
-                  {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
-                />
-              ) : null}
+              <BranchToolbarEnvironmentSelector
+                autoEnvironmentLabel={autoEnvironmentLabel}
+                onAutoEnvironment={onAutoEnvironment}
+                envLocked={envLocked}
+                environmentId={environmentId}
+                availableEnvironments={availableEnvironments}
+                {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
+                {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
+              />
               {showGitControls ? (
                 <Separator
                   orientation="vertical"

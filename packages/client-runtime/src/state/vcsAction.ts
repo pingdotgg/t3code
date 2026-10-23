@@ -180,7 +180,7 @@ const EMPTY_VCS_ACTION_ATOM = Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
   Atom.withLabel("vcs-action:null"),
 );
 
-export function getVcsActionTargetKey(target: VcsActionTarget): string | null {
+function getVcsActionTargetKey(target: VcsActionTarget): string | null {
   if (target.environmentId === null || target.cwd === null) {
     return null;
   }

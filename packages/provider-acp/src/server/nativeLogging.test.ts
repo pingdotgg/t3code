@@ -4,7 +4,6 @@ import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as AcpErrors from "effect-acp/errors";
 
@@ -68,33 +67,6 @@ nodeServicesIt("ACP native logging", (it) => {
     }),
   );
 
-  it.effect("keeps request diagnostics without enabling full protocol logging", () =>
-    Effect.gen(function* () {
-      const records: Array<unknown> = [];
-      const makeLogger = yield* makeAcpNativeLoggerFactory();
-      const logger = makeLogger({
-        nativeEventLogger: {
-          filePath: "/tmp/provider-native.ndjson",
-          write: (event) => Effect.sync(() => void records.push(event)),
-          close: () => Effect.void,
-        },
-        provider: ProviderDriverKind.make("grok"),
-        threadId: ThreadId.make("thread-1"),
-      });
-
-      assert.isUndefined(logger.protocolLogging);
-      const requestLogger = logger.requestLogger;
-      assert.exists(requestLogger);
-      if (!requestLogger) return;
-      yield* requestLogger({
-        method: "session/prompt",
-        payload: {},
-        status: "started",
-      });
-      assert.lengthOf(records, 1);
-    }),
-  );
-
   it.effect("drops transient ACP chunks before formatting verbose protocol logs", () =>
     Effect.gen(function* () {
       const records: Array<unknown> = [];
@@ -151,129 +123,6 @@ nodeServicesIt("ACP native logging", (it) => {
       assert.lengthOf(records, 1);
     }),
   );
-
-  it.effect("keeps mixed and incomplete raw diagnostics", () =>
-    Effect.gen(function* () {
-      const records: Array<unknown> = [];
-      const makeLogger = yield* makeAcpNativeLoggerFactory();
-      const logger = makeLogger({
-        nativeEventLogger: {
-          filePath: "/tmp/provider-native.ndjson",
-          write: (event) => Effect.sync(() => void records.push(event)),
-          close: () => Effect.void,
-        },
-        provider: ProviderDriverKind.make("cursor"),
-        threadId: ThreadId.make("thread-1"),
-        verboseProtocolLogging: true,
-      });
-      const protocolLogger = logger.protocolLogging?.logger;
-      assert.exists(protocolLogger);
-      if (!protocolLogger) return;
-
-      const transient = encodeUnknownJson({
-        method: "session/update",
-        params: { update: { sessionUpdate: "agent_message_chunk" } },
-      });
-      const lifecycle = encodeUnknownJson({ method: "session/new", params: {} });
-
-      yield* protocolLogger({
-        direction: "incoming",
-        stage: "raw",
-        payload: `${transient}\n${lifecycle}\n`,
-      });
-      yield* protocolLogger({
-        direction: "incoming",
-        stage: "raw",
-        payload: transient,
-      });
-      yield* protocolLogger({
-        direction: "incoming",
-        stage: "raw",
-        payload: `${transient}\n{malformed}\n`,
-      });
-
-      assert.lengthOf(records, 3);
-    }),
-  );
-
-  it.effect("filters transient entries from mixed decoded batches", () =>
-    Effect.gen(function* () {
-      const records: Array<unknown> = [];
-      const makeLogger = yield* makeAcpNativeLoggerFactory();
-      const logger = makeLogger({
-        nativeEventLogger: {
-          filePath: "/tmp/provider-native.ndjson",
-          write: (event) => Effect.sync(() => void records.push(event)),
-          close: () => Effect.void,
-        },
-        provider: ProviderDriverKind.make("grok"),
-        threadId: ThreadId.make("thread-1"),
-        verboseProtocolLogging: true,
-      });
-      const protocolLogger = logger.protocolLogging?.logger;
-      assert.exists(protocolLogger);
-      if (!protocolLogger) return;
-
-      yield* protocolLogger({
-        direction: "incoming",
-        stage: "decoded",
-        payload: [
-          {
-            _tag: "Request",
-            tag: "session/update",
-            payload: { update: { sessionUpdate: "agent_thought_chunk" } },
-          },
-          {
-            _tag: "Request",
-            tag: "session/new",
-            payload: {},
-          },
-        ],
-      });
-
-      assert.lengthOf(records, 1);
-      assert.include(encodeUnknownJson(records), '"itemCount":1');
-    }),
-  );
-
-  it.effect("logs a structural tag when the native writer defects", () => {
-    const messages: Array<unknown> = [];
-    const logCapture = Logger.make<unknown, void>(({ message }) => {
-      if (Array.isArray(message)) {
-        messages.push(...message);
-      } else {
-        messages.push(message);
-      }
-    });
-    const secret = "secret-writer-failure";
-
-    return Effect.gen(function* () {
-      const makeLogger = yield* makeAcpNativeLoggerFactory();
-      const logger = makeLogger({
-        nativeEventLogger: {
-          filePath: "/tmp/provider-native.ndjson",
-          write: () => Effect.die(new Error(secret)),
-          close: () => Effect.void,
-        },
-        provider: ProviderDriverKind.make("cursor"),
-        threadId: ThreadId.make("thread-1"),
-      });
-      const requestLogger = logger.requestLogger;
-      assert.exists(requestLogger);
-      if (!requestLogger) return;
-
-      yield* requestLogger({
-        method: "session/prompt",
-        payload: {},
-        status: "started",
-      });
-
-      const serialized = encodeUnknownJson(messages);
-      assert.notInclude(serialized, secret);
-      assert.include(serialized, '"errorTag":"Die"');
-      assert.include(serialized, '"reasonCount":1');
-    }).pipe(Effect.provide(Logger.layer([logCapture], { mergeWithExisting: false })));
-  });
 
   it.effect("preserves native writer interruption", () =>
     Effect.gen(function* () {

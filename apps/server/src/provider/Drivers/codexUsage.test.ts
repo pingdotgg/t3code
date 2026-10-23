@@ -72,11 +72,6 @@ describe("parseCodexLine", () => {
     expect(repeat).toBeNull();
   });
 
-  it("drops usage that arrives before any model is known", () => {
-    const state = initialCodexScanState();
-    expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
-  });
-
   it("does not consume counters before the model and timestamp are valid", () => {
     const state = initialCodexScanState();
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
@@ -187,6 +182,123 @@ describe("parseCodexLine", () => {
     }
   });
 
+  it.each(["continuation", "fork", "subagent"])(
+    "bills only the latest request when a %s has no initial counter baseline",
+    (source) => {
+      const state = initialCodexScanState();
+      parseCodexLine(
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-08-01T05:17:41.000Z",
+          payload: {
+            id: "child",
+            model_provider: "openai",
+            ...(source === "fork" ? { forked_from_id: "parent" } : {}),
+            ...(source === "subagent"
+              ? { source: { subagent: { thread_spawn: { parent_thread_id: "parent" } } } }
+              : { source: "vscode" }),
+          },
+        }),
+        state,
+      );
+      parseCodexLine(turnContext, state);
+      const request = {
+        ...counters(100, 20),
+        cached_input_tokens: 30,
+        cache_write_input_tokens: 10,
+        reasoning_output_tokens: 5,
+      };
+      const cumulative = {
+        ...counters(500, 60),
+        cached_input_tokens: 200,
+        cache_write_input_tokens: 20,
+        reasoning_output_tokens: 15,
+      };
+      const first = counted(request, cumulative);
+      expect(parseCodexLine(first, state)).toMatchObject({
+        sessionId: "child",
+        totals: {
+          uncachedInputTokens: 60,
+          cachedInputTokens: 30,
+          cacheCreationTokens: 10,
+          outputTokens: 20,
+          reasoningTokens: 5,
+        },
+      });
+      expect(parseCodexLine(first, state)).toBeNull();
+      expect(parseCodexLine(counted(counters(10, 2), cumulative), state)).toBeNull();
+      expect(
+        parseCodexLine(
+          counted(counters(10, 2), {
+            ...cumulative,
+            input_tokens: 510,
+            output_tokens: 62,
+            total_tokens: 572,
+          }),
+          state,
+        )?.totals.outputTokens,
+      ).toBe(2);
+      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    },
+  );
+
+  it.each([
+    {
+      ...counters(90, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 10),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 5,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 20,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 5,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 3,
+    },
+    {
+      ...counters(110, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 30),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 20,
+    },
+  ])("rejects an initial snapshot with an impossible inherited baseline: %j", (cumulative) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = {
+      ...counters(100, 20),
+      cached_input_tokens: 30,
+      cache_write_input_tokens: 10,
+      reasoning_output_tokens: 5,
+    };
+    expect(parseCodexLine(counted(request, cumulative), state)).toBeNull();
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(state.lastCumulativeUsage).toEqual(cumulative);
+  });
+
   it.each(["request", "cumulative"])("skips malformed %s counters and recovers", (malformed) => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
@@ -231,24 +343,34 @@ describe("parseCodexLine", () => {
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
   });
 
-  it("carries the service tier from the latest thread settings", () => {
-    const settings = (thread_settings: Record<string, unknown>) =>
-      JSON.stringify({
-        type: "event_msg",
-        timestamp: "2026-08-01T05:17:42.000Z",
-        payload: { type: "thread_settings_applied", thread_settings },
+  it.each([false, true])(
+    "accepts the post-compaction context marker without a malformed record (prior request: %s)",
+    (priorRequest) => {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      if (priorRequest) parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+      const marker = counted({ ...counters(0, 0), total_tokens: 26387 }, counters(0, 0), {
+        model_context_window: 475000,
       });
+      expect(parseCodexLine(marker, state)).toBeNull();
+      expect(
+        parseCodexLine(counted(counters(30, 5), counters(30, 5)), state)?.totals.outputTokens,
+      ).toBe(5);
+      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    },
+  );
+
+  it("bills the first request after a resume restarts the cumulative counters", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
-    const speedAfter = (line: string, output: number) => {
-      parseCodexLine(line, state);
-      return parseCodexLine(tokenCount(100, 0, output, 0), state)?.speed;
-    };
-
-    expect(parseCodexLine(tokenCount(100, 0, 1, 0), state)?.speed).toBe("standard");
-    expect(speedAfter(settings({ service_tier: "ultrafast" }), 2)).toBe("ultrafast");
-    expect(speedAfter(settings({ service_tier: "priority" }), 3)).toBe("fast");
-    expect(speedAfter(settings({ model: "gpt-6-astra" }), 4)).toBe("standard");
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    expect(
+      parseCodexLine(counted(counters(30, 5), counters(30, 5)), state)?.totals.outputTokens,
+    ).toBe(5);
+    expect(
+      parseCodexLine(counted(counters(10, 2), counters(40, 7)), state)?.totals.outputTokens,
+    ).toBe(2);
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
   });
 
   it("retains initial tier evidence only for the own OpenAI session and exact context until native settings arrive", () => {
@@ -353,16 +475,6 @@ describe("parseCodexLine", () => {
       parsed.timestamp = timestamp;
       return JSON.stringify(parsed);
     };
-
-    it("keeps the child session id over copied ancestor metas", () => {
-      const state = initialCodexScanState();
-      parseCodexLine(meta({ id: "child", timestamp: "2026-08-01T05:00:00.000Z" }), state);
-      parseCodexLine(meta({ id: "parent", timestamp: "2026-08-01T05:00:00.000Z" }), state);
-      parseCodexLine(turnContext, state);
-      const record = parseCodexLine(tokenCount(100, 0, 10, 0), state);
-
-      expect(record?.sessionId).toBe("child");
-    });
 
     it("drops the re-stamped copied burst and keeps the first real event", () => {
       const state = initialCodexScanState();

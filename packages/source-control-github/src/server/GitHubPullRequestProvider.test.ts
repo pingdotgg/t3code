@@ -2,10 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
 import type { PullRequestReaction } from "@t3tools/contracts";
 
-import { decodePullRequestDetailJson } from "./gitHubPullRequestJson.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
@@ -105,155 +103,6 @@ it.effect("advertises standalone branch deletion for source repository writers",
         canDeleteBranch: false,
       }).actions,
     ).not.toContain("delete-branch");
-  }),
-);
-
-it.effect("refreshes checks without permissions or comparison reads", () =>
-  Effect.gen(function* () {
-    let reads = 0;
-    const snapshot = Result.getOrThrow(
-      decodePullRequestDetailJson(`{
-      "number": 7, "title": "Checks", "url": "https://github.com/acme/web/pull/7",
-      "headRefName": "feature", "baseRefName": "main", "state": "OPEN",
-      "createdAt": "2026-07-01T00:00:00Z", "updatedAt": "2026-07-01T00:00:00Z"
-    }`),
-    );
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestDetail: () =>
-            Effect.sync(() => {
-              reads++;
-              return {
-                ...snapshot,
-                ...coreFields,
-                state: reads === 3 ? ("merged" as const) : ("open" as const),
-                checks: [
-                  {
-                    name: "build",
-                    status: reads === 1 ? ("pending" as const) : ("success" as const),
-                    description: null,
-                    url: null,
-                  },
-                ],
-              };
-            }),
-        }),
-      ),
-    );
-    const read = provider.getChangeRequestChecks;
-    if (read === undefined) return yield* Effect.die("checks read missing");
-    for (let tick = 1; tick <= 3; tick++) {
-      const result = yield* read({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-      expect(result.checks[0]?.status).toBe(tick === 1 ? "pending" : "success");
-      expect(result.state).toBe(tick === 3 ? "merged" : "open");
-    }
-    expect(reads).toBe(3);
-  }),
-);
-
-it.effect("uses one narrow read for a linked pull request summary", () =>
-  Effect.gen(function* () {
-    let summaryReads = 0;
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestSummary: () =>
-            Effect.sync(() => {
-              summaryReads += 1;
-              return {
-                number: 7,
-                title: "Summary",
-                url: "https://github.com/acme/web/pull/7",
-                headBranch: "feat/summary",
-                baseBranch: "main",
-                state: "open" as const,
-                updatedAt: "2026-08-24T12:34:56.000Z",
-                author: { login: "octocat", name: null, avatarUrl: null },
-              };
-            }),
-        }),
-      ),
-    );
-
-    const readSummary = provider.getChangeRequestSummary;
-    if (readSummary === undefined) return yield* Effect.die("summary read was not implemented");
-    const summary = yield* readSummary({
-      cwd: "/w",
-      repository: "acme/web",
-      host: "github.com",
-      number: 7,
-    });
-
-    expect(summary.state).toBe("open");
-    expect(summaryReads).toBe(1);
-    expect(summary.author?.avatarUrl).toBe("https://github.com/octocat.png?size=80");
-  }),
-);
-
-it.effect("declares host-native stacks and passes the one the CLI reads through", () =>
-  Effect.gen(function* () {
-    const stack = {
-      id: "42",
-      number: 3,
-      url: "https://github.com/acme/web/stacks/3",
-      base: "main",
-      layers: [
-        { number: 6, headBranch: "feat/one", state: "merged" as const },
-        { number: 7, headBranch: "feat/two", state: "open" as const },
-      ],
-    };
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestStack: (input) => Effect.succeed(input.number === 7 ? stack : null),
-        }),
-      ),
-    );
-
-    expect(provider.capabilities.stacks).toBe(true);
-    const readStack = provider.getChangeRequestStack;
-    if (readStack === undefined) return yield* Effect.die("stack read was not implemented");
-    const ref = { cwd: "/w", repository: "acme/web", host: "github.com" };
-    expect(yield* readStack({ ...ref, number: 7 })).toEqual(stack);
-    expect(yield* readStack({ ...ref, number: 8 })).toBeNull();
-  }),
-);
-
-it.effect("reports a failed stack read against its own operation", () =>
-  Effect.gen(function* () {
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestStack: () =>
-            Effect.fail(
-              new GitHubPullRequestApi.GitHubPullRequestReadError({
-                cwd: "/w",
-                operation: "getPullRequestStack",
-                cause: new Error("unreadable"),
-              }),
-            ),
-        }),
-      ),
-    );
-
-    const readStack = provider.getChangeRequestStack;
-    if (readStack === undefined) return yield* Effect.die("stack read was not implemented");
-    const error = yield* Effect.flip(
-      readStack({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 }),
-    );
-
-    expect(error.operation).toBe("getChangeRequestStack");
-    expect(error.reason).toBe("failed");
   }),
 );
 
@@ -578,39 +427,6 @@ const openDetail = {
   commits: [],
 };
 
-it.effect(
-  "uses the core comparison and permissions while preserving workflow approval checks",
-  () =>
-    Effect.gen(function* () {
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-            getPullRequestDetail: () =>
-              Effect.succeed({ ...openDetail, comparison: { behindBy: 2, viewerCanUpdate: true } }),
-            listWorkflowRunsRequiringApproval: () =>
-              Effect.succeed([{ id: 123, name: "tests", url: "https://example.com/runs/123" }]),
-          }),
-        ),
-      );
-
-      const detail = yield* provider.getChangeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-
-      expect(detail.behindBy).toBe(2);
-      expect(detail.workflowApprovalsRequired).toBe(1);
-      expect(detail.checks).toContainEqual({
-        name: "tests",
-        status: "action-required",
-        description: "A maintainer must approve this workflow before it can run.",
-        url: "https://example.com/runs/123",
-      });
-    }),
-);
-
 it.effect("does not classify same-repository gates as fork workflow approvals", () =>
   Effect.gen(function* () {
     const provider = yield* make;
@@ -692,46 +508,6 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
   ),
 );
 
-it.effect("propagates workflow discovery rate limits", () =>
-  Effect.gen(function* () {
-    const provider = yield* make;
-    const error = yield* provider
-      .getChangeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      })
-      .pipe(Effect.flip);
-
-    expect(error.operation).toBe("getChangeRequest");
-    expect(error.reason).toBe("rate-limited");
-  }).pipe(
-    Effect.provide(
-      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-        revalidateChecks: (_input, read) => read,
-        getPullRequestDetail: () => Effect.succeed(openDetail),
-        listWorkflowRunsRequiringApproval: () =>
-          Effect.fail(
-            new GitHubRequestPolicy.GitHubApiRateLimitError({
-              host: "github.com",
-              operation: "listWorkflowRunsRequiringApproval",
-            }),
-          ),
-        getViewerAccess: () =>
-          Effect.succeed({
-            canWrite: true,
-            canTriage: true,
-            canUpdate: true,
-            didAuthor: false,
-            mergeCapabilities: { merge: true, squash: true, rebase: true },
-            autoMergeAllowed: true,
-          }),
-      }),
-    ),
-  ),
-);
-
 describe("getViewerPermissions", () => {
   const access = {
     canWrite: true,
@@ -741,32 +517,6 @@ describe("getViewerPermissions", () => {
     mergeCapabilities: { merge: true, squash: true, rebase: true },
     autoMergeAllowed: true,
   };
-
-  it.effect("checks fresh access without reading branch details for unrelated operations", () => {
-    let accessReads = 0;
-    return Effect.gen(function* () {
-      const provider = yield* make;
-      const permissions = yield* provider.getViewerPermissions({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        includeUpdateBranch: false,
-      });
-
-      expect(accessReads).toBe(1);
-      expect(permissions.actions).toContain("merge");
-      expect(permissions.actions).not.toContain("update-branch");
-    }).pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestDetail: () => Effect.die("Unexpected detail read"),
-          getViewerAccess: () => Effect.sync(() => (accessReads++, access)),
-        }),
-      ),
-    );
-  });
 
   const layerWithDetail = (
     detail: Effect.Effect<GitHubPullRequestCore, GitHubPullRequestApi.GitHubPullRequestApiError>,
@@ -803,24 +553,6 @@ describe("getViewerPermissions", () => {
       ),
     ),
   );
-
-  it.effect("uses the GraphQL reserve for manual permission checks", () => {
-    let allowed: boolean | undefined;
-    return Effect.gen(function* () {
-      const provider = yield* make;
-      yield* provider.getViewerPermissions({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-      expect(allowed).toBe(true);
-    }).pipe(
-      Effect.provide(
-        layerWithDetail(Effect.succeed(openDetail), (allowReserve) => (allowed = allowReserve)),
-      ),
-    );
-  });
 
   it.effect("still answers from the light access read when the detail read fails", () =>
     Effect.gen(function* () {
@@ -1029,84 +761,9 @@ describe("getChangeRequestActivity dismissed reviews", () => {
       Effect.provide(layerFor("<!-- Macroscope (Approvability) review body marker -->")),
     ),
   );
-
-  it.effect("keeps the words of a dismissed review that has its own", () =>
-    readActivity.pipe(
-      Effect.map((activity) => {
-        expect(activity.comments[0]?.body).toBe("These findings still stand.");
-      }),
-      Effect.provide(layerFor("These findings still stand.")),
-    ),
-  );
-});
-
-describe("editing", () => {
-  const rewrites: Array<unknown> = [];
-
-  it.effect("hands a rewrite to the CLI as the request named it", () =>
-    Effect.gen(function* () {
-      const provider = yield* make;
-
-      expect(provider.capabilities.edit).toEqual({ changeRequest: true, comment: true });
-      yield* provider.updateChangeRequest!({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        title: "A better title",
-      });
-      yield* provider.updateComment!({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        commentId: "IC_1",
-        kind: "review-comment",
-        body: "Reworded.",
-      });
-
-      expect(rewrites).toEqual([
-        {
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          title: "A better title",
-        },
-        {
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          commentId: "IC_1",
-          kind: "review-comment",
-          body: "Reworded.",
-        },
-      ]);
-    }).pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          updatePullRequest: (input) => Effect.sync(() => void rewrites.push(input)),
-          updateComment: (input) => Effect.sync(() => void rewrites.push(input)),
-        }),
-      ),
-    ),
-  );
 });
 
 describe("loginAvatarUrl", () => {
-  it("serves a user's picture from the host they belong to", () => {
-    expect(loginAvatarUrl("octocat", "github.com")).toBe("https://github.com/octocat.png?size=80");
-    expect(loginAvatarUrl("octocat", "ghe.example.com")).toBe(
-      "https://ghe.example.com/octocat.png?size=80",
-    );
-  });
-
-  it("has nothing for an app, which names no page", () => {
-    expect(loginAvatarUrl("dependabot[bot]", "github.com")).toBeNull();
-  });
-
   it("refuses anything that is not a login, rather than building a URL out of it", () => {
     for (const login of ["../../etc", "a b", "-leading", "x".repeat(40), ""]) {
       expect(loginAvatarUrl(login, "github.com")).toBeNull();

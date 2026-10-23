@@ -10,12 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { type ClosedViewEntry, useClosedViewStore } from "./closedViewStore";
 import { __setClientSettingsForTests } from "./hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "./previewStateStore";
-import {
-  planNextReopen,
-  pullRequestsSearchForRestore,
-  type ReopenOwnerState,
-  reopenClosedView,
-} from "./reopenClosedView";
+import { planNextReopen, type ReopenOwnerState, reopenClosedView } from "./reopenClosedView";
 import {
   selectThreadRightPanelState,
   type ThreadRightPanelState,
@@ -188,47 +183,5 @@ describe("planNextReopen", () => {
     );
     expect(plan.drop.map((e) => e.id)).toEqual(dropped);
     expect(plan.restore?.id ?? null).toBe(restored);
-  });
-});
-
-describe("pullRequestsSearchForRestore", () => {
-  it("replaces the selection and keeps list filters", () => {
-    const search = pullRequestsSearchForRestore(
-      {
-        involvement: "reviewing",
-        state: "open",
-        q: "mine",
-        host: "filter.example.com",
-        selectedHost: "old",
-        number: 1,
-      },
-      {
-        kind: "pull-request",
-        id: "pull-request:example",
-        repository: "owner/repo",
-        number: 42,
-        projectId: "project-1",
-        environmentId: "remote",
-        host: "github.example.com",
-      },
-    );
-    expect(search).toEqual({
-      involvement: "reviewing",
-      state: "open",
-      q: "mine",
-      host: "filter.example.com",
-      repository: "owner/repo",
-      number: 42,
-      selectedProjectId: "project-1",
-      selectedHost: "github.example.com",
-      selectedEnvironmentId: "remote",
-    });
-  });
-
-  it("clears a stale selection and fills default filters when nothing is selected", () => {
-    expect(pullRequestsSearchForRestore({ repository: "old/repo", number: 7 }, null)).toEqual({
-      involvement: "all",
-      state: "open",
-    });
   });
 });

@@ -27,6 +27,8 @@ import {
   findHeaderMenuAction,
 } from "../../components/ui/headerMenu.android";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
+import { deriveBottomControlInsets } from "../../lib/reserved-regions";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -75,6 +77,8 @@ function DevicePreviewScreen({
   readonly onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  // NativeColumnContent already insets the sides, so only a book fold moves the reveal handle.
+  const handleBounds = deriveBottomControlInsets(useNativeColumnLayoutMetrics());
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
   const [foreground, setForeground] = useState(AppState.currentState !== "background");
@@ -318,7 +322,10 @@ function DevicePreviewScreen({
           accessibilityHint="Shaking the phone also shows them"
           hitSlop={12}
           className="absolute h-6 w-16 items-center justify-center self-center"
-          style={{ top: Math.max(insets.top - 18, 4) }}
+          style={{
+            top: Math.max(insets.top - 18, 4),
+            transform: [{ translateX: (handleBounds.left - handleBounds.right) / 2 }],
+          }}
           onPress={() => setControlsVisible(true)}
         >
           <View className="h-1.5 w-10 rounded-full bg-white/40" />

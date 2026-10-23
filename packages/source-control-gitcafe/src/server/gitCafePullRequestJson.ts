@@ -12,6 +12,7 @@ import {
   type PullRequestComment,
   type PullRequestReaction,
   type PullRequestReactionContent,
+  type PullRequestReviewerCandidate,
   type PullRequestReviewThread,
   type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
@@ -29,13 +30,18 @@ const Actor = Schema.Union([
     handle: TrimmedNonEmptyString,
     displayName: Schema.NullOr(Schema.String),
     avatarUrl: Schema.NullOr(Schema.String),
+    bot: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     kind: Schema.Literal("github"),
     actorId: Schema.String,
     login: TrimmedNonEmptyString,
     avatarUrl: Schema.NullOr(Schema.String),
-    linkedProfile: Schema.optional(Schema.NullOr(Schema.Struct({ handle: TrimmedNonEmptyString }))),
+    linkedProfile: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({ handle: TrimmedNonEmptyString, actorId: Schema.optional(Schema.String) }),
+      ),
+    ),
   }),
   Schema.Struct({ kind: Schema.Literal("unavailable"), actorId: Schema.String }),
 ]);
@@ -79,6 +85,10 @@ export const GitCafePullDetail = Schema.Struct({
   observedBaseOid: Schema.optional(Schema.NullOr(Schema.String)),
   mergeRoute: Schema.optional(Schema.Literals(["native", "provider", "unsupported"])),
   lockedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  viewerActorId: Schema.optional(Schema.NullOr(Schema.String)),
+  // Set once GitHub has merged a pull request GitCafe routed there, which can be before the
+  // sync brings the merged state back.
+  providerMerge: Schema.optional(Schema.NullOr(Schema.Struct({ mergedAt: IsoDateTime }))),
   capabilities: Schema.Struct({
     comment: Schema.Boolean,
     review: Schema.Boolean,
@@ -141,6 +151,24 @@ export const GitCafeCommits = Schema.Struct({
   truncated: Schema.Boolean,
   next: Schema.NullOr(Schema.String),
   headOid: Schema.String,
+});
+
+export const GitCafeLabels = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      name: TrimmedNonEmptyString,
+      color: Schema.NullOr(Schema.String),
+      description: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  next: Schema.NullOr(Schema.String),
+});
+
+/** A pull request's reviewers and its reviewer candidates, each actor under its id. */
+export const GitCafeActorEntries = Schema.Struct({
+  items: Schema.Array(Schema.Struct({ id: TrimmedNonEmptyString, actor: Actor })),
+  next: Schema.NullOr(Schema.String),
 });
 
 export const GitCafeReactions = Schema.Struct({
@@ -249,6 +277,7 @@ function toActor(actor: Actor, host: string): PullRequestActor | null {
   return {
     login: actor.kind === "local" ? actor.handle : actor.login,
     name: actor.kind === "local" ? actor.displayName : null,
+    ...(actor.kind === "local" && actor.bot === true ? { isBot: true } : {}),
     // GitCafe serves its own avatars by path, so a relative one is read against the host.
     avatarUrl: actor.avatarUrl === null ? null : new URL(actor.avatarUrl, `https://${host}`).href,
   };
@@ -261,6 +290,22 @@ export function toReviewers(
   return (pull.reviewers ?? []).flatMap(({ actor }) => {
     const reviewer = toActor(actor, host);
     return reviewer === null ? [] : [reviewer];
+  });
+}
+
+export function toReviewerCandidates(
+  candidates: typeof GitCafeActorEntries.Type,
+  input: {
+    readonly requested: ReadonlySet<string>;
+    readonly authorActorId: string;
+    readonly host: string;
+  },
+): ReadonlyArray<PullRequestReviewerCandidate> {
+  return candidates.items.flatMap(({ id, actor }) => {
+    const reviewer = id === input.authorActorId ? null : toActor(actor, input.host);
+    return reviewer === null
+      ? []
+      : [{ ...reviewer, id, kind: "user" as const, isRequested: input.requested.has(id) }];
   });
 }
 
@@ -293,8 +338,18 @@ export function toChangeRequest(
     reviewRequestLogins: (pull.reviewers ?? []).flatMap(({ actor }) =>
       reviewerLogins(actor, target.host),
     ),
-    labels: pull.labels ?? [],
+    labels: (pull.labels ?? []).map(({ name, color }) => ({ name, color })),
   };
+}
+
+function isViewerAuthor(detail: GitCafePullDetail): boolean {
+  const viewer = detail.viewerActorId;
+  if (viewer == null) return false;
+  const { author } = detail;
+  return (
+    author.actorId === viewer ||
+    (author.kind === "github" && author.linkedProfile?.actorId === viewer)
+  );
 }
 
 export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewerPermissions {
@@ -312,8 +367,14 @@ export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewe
     stackRebase: merge,
     comment: open,
     resolve: open,
-    verdicts: review ? ["approve", "request-changes", "comment"] : [],
-    requestReviewers: false,
+    // GitCafe refuses an author's approval and request for changes, as GitHub does.
+    verdicts: !review
+      ? []
+      : isViewerAuthor(detail)
+        ? ["comment"]
+        : ["approve", "request-changes", "comment"],
+    requestReviewers: edit && detail.state === "open",
+    labels: edit && detail.state === "open",
     editChangeRequest: edit,
     // GitCafe's only branch update moves a whole stack.
     updateMethods: [],

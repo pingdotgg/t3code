@@ -111,6 +111,8 @@ export class ProjectFaviconResolver extends Context.Service<
       cwd: string,
       faviconPath?: string,
     ) => Effect.Effect<string | null, ProjectFaviconResolutionError>;
+    /** Forgets cached lookups for a workspace whose files changed, such as a finished clone. */
+    readonly invalidate: (cwd: string) => Effect.Effect<void>;
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
@@ -340,7 +342,18 @@ export const make = Effect.gen(function* () {
     return yield* Cache.get(faviconCache, key);
   });
 
-  return ProjectFaviconResolver.of({ resolvePath });
+  const invalidate: ProjectFaviconResolver["Service"]["invalidate"] = (cwd) =>
+    Cache.keys(faviconCache).pipe(
+      Effect.flatMap((keys) =>
+        Effect.forEach(
+          Array.from(keys).filter((key) => parseFaviconCacheKey(key).cwd === cwd),
+          (key) => Cache.invalidate(faviconCache, key),
+          { discard: true },
+        ),
+      ),
+    );
+
+  return ProjectFaviconResolver.of({ resolvePath, invalidate });
 });
 
 export const layer = Layer.effect(ProjectFaviconResolver, make);

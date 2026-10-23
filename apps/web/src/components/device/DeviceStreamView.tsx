@@ -164,6 +164,7 @@ export function DeviceStreamView(props: {
           setMjpegUrl(url);
           setMjpegGeneration((generation) => generation + 1);
         },
+        onCanvasVideo: () => setMjpegUrl(null),
         onInputConnected: (connected, detail) => {
           setInputState({ connected, ...(detail ? { detail } : {}) });
           if (!connected) setShowRestartNotice(false);

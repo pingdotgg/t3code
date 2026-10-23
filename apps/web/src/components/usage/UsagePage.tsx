@@ -224,7 +224,9 @@ export function UsagePage() {
   const refreshingUsage = isRefreshing && !showingLimits;
   const showingKept = shown !== null && shown.window !== window;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
+  const presentationsWithProviders = useAtomValue(
+    environmentPresentations.presentationsWithProvidersAtom,
+  );
   const cursorAccessEnvironments = hiddenProviders.has("cursor")
     ? []
     : cursorKeychainAccessEnvironments(selectedEnvironments);
@@ -351,10 +353,10 @@ export function UsagePage() {
       : enumerateHourStarts(shownWindow.sinceTime, shownWindow.untilTime);
   const showChatGptSharing =
     !hiddenProviders.has("codex") &&
-    [...providersByEnvironment].some(
-      ([id, providers]) =>
+    [...presentationsWithProviders].some(
+      ([id, presentation]) =>
         (selectedEnvironmentIds === null || selectedEnvironmentIds.has(id)) &&
-        providers.some(usesChatGptSharing),
+        (presentation.serverConfig?.providers ?? []).some(usesChatGptSharing),
     );
 
   const windowLabel =
@@ -795,7 +797,7 @@ function UsageOverview({
                     )}
                   >
                     {awaitingData
-                      ? "—"
+                      ? "-"
                       : metric === "cost"
                         ? formatUsd(totals?.costUsd ?? 0)
                         : formatTokens(totals?.totalTokens ?? 0)}

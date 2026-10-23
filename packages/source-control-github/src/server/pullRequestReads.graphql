@@ -475,6 +475,24 @@ query PullRequestFilesViewed($owner: String!, $name: String!, $number: Int!, $af
   }
 }
 
+query PullRequestFileStats($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          path
+          additions
+          deletions
+        }
+      }
+    }
+  }
+}
+
 # What a merge that rewrites its message reads first: GitHub's own message for the method, and
 # whether a merge queue will choose its own instead.
 query PullRequestMergeMessage(

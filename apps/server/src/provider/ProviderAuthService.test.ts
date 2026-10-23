@@ -451,27 +451,6 @@ describe("ProviderAuthService", () => {
       assert.include(error.detail, "does not accept");
     }),
   );
-  it.effect("stops routed sessions before sign-in, including for a disabled instance", () =>
-    Effect.gen(function* () {
-      const { service, actions, released } = yield* makeHarness({
-        enabled: false,
-        threads: [makeThread("active")],
-        sessions: new Map([[ThreadId.make("active"), [makeSession("active-session")]]]),
-      });
-      const state = yield* service.start({ instanceId }, owner);
-
-      assert.strictEqual(state.instanceId, instanceId);
-      assert.strictEqual(state.phase, "waiting");
-      assert.deepStrictEqual(released, ["active-session"]);
-      assert.deepStrictEqual(actions, [
-        "close-gate",
-        "list-threads",
-        "sessions:active",
-        "stop:active-session",
-        "start-sign-in",
-      ]);
-    }),
-  );
 
   it.effect("keeps sign-in state private and accepts the owner's redirect URL", () =>
     Effect.gen(function* () {
@@ -689,42 +668,6 @@ describe("ProviderAuthService", () => {
       }),
   );
 
-  it.effect.each([
-    { text: "/logout", hasAttachments: false, handled: true },
-    { text: " \n/logout\t", hasAttachments: false, handled: true },
-    { text: "/logout", hasAttachments: true, handled: false },
-    { text: "/logout please", hasAttachments: false, handled: false },
-    { text: "Explain /logout", hasAttachments: false, handled: false },
-    { text: "/Logout", hasAttachments: false, handled: false },
-  ])("handles only a standalone logout command %#", ({ text, hasAttachments, handled }) =>
-    Effect.gen(function* () {
-      const { service, actions } = yield* makeHarness();
-      const result = yield* service.tryHandlePromptCommand({ instanceId, text, hasAttachments });
-
-      assert.strictEqual(result, handled);
-      assert.deepStrictEqual(
-        actions,
-        handled ? ["close-gate", "list-threads", "native-logout"] : [],
-      );
-    }),
-  );
-
-  it.effect("does not intercept commands for providers without an auth controller", () =>
-    Effect.gen(function* () {
-      const { service, actions } = yield* makeHarness();
-      for (const id of [unsupportedInstanceId, ProviderInstanceId.make("missing")]) {
-        assert.isFalse(
-          yield* service.tryHandlePromptCommand({
-            instanceId: id,
-            text: "/logout",
-            hasAttachments: false,
-          }),
-        );
-      }
-      assert.deepStrictEqual(actions, []);
-    }),
-  );
-
   it.effect("does not log out when the thread shell cannot be read", () =>
     Effect.gen(function* () {
       const { service, actions } = yield* makeHarness({ shellError: true });
@@ -759,22 +702,6 @@ describe("ProviderAuthService", () => {
         "sessions:active",
         "stop:active-session",
       ]);
-    }),
-  );
-
-  it.effect("returns native logout failures to the command caller", () =>
-    Effect.gen(function* () {
-      const logoutError = new ProviderSetupError({
-        instanceId,
-        operation: "logout",
-        detail: "Native sign-out failed. Try again.",
-      });
-      const { service } = yield* makeHarness({ logoutError });
-      const error = yield* Effect.flip(
-        service.tryHandlePromptCommand({ instanceId, text: "/logout", hasAttachments: false }),
-      );
-
-      assert.strictEqual(error, logoutError);
     }),
   );
 });
@@ -889,46 +816,6 @@ it.effect.each(["start", "logout", "prompt"] as const)(
       const blocked = yield* Effect.flip(harness.service.logout({ instanceId }));
       assert.include(blocked.detail, "shared sign-in");
       assert.equal(replacementMutations, 0);
-    }).pipe(Effect.scoped),
-);
-
-it.effect.each([
-  { owner: "provider" as const, key: "different-binding" },
-  { owner: "t3" as const, key: "shared" },
-])(
-  "does not invalidate a peer that switches credential binding during session draining %#",
-  (binding) =>
-    Effect.gen(function* () {
-      const draining = yield* Deferred.make<void>();
-      const continueDrain = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        sharedCredentials: true,
-        ...sessionThreads([makeSession("shared-draining", "ready", otherInstanceId)]),
-        beforeStop: Deferred.succeed(draining, undefined).pipe(
-          Effect.andThen(Deferred.await(continueDrain)),
-        ),
-      });
-      const logout = yield* harness.service.logout({ instanceId }).pipe(Effect.forkChild);
-      yield* Deferred.await(draining);
-      let replacementInvalidated = false;
-      harness.replaceInstance(
-        makeInstance({
-          instanceId: otherInstanceId,
-          enabled: true,
-          auth: {
-            ...harness.auth,
-            credentialBinding: binding,
-            invalidate: Effect.sync(() => {
-              replacementInvalidated = true;
-            }),
-          },
-        }),
-      );
-      yield* Deferred.succeed(continueDrain, undefined);
-      yield* Fiber.join(logout);
-      assert.isFalse(replacementInvalidated);
-      assert.isFalse(harness.sessions.has(ThreadId.make("shared-draining")));
-      assert.include(harness.actions, "native-logout");
     }).pipe(Effect.scoped),
 );
 

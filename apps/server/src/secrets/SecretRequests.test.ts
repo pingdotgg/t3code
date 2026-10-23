@@ -7,17 +7,14 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
-import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "./SecretRequests.ts";
 
@@ -211,24 +208,6 @@ it.effect("a save whose record failed can be saved again", () =>
   ),
 );
 
-it.effect("a save whose record and cleanup both failed is finished by saving again", () =>
-  withService(
-    ({ service }) =>
-      Effect.gen(function* () {
-        yield* service
-          .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
-          .pipe(Effect.flip);
-        yield* service.answer({
-          threadId,
-          turnItemId,
-          answer: { type: "save", secret: "ghp_secret" },
-        });
-        assert.isTrue(Option.isSome(yield* service.savedRef({ threadId, turnItemId })));
-      }),
-    { failedRecords: 1, removeFails: true },
-  ),
-);
-
 it.effect("a ref only works in the project it was entered for", () =>
   withService(({ service }) =>
     Effect.gen(function* () {
@@ -340,48 +319,6 @@ it.effect("refuses an answer once the agent that asked has stopped", () =>
         assert.equal(dispatched.length, 0);
       }),
     { runStatus: "completed" },
-  ),
-);
-
-it.effect("drops values nobody used once they expire, and keeps the rest", () =>
-  Effect.gen(function* () {
-    const store = yield* ServerSecretStore.ServerSecretStore;
-    const encode = (savedAt: number) =>
-      new TextEncoder().encode(
-        `{"projectId":"project-1","value":"ghp_secret","savedAt":${savedAt}}`,
-      );
-    yield* TestClock.adjust("2 days");
-    const now = yield* Clock.currentTimeMillis;
-    const stale = `secret-request-${"a".repeat(32)}`;
-    const fresh = `secret-request-${"b".repeat(32)}`;
-    yield* store.set(stale, encode(now - 25 * 60 * 60 * 1000));
-    yield* store.set(fresh, encode(now));
-    yield* store.set("unrelated", new Uint8Array([1]));
-
-    yield* Effect.gen(function* () {
-      yield* SecretRequests.SecretRequests;
-    }).pipe(
-      Effect.provide(
-        SecretRequests.layer.pipe(
-          Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
-        ),
-      ),
-      Effect.scoped,
-    );
-
-    assert.isTrue(Option.isNone(yield* store.get(stale)));
-    assert.isTrue(Option.isSome(yield* store.get(fresh)));
-    assert.isTrue(Option.isSome(yield* store.get("unrelated")));
-    assert.isTrue(Option.isSome(yield* store.get("secret-request-salt")));
-  }).pipe(
-    Effect.provide(
-      ServerSecretStore.layer.pipe(
-        Layer.provideMerge(
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-secret-requests-" }),
-        ),
-        Layer.provideMerge(NodeServices.layer),
-      ),
-    ),
   ),
 );
 

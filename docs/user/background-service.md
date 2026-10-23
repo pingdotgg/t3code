@@ -118,7 +118,7 @@ Downloads, it may need Full Disk Access for the `t3` executable listed in
 `~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
 
 For failures after signing in to T3 Connect, see
-[connection troubleshooting](./remote-access.md#t3-connect-troubleshooting).
+[connection troubleshooting](./t3-connect-troubleshooting.md).
 
 ## Reclaim database space
 

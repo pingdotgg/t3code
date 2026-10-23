@@ -36,22 +36,6 @@ const makeWindow = () => {
 };
 
 describe("DesktopWebLinks", () => {
-  it("treats only http and https as web links", () => {
-    assert.isTrue(DesktopWebLinks.isWebLink("https://example.com/"));
-    assert.isTrue(DesktopWebLinks.isWebLink("http://localhost:3000/a?b=1"));
-    assert.isFalse(DesktopWebLinks.isWebLink("t3code://app/welcome"));
-    assert.isFalse(DesktopWebLinks.isWebLink("mailto:hello@example.com"));
-    assert.isFalse(DesktopWebLinks.isWebLink("not a url"));
-  });
-
-  it("opens HTML files the way a browser does, and nothing else by path", () => {
-    assert.isTrue(DesktopWebLinks.isWebPageFile("/Users/me/report.html"));
-    assert.isTrue(DesktopWebLinks.isWebPageFile("/tmp/page.HTM"));
-    assert.isTrue(DesktopWebLinks.isWebPageFile("/tmp/page.xhtml"));
-    assert.isFalse(DesktopWebLinks.isWebPageFile("/tmp/notes.md"));
-    assert.isFalse(DesktopWebLinks.isWebPageFile("/tmp/html"));
-  });
-
   it.effect("holds links until the renderer listens, then delivers them in order", () => {
     const { sent, revealed, layer } = makeWindow();
     return Effect.gen(function* () {

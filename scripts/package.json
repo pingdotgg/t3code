@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir ."
   },
   "dependencies": {
@@ -21,6 +21,7 @@
     "@effect/vitest": "catalog:",
     "@types/plist": "catalog:",
     "@types/pngjs": "6.0.5",
+    "esbuild": "0.28.2",
     "typescript": "catalog:",
     "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:"

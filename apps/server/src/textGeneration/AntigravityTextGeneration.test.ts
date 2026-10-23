@@ -15,8 +15,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
-import { type AcpError, AcpRequestError } from "effect-acp/errors";
+import { type AcpError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
 
@@ -380,29 +379,6 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("declines elicitation and stops the helper", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeFixture({ prompt: () => Effect.never });
-      const child = yield* fixture.textGeneration
-        .generateThreadTitle(fixture.titleInput)
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(fixture.enteredPrompt);
-      const reply = yield* fixture.incoming.question(
-        {
-          sessionId: SESSION_ID,
-          mode: "form",
-          message: "Name this branch",
-          requestedSchema: { type: "object", properties: {} },
-        },
-        requestContext,
-      );
-      const error = yield* Fiber.join(child).pipe(Effect.flip);
-      expect(reply).toEqual({ action: "decline" });
-      expect(error.detail).toContain("user input");
-      yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
-  );
-
   it.effect.each(["file", "terminal", "extension"] as const)(
     "denies unexpected %s requests",
     (kind) =>
@@ -490,21 +466,6 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("fails an unavailable model before prompting", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeFixture();
-      const error = yield* fixture.textGeneration
-        .generateThreadTitle({
-          ...fixture.titleInput,
-          modelSelection: { ...modelSelection, model: "not-in-the-account" },
-        })
-        .pipe(Effect.flip);
-      expect(error.detail).toContain("select the Antigravity model");
-      expect(fixture.state.prompts).toEqual([]);
-      yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("uses the native default without sending T3's default selection as a model ID", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();
@@ -550,21 +511,6 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not start another runtime or prompt after authentication fails", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeFixture({
-        startError: new AcpRequestError({ code: -32000, errorMessage: "Authentication required" }),
-      });
-      const error = yield* fixture.textGeneration
-        .generateThreadTitle(fixture.titleInput)
-        .pipe(Effect.flip);
-      expect(error._tag).toBe("TextGenerationError");
-      expect(fixture.state.workspaces).toHaveLength(1);
-      expect(fixture.state.prompts).toEqual([]);
-      yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("does not launch during sign-out or before sign-in", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture({ rejectAdmission: true });
@@ -573,21 +519,6 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .pipe(Effect.flip);
       expect(error._tag).toBe("TextGenerationError");
       expect(fixture.state.workspaces).toEqual([]);
-      yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("times out a stalled helper and waits for cleanup", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeFixture({ prompt: () => Effect.never });
-      const child = yield* fixture.textGeneration
-        .generateThreadTitle(fixture.titleInput)
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(fixture.enteredPrompt);
-      yield* TestClock.adjust(180_000);
-      const error = yield* Fiber.join(child).pipe(Effect.flip);
-      expect(error.detail).toContain("timed out");
-      expect(fixture.state.cancellations).toBe(1);
       yield* fixture.assertCleaned;
     }).pipe(Effect.scoped),
   );

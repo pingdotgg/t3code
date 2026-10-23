@@ -79,35 +79,21 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
 }
 
+/**
+ * Only a request for the user or a fresh failure ends a snooze early. Completed runs never do:
+ * a snoozed long-running thread keeps waking itself for background work and stays hidden
+ * until its timer.
+ */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
   if (shell.source?.pendingRuntimeRequest != null) return true;
   if (shell.pendingSubagentRequest != null) return true;
   const failedAt = failureEdgeAt(shell);
-  if (
+  return (
     failedAt !== undefined &&
     (shell.snoozedAt == null ||
       (failedAt != null && Date.parse(failedAt) > Date.parse(shell.snoozedAt)))
-  ) {
-    return true;
-  }
-  return completionWakeAt(shell) !== null;
-}
-
-/** A snooze acknowledges the run already requested, including its eventual result. */
-function completionWakeAt(shell: ThreadSnoozeShell): string | null {
-  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-  if (
-    shell.snoozedAt != null &&
-    (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-    latestRun.requestedAt != null &&
-    Date.parse(latestRun.requestedAt) > Date.parse(shell.snoozedAt) &&
-    latestRun.completedAt != null &&
-    Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
-  ) {
-    return latestRun.completedAt;
-  }
-  return null;
+  );
 }
 
 // V2 runtime.updatedAt includes metadata writes; prefer the failed run's completion.
@@ -168,8 +154,6 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
-    const completedAt = completionWakeAt(shell);
-    if (completedAt !== null) return completedAt;
     // An old failure must not replace the activity time of an approval or input wake.
     const failedAt = failureEdgeAt(shell);
     if (
@@ -309,4 +293,23 @@ export function localSnoozeDate(date: Date): string {
 
 export function localSnoozeTime(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Whether a woken thread woke after the user last saw it. A run that completed
+ * after the last visit counts as seeing it, since the user watched it finish.
+ */
+export function isThreadWokeUnseen(input: {
+  readonly wokeAt: string | null;
+  readonly settled: boolean;
+  readonly lastVisitedAt: string | null | undefined;
+  readonly latestRunCompletedAt: string | null;
+}): boolean {
+  if (input.wokeAt === null || input.settled) return false;
+  const wokeAtMs = Date.parse(input.wokeAt);
+  if (Number.isNaN(wokeAtMs)) return false;
+  const seenAt = [input.lastVisitedAt, input.latestRunCompletedAt]
+    .map((value) => (value ? Date.parse(value) : NaN))
+    .filter((ms) => !Number.isNaN(ms));
+  return seenAt.every((ms) => ms < wokeAtMs);
 }

@@ -117,9 +117,8 @@ export const THREAD_ROLLBACK_AFTER_PROMPT = "Repeat the conversation verbatim.";
 export const THREAD_FORK_NATIVE_SOURCE_PROMPT =
   "Respond with the following text: source fork seed ok";
 export const THREAD_FORK_NATIVE_TARGET_PROMPT = "Respond with the following text: fork native ok";
-export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER = "source-marker-7Q9V";
-export const THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER = "fork-marker-2K4M";
-export const THREAD_FORK_NATIVE_CONTINUE_RECALL = `${THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER}|${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER}`;
+const THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER = "source-marker-7Q9V";
+const THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER = "fork-marker-2K4M";
 export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER} for later in this conversation. Respond with exactly: source marker stored`;
 export const THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT = `Remember the second opaque marker ${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER} for later in this conversation. Respond with exactly: fork marker stored`;
 export const THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT =
@@ -130,8 +129,8 @@ const THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER = "sibling-second-9N6C";
 export const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: sibling source stored`;
 export const THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
 export const THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-export const THREAD_MERGE_BACK_SOURCE_MARKER = "merge-source-4H8Q";
-export const THREAD_MERGE_BACK_FORK_MARKER = "merge-fork-7T2W";
+const THREAD_MERGE_BACK_SOURCE_MARKER = "merge-source-4H8Q";
+const THREAD_MERGE_BACK_FORK_MARKER = "merge-fork-7T2W";
 export const THREAD_MERGE_BACK_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge source stored`;
 export const THREAD_MERGE_BACK_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_FORK_MARKER}. Respond with exactly: merge fork stored`;
 export const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
@@ -145,12 +144,11 @@ export const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
   "User message:",
   "Retain the transferred fork marker for later. Respond with exactly: merge delta stored",
 ].join("\n");
-export const THREAD_MERGE_BACK_RECALL = `${THREAD_MERGE_BACK_SOURCE_MARKER}|${THREAD_MERGE_BACK_FORK_MARKER}`;
 export const THREAD_MERGE_BACK_RECALL_PROMPT =
   "Return the source marker followed by the transferred fork marker, separated by a single | character. Respond with only the markers and separator.";
-export const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";
-export const THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER = "merge-sibling-first-6V2J";
-export const THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER = "merge-sibling-second-9X5B";
+const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";
+const THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER = "merge-sibling-first-6V2J";
+const THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER = "merge-sibling-second-9X5B";
 export const THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge sibling source stored`;
 export const THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER}. Respond with exactly: first merge sibling stored`;
 export const THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER}. Respond with exactly: second merge sibling stored`;

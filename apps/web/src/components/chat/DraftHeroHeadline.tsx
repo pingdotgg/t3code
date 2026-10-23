@@ -41,6 +41,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
+import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 const ADD_PROJECT_VALUE = "add-project";
@@ -254,13 +255,13 @@ export function DraftHeroHeadline({
             <ComboboxTrigger
               render={<InlineButton tone="picker" />}
               data-draft-project-trigger=""
-              // Leaves room for the trailing "?" so a truncated name keeps it on its line.
-              className="pointer-events-auto max-w-[calc(100%-1em)] align-baseline"
+              className="pointer-events-auto min-w-0 max-w-full align-baseline"
             />
           }
         >
           <DraftProjectName
             value={isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
+            singleLine
           />
         </TooltipTrigger>
         {activeProjectDisplayName && !isScratchDraft ? (
@@ -308,9 +309,9 @@ export function DraftHeroHeadline({
     <button
       type="button"
       onClick={openAddProject}
-      className="pointer-events-auto inline cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="pointer-events-auto inline min-w-0 max-w-full cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      {activeProjectTitle ?? "Add a project"}
+      <DraftProjectName value={activeProjectTitle ?? "Add a project"} singleLine />
     </button>
   );
 
@@ -341,21 +342,21 @@ export function DraftHeroHeadline({
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      {/* An explicit heading label hides the inline project picker in NVDA browse mode. */}
-      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-        {isScratchDraft ? (
-          <>What should we work on?</>
-        ) : hasResolvedProject ? (
-          <>
-            What should we build in <span className="whitespace-nowrap">{projectSelector}?</span>
-          </>
-        ) : canChooseProject ? (
-          <>{projectSelector} to start</>
-        ) : (
-          <>Add a project to start</>
-        )}
-      </h1>
-      {}
+      {hasResolvedProject && !isScratchDraft ? (
+        <DraftHeroProjectHeading projectName={activeProjectDisplayName ?? "Choose a project"}>
+          {projectSelector}
+        </DraftHeroProjectHeading>
+      ) : (
+        <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+          {isScratchDraft ? (
+            <>What should we work on?</>
+          ) : canChooseProject ? (
+            <>{projectSelector} to start</>
+          ) : (
+            <>Add a project to start</>
+          )}
+        </h1>
+      )}
       {scratchWorkspaceRoot === null ? null : (
         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}

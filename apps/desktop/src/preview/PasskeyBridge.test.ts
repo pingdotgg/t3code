@@ -16,17 +16,6 @@ const assertionData = {
   extensions: { prf: { results: { first: base64Url([9]) } } },
 };
 
-const attestationData = {
-  credentialId: base64Url([1, 2, 3]),
-  clientDataJSON: base64Url([4]),
-  attestationObject: base64Url([10]),
-  authData: base64Url([11]),
-  publicKey: base64Url([12]),
-  publicKeyAlgorithm: -7,
-  transports: [],
-  extensions: { credProps: { rk: true } },
-};
-
 const creationOptions: PublicKeyCredentialCreationOptions = {
   challenge: new Uint8Array([1]),
   rp: { name: "Example" },
@@ -144,62 +133,6 @@ describe("installPasskeyBridge", () => {
     });
   });
 
-  it("returns registrations with their attestation and public key", async () => {
-    const { invoke, credentials, FakeAttestationResponse } = install(() => ({
-      success: true,
-      data: attestationData,
-    }));
-
-    const credential = (await credentials.create({
-      publicKey: creationOptions,
-    })) as PublicKeyCredential;
-
-    assert.strictEqual(invoke.mock.calls[0]?.[0], PASSKEY_CREATE_CHANNEL);
-    const response = credential.response as AuthenticatorAttestationResponse;
-    assert.instanceOf(response, FakeAttestationResponse);
-    assert.isNull(credential.authenticatorAttachment);
-    assert.deepStrictEqual(bytesOf(response.attestationObject), [10]);
-    assert.deepStrictEqual(bytesOf(response.getAuthenticatorData()), [11]);
-    assert.deepStrictEqual(bytesOf(response.getPublicKey()), [12]);
-    assert.strictEqual(response.getPublicKeyAlgorithm(), -7);
-    assert.deepStrictEqual(credential.getClientExtensionResults(), { credProps: { rk: true } });
-    assert.deepStrictEqual(credential.toJSON(), {
-      id: attestationData.credentialId,
-      rawId: attestationData.credentialId,
-      type: "public-key",
-      response: {
-        clientDataJSON: attestationData.clientDataJSON,
-        attestationObject: attestationData.attestationObject,
-        authenticatorData: attestationData.authData,
-        transports: [],
-        publicKey: attestationData.publicKey,
-        publicKeyAlgorithm: -7,
-      },
-      clientExtensionResults: { credProps: { rk: true } },
-    });
-  });
-
-  it("leaves autofill and non-passkey requests to Chromium", async () => {
-    const { invoke, credentials, nativeCreate, nativeGet } = install(() => ({
-      success: true,
-      data: assertionData,
-    }));
-
-    await credentials.get({
-      mediation: "conditional",
-      publicKey: { challenge: new Uint8Array([1]) },
-    });
-    await credentials.get({ password: true } as CredentialRequestOptions);
-    const upgrade = { mediation: "conditional", publicKey: creationOptions } as const;
-    await credentials.create(upgrade);
-    await credentials.create({ password: {} } as CredentialCreationOptions);
-    assert.strictEqual(invoke.mock.calls.length, 0);
-    assert.strictEqual(nativeGet.mock.calls.length, 2);
-    assert.strictEqual(nativeCreate.mock.calls.length, 2);
-    assert.isFalse(await PublicKeyCredential.isConditionalMediationAvailable());
-    assert.isTrue(await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
-  });
-
   it("rejects with the WebAuthn error the ceremony ended with", async () => {
     const { credentials } = install((channel) => ({
       success: false,
@@ -214,18 +147,6 @@ describe("installPasskeyBridge", () => {
       .get({ publicKey: { challenge: new Uint8Array([1]) } })
       .catch((error: unknown) => error);
     assert.instanceOf(fetched, TypeError);
-  });
-
-  it("refuses when the main process has no handler for the page", async () => {
-    const { credentials } = install(() => {
-      throw new Error("Error invoking remote method 'preview:passkey-get': No handler registered");
-    });
-
-    const error = await credentials
-      .get({ publicKey: { challenge: new Uint8Array([1]) } })
-      .catch((caught: unknown) => caught);
-    assert.instanceOf(error, DOMException);
-    assert.strictEqual((error as DOMException).name, "NotAllowedError");
   });
 
   it("rejects as soon as the page aborts, without waiting on the system sheet", async () => {

@@ -1,7 +1,23 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileChipMenu, fileChipShareSource, resolveFileChipTarget } from "./fileChipMenu";
+import {
+  fileChipClipboardPath,
+  fileChipMenu,
+  fileChipShareSource,
+  resolveFileChipTarget,
+} from "./fileChipMenu";
+
+it("copies native paths from a relative file chip in a Windows workspace", () => {
+  const target = resolveFileChipTarget("reports/Device Users.csv", "C:/repo");
+  if (!target) throw new Error("File-chip target unavailable");
+  expect(fileChipClipboardPath(target, "copy-full-path")).toBe(
+    String.raw`C:\repo\reports\Device Users.csv`,
+  );
+  expect(fileChipClipboardPath(target, "copy-relative-path")).toBe(
+    String.raw`reports\Device Users.csv`,
+  );
+});
 
 describe("resolveFileChipTarget", () => {
   it("resolves a workspace-relative link to both paths", () => {
@@ -11,36 +27,23 @@ describe("resolveFileChipTarget", () => {
     });
   });
 
-  it("keeps only the full path for a host file outside the workspace", () => {
-    expect(resolveFileChipTarget("/tmp/report.md", "/repo")).toEqual({
-      fullPath: "/tmp/report.md",
+  it("resolves home links for navigation and menu actions", () => {
+    expect(resolveFileChipTarget("~/.agents/AGENTS.md:314", "/home/maria/repo")).toEqual({
+      fullPath: "/home/maria/.agents/AGENTS.md",
     });
-  });
-
-  it("keeps only the relative path when the workspace root is unknown", () => {
-    expect(resolveFileChipTarget("src/app.ts", null)).toEqual({ relativePath: "src/app.ts" });
+    expect(resolveFileChipTarget("~/repo/src/main.ts:12", "/home/maria/repo")).toEqual({
+      fullPath: "/home/maria/repo/src/main.ts",
+      relativePath: "src/main.ts",
+    });
+    expect(resolveFileChipTarget("~/.agents/AGENTS.md", "C:\\Users\\maria\\repo")).toEqual({
+      fullPath: "C:\\Users\\maria\\.agents\\AGENTS.md",
+    });
   });
 
   it("ignores links that are not files or cannot be opened", () => {
     expect(resolveFileChipTarget("https://example.com/app.ts", "/repo")).toBeNull();
     expect(resolveFileChipTarget("~/report.md", "/repo")).toBeNull();
     expect(resolveFileChipTarget("../other/file.ts", "/repo")).toBeNull();
-  });
-});
-
-describe("fileChipMenu", () => {
-  it("offers only the copies the target can satisfy", () => {
-    expect(fileChipMenu({ fullPath: "/tmp/report.md" })).toEqual({
-      title: "/tmp/report.md",
-      actions: [
-        { id: "copy-full-path", title: "Copy full path" },
-        { id: "open-file", title: "Open in file viewer" },
-      ],
-    });
-    expect(fileChipMenu({ relativePath: "src/app.ts" }).actions.map(({ id }) => id)).toEqual([
-      "copy-relative-path",
-      "open-file",
-    ]);
   });
 });
 
@@ -66,14 +69,6 @@ describe("file chip downloads", () => {
       name: path.split("/").at(-1),
       mimeType,
       resource: { _tag: "media-file", threadId, path },
-    });
-  });
-
-  it("retains the thread context for a relative file without a known workspace root", () => {
-    expect(
-      fileChipShareSource(resolveFileChipTarget("clips/demo.mp4", null)!, threadId),
-    ).toMatchObject({
-      resource: { _tag: "media-file", threadId, path: "clips/demo.mp4" },
     });
   });
 

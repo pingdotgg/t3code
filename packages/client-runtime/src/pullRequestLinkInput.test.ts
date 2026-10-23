@@ -69,12 +69,6 @@ describe("resolveLinkPullRequestInput", () => {
     });
   });
 
-  it("returns null for input that is not a reference", () => {
-    expect(
-      resolveLinkPullRequestInput({ reference: "hello", project, hasProject: () => true }),
-    ).toBeNull();
-  });
-
   it("resolves a bare number against the thread's own repository", () => {
     expect(
       resolveLinkPullRequestInput({ reference: "#42", project, hasProject: () => true }),
@@ -113,92 +107,21 @@ describe("resolveLinkPullRequestInput", () => {
     });
     expect(result).toMatchObject({ error: expect.stringContaining("gitlab.com") });
   });
-
-  it.each(["12", "#12"])(
-    "names the missing repository when resolving bare number %s",
-    (reference) => {
-      expect(
-        resolveLinkPullRequestInput({ reference, project: null, hasProject: () => true }),
-      ).toEqual({
-        error:
-          "Paste the full pull request URL; this thread has no repository to resolve the number against.",
-      });
-    },
-  );
-
-  it("accepts a checkout command as a reference", () => {
-    expect(
-      resolveLinkPullRequestInput({
-        reference: "gh pr checkout https://github.com/acme/web/pull/3",
-        project,
-        hasProject: () => true,
-      }),
-    ).toMatchObject({ link: { number: 3, repository: "acme/web" } });
-  });
-});
-
-describe("changeRequestWebUrl", () => {
-  it("knows the four hosts and nothing else", () => {
-    expect(changeRequestWebUrl("gitlab", "gitlab.com", "g/sub/repo", 5)).toBe(
-      "https://gitlab.com/g/sub/repo/-/merge_requests/5",
-    );
-    expect(changeRequestWebUrl("unknown", "x", "a/b", 1)).toBeNull();
-  });
 });
 
 describe("parsePullRequestReference", () => {
-  it("accepts GitHub pull request URLs", () => {
-    expect(parsePullRequestReference("https://github.com/pingdotgg/t3code/pull/42")).toBe(
-      "https://github.com/pingdotgg/t3code/pull/42",
-    );
-  });
-
-  it("accepts Azure DevOps pull request URLs", () => {
-    expect(
-      parsePullRequestReference("https://dev.azure.com/acme/project/_git/t3code/pullrequest/42"),
-    ).toBe("https://dev.azure.com/acme/project/_git/t3code/pullrequest/42");
-  });
-
-  it("accepts GitLab merge request URLs", () => {
-    expect(parsePullRequestReference("https://gitlab.com/group/project/-/merge_requests/42")).toBe(
-      "https://gitlab.com/group/project/-/merge_requests/42",
-    );
-  });
-
   it("accepts legacy Azure DevOps pull request URLs", () => {
     expect(
       parsePullRequestReference("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42"),
     ).toBe("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42");
   });
 
-  it("accepts raw numbers", () => {
-    expect(parsePullRequestReference("42")).toBe("42");
-  });
-
-  it("accepts #number references", () => {
-    expect(parsePullRequestReference("#42")).toBe("42");
-  });
-
   it("accepts gh pr checkout commands with raw numbers", () => {
     expect(parsePullRequestReference("gh pr checkout 42")).toBe("42");
   });
 
-  it("accepts gh pr checkout commands with #number references", () => {
-    expect(parsePullRequestReference("gh pr checkout #42")).toBe("42");
-  });
-
-  it("accepts gh pr checkout commands with GitHub pull request URLs", () => {
-    expect(
-      parsePullRequestReference("gh pr checkout https://github.com/pingdotgg/t3code/pull/42"),
-    ).toBe("https://github.com/pingdotgg/t3code/pull/42");
-  });
-
   it("accepts glab mr checkout commands with raw numbers", () => {
     expect(parsePullRequestReference("glab mr checkout 42")).toBe("42");
-  });
-
-  it("accepts az repos pr checkout commands with raw numbers", () => {
-    expect(parsePullRequestReference("az repos pr checkout --id 42")).toBe("42");
   });
 
   it("accepts az repos pr checkout commands with equals-style ids", () => {

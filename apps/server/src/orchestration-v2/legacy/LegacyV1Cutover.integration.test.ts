@@ -559,18 +559,29 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
 
 const waitForIdle = Effect.fn("LegacyV1Cutover.waitForIdle")(function* (threadId: ThreadId) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const projection = yield* orchestrator.getThreadProjection(threadId);
-    if (
-      projection.runs.every(
-        (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
-      )
-    ) {
-      return projection;
-    }
-    yield* Effect.sleep("5 millis");
+  const eventSink = yield* EventSink.EventSinkV2;
+  const isIdle = (projection: OrchestrationV2ThreadProjection) =>
+    projection.runs.every(
+      (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
+    );
+  const afterSequence = yield* eventSink.latestSequence();
+  const current = yield* orchestrator.getThreadProjection(threadId);
+  if (isIdle(current)) {
+    return current;
   }
-  return yield* Effect.die(new Error("Cutover test timed out waiting for idle"));
+  // Projections commit with their events, so each later event is the only time to re-read.
+  const [idle] = yield* eventSink.stream({ afterSequence }).pipe(
+    Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+    Stream.filter(isIdle),
+    Stream.take(1),
+    Stream.runCollect,
+  );
+  if (idle === undefined) {
+    return yield* Effect.die(
+      new Error("Cutover test event stream ended before the thread went idle"),
+    );
+  }
+  return idle;
 });
 
 const layerBoot = (input: {

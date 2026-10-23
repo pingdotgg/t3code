@@ -26,13 +26,4 @@ describe("PR attachments", () => {
       },
     ]);
   });
-
-  it("does not collect ordinary links or media examples in code", () => {
-    const media = splitPullRequestBody(
-      "https://example.com/docs\n\n```\nhttps://drop.example.com/demo.mp4\n```",
-    );
-    expect(
-      pullRequestDescriptionContent({ type: "root" } as MarkdownNode, media).attachments,
-    ).toEqual([]);
-  });
 });

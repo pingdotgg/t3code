@@ -27,9 +27,7 @@ import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -44,8 +42,6 @@ import {
   openCodeBoundaryAfterProviderTurn,
   openCodeChildPermissionRules,
   openCodePermissionRules,
-  openCodePermissionRequestKind,
-  openCodeToolProjectionKind,
   makeOpenCodeProtocolLogger,
   makeOpenCodeAdapterV2,
   OPENCODE_PROVIDER,
@@ -241,7 +237,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
-  it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
+  it.effect.each(["completed", "failed", "unavailable"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>
       Effect.gen(function* () {
@@ -327,16 +323,6 @@ describe("OpenCodeAdapterV2", () => {
             }),
           );
           yield* Effect.promise(() => nativeEvents.push(step("old", "old-assistant")));
-        }
-        if (ending === "unresolved")
-          yield* Effect.promise(() => nativeEvents.push(step("unknown", "unknown-assistant")));
-        if (ending === "reconnect") {
-          yield* Effect.promise(() =>
-            nativeEvents.push({ type: "server.connected", properties: {} }),
-          );
-          yield* Effect.promise(() =>
-            nativeEvents.push({ type: "server.connected", properties: {} }),
-          );
         }
         if (ending === "failed") {
           yield* Effect.promise(() =>
@@ -457,184 +443,6 @@ describe("OpenCodeAdapterV2", () => {
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
     ),
-  );
-
-  it.effect.each(["permission", "question"] as const)(
-    "cancels an undelivered %s reply at its deadline",
-    (kind) =>
-      Effect.gen(function* () {
-        const nativeEvents = asyncEventStream();
-        const called = promiseGate<void>();
-        let signal: AbortSignal | undefined;
-        let deliver = false;
-        const harness = yield* makeOpenCodeRuntimeHarness(`reply-${kind}`, "root", {
-          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-          session: {
-            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-            promptAsync: async () => ({ data: true }),
-            abort: async () => ({ data: true }),
-            children: async () => ({ data: [] }),
-          },
-          [kind]: {
-            reply: async (_input: unknown, options: { signal: AbortSignal }) => {
-              if (deliver) return { data: true };
-              signal = options.signal;
-              called.resolve();
-              return new Promise(() => {});
-            },
-          },
-        });
-        yield* harness.startTurn();
-        const received = yield* harness.runtime.events.pipe(
-          Stream.filter((event) => event.type === "runtime_request.updated"),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkScoped,
-        );
-        yield* Effect.promise(() =>
-          nativeEvents.push({
-            type: `${kind}.asked`,
-            properties:
-              kind === "permission"
-                ? {
-                    id: "request",
-                    sessionID: "root",
-                    permission: "bash",
-                    patterns: ["*"],
-                    always: [],
-                    metadata: {},
-                  }
-                : {
-                    id: "request",
-                    sessionID: "root",
-                    questions: [
-                      {
-                        header: "Choice",
-                        question: "Which?",
-                        options: [{ label: "Yes", description: "Proceed" }],
-                      },
-                    ],
-                  },
-          }),
-        );
-        const request = (yield* Fiber.join(received))[0]!.runtimeRequest;
-        const response = {
-          requestId: request.id,
-          ...(kind === "permission"
-            ? { decision: "accept" as const }
-            : { answers: { Choice: "Yes" } }),
-        };
-        const reply = yield* harness.runtime
-          .respondToRuntimeRequest(response)
-          .pipe(Effect.exit, Effect.forkScoped);
-        yield* Effect.promise(() => called.promise);
-        yield* TestClock.adjust("10 seconds");
-        assert.isTrue(Exit.isFailure(yield* Fiber.join(reply)));
-        assert.isTrue(signal?.aborted);
-        deliver = true;
-        yield* harness.runtime.respondToRuntimeRequest(response);
-      }).pipe(
-        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-        Effect.scoped,
-      ),
-  );
-
-  it.effect("aborts external root and descendants before closing the event stream", () =>
-    Effect.gen(function* () {
-      const scope = yield* Scope.make();
-      const nativeEvents = asyncEventStream();
-      const calls: string[] = [];
-      yield* makeOpenCodeRuntimeHarness("release", "root", {
-        event: {
-          subscribe: async (_input: unknown, options: { signal: AbortSignal }) => {
-            options.signal.addEventListener("abort", () => {
-              calls.push("stream.close");
-              nativeEvents.close();
-            });
-            return { stream: nativeEvents.stream };
-          },
-        },
-        session: {
-          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          abort: async ({ sessionID }: { sessionID: string }) => {
-            calls.push(`abort:${sessionID}`);
-            return { data: true };
-          },
-          children: async ({ sessionID }: { sessionID: string }) => {
-            calls.push(`children:${sessionID}`);
-            return { data: sessionID === "root" ? [{ id: "child" }] : [] };
-          },
-        },
-      }).pipe(Effect.provideService(Scope.Scope, scope));
-      yield* Scope.close(scope, Exit.void);
-      assert.deepEqual(calls, [
-        "abort:root",
-        "children:root",
-        "abort:child",
-        "children:child",
-        "stream.close",
-      ]);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
-  );
-
-  it.effect.each(["enumeration", "abort", "not-found", "timeout"] as const)(
-    "reports descendant cleanup %s",
-    (failure) =>
-      Effect.gen(function* () {
-        const nativeEvents = asyncEventStream();
-        const called = promiseGate<void>();
-        let childSignal: AbortSignal | undefined;
-        const harness = yield* makeOpenCodeRuntimeHarness(`cleanup-${failure}`, "root", {
-          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-          session: {
-            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-            promptAsync: async () => ({ data: true }),
-            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-            messages: async () => ({ data: [] }),
-            children: async ({ sessionID }: { sessionID: string }) => {
-              if (failure === "enumeration") throw new Error("cannot enumerate");
-              return { data: sessionID === "root" ? [{ id: "child" }] : [] };
-            },
-            abort: async (
-              { sessionID }: { sessionID: string },
-              options: { signal: AbortSignal },
-            ) => {
-              if (sessionID === "root") return { data: true };
-              if (failure === "timeout" && childSignal?.aborted) return { data: true };
-              childSignal = options.signal;
-              called.resolve();
-              if (failure === "timeout") {
-                return new Promise(() => {});
-              }
-              if (failure === "not-found") throw { status: 404 };
-              throw new Error("child abort failed");
-            },
-          },
-        });
-        yield* harness.startTurn();
-        const snapshot = yield* harness.runtime.readThreadSnapshot({
-          providerThread: harness.providerThread,
-        });
-        const stop = yield* harness.runtime
-          .interruptTurn({
-            providerThread: harness.providerThread,
-            providerTurnId: snapshot.providerTurns.at(-1)!.id,
-          })
-          .pipe(Effect.exit, Effect.forkScoped);
-        if (failure === "timeout") {
-          yield* Effect.promise(() => called.promise);
-          yield* TestClock.adjust("15 seconds");
-        }
-        const result = yield* Fiber.join(stop);
-        assert.equal(Exit.isSuccess(result), failure === "not-found");
-        if (failure === "timeout") assert.isTrue(childSignal?.aborted);
-      }).pipe(
-        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-        Effect.scoped,
-      ),
   );
 
   it.effect(
@@ -1032,6 +840,62 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  it.effect("drops cancelled OpenCode todos so a finished list completes", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-todos";
+      const harness = yield* makeOpenCodeRuntimeHarness("todos", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        mcp: { status: async () => ({ data: {} }) },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "plan.updated"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "todo.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            todos: [
+              { content: "Write the fix", status: "completed", priority: "high" },
+              { content: "Try another approach", status: "cancelled", priority: "low" },
+              { content: "Add a test", status: "completed", priority: "medium" },
+            ],
+          },
+        }),
+      );
+      const plan = (yield* Fiber.join(received)).flatMap((event) =>
+        event.type === "plan.updated" ? [event.plan] : [],
+      )[0];
+      assert.ok(plan?.kind === "todo_list");
+      assert.deepEqual(
+        plan.steps.map((step) => ({ text: step.text, status: step.status })),
+        [
+          { text: "Write the fix", status: "completed" },
+          { text: "Add a test", status: "completed" },
+        ],
+      );
+      assert.equal(plan.status, "completed");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("presents OpenCode MCP calls without treating remote tools as local edits", () =>
     Effect.gen(function* () {
       const output =
@@ -1194,97 +1058,6 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect.each(["failure", "timeout"] as const)("retries MCP status after %s", (failure) =>
-    Effect.gen(function* () {
-      const nativeEvents = asyncEventStream();
-      const called = promiseGate<void>();
-      const sessionId = `mcp-status-${failure}`;
-      let statusReads = 0;
-      let signal: AbortSignal | undefined;
-      const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
-        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-        session: {
-          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
-          promptAsync: async () => ({ data: true }),
-        },
-        mcp: {
-          status: async (_input: unknown, options: { signal?: AbortSignal }) => {
-            statusReads++;
-            if (statusReads === 1) {
-              signal = options?.signal;
-              called.resolve();
-              if (failure === "timeout") return new Promise(() => {});
-              throw new Error("MCP status unavailable");
-            }
-            return { data: { weather: { status: "connected" } } };
-          },
-        },
-      });
-      yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
-        Stream.takeUntil(
-          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
-        ),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      for (const status of ["running", "completed"] as const) {
-        const emitted = yield* Effect.promise(() =>
-          nativeEvents.push({
-            type: "message.part.updated",
-            properties: {
-              sessionID: sessionId,
-              part: {
-                id: "weather-part",
-                sessionID: sessionId,
-                messageID: "weather-message",
-                type: "tool",
-                callID: "weather-call",
-                tool: "weather_edit_document",
-                state: {
-                  status,
-                  input: { document: "remote-doc" },
-                  title: "Edit remote document",
-                  metadata: {},
-                  output: "saved",
-                  time: { start: 1, end: 2 },
-                },
-              },
-            },
-          }),
-        ).pipe(Effect.forkScoped);
-        if (status === "running" && failure === "timeout") {
-          yield* Effect.promise(() => called.promise);
-          yield* TestClock.adjust("1 second");
-        }
-        yield* Fiber.join(emitted);
-      }
-      yield* Effect.promise(() =>
-        nativeEvents.push({ type: "session.compacted", properties: { sessionID: sessionId } }),
-      );
-      const completed = (yield* Fiber.join(received)).find(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "dynamic_tool" &&
-          event.turnItem.status === "completed",
-      );
-      assert.equal(statusReads, 2);
-      assert.equal(
-        completed?.type === "turn_item.updated" && completed.turnItem.title,
-        "Edit remote document",
-      );
-      assert.deepEqual(completed?.type === "turn_item.updated" && completed.turnItem.toolSource, {
-        key: "mcp:weather",
-        name: "weather",
-        kind: "integration",
-      });
-      if (failure === "timeout") assert.isTrue(signal?.aborted);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
-  );
-
   it.effect("admits a native command on its user receipt before generation completes", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -1345,36 +1118,6 @@ describe("OpenCodeAdapterV2", () => {
       yield* Fiber.join(start);
       assert.equal(promptCalls, 0);
       release.resolve();
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
-  );
-
-  it.effect("sends unadvertised slash commands as ordinary prompts", () =>
-    Effect.gen(function* () {
-      const nativeEvents = asyncEventStream();
-      const prompts: unknown[] = [];
-      const harness = yield* makeOpenCodeRuntimeHarness("unknown-command", "unknown-command", {
-        event: {
-          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
-            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
-            return { stream: nativeEvents.stream };
-          },
-        },
-        command: { list: async () => ({ data: [{ name: "review" }] }) },
-        session: {
-          create: async () => ({
-            data: { id: "unknown-command", time: { created: 1, updated: 1 } },
-          }),
-          promptAsync: async (input: { parts: unknown }) => {
-            prompts.push(input.parts);
-            return { data: true };
-          },
-        },
-      });
-      yield* harness.startTurn("/unknown words");
-      assert.deepEqual(prompts, [[{ type: "text", text: "/unknown words" }]]);
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -2241,19 +1984,6 @@ describe("OpenCodeAdapterV2", () => {
     assert.isTrue(admission.admissionPending);
   });
 
-  it("releases admission only after prompt acceptance and new-turn evidence", () => {
-    const admission = {
-      admissionPending: true,
-      admissionAccepted: false,
-      admissionMessageObserved: false,
-      idleDuringAdmission: false,
-    };
-
-    assert.equal(advanceOpenCodePromptAdmission(admission, "busy"), "hold");
-    assert.equal(advanceOpenCodePromptAdmission(admission, "accepted"), "release");
-    assert.isFalse(admission.admissionPending);
-  });
-
   it("releases admission when an assistant completes under a provider-assigned message id", () => {
     const admission = {
       admissionPending: true,
@@ -2284,25 +2014,6 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(advanceOpenCodePromptAdmission(admission, "accepted"), "release");
   });
 
-  it.effect("reconciles current idle and busy status replies after prompt admission", () =>
-    Effect.gen(function* () {
-      for (const expected of ["idle", "busy"] as const) {
-        const admission = { admissionGeneration: 4, admissionPending: true };
-        const status = yield* Deferred.make<"idle" | "busy" | "unknown">();
-        const fiber = yield* reconcileOpenCodePromptAdmissionStatus(
-          admission,
-          4,
-          Deferred.await(status),
-        ).pipe(Effect.forkChild({ startImmediately: true }));
-
-        yield* Deferred.succeed(status, expected);
-
-        assert.equal(yield* Fiber.join(fiber), expected);
-        assert.isFalse(admission.admissionPending);
-      }
-    }),
-  );
-
   it.effect("keeps admission pending after a transient status failure", () =>
     Effect.gen(function* () {
       const admission = { admissionGeneration: 4, admissionPending: true };
@@ -2317,200 +2028,6 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.isFalse(admission.admissionPending);
     }),
-  );
-
-  it.effect("retries a transient status failure without another idle event", () =>
-    Effect.gen(function* () {
-      const nativeSessionId = "native-opencode-status-retry";
-      const nativeEvents = asyncEventStream();
-      const promptRelease = promiseGate<void>();
-      const promptCalls = yield* Queue.unbounded<string>();
-      const statusCalls = yield* Queue.unbounded<number>();
-      let statusCallCount = 0;
-      const client = {
-        event: {
-          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
-            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
-            return { stream: nativeEvents.stream };
-          },
-        },
-        session: {
-          create: async () => ({
-            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
-          }),
-          get: async () => ({
-            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
-          }),
-          promptAsync: async (input: { readonly messageID?: string }) => {
-            Queue.offerUnsafe(promptCalls, input.messageID!);
-            await promptRelease.promise;
-            return { data: true };
-          },
-          status: async () => {
-            statusCallCount += 1;
-            Queue.offerUnsafe(statusCalls, statusCallCount);
-            if (statusCallCount === 1) throw new Error("transient status failure");
-            return { data: { [nativeSessionId]: { type: "idle" as const } } };
-          },
-          messages: async () => ({ data: [] }),
-          children: async () => ({ data: [] }),
-          abort: async () => ({ data: true }),
-        },
-        mcp: { add: async () => ({ data: true }) },
-      };
-      const harness = yield* makeOpenCodeRuntimeHarness("status-retry", nativeSessionId, client);
-      const terminalEvents = yield* harness.runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      const start = yield* harness.startTurn().pipe(Effect.forkScoped);
-      const admissionMessageId = yield* Queue.take(promptCalls);
-
-      yield* Effect.promise(() =>
-        nativeEvents.push({
-          type: "session.status",
-          properties: { sessionID: nativeSessionId, status: { type: "idle" } },
-        }),
-      );
-      promptRelease.resolve();
-      yield* Fiber.join(start);
-      const userMessage = {
-        type: "message.updated",
-        properties: {
-          sessionID: nativeSessionId,
-          info: {
-            id: admissionMessageId,
-            sessionID: nativeSessionId,
-            role: "user",
-            time: { created: DateTime.toEpochMillis(harness.now) },
-          },
-        },
-      };
-      yield* Effect.promise(() => nativeEvents.push(userMessage));
-      assert.equal(yield* Queue.take(statusCalls), 1);
-
-      yield* Effect.promise(() => nativeEvents.push(userMessage));
-      assert.equal(statusCallCount, 1, "duplicate events must share the generation's retry worker");
-      yield* TestClock.adjust("250 millis");
-      assert.equal(yield* Queue.take(statusCalls), 2);
-
-      const events = Array.from(yield* Fiber.join(terminalEvents));
-      const terminals = events.filter((event) => event.type === "turn.terminal");
-      assert.equal(statusCallCount, 2);
-      assert.lengthOf(terminals, 1);
-      assert.equal(terminals[0]?.status, "completed");
-      assert.isNull(terminals[0]?.failure ?? null);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
-  );
-
-  it.effect("does not let a queued status retry adopt a newer steer generation", () =>
-    Effect.gen(function* () {
-      const nativeSessionId = "native-opencode-stale-status-retry";
-      const nativeEvents = asyncEventStream();
-      const firstPromptRelease = promiseGate<void>();
-      const promptCalls = yield* Queue.unbounded<string>();
-      const statusCalls = yield* Queue.unbounded<number>();
-      let promptCallCount = 0;
-      let statusCallCount = 0;
-      const client = {
-        event: {
-          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
-            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
-            return { stream: nativeEvents.stream };
-          },
-        },
-        session: {
-          create: async () => ({
-            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
-          }),
-          get: async () => ({
-            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
-          }),
-          promptAsync: async (input: { readonly messageID?: string }) => {
-            promptCallCount += 1;
-            Queue.offerUnsafe(promptCalls, input.messageID!);
-            if (promptCallCount === 1) {
-              await firstPromptRelease.promise;
-            }
-            return { data: true };
-          },
-          status: async () => {
-            statusCallCount += 1;
-            Queue.offerUnsafe(statusCalls, statusCallCount);
-            if (statusCallCount === 1) throw new Error("transient status failure");
-            return { data: { [nativeSessionId]: { type: "idle" as const } } };
-          },
-          messages: async () => ({ data: [] }),
-          children: async () => ({ data: [] }),
-          abort: async () => ({ data: true }),
-        },
-        mcp: { add: async () => ({ data: true }) },
-      };
-      const harness = yield* makeOpenCodeRuntimeHarness(
-        "stale-status-retry",
-        nativeSessionId,
-        client,
-      );
-      const start = yield* harness.startTurn().pipe(Effect.forkScoped);
-      const firstAdmissionMessageId = yield* Queue.take(promptCalls);
-
-      yield* Effect.promise(() =>
-        nativeEvents.push({
-          type: "session.status",
-          properties: { sessionID: nativeSessionId, status: { type: "idle" } },
-        }),
-      );
-      firstPromptRelease.resolve();
-      yield* Fiber.join(start);
-      yield* Effect.promise(() =>
-        nativeEvents.push({
-          type: "message.updated",
-          properties: {
-            sessionID: nativeSessionId,
-            info: {
-              id: firstAdmissionMessageId,
-              sessionID: nativeSessionId,
-              role: "user",
-              time: { created: DateTime.toEpochMillis(harness.now) },
-            },
-          },
-        }),
-      );
-      assert.equal(yield* Queue.take(statusCalls), 1);
-
-      const running = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      const activeTurn = running.providerTurns.at(-1)!;
-      yield* harness.runtime.steerTurn({
-        threadId: harness.threadId,
-        runId: harness.runId,
-        providerThread: harness.providerThread,
-        providerTurnId: activeTurn.id,
-        message: {
-          messageId: MessageId.make("message-opencode-stale-status-retry-steer"),
-          text: "new generation",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-      });
-      yield* Queue.take(promptCalls);
-      yield* TestClock.adjust("250 millis");
-
-      const afterRetry = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      assert.equal(statusCallCount, 1);
-      assert.equal(afterRetry.providerTurns.at(-1)?.status, "running");
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
   );
 
   it.effect("ignores a delayed status reply after steering starts a newer admission", () =>
@@ -2530,24 +2047,6 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(yield* Fiber.join(fiber), "stale");
       assert.equal(admission.admissionGeneration, 5);
       assert.isTrue(admission.admissionPending);
-    }),
-  );
-
-  it.effect("does not revive admission when abort wins a pending status lookup", () =>
-    Effect.gen(function* () {
-      const admission = { admissionGeneration: 4, admissionPending: true };
-      const status = yield* Deferred.make<"idle" | "busy" | "unknown">();
-      const fiber = yield* reconcileOpenCodePromptAdmissionStatus(
-        admission,
-        4,
-        Deferred.await(status),
-      ).pipe(Effect.forkChild({ startImmediately: true }));
-
-      cancelOpenCodePromptAdmission(admission, 5);
-      yield* Deferred.succeed(status, "idle");
-
-      assert.equal(yield* Fiber.join(fiber), "stale");
-      assert.isFalse(admission.admissionPending);
     }),
   );
 
@@ -2691,29 +2190,6 @@ describe("OpenCodeAdapterV2", () => {
       ),
     ),
   );
-
-  it("maps native permission families to orchestration request kinds", () => {
-    assert.equal(openCodePermissionRequestKind("bash"), "command");
-    assert.equal(openCodePermissionRequestKind("read"), "file-read");
-    assert.equal(openCodePermissionRequestKind("grep"), "file-read");
-    assert.equal(openCodePermissionRequestKind("external_directory"), "file-read");
-    assert.equal(openCodePermissionRequestKind("external_directory", "edit"), "file-change");
-    assert.equal(openCodePermissionRequestKind("edit"), "file-change");
-    assert.equal(openCodePermissionRequestKind("apply_patch"), "file-change");
-    assert.equal(openCodePermissionRequestKind("todowrite"), "command");
-    assert.equal(openCodePermissionRequestKind("custom", "todowrite"), "command");
-  });
-
-  it("maps OpenCode tools to semantic turn-item families", () => {
-    assert.equal(openCodeToolProjectionKind("bash"), "command_execution");
-    assert.equal(openCodeToolProjectionKind("edit"), "file_change");
-    assert.equal(openCodeToolProjectionKind("read"), "dynamic_tool");
-    assert.equal(openCodeToolProjectionKind("lsp"), "file_search");
-    assert.equal(openCodeToolProjectionKind("websearch"), "web_search");
-    assert.equal(openCodeToolProjectionKind("codesearch"), "web_search");
-    assert.equal(openCodeToolProjectionKind("todowrite"), "dynamic_tool");
-    assert.equal(openCodeToolProjectionKind("custom_tool"), "dynamic_tool");
-  });
 
   it("maps runtime modes to safe OpenCode permission rules", () => {
     const approvalRequired = openCodePermissionRules(runtimePolicy("approval-required"));

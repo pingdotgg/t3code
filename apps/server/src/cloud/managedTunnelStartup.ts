@@ -50,7 +50,7 @@ const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 // retry has to re-run the whole operation.
 const RELAY_RETRY_MAX_DELAY = Duration.minutes(5);
 
-export const relayRetrySchedule = Schedule.exponential("1 second").pipe(
+const relayRetrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.jittered,
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, RELAY_RETRY_MAX_DELAY)),
@@ -132,7 +132,7 @@ export const retryDesiredLinkReconcile = <A, E, R>(
 
 // Every managed host shares one relay, so a host stuck in a bad loop must not
 // turn into a fleet-wide request storm.
-export const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
+const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
 
 // Retries inside one recovery, while the relay keeps failing, stay at least a
 // cooldown apart. They do not grow the cooldown: only a new request does.
@@ -152,7 +152,7 @@ const MANAGED_TUNNEL_RECOVERY_SETTLED_AFTER = Duration.minutes(10);
  * and recovery cannot help, so each request that follows right after a
  * recovery doubles the wait, up to 30 minutes.
  */
-export function nextManagedTunnelRecoveryCooldown(input: {
+function nextManagedTunnelRecoveryCooldown(input: {
   readonly current: Duration.Duration;
   readonly sinceLastRecovery: Duration.Duration;
 }): Duration.Duration {

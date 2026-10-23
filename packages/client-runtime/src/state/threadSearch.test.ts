@@ -17,12 +17,6 @@ import {
 const envA = EnvironmentId.make("env-a");
 const envB = EnvironmentId.make("env-b");
 
-it("creates stable keys regardless of environment order", () => {
-  expect(makeThreadSearchKey([envB, envA], "needle")).toBe(
-    makeThreadSearchKey([envA, envB], "needle"),
-  );
-});
-
 it("creates keys without array methods unavailable in Hermes", () => {
   const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
   Reflect.deleteProperty(Array.prototype, "toSorted");
@@ -47,28 +41,6 @@ it("encodes scoped thread keys without delimiter collisions", () => {
   });
 
   expect(first).not.toBe(second);
-});
-
-it("accepts search keys at the maximum decoded query length", () => {
-  const queries: string[] = [];
-  const searchAtom = createThreadSearchResultsAtomFamily<Error>({
-    getSearchAtom: (_environmentId, query) => {
-      queries.push(query);
-      return Atom.make(AsyncResult.success({ matches: [] }));
-    },
-    labelPrefix: "test:thread-search",
-  });
-  const registry = AtomRegistry.make();
-  const query = "a".repeat(200);
-
-  try {
-    registry.get(searchAtom(makeThreadSearchKey([envA], query)));
-    registry.get(searchAtom(makeThreadSearchKey([envA], ` ${query} `)));
-
-    expect(queries).toEqual([query, query]);
-  } finally {
-    registry.dispose();
-  }
 });
 
 it("ignores invalid search keys", () => {

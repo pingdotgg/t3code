@@ -23,6 +23,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const Probe = Schema.Struct({
@@ -191,6 +192,21 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
     );
 
+  const platformAvailability: DeviceHost.DeviceHost["Service"]["platformAvailability"] = (
+    platform,
+  ) =>
+    provide(probe(config, owner)).pipe(
+      Effect.map((value) => {
+        summary = { ...summary, platforms: value.platforms };
+        return value.platforms.find((p) => p.platform === platform)!;
+      }),
+      Effect.orElseSucceed(() => ({
+        platform,
+        available: false,
+        reason: "Cannot reach device host. Test its SSH connection in Settings.",
+      })),
+    );
+
   const connectOnce = Effect.fn("SshDeviceHost.connectOnce")(function* (): Effect.fn.Return<
     DeviceHost.DeviceHostReady & { agentDevice?: DeviceHost.DeviceHostAgentReady["agentDevice"] },
     DeviceHost.DeviceHostError
@@ -292,9 +308,19 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
       Effect.forkIn(scope),
     );
+    const hubOrigin = `http://127.0.0.1:${hubPort}`;
     const next = {
       nodePath: remote.nodePath,
-      hub: { origin: `http://127.0.0.1:${hubPort}` },
+      hub: { origin: hubOrigin },
+      devices: makeDeviceHubOperations({
+        hostId: config.id,
+        origin: hubOrigin,
+        http,
+        run,
+        androidAvailable: platformAvailability("android").pipe(
+          Effect.map((availability) => availability.available),
+        ),
+      }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&
       remote.entryPath !== undefined
@@ -446,6 +472,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   yield* Effect.addFinalizer(() => stop);
   return {
     id: config.id,
+    label: config.label,
     summary: Effect.sync(() => summary),
     inspect: provide(probe(config, owner)).pipe(
       Effect.tap((value) =>
@@ -481,17 +508,6 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
     stopAgent: changeAgent(false).pipe(Effect.asVoid, Effect.ignore),
     stop,
-    platformAvailability: (platform) =>
-      provide(probe(config, owner)).pipe(
-        Effect.map((value) => {
-          summary = { ...summary, platforms: value.platforms };
-          return value.platforms.find((p) => p.platform === platform)!;
-        }),
-        Effect.orElseSucceed(() => ({
-          platform,
-          available: false,
-          reason: "Cannot reach device host. Test its SSH connection in Settings.",
-        })),
-      ),
+    platformAvailability,
   } satisfies DeviceHost.DeviceHost["Service"];
 });

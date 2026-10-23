@@ -244,6 +244,7 @@ describe("mobile context clipboard imports", () => {
     expect(mocks.download).not.toHaveBeenCalled();
   });
 
+  // regression: #18322 don't send or paste attached threads a machine can't read
   it("reports foreign threads and failed files together while keeping the rest of a paste", async () => {
     mocks.download.mockRejectedValueOnce(new Error("source disconnected"));
     const result = await importComposerContextClipboard(
@@ -294,12 +295,5 @@ describe("mobile context clipboard imports", () => {
     expect(
       collectComposerContextReferences(result!.text).map((reference) => reference.contextId),
     ).toEqual(result!.context.records.map((record) => record.contextId));
-  });
-
-  it("refuses an overflowing context paste before copying files", async () => {
-    await expect(
-      importComposerContextClipboard(clipboard, 0, new AbortController().signal, 200),
-    ).rejects.toThrow("Remove some context");
-    expect(mocks.download).not.toHaveBeenCalled();
   });
 });

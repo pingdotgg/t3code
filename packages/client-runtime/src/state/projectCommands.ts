@@ -135,6 +135,11 @@ export function createProjectEnvironmentAtoms<R, E>(
           (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
         ),
     }),
+    listIgnoredFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:list-ignored-files",
+      tag: WS_METHODS.projectsListIgnoredFiles,
+      staleTimeMs: 15_000,
+    }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,

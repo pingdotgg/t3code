@@ -5,6 +5,8 @@
 //   node ci-changes.cjs --paths <file> --full   run every Linux job, gate only the macOS lint
 //   node ci-changes.cjs                         changed paths unknown: run everything
 //
+// scripts/check-changed.ts requires the same decisions so local runs match CI.
+//
 // Every changed path maps to workspace packages, which then pull in their
 // dependents from package.json. A path this file does not recognize runs
 // everything, so a new root file or directory can only cost minutes.
@@ -201,4 +203,6 @@ function main() {
   for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
 }
 
-main();
+module.exports = { readWorkspace, decide };
+
+if (require.main === module) main();

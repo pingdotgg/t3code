@@ -40,6 +40,7 @@ import {
   type PullRequestDiffFileContentsResult,
   type PullRequestDiffStat,
   type PullRequestDiffInput,
+  type PullRequestChangeBreakdown,
   type PullRequestFilesViewedResult,
   type PullRequestDiffResult,
   type PullRequestInvalidateInput,
@@ -95,12 +96,16 @@ import {
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
+import { toChangeBreakdown } from "./pullRequestChangeBreakdown.ts";
 
 export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
 }
 
-type PullRequestReading = Pick<PullRequestSummary, "state" | "updatedAt" | "observedAt">;
+type PullRequestReading = Pick<
+  PullRequestSummary,
+  "state" | "isDraft" | "updatedAt" | "observedAt"
+>;
 
 function supersedesReading(current: PullRequestReading | undefined, next: PullRequestReading) {
   if (current === undefined) return true;
@@ -230,6 +235,9 @@ export class PullRequestService extends Context.Service<
     readonly setFilesViewed: (
       input: PullRequestSetFilesViewedInput,
     ) => Effect.Effect<void, PullRequestError>;
+    readonly changeBreakdown: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestChangeBreakdown, PullRequestError>;
     readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
@@ -535,6 +543,9 @@ function withRateLimitBackoff(
     ...(api.getFilesViewed === undefined
       ? {}
       : { getFilesViewed: wrap("getFilesViewed", api.getFilesViewed) }),
+    ...(api.getFileStats === undefined
+      ? {}
+      : { getFileStats: wrap("getFileStats", api.getFileStats) }),
     ...(api.setFilesViewed === undefined
       ? {}
       : { setFilesViewed: interactive("setFilesViewed", api.setFilesViewed) }),
@@ -2779,7 +2790,11 @@ export const make = Effect.gen(function* () {
                   host: project.host,
                   number: input.number,
                 })
-                .pipe(Effect.mapError(toPullRequestError("checks"))),
+                .pipe(
+                  Effect.mapError(toPullRequestError("checks")),
+                  observeRead,
+                  Effect.map(({ value, observedAt }) => ({ ...value, observedAt })),
+                ),
         ),
       );
     },
@@ -2883,10 +2898,12 @@ export const make = Effect.gen(function* () {
       }
       detailStates.set(scope, {
         state: next.state,
+        isDraft: next.isDraft,
         updatedAt: next.updatedAt,
         observedAt: next.observedAt,
       });
-      return current?.state !== next.state && ref.host !== undefined
+      return (current?.state !== next.state || current?.isDraft !== next.isDraft) &&
+        ref.host !== undefined
         ? PubSub.publish(stateChanges, {
             host: ref.host,
             repository: ref.repository,
@@ -2898,22 +2915,34 @@ export const make = Effect.gen(function* () {
   // must never outrank a reading this environment made itself.
   const reportedStates = new Map<
     string,
-    { readonly state: PullRequestState; readonly atMs: number }
+    {
+      readonly state: PullRequestState;
+      readonly isDraft: boolean | undefined;
+      readonly atMs: number;
+    }
   >();
-  const reportState: PullRequestService["Service"]["reportState"] = ({ reference, state }) =>
+  const reportState: PullRequestService["Service"]["reportState"] = ({
+    reference,
+    state,
+    isDraft,
+  }) =>
     Effect.all([canonicalRef(reference), Clock.currentTimeMillis]).pipe(
       Effect.flatMap(([ref, nowMs]) =>
         Effect.suspend(() => {
           const scope = refScope(ref);
           const reported = reportedStates.get(scope);
-          if (reported?.state === state && nowMs - reported.atMs < REPORTED_STATE_DEDUPE_MS)
+          if (
+            reported?.state === state &&
+            reported.isDraft === isDraft &&
+            nowMs - reported.atMs < REPORTED_STATE_DEDUPE_MS
+          )
             return Effect.void;
           reportedStates.delete(scope);
           if (reportedStates.size >= REF_EPOCH_CAPACITY) {
             const oldest = reportedStates.keys().next().value;
             if (oldest !== undefined) reportedStates.delete(oldest);
           }
-          reportedStates.set(scope, { state, atMs: nowMs });
+          reportedStates.set(scope, { state, isDraft, atMs: nowMs });
           return ref.host === undefined
             ? Effect.void
             : PubSub.publish(stateChanges, {
@@ -2950,6 +2979,32 @@ export const make = Effect.gen(function* () {
   const activityCache = yield* Cache.makeWith(
     (key: string) => {
       return activityUncached(refOfCacheKey(key));
+    },
+    {
+      capacity: DETAIL_CACHE_CAPACITY,
+      timeToLive: (exit, key) =>
+        Exit.isSuccess(exit) ? detailTimeToLive(lastGoodSummary.peek(key)?.state) : Duration.zero,
+    },
+  );
+
+  const changeBreakdownCache = yield* Cache.makeWith(
+    (key: string) => {
+      const ref = refOfCacheKey(key);
+      return requireProject(ref).pipe(
+        Effect.flatMap((project) => {
+          const read = project.api.getFileStats;
+          if (read === undefined) return Effect.succeed(null);
+          return read({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: ref.number,
+          }).pipe(
+            Effect.map(toChangeBreakdown),
+            Effect.mapError(toPullRequestError("changeBreakdown")),
+          );
+        }),
+      );
     },
     {
       capacity: DETAIL_CACHE_CAPACITY,
@@ -3366,6 +3421,9 @@ export const make = Effect.gen(function* () {
     diffFileContents,
     filesViewed: credentialCached(filesViewed),
     setFilesViewed,
+    changeBreakdown: credentialCached((input) =>
+      Cache.get(changeBreakdownCache, refCacheKey(input)),
+    ),
     runAction: runActionAndInvalidate,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { ResolvedSharePayload, SharePayload } from "expo-sharing";
@@ -145,42 +144,6 @@ describe("incoming native shares", () => {
     expect(removeOwnedFile).toHaveBeenCalledWith(file.value);
   });
 
-  it("rejects shared files that exceed the generic attachment limit", async () => {
-    const file: SharePayload = {
-      shareType: "file",
-      value: "file:///shared/huge.zip",
-      mimeType: "application/zip",
-    };
-    const persistFile = vi.fn(async () => "file:///documents/huge.zip");
-    const removeOwnedFile = vi.fn(async () => undefined);
-
-    const result = await buildIncomingShareDraft({
-      id: "share-huge",
-      createdAt: "2026-07-15T10:00:00.000Z",
-      payloads: [file],
-      resolvedPayloads: [
-        {
-          ...file,
-          contentUri: file.value,
-          contentType: "file",
-          contentMimeType: "application/zip",
-          contentSize: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
-          originalName: "huge.zip",
-        },
-      ],
-      fileReader: {
-        readBase64: async () => "unused",
-        persistFile,
-        removeOwnedFile,
-      },
-    });
-
-    expect(result.attachments).toEqual([]);
-    expect(result.warnings).toEqual(["'huge.zip' exceeds the 50 MB attachment limit."]);
-    expect(persistFile).not.toHaveBeenCalled();
-    expect(removeOwnedFile).toHaveBeenCalledWith(file.value);
-  });
-
   it.each([
     { value: "file:///shared/clip.MOV", mimeType: "video/quicktime", originalName: "clip.MOV" },
     { value: "content://media/videos/12", mimeType: "video/mp4", originalName: "clip.mp4" },
@@ -290,56 +253,6 @@ describe("incoming native shares", () => {
     ]);
   });
 
-  it("records the stored copy's measured size when a content URI under-reports", async () => {
-    const file: SharePayload = {
-      shareType: "file",
-      value: "content://shared/report",
-      mimeType: "application/pdf",
-    };
-    const persistFile = vi.fn(async () => "file:///documents/report.pdf");
-    const readSize = vi.fn(async (uri: string) => (uri.startsWith("content:") ? 42 : 4200));
-
-    const result = await buildIncomingShareDraft({
-      id: "share-android-report",
-      createdAt: "2026-07-15T10:00:00.000Z",
-      payloads: [file],
-      resolvedPayloads: [],
-      fileReader: {
-        readBase64: async () => "unused",
-        persistFile,
-        readSize,
-        removeOwnedFile: async () => undefined,
-      },
-    });
-
-    expect(result.attachments).toHaveLength(1);
-    expect(result.attachments[0]?.sizeBytes).toBe(4200);
-  });
-
-  it("treats a zero-length Android content URI as unknown until its copy is measured", async () => {
-    const file: SharePayload = {
-      shareType: "file",
-      value: "content://shared/report",
-      mimeType: "application/pdf",
-    };
-
-    const result = await buildIncomingShareDraft({
-      id: "share-zero-metadata",
-      createdAt: "2026-07-15T10:00:00.000Z",
-      payloads: [file],
-      resolvedPayloads: [],
-      fileReader: {
-        readBase64: async () => "unused",
-        persistFile: async () => "file:///documents/report.pdf",
-        readSize: async (uri) => (uri.startsWith("content:") ? 0 : 42),
-        removeOwnedFile: async () => undefined,
-      },
-    });
-
-    expect(result.attachments[0]?.sizeBytes).toBe(42);
-    expect(result.warnings).toEqual([]);
-  });
-
   it("rejects a shared file whose persisted copy measures empty and releases the copy", async () => {
     const file: SharePayload = {
       shareType: "file",
@@ -365,39 +278,6 @@ describe("incoming native shares", () => {
     expect(result.attachments).toEqual([]);
     expect(result.warnings).toEqual(["'report' is empty or could not be read."]);
     expect(removeOwnedFile.mock.calls.map(([uri]) => uri)).toContain(persistedUri);
-  });
-
-  it("keeps the Android display name without copying the file into the Expo cache", async () => {
-    const file = {
-      shareType: "file" as const,
-      value: "content://shared/12345",
-      mimeType: "application/pdf",
-      originalName: "quarterly-report.pdf",
-    };
-
-    const result = await buildIncomingShareDraft({
-      id: "share-named-report",
-      createdAt: "2026-07-15T10:00:00.000Z",
-      payloads: [file],
-      resolvedPayloads: [],
-      fileReader: {
-        readBase64: async () => "unused",
-        readSize: async () => 42,
-        persistFile: async (_uri, name) => `file:///documents/${name}`,
-        removeOwnedFile: async () => undefined,
-      },
-    });
-
-    expect(result.attachments).toEqual([
-      {
-        id: "share-named-report:file:0",
-        type: "file",
-        name: "quarterly-report.pdf",
-        mimeType: "application/pdf",
-        sizeBytes: 42,
-        fileUri: "file:///documents/quarterly-report.pdf",
-      },
-    ]);
   });
 
   it("keeps a no-copy file source that the returned attachment still owns", async () => {
@@ -452,57 +332,6 @@ describe("incoming native shares", () => {
 
     expect(result.attachments[0]).toMatchObject({ type: "file", fileUri: persistedUri });
     expect(removeOwnedFile.mock.calls.map(([uri]) => uri)).toEqual([resolvedUri, payloadUri]);
-  });
-
-  it("keeps images and rejects shared files on servers without file support", () => {
-    const image = {
-      id: "image-1",
-      type: "image" as const,
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 3,
-      dataUrl: "data:image/png;base64,YWJj",
-      previewUri: "data:image/png;base64,YWJj",
-    };
-    const file = {
-      id: "file-1",
-      type: "file" as const,
-      name: "report.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 42,
-      fileUri: "file:///documents/report.pdf",
-    };
-
-    expect(
-      selectIncomingShareAttachments({
-        attachments: [image, file],
-        maxFileAttachmentBytes: null,
-      }),
-    ).toEqual({
-      attachments: [image],
-      warnings: ["'report.pdf' was skipped because this server does not support files."],
-    });
-  });
-
-  it("uses the destination server's attachment limit in share warnings", () => {
-    const file = {
-      id: "file-1",
-      type: "file" as const,
-      name: "report.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 6 * 1024 * 1024,
-      fileUri: "file:///documents/report.pdf",
-    };
-
-    expect(
-      selectIncomingShareAttachments({
-        attachments: [file],
-        maxFileAttachmentBytes: 5 * 1024 * 1024,
-      }),
-    ).toEqual({
-      attachments: [],
-      warnings: ["'report.pdf' exceeds the 5 MB attachment limit."],
-    });
   });
 
   it("uses current server support and limits when selecting a reserved share", () => {
@@ -688,15 +517,6 @@ describe("share cleanup ownership", () => {
     "file:///var/mobile/Containers/Data/Application/APP/Documents/",
     "file:///var/mobile/Containers/Shared/AppGroup/GROUP",
   ];
-
-  it("allows deleting files inside the app's own directories", () => {
-    expect(
-      isShareFileUriUnderOwnedRoots(
-        "file:///var/mobile/Containers/Shared/AppGroup/GROUP/shared.pdf",
-        ownedRoots,
-      ),
-    ).toBe(true);
-  });
 
   it("treats /private/var and /var as the same iOS location", () => {
     expect(

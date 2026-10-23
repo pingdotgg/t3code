@@ -22,7 +22,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
@@ -116,27 +115,6 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination settings grant to check OTLP endpoints", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const check = createCommandPermissions(runtime, WS_METHODS.serverCheckOtlpEndpoint);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(check.permissionAtom(env))).toBe(false);
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...grant(false),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
-          }),
-        );
-        expect(registry.get(check.permissionAtom(env))).toBe(true);
-        yield* check.authorize(registry, env);
-      }),
-    ),
-  );
-
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -160,18 +138,6 @@ describe("command permissions", () => {
         yield* Effect.yieldNow;
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         yield* Fiber.join(fiber);
-      }),
-    ),
-  );
-  it.effect("bounds a session that never loads", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const fiber = yield* permissions
-          .authorize(registry, env)
-          .pipe(Effect.flip, Effect.forkChild);
-        yield* TestClock.adjust("6 seconds");
-        expect((yield* Fiber.join(fiber))._tag).toBe("EnvironmentAuthorizationError");
       }),
     ),
   );

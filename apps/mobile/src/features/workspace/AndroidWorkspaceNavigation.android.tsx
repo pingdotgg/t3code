@@ -55,6 +55,7 @@ function nativeColor(value: string) {
 }
 
 export function AndroidWorkspaceNavigation(props: {
+  readonly onNewThread: () => void;
   readonly rail?: boolean;
   readonly onSelect?: () => void;
   /** The rail needs the whole workspace while it widens over the list. */
@@ -117,7 +118,7 @@ export function AndroidWorkspaceNavigation(props: {
         }}
         onNewThread={() => {
           Keyboard.dismiss();
-          navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+          props.onNewThread();
         }}
         onOverlayChange={(event) => props.onOverlayChange?.(event.nativeEvent.overlay)}
         style={rail ? { flex: 1 } : { height: 80 * Math.max(1, scale) }}

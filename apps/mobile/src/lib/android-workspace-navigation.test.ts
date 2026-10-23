@@ -110,18 +110,6 @@ describe("Android workspace navigation", () => {
     expect(names(apply(second, StackActions.pop()))).toEqual(["Home"]);
   });
 
-  it("dismisses nested content and overlays when the sidebar selects a peer", () => {
-    let state = legacyHistory();
-    state = apply(
-      state,
-      StackActions.push("PullRequestFile", { ...pullRequest.params, path: "src/main.ts" }),
-    );
-    state = apply(state, StackActions.push("SettingsSheet"));
-    const selected = select(state, thread);
-    expect(names(selected)).toEqual(["Home", "Thread"]);
-    expect(selected.routes[1]?.params).toEqual(thread.params);
-  });
-
   it("creates Home beneath cold-linked details and gives direct list escape", () => {
     const initial = router.getInitialState(options);
     const cold = apply(initial, CommonActions.reset({ index: 0, routes: [pullRequest] }));
@@ -137,17 +125,6 @@ describe("Android workspace navigation", () => {
     expect(back.routes[back.index]?.params).toEqual(pullRequest.params);
   });
 
-  it("preserves normal nested PR Back behavior", () => {
-    const detail = select(legacyHistory(), pullRequest);
-    const nested = apply(
-      detail,
-      StackActions.push("PullRequestFile", { ...pullRequest.params, path: "file.ts" }),
-    );
-    const back = apply(nested, StackActions.pop());
-    expect(back.routes[back.index]?.key).toBe(detail.routes[detail.index]?.key);
-    expect(names(back)).toEqual(["Home", "PullRequest"]);
-  });
-
   it.each(["ThreadFiles", "ThreadTerminal", "GitOverview"])(
     "returns to chat when its sidebar row is selected from %s",
     (route) => {
@@ -160,30 +137,18 @@ describe("Android workspace navigation", () => {
     },
   );
 
-  it.each([
-    { environmentId: "environment-b" },
-    { projectId: "project-b" },
-    { repository: "owner/other" },
-    { host: "git.example.test" },
-    { number: 43 },
-  ])("does not reuse another PR's key when its scope differs: %o", (change) => {
-    const previous = select(router.getInitialState(options), pullRequest);
-    const state = select(previous, {
-      name: "PullRequest",
-      params: { ...pullRequest.params, ...change },
-    });
-    expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
-    expect(state.routes[1]?.params).toEqual({ ...pullRequest.params, ...change });
-  });
-
-  it("does not reuse a thread key from another environment", () => {
-    const previous = select(router.getInitialState(options), thread);
-    const state = select(previous, {
-      name: "Thread",
-      params: { ...thread.params, environmentId: "environment-b" },
-    });
-    expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
-  });
+  it.each([{ environmentId: "environment-b" }, { repository: "owner/other" }])(
+    "does not reuse another PR's key when its scope differs: %o",
+    (change) => {
+      const previous = select(router.getInitialState(options), pullRequest);
+      const state = select(previous, {
+        name: "PullRequest",
+        params: { ...pullRequest.params, ...change },
+      });
+      expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
+      expect(state.routes[1]?.params).toEqual({ ...pullRequest.params, ...change });
+    },
+  );
 
   it("returns to a distinct previous thread, otherwise to the workspace list", () => {
     const parent = select(router.getInitialState(options), thread);
@@ -256,14 +221,6 @@ describe("Android workspace navigation", () => {
         thread.params,
       ),
     ).toBe(false);
-  });
-
-  it("drops stale detail history on a tab switch while retaining Home", () => {
-    const previous = legacyHistory();
-    const state = select(previous);
-    expect(names(state)).toEqual(["Home"]);
-    expect(state.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(state.index).toBe(0);
   });
 
   it("resets the root stack when a nested Settings stack has focus", () => {

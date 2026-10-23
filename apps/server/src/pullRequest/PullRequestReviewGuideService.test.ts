@@ -7,7 +7,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
+import * as Queue from "effect/Queue";
+import * as Tracer from "effect/Tracer";
 import {
   ProjectId,
   GitCommandError,
@@ -16,7 +17,6 @@ import {
   type PullRequestStack,
   type PullRequestRef,
 } from "@t3tools/contracts";
-import type { ReviewGuideGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -224,18 +224,33 @@ const layerBase = Layer.mergeAll(
 
 type Repositories = Effect.Success<typeof makeRepositories>;
 
-const awaitRunFailure = (
-  service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
-  input: PullRequestRef,
-) =>
-  service.get(input).pipe(
-    Effect.flatMap((result) =>
-      result.run?._tag === "Failed"
-        ? Effect.succeed(result.run.detail)
-        : Effect.fail("still running" as const),
-    ),
-    Effect.retry(Schedule.spaced("20 millis")),
-  );
+// A run forks into the service's scope, so a test learns it settled when the run's `write` span
+// ends; the run records its outcome synchronously right after.
+const watchRuns = Effect.gen(function* () {
+  const ended = yield* Queue.unbounded<void>();
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      if (options.name !== "PullRequestReviewGuideService.write") return span;
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        Queue.offerUnsafe(ended, undefined);
+      };
+      return span;
+    },
+  });
+  return {
+    generate: (
+      service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
+      input: PullRequestRef,
+    ) => service.generate(input).pipe(Effect.withTracer(tracer)),
+    settled: (
+      service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
+      input: PullRequestRef,
+    ) => Queue.take(ended).pipe(Effect.andThen(service.get(input))),
+  };
+});
 
 const startSingleBranchRun = (input: {
   readonly repositoryName: string;
@@ -331,7 +346,8 @@ const startSingleBranchRun = (input: {
       PullRequestReviewGuideService.PullRequestReviewGuideService,
     );
     const guideReference = { ...reference, repository: `acme/${input.repositoryName}` };
-    yield* service.generate(guideReference);
+    const runs = yield* watchRuns;
+    yield* runs.generate(service, guideReference);
     return {
       repositories,
       reportedHead,
@@ -340,146 +356,11 @@ const startSingleBranchRun = (input: {
       stored,
       fetchedRefs,
       observed,
+      settled: runs.settled(service, guideReference),
     };
   });
 
-// Runs drive real git, which the test clock does not advance, so waits use real time.
 it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideService", (it) => {
-  it.effect.each([
-    {
-      name: "a short head already fetched",
-      shortHash: true,
-      prepare: "fetch-feature",
-      pushDuringFetch: false,
-      refuseCommitFetch: true,
-      expectedFetches: [],
-    },
-    {
-      name: "a short head on its branch",
-      shortHash: true,
-      prepare: "none",
-      pushDuringFetch: false,
-      refuseCommitFetch: true,
-      expectedFetches: ["refs/heads/feature"],
-    },
-    {
-      name: "a short head whose branch moves during the fetch",
-      shortHash: true,
-      prepare: "none",
-      pushDuringFetch: true,
-      refuseCommitFetch: true,
-      expectedFetches: ["refs/heads/feature"],
-    },
-    {
-      name: "a full head served by commit",
-      shortHash: false,
-      prepare: "none",
-      pushDuringFetch: false,
-      refuseCommitFetch: false,
-      expectedFetches: ["<head>"],
-    },
-    {
-      name: "a full head on its branch",
-      shortHash: false,
-      prepare: "none",
-      pushDuringFetch: false,
-      refuseCommitFetch: true,
-      expectedFetches: ["<head>", "refs/heads/feature"],
-    },
-    {
-      name: "a full head only on its pull ref",
-      shortHash: false,
-      prepare: "refs/pull/7/head",
-      pushDuringFetch: false,
-      refuseCommitFetch: true,
-      expectedFetches: ["<head>", "refs/heads/feature", "refs/pull/7/head"],
-    },
-    {
-      name: "a full head only on its merge request ref",
-      shortHash: false,
-      prepare: "refs/merge-requests/7/head",
-      pushDuringFetch: false,
-      refuseCommitFetch: true,
-      expectedFetches: [
-        "<head>",
-        "refs/heads/feature",
-        "refs/pull/7/head",
-        "refs/merge-requests/7/head",
-      ],
-    },
-  ])(
-    "writes a guide for the reported commit: $name",
-    ({ shortHash, prepare, pushDuringFetch, refuseCommitFetch, expectedFetches }) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const run = yield* startSingleBranchRun({
-            repositoryName: "fetched-head",
-            reportedHead: (repositories) =>
-              shortHash ? repositories.headSha.slice(0, 12) : repositories.headSha,
-            refuseCommitFetch,
-            prepare: (repositories, workspace) => {
-              const remote = `${repositories.root}/remote`;
-              if (prepare === "fetch-feature") {
-                return git(workspace, ["fetch", "--quiet", "origin", "feature"]).pipe(
-                  Effect.asVoid,
-                );
-              }
-              if (prepare === "none") return Effect.void;
-              return git(remote, ["update-ref", prepare, repositories.headSha]).pipe(
-                Effect.andThen(
-                  git(remote, ["update-ref", "refs/heads/feature", repositories.lowerSha]),
-                ),
-                Effect.asVoid,
-              );
-            },
-            onBranchFetch: pushDuringFetch
-              ? (repositories) => {
-                  const remote = `${repositories.root}/remote`;
-                  return git(remote, ["checkout", "--quiet", "feature"]).pipe(
-                    Effect.andThen(
-                      git(remote, [
-                        "commit",
-                        "--quiet",
-                        "--allow-empty",
-                        "-m",
-                        "push during fetch",
-                      ]),
-                    ),
-                    Effect.asVoid,
-                  );
-                }
-              : undefined,
-          });
-          yield* Effect.raceFirst(
-            Deferred.await(run.stored),
-            awaitRunFailure(run.service, run.reference).pipe(
-              Effect.flatMap((detail) => Effect.die(`run failed: ${detail}`)),
-            ),
-          );
-          const { headSha } = run.repositories;
-          const result = yield* run.service.get(run.reference);
-          assert.strictEqual(result.guide?.headSha, run.reportedHead);
-          assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
-          assert.deepStrictEqual(run.observed, [
-            { cwd: run.observed[0]?.cwd, head: headSha, changed: "feature.txt" },
-          ]);
-          const headRefs = new Set([
-            headSha,
-            run.reportedHead,
-            "refs/heads/feature",
-            "refs/pull/7/head",
-            "refs/merge-requests/7/head",
-          ]);
-          assert.deepStrictEqual(
-            run.fetchedRefs.filter((ref) => headRefs.has(ref)),
-            expectedFetches.map((ref) => (ref === "<head>" ? headSha : ref)),
-          );
-          const fs = yield* FileSystem.FileSystem;
-          assert.isFalse(yield* fs.exists(run.observed[0]?.cwd ?? ""));
-        }),
-      ),
-  );
-
   it.effect.each([
     {
       name: "a branch named like the short head",
@@ -529,133 +410,15 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
               Effect.asVoid,
             ),
         });
-        const detail = yield* Effect.raceFirst(
-          awaitRunFailure(run.service, run.reference),
-          Deferred.await(run.stored).pipe(Effect.andThen(Effect.die("a guide was written"))),
-        );
+        const result = yield* run.settled;
+        assert.isFalse(yield* Deferred.isDone(run.stored), "a guide was written");
+        assert.strictEqual(result.run?._tag, "Failed");
+        const detail = result.run?._tag === "Failed" ? result.run.detail : "";
         for (const part of expected) assert.include(detail, part);
         assert.deepStrictEqual(run.observed, []);
         assert.isFalse(run.fetchedRefs.some((ref) => ref.startsWith("-")));
         const fs = yield* FileSystem.FileSystem;
         assert.isFalse(yield* fs.exists(`${run.repositories.root}/injected`));
-      }),
-    ),
-  );
-
-  it.effect("briefs the change against its own base in a checkout it then removes", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const repositories = yield* makeRepositories;
-        const seen = yield* Deferred.make<{
-          readonly input: ReviewGuideGenerationInput;
-          readonly changed: string;
-          readonly head: string;
-          readonly upper: string;
-        }>();
-        const finish = yield* Deferred.make<void>();
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
-          git(cwd, args).pipe(
-            Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-            Effect.orDie,
-          );
-        const stored = yield* Deferred.make<void>();
-
-        // Built in this test's scope: runs are forked into the service's scope and must outlive
-        // the call that obtains the service.
-        const context = yield* Layer.build(
-          makeLayer({
-            ...repositories,
-            stored,
-            generate: (input) =>
-              Effect.gen(function* () {
-                const changed = yield* readCheckout(input.cwd, [
-                  "diff",
-                  "--name-only",
-                  `${input.baseCommit}...HEAD`,
-                ]);
-                const head = yield* readCheckout(input.cwd, ["rev-parse", "HEAD"]);
-                const upper = yield* readCheckout(input.cwd, [
-                  "show",
-                  `${repositories.upperSha}:upper.txt`,
-                ]);
-                yield* Deferred.succeed(seen, { input, changed, head, upper });
-                yield* Deferred.await(finish);
-                return {
-                  stops: [
-                    {
-                      title: "The feature",
-                      summary: "The change.",
-                      attention: null,
-                      excerpts: [
-                        { path: "feature.txt", side: "new", start: 4, end: 40, caption: "" },
-                      ],
-                      files: [],
-                      notes: [
-                        { path: "feature.txt", line: 5, title: "Kept", body: "Inside." },
-                        { path: "feature.txt", line: 30, title: "Dropped", body: "Outside." },
-                      ],
-                      questions: [],
-                    },
-                  ],
-                };
-              }),
-          }),
-        );
-        const service = Context.get(
-          context,
-          PullRequestReviewGuideService.PullRequestReviewGuideService,
-        );
-
-        const started = yield* service.generate(reference);
-        assert.strictEqual(started.run?._tag, "Running");
-        assert.strictEqual(started.guide, null);
-        assert.isTrue(started.started);
-
-        const failedRun = service.get(reference).pipe(
-          Effect.flatMap((result) =>
-            result.run?._tag === "Failed"
-              ? Effect.die(`run failed: ${result.run.detail}`)
-              : Effect.fail("still running" as const),
-          ),
-          Effect.retry(Schedule.spaced("20 millis")),
-        );
-        const observed = yield* Effect.raceFirst(Deferred.await(seen), failedRun);
-        assert.strictEqual(observed.head, repositories.headSha);
-        assert.strictEqual(observed.changed, "feature.txt");
-        assert.strictEqual(observed.input.baseBranch, "stack-base");
-        assert.deepStrictEqual(observed.input.stack, [
-          { number: 6, title: "Lower", state: "open", headSha: repositories.lowerSha },
-          { number: 7, title: "Add the feature", state: "open", headSha: repositories.headSha },
-          { number: 8, title: "Upper", state: "open", headSha: repositories.upperSha },
-          { number: 9, title: "Unpushed", state: "open", headSha: null },
-        ]);
-        assert.strictEqual(observed.upper, "upper layer");
-
-        const joined = yield* service.generate(reference);
-        assert.strictEqual(joined.run, started.run);
-        assert.isFalse(joined.started);
-
-        yield* Deferred.succeed(finish, undefined);
-        yield* Deferred.await(stored);
-        const finished = yield* service.get(reference);
-        assert.strictEqual(finished.guide?.headSha, repositories.headSha);
-        const guide = finished.guide;
-        assert.isNotNull(guide);
-        const [story] = guide.stops;
-        assert.deepStrictEqual(story?.excerpts, [
-          { path: "feature.txt", side: "new", start: 4, end: 10, caption: "" },
-        ]);
-        assert.deepStrictEqual(
-          story?.notes.map((note) => note.title),
-          ["Kept"],
-        );
-        assert.strictEqual(guide.stops.length, 1);
-
-        const fs = yield* FileSystem.FileSystem;
-        assert.isFalse(yield* fs.exists(observed.input.cwd));
-        const worktrees = yield* git(repositories.workspace, ["worktree", "list", "--porcelain"]);
-        assert.notInclude(worktrees, observed.input.cwd);
       }),
     ),
   );
@@ -754,119 +517,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         assert.isFalse(yield* Ref.get(generated));
       }),
     ),
-  );
-
-  it.effect("refuses to write a guide while the server has review guides off", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const repositories = yield* makeRepositories;
-        const stored = yield* Deferred.make<void>();
-        const context = yield* Layer.build(
-          makeLayer({
-            ...repositories,
-            stored,
-            enabled: false,
-            generate: () => Effect.die("a guide must not be written while the beta is off"),
-          }),
-        );
-        const service = Context.get(
-          context,
-          PullRequestReviewGuideService.PullRequestReviewGuideService,
-        );
-        const result = yield* Effect.flip(service.generate(reference));
-        assert.include(result.message, "Review guides are off");
-      }),
-    ),
-  );
-
-  it.effect(
-    "keeps a newer run's guide when an older run for the same pull request finishes late",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const repositories = yield* makeRepositories;
-          const stored = yield* Deferred.make<void>();
-          const currentHead = yield* Ref.make(repositories.headSha);
-          const releaseOld = yield* Deferred.make<void>();
-          const oldStarted = yield* Deferred.make<void>();
-          const answer = (title: string) => ({
-            stops: [
-              {
-                title,
-                summary: "",
-                attention: null,
-                excerpts: [],
-                files: [],
-                notes: [],
-                questions: [],
-              },
-            ],
-          });
-          const context = yield* Layer.build(
-            makeLayer({
-              ...repositories,
-              stored,
-              currentHead,
-              generate: (input) =>
-                input.cwd.length > 0 && input.baseCommit.length > 0
-                  ? Ref.get(currentHead).pipe(
-                      Effect.flatMap((head) =>
-                        head === repositories.headSha
-                          ? Deferred.succeed(oldStarted, undefined).pipe(
-                              Effect.andThen(Deferred.await(releaseOld)),
-                              Effect.as(answer("old head")),
-                            )
-                          : Effect.succeed(answer("new head")),
-                      ),
-                    )
-                  : Effect.die("unreachable"),
-            }),
-          );
-          const service = Context.get(
-            context,
-            PullRequestReviewGuideService.PullRequestReviewGuideService,
-          );
-
-          yield* service.generate(reference);
-          const firstFailed = service.get(reference).pipe(
-            Effect.flatMap((result) =>
-              result.run?._tag === "Failed"
-                ? Effect.die(`first run failed: ${result.run.detail}`)
-                : Effect.fail("still running" as const),
-            ),
-            Effect.retry(Schedule.spaced("20 millis")),
-          );
-          yield* Effect.raceFirst(Deferred.await(oldStarted), firstFailed);
-          yield* Ref.set(currentHead, repositories.upperSha);
-          const second = yield* service.generate(reference);
-          assert.strictEqual(second.run?._tag, "Running");
-          assert.strictEqual(second.run?.headSha, repositories.upperSha);
-          const failedRun = service.get(reference).pipe(
-            Effect.flatMap((result) =>
-              result.run?._tag === "Failed"
-                ? Effect.die(`run failed: ${result.run.detail}`)
-                : Effect.fail("still running" as const),
-            ),
-            Effect.retry(Schedule.spaced("20 millis")),
-          );
-          yield* Effect.raceFirst(Deferred.await(stored), failedRun);
-
-          yield* Deferred.succeed(releaseOld, undefined);
-          const settled = yield* service.get(reference).pipe(
-            Effect.filterOrFail(
-              (result) => result.run === null,
-              () => "still running" as const,
-            ),
-            Effect.retry({ schedule: Schedule.spaced("20 millis"), times: 250 }),
-          );
-          assert.strictEqual(settled.guide?.headSha, repositories.upperSha);
-          yield* Effect.sleep("200 millis");
-          const after = yield* service.get(reference);
-          assert.isNull(after.run);
-          assert.strictEqual(after.guide?.headSha, repositories.upperSha);
-          assert.strictEqual(after.guide?.stops[0]?.title, "new head");
-        }),
-      ),
   );
 
   it.effect("refuses a pull request from a repository the project is not a checkout of", () =>

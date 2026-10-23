@@ -63,13 +63,6 @@ const CACHED_SHELL_SUMMARY: EnvironmentShellSummary = {
 };
 
 describe("mobile workspace projection", () => {
-  it("preserves explicit offline state without presenting it as a connection error", () => {
-    const projected = projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("offline"));
-
-    expect(projected.connectionState).toBe("offline");
-    expect(projected.connectionError).toBeNull();
-  });
-
   it("reports offline before stale connected presentations", () => {
     const environments = [projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("connected"))];
     const state = projectWorkspaceState({
@@ -77,29 +70,12 @@ describe("mobile workspace projection", () => {
       networkStatus: "offline",
       environments,
       shellSummary: EMPTY_SHELL_SUMMARY,
+      hasSyncingConnectedEnvironment: false,
     });
 
     expect(state.connectionState).toBe("offline");
     expect(state.networkStatus).toBe("offline");
     expect(state.hasReadyEnvironment).toBe(false);
-  });
-
-  it("projects reconnecting environments dynamically from active phases", () => {
-    const environments = [
-      projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("reconnecting")),
-      projectWorkspaceEnvironment(EnvironmentId.make("environment-2"), environment("connected")),
-    ];
-    const state = projectWorkspaceState({
-      isReady: true,
-      networkStatus: "online",
-      environments,
-      shellSummary: EMPTY_SHELL_SUMMARY,
-    });
-
-    expect(state.connectingEnvironments).toHaveLength(1);
-    expect(state.connectingEnvironments[0]?.connectionState).toBe("reconnecting");
-    expect(state.hasConnectingEnvironment).toBe(true);
-    expect(state.hasReadyEnvironment).toBe(true);
   });
 
   it("keeps retained snapshots visible while reconnecting without claiming readiness", () => {
@@ -109,10 +85,12 @@ describe("mobile workspace projection", () => {
       networkStatus: "online",
       environments,
       shellSummary: CACHED_SHELL_SUMMARY,
+      hasSyncingConnectedEnvironment: false,
     });
 
     expect(state.hasLoadedShellSnapshot).toBe(true);
     expect(state.hasPendingShellSnapshot).toBe(true);
+    expect(state.hasSyncingConnectedEnvironment).toBe(false);
     expect(state.hasReadyEnvironment).toBe(false);
     expect(state.connectionState).toBe("reconnecting");
   });

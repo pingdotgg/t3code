@@ -59,7 +59,7 @@ const readKeychainEntry = Effect.tryPromise({
   catch: (cause) => new CursorKeychainReadError({ cause }),
 });
 
-export const make = (
+const make = (
   read: Effect.Effect<string | null, CursorKeychainReadError> = readKeychainEntry,
   timeout: Duration.Input = DEFAULT_TIMEOUT,
 ): CursorKeychain["Service"] => {

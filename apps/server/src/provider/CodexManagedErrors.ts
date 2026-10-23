@@ -9,6 +9,11 @@ const legacyFailures = {
       "Your ChatGPT usage limit was reached. Check ChatGPT Usage settings for your available allowance.",
     revoke: false,
   },
+  subscription_sharing_workplace_individual_usage_limit_exceeded: {
+    message:
+      "You reached your workspace's limit for using ChatGPT in other apps. Ask your workspace admin to increase it.",
+    revoke: false,
+  },
   subscription_sharing_usage_unavailable: {
     message: "ChatGPT usage is temporarily unavailable. Try again shortly.",
     revoke: false,

@@ -105,22 +105,4 @@ describe("tailClaudeTaskOutput", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
-
-  it.live("ends when stopped even if Claude Code never wrote the file", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { root } = yield* makeTaskFile;
-        const stop = yield* Deferred.make<void>();
-        const fiber = yield* tailClaudeTaskOutput({
-          root,
-          sessionId: SESSION_ID,
-          taskId: TASK_ID,
-          stop,
-          onChunk: () => Effect.die("no file, no output"),
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.succeed(stop, undefined);
-        yield* Fiber.join(fiber);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
 });

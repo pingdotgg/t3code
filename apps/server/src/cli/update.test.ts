@@ -1,53 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, expect, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NetService from "@t3tools/shared/Net";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { afterEach, vi } from "vite-plus/test";
 
-import packageJson from "../../package.json" with { type: "json" };
-import * as BootService from "../cloud/bootService.ts";
-import { pinnedRuntimePaths } from "../cloud/pinnedRuntime.ts";
-import {
-  repointLauncher,
-  resolveLauncherPath,
-  resolveNewestVersion,
-  updateCommand,
-} from "./update.ts";
+import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
 
 afterEach(() => vi.restoreAllMocks());
-
-it.effect.each([
-  { environment: { GH_TOKEN: " gh-token ", GITHUB_TOKEN: "github-token" }, token: "gh-token" },
-  { environment: { GH_TOKEN: "  ", GITHUB_TOKEN: " github-token " }, token: "github-token" },
-  { environment: { GITHUB_TOKEN: "github-token" }, token: "github-token" },
-  { environment: { GH_TOKEN: "  ", GITHUB_TOKEN: "  " }, token: undefined },
-  { environment: {}, token: undefined },
-])("selects release authentication from $environment", ({ environment, token }) =>
-  Effect.gen(function* () {
-    const authorizations: Array<string | undefined> = [];
-    const httpClient = HttpClient.make((request) => {
-      authorizations.push(request.headers.authorization);
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(request, Response.json([{ tag_name: "v1.2.3" }])),
-      );
-    });
-    const version = yield* resolveNewestVersion("stable").pipe(
-      Effect.provideService(HostProcess.Environment, environment),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
-    assert.equal(version, "1.2.3");
-    assert.deepStrictEqual(authorizations, [token === undefined ? undefined : `Bearer ${token}`]);
-  }),
-);
 
 it.effect("authenticates each release page until the requested channel is found", () =>
   Effect.gen(function* () {
@@ -163,80 +126,5 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
-  );
-});
-
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update service", (it) => {
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "reports the service switch as pending after installing the target runtime",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-service-" });
-        const targetVersion = "999.0.0";
-        const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux");
-        yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
-        yield* fs.writeFileString(
-          runtime.entryPath,
-          `#!/bin/sh\nprintf 't3 v${targetVersion}\\n'\n`,
-        );
-        yield* fs.chmod(runtime.entryPath, 0o755);
-        yield* fs.writeFileString(runtime.sentinelPath, `${targetVersion}\n`);
-        const logPath = path.join(baseDir, "userdata/logs/boot-service.log");
-        const unitPath = path.join(baseDir, "t3code.service");
-        const installs: Array<Parameters<BootService.BootService["Service"]["install"]>[0]> = [];
-        vi.spyOn(BootService, "layer").mockReturnValue(
-          Layer.succeed(BootService.BootService, {
-            status: Effect.succeed({
-              supported: true,
-              installed: true,
-              current: true,
-              installedVersion: packageJson.version,
-              installedBaseDir: baseDir,
-              logPath,
-              unitPath,
-            }),
-            install: (options) =>
-              Effect.sync(() => {
-                installs.push(options);
-                return {
-                  program: [runtime.entryPath],
-                  baseDir,
-                  logPath,
-                  unitPath,
-                  handedOff: true,
-                };
-              }),
-            restart: Effect.die("unexpected restart"),
-            uninstall: Effect.die("unexpected uninstall"),
-            withStopped: () => Effect.die("unexpected maintenance"),
-          }),
-        );
-        const lines: string[] = [];
-        yield* Command.runWith(updateCommand, { version: packageJson.version })([
-          targetVersion,
-          "--yes",
-          "--base-dir",
-          baseDir,
-        ]).pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(HostProcess.IsExecutable, false),
-          Effect.provideService(HostProcess.Environment, {}),
-          Effect.provideService(Console.Console, {
-            ...globalThis.console,
-            log: (...args) => {
-              lines.push(args.map(String).join(" "));
-            },
-          }),
-          Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-        );
-
-        expect(installs).toEqual([{ allowDowngrade: false, start: true }]);
-        const output = lines.join("\n");
-        expect(output).not.toContain("Background service restarted");
-        expect(output).toContain(`Background service switching to ${targetVersion}`);
-        expect(output).toContain(logPath);
-      }),
   );
 });

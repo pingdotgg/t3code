@@ -147,14 +147,13 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
-export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
+const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
   function* (): Effect.fn.Return<void, never, DesktopBackendPool.DesktopBackendPool> {
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const instances = yield* pool.list;
     yield* Effect.forEach(
       instances,
-      // Exceeds the backend's 30s graceful termination and output drain budget.
-      (instance) => instance.stop({ timeout: Duration.seconds(45) }),
+      (instance) => instance.stop({ timeout: Duration.seconds(5) }),
       { concurrency: "unbounded" },
     );
   },
@@ -240,7 +239,9 @@ const bootstrap = Effect.gen(function* () {
   }
 
   if (!(yield* Ref.get(state.quitting))) {
-    yield* desktopWindow.showConnectingSplash;
+    if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
+      yield* desktopWindow.showConnectingSplash;
+    }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
     yield* appActivation.start.pipe(

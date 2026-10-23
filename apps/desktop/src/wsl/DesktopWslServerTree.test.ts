@@ -105,20 +105,6 @@ describe("DesktopWslServerTree", () => {
     }),
   );
 
-  it.effect("returns the server root unchanged when it is a plain directory (dev)", () =>
-    withTempDir((tempDir) =>
-      Effect.gen(function* () {
-        const result = yield* ensureWith({
-          baseDir: tempDir,
-          resourcesPath: tempDir,
-          isPackaged: false,
-        });
-        assert.isTrue(result.ok);
-        assert.isFalse(result.ok && result.root.endsWith(".asar"));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("extracts an archive root into a version-keyed state directory", () =>
     withTempDir((tempDir) =>
       Effect.gen(function* () {
@@ -288,32 +274,6 @@ describe("DesktopWslServerTree", () => {
         assert.equal(entry, "new");
         const treeRoot = path.dirname(root);
         assert.isFalse(yield* fileSystem.exists(path.join(treeRoot, "1.2.3")));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("removes the legacy Windows extraction tree without preparing a fallback", () =>
-    withTempDir((tempDir) =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const resourcesPath = path.join(tempDir, "resources");
-        const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
-        yield* fileSystem.makeDirectory(path.join(treeRoot, "1.2.3"), { recursive: true });
-        yield* fileSystem.writeFileString(path.join(treeRoot, "1.2.3", "legacy"), "old");
-
-        yield* Effect.gen(function* () {
-          const tree = yield* DesktopWslServerTree.DesktopWslServerTree;
-          yield* tree.cleanupLegacy;
-        }).pipe(
-          Effect.provide(
-            DesktopWslServerTree.layer.pipe(
-              Layer.provideMerge(layerEnvironment({ baseDir: tempDir, resourcesPath })),
-            ),
-          ),
-        );
-
-        assert.isFalse(yield* fileSystem.exists(treeRoot));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -174,7 +174,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
   },
 ];
 
-export const cookieDatabaseCandidatePaths = (
+const cookieDatabaseCandidatePaths = (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
   profileDirectory: string,
@@ -577,7 +577,7 @@ export const chromiumSingletonLockIsHeld = Effect.fnUntraced(function* (
 });
 
 /** Windows sharing and lock violations are translated by libuv to `Busy`. */
-export const isWindowsLockHeldError = (error: PlatformError.PlatformError): boolean =>
+const isWindowsLockHeldError = (error: PlatformError.PlatformError): boolean =>
   error.reason._tag === "Busy";
 
 /**
@@ -671,7 +671,7 @@ const FCNTL_PROBE_SCRIPT =
  * block Firefox import outright on such machines, and the SQLite snapshot
  * already copes with a live database's WAL, as it does for every other engine.
  */
-export const posixLockIsHeld = Effect.fnUntraced(function* (
+const posixLockIsHeld = Effect.fnUntraced(function* (
   path: string,
   interpreters: ReadonlyArray<string> = FCNTL_PROBE_INTERPRETERS,
 ) {

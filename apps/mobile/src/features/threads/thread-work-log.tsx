@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import { SubagentStatusDot } from "./SubagentStatusDot";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
+import { ProposedPlanCard } from "./ProposedPlanCard";
 import {
   WorkLogLabel,
   WorkLogBlock,
@@ -33,11 +34,14 @@ import {
 } from "react";
 import {
   AccessibilityInfo,
+  Animated as NativeAnimated,
   AppState,
   type ColorValue,
+  Easing,
   Pressable,
   ScrollView,
   StyleSheet,
+  useAnimatedValue,
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -91,17 +95,12 @@ import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import Animated, {
-  cancelAnimation,
-  Easing,
   FadeIn,
   FadeOut,
   LinearTransition,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
-  withRepeat,
-  withSequence,
   withTiming,
 } from "react-native-reanimated";
 import { useAssetUrl } from "../../state/assets";
@@ -267,7 +266,7 @@ export function ShimmeringWorkContent(props: {
   const [appIsActive, setAppIsActive] = useState(AppState.currentState === "active");
   const [reducedMotion, setReducedMotion] = useState(true);
   const screenIsFocused = useIsFocused();
-  const progress = useSharedValue(0);
+  const progress = useAnimatedValue(0);
   const gradientId = `work-shimmer-${useId().replaceAll(":", "")}`;
   const contentWidth = Math.min(
     availableWidth,
@@ -290,37 +289,37 @@ export function ShimmeringWorkContent(props: {
     return () => subscription.remove();
   }, []);
 
+  // Runs on React Native's native driver instead of Reanimated, whose
+  // per-frame commits starve React's while commit pausing is disabled
+  // (package.json). See docs/internals/performance-regressions.md.
   useEffect(() => {
-    cancelAnimation(progress);
-    progress.value = 0;
+    progress.setValue(0);
     if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused) return;
 
-    progress.value = withRepeat(
-      withSequence(
-        withTiming(1, {
-          duration: SHIMMER_SWEEP_MS,
-          easing: Easing.linear,
-          reduceMotion: ReduceMotion.Never,
-        }),
-        withDelay(
-          SHIMMER_PAUSE_MS,
-          withTiming(0, { duration: 0, reduceMotion: ReduceMotion.Never }),
-        ),
-      ),
-      -1,
-      false,
-      undefined,
-      ReduceMotion.Never,
+    const loop = NativeAnimated.loop(
+      NativeAnimated.timing(progress, {
+        toValue: 1,
+        duration: SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
     );
-    return () => cancelAnimation(progress);
+    loop.start();
+    return () => loop.stop();
   }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
 
-  const sweepStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: -SHIMMER_WIDTH + progress.value * (contentWidth + SHIMMER_WIDTH) }],
-  }));
-  const counterSweepStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: SHIMMER_WIDTH - progress.value * (contentWidth + SHIMMER_WIDTH) }],
-  }));
+  // One timing covers the sweep and the pause, so the native driver can loop it.
+  // The React Compiler memoizes these, so re-renders don't rebuild the native
+  // animation nodes.
+  const inputRange = [0, SHIMMER_SWEEP_MS / (SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS), 1];
+  const sweepTranslateX = progress.interpolate({
+    inputRange,
+    outputRange: [-SHIMMER_WIDTH, contentWidth, contentWidth],
+  });
+  const counterSweepTranslateX = progress.interpolate({
+    inputRange,
+    outputRange: [SHIMMER_WIDTH, -contentWidth, -contentWidth],
+  });
 
   return (
     <View
@@ -341,13 +340,20 @@ export function ShimmeringWorkContent(props: {
         onTextLayout={(event) => setTextWidth(event.nativeEvent.lines[0]?.width ?? 0)}
       />
       {!reducedMotion && appIsActive && screenIsFocused && contentWidth > 0 ? (
-        <Animated.View
-          className="absolute inset-y-0 left-0 overflow-hidden"
+        <NativeAnimated.View
           pointerEvents="none"
           accessible={false}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
-          style={[{ width: SHIMMER_WIDTH }, sweepStyle]}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            overflow: "hidden",
+            width: SHIMMER_WIDTH,
+            transform: [{ translateX: sweepTranslateX }],
+          }}
         >
           <MaskedView
             style={StyleSheet.absoluteFill}
@@ -368,7 +374,9 @@ export function ShimmeringWorkContent(props: {
               </Svg>
             }
           >
-            <Animated.View style={[{ width: availableWidth }, counterSweepStyle]}>
+            <NativeAnimated.View
+              style={{ width: availableWidth, transform: [{ translateX: counterSweepTranslateX }] }}
+            >
               <ShimmerWorkContent
                 textClassName={props.textClassName}
                 compact={props.compact}
@@ -381,9 +389,9 @@ export function ShimmeringWorkContent(props: {
                 themeAppearance={props.themeAppearance}
                 toolIcon={props.toolIcon}
               />
-            </Animated.View>
+            </NativeAnimated.View>
           </MaskedView>
-        </Animated.View>
+        </NativeAnimated.View>
       ) : null}
     </View>
   );
@@ -476,6 +484,7 @@ interface ThreadWorkLogProps {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly anchorKey: string;
   readonly environmentId: EnvironmentId;
+  readonly workspaceRoot?: string | null | undefined;
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -512,6 +521,18 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
 
   if (props.activities.length === 0) {
     return null;
+  }
+
+  const plan = props.activities[0]?.projectedItem.item;
+  if (plan?.type === "proposed_plan") {
+    return (
+      <ProposedPlanCard
+        environmentId={props.environmentId}
+        workspaceRoot={props.workspaceRoot}
+        markdown={plan.markdown}
+        renderMarkdown={props.renderReasoning}
+      />
+    );
   }
 
   if (props.activities[0]?.projectedItem.item.type === "subagent") {
@@ -1282,6 +1303,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly hasFailure: boolean;
   readonly shimmer: boolean;
   readonly thought?: string | undefined;
+  readonly trailing?: ReactNode;
   readonly onToggle: () => void;
 }) {
   const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
@@ -1314,49 +1336,54 @@ export function ThreadWorkGroupToggle(props: {
           </Text>
         </Pressable>
       ) : null}
-      <WorkLogPressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: props.expanded }}
-        accessibilityLabel={accessibilityLabel}
-        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
-        onPress={() => {
-          void Haptics.selectionAsync();
-          props.onToggle();
-        }}
-        rowSizing={props.rowSizing}
-      >
-        {props.shimmer ? (
-          <ShimmeringWorkContent
-            key={props.rowSizing.textSizeKey}
-            environmentId={props.environmentId}
-            icon={icon}
-            iconSubtleColor={props.iconSubtleColor}
-            label={props.summary}
-            showIcon
-            themeAppearance={props.themeAppearance}
-            toolIcon={props.toolIcon}
-          />
-        ) : (
-          <>
-            <WorkLogIconSlot>
-              <ToolActivityIconView
+      <View className="flex-row items-center">
+        <View className="min-w-0 flex-1">
+          <WorkLogPressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: props.expanded }}
+            accessibilityLabel={accessibilityLabel}
+            accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
+            onPress={() => {
+              void Haptics.selectionAsync();
+              props.onToggle();
+            }}
+            rowSizing={props.rowSizing}
+          >
+            {props.shimmer ? (
+              <ShimmeringWorkContent
+                key={props.rowSizing.textSizeKey}
                 environmentId={props.environmentId}
-                icon={props.toolIcon}
-                fallback={icon}
-                fallbackColor={props.iconSubtleColor}
+                icon={icon}
+                iconSubtleColor={props.iconSubtleColor}
+                label={props.summary}
+                showIcon
                 themeAppearance={props.themeAppearance}
+                toolIcon={props.toolIcon}
               />
-            </WorkLogIconSlot>
-            <WorkLogLabel key={props.rowSizing.textSizeKey}>{props.summary}</WorkLogLabel>
-          </>
-        )}
-        <ThreadDisclosureChevron
-          expanded={props.expanded}
-          collapsedDirection="down"
-          size={11}
-          tintColor={props.iconSubtleColor}
-        />
-      </WorkLogPressable>
+            ) : (
+              <>
+                <WorkLogIconSlot>
+                  <ToolActivityIconView
+                    environmentId={props.environmentId}
+                    icon={props.toolIcon}
+                    fallback={icon}
+                    fallbackColor={props.iconSubtleColor}
+                    themeAppearance={props.themeAppearance}
+                  />
+                </WorkLogIconSlot>
+                <WorkLogLabel key={props.rowSizing.textSizeKey}>{props.summary}</WorkLogLabel>
+              </>
+            )}
+            <ThreadDisclosureChevron
+              expanded={props.expanded}
+              collapsedDirection="down"
+              size={11}
+              tintColor={props.iconSubtleColor}
+            />
+          </WorkLogPressable>
+        </View>
+        {props.trailing}
+      </View>
     </WorkLogBlock>
   );
 }
@@ -1583,14 +1610,17 @@ function ToolActivityImage(props: {
         <View
           style={[
             StyleSheet.absoluteFill,
-            props.themeAppearance === "light" ? { filter: [{ brightness: 0.6 }] } : undefined,
+            props.themeAppearance === "light" ? { filter: [{ brightness: 0.7 }] } : undefined,
           ]}
         >
           <Image
             source={props.source}
             cachePolicy="memory-disk"
             contentFit="contain"
-            style={[StyleSheet.absoluteFill, { opacity: loaded ? 0.7 : 0 }]}
+            style={[
+              StyleSheet.absoluteFill,
+              { opacity: loaded ? (props.themeAppearance === "dark" ? 0.7 : 1) : 0 },
+            ]}
             onLoad={() => setLoaded(true)}
             onError={() => setFailed(true)}
           />

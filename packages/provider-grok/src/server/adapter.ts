@@ -85,7 +85,7 @@ export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_K
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
-export const GrokProviderCapabilitiesV2 = {
+const GrokProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,

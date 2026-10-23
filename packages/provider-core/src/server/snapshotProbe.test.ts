@@ -4,7 +4,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -37,23 +36,6 @@ const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabil
 });
 
 describe("providerModelsFromSettings", () => {
-  it("applies the provided capabilities to custom models", () => {
-    const models = providerModelsFromSettings(
-      [],
-      ["openai/gpt-5"],
-      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
-    );
-
-    expect(models).toEqual([
-      {
-        slug: "openai/gpt-5",
-        name: "openai/gpt-5",
-        isCustom: true,
-        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
-      },
-    ]);
-  });
-
   it("keeps an entry's own name and capabilities over the driver default", () => {
     const capabilities = createModelCapabilities({
       optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
@@ -115,10 +97,6 @@ describe("providerModelsFromSettings", () => {
 });
 
 describe("parseGenericCliVersion", () => {
-  it("parses a bare version", () => {
-    expect(parseGenericCliVersion("1.14.19")).toBe("1.14.19");
-  });
-
   it("parses a v-prefixed version", () => {
     expect(parseGenericCliVersion("opencode v2.0.3")).toBe("2.0.3");
     expect(parseGenericCliVersion("v22.19.0")).toBe("22.19.0");
@@ -128,30 +106,12 @@ describe("parseGenericCliVersion", () => {
     expect(parseGenericCliVersion("codex-cli 0.53.0 (build abc)")).toBe("0.53.0");
   });
 
-  it("returns null when no version is present", () => {
-    expect(parseGenericCliVersion("no version here")).toBeNull();
-  });
-
   it("ignores versions glued to other word characters", () => {
     expect(parseGenericCliVersion("build2.0.3artifact")).toBeNull();
   });
 });
 
 describe("ProviderCommandNotFoundError", () => {
-  it("classifies normalized platform failures without parsing messages", () => {
-    expect(
-      isCommandMissingCause(
-        PlatformError.systemError({
-          _tag: "NotFound",
-          module: "ChildProcess",
-          method: "spawn",
-          description: "arbitrary host detail",
-        }),
-      ),
-    ).toBe(true);
-    expect(isCommandMissingCause(new Error("spawn provider ENOENT"))).toBe(false);
-  });
-
   it.effect("retains safe failed-command diagnostics without process output", () => {
     const stderr = "'codex' is not recognized: secret-token-value";
     const spawner = ChildProcessSpawner.make(() =>

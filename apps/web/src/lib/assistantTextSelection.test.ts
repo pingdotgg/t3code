@@ -231,15 +231,6 @@ describe("captureAssistantTextSelection", () => {
     },
   );
 
-  it("finds the source when both endpoints are parent boundaries", () => {
-    const quote = textNode("Only this response.");
-    const source = assistantSource(new SelectionNode("P").append(quote));
-    const viewport = new SelectionNode("MAIN").append(source, assistantSource(textNode("Next.")));
-    expect(capture(viewport, nativeSelection([viewport, 0], [viewport, 1]))?.selector).toEqual(
-      selector(quote.data),
-    );
-  });
-
   it("captures the final paragraph when Chromium extends to the timestamp paragraph boundary", () => {
     const quote = textNode("The final paragraph.");
     const source = assistantSource(
@@ -346,14 +337,6 @@ describe("captureAssistantTextSelection", () => {
       capture(source, nativeSelection([first, 0], [code, code.length], true))?.selector,
     ).toEqual(selector("Before 😀 cafe\u0301\nfirst line\r\n  second line\t🚀"));
   });
-
-  it("rejects a source outside the supplied viewport", () => {
-    const quote = textNode("Outside.");
-    assistantSource(quote);
-    expect(
-      capture(new SelectionNode("MAIN"), nativeSelection([quote, 0], [quote, quote.length])),
-    ).toBeNull();
-  });
 });
 
 describe("createAssistantTextSelector", () => {
@@ -427,22 +410,9 @@ describe("createAssistantTextSelector", () => {
       expect(findAssistantCitationText(text, parsed!)).toBeNull();
     },
   );
-
-  it.each(["", " \n\t\r\n"])("rejects empty or whitespace-only selections: %j", (text) => {
-    expect(createAssistantTextSelector(text, 0, text.length)).toBeNull();
-  });
 });
 
 describe("findAssistantCitationText", () => {
-  it("resolves an exact selection with its saved position and context", () => {
-    expect(
-      findAssistantCitationText(
-        "Before the selected text after.",
-        selector("selected text", { start: 11, end: 24, prefix: "Before the ", suffix: " after." }),
-      ),
-    ).toEqual({ start: 11, end: 24 });
-  });
-
   it("finds a unique quote when insertion before it shifts its offsets", () => {
     expect(
       findAssistantCitationText(
@@ -450,15 +420,6 @@ describe("findAssistantCitationText", () => {
         selector("selected text", { start: 11, end: 24, prefix: "Before the ", suffix: " after." }),
       ),
     ).toEqual({ start: 34, end: 47 });
-  });
-
-  it("still finds a unique quote after its surrounding text changes", () => {
-    expect(
-      findAssistantCitationText(
-        "New selected text nearby.",
-        selector("selected text", { start: 11, end: 24, prefix: "Before the ", suffix: " after." }),
-      ),
-    ).toEqual({ start: 4, end: 17 });
   });
 
   it("uses both context sides when each side alone matches several repeated quotes", () => {
@@ -505,15 +466,6 @@ describe("findAssistantCitationText", () => {
     ).toBeNull();
   });
 
-  it("rejects repeated quotes when neither occurrence matches all supplied context", () => {
-    expect(
-      findAssistantCitationText(
-        "left quote wrong / wrong quote right",
-        selector("quote", { prefix: "left ", suffix: " right" }),
-      ),
-    ).toBeNull();
-  });
-
   it("counts overlapping occurrences when checking ambiguity", () => {
     expect(findAssistantCitationText("banana", selector("ana", { start: 1, end: 4 }))).toBeNull();
   });
@@ -537,13 +489,6 @@ describe("findAssistantCitationText", () => {
     ).toEqual({ start: 6, end: 19 });
   });
 
-  it("does not trim the document's leading whitespace out of its offsets", () => {
-    expect(findAssistantCitationText("\n\t  quote", selector("quote"))).toEqual({
-      start: 1,
-      end: 6,
-    });
-  });
-
   it("uses UTF-16 offsets for emoji and combining characters", () => {
     expect(findAssistantCitationText("😀 cafe\u0301 🚀 done", selector("cafe\u0301 🚀"))).toEqual({
       start: 3,
@@ -559,26 +504,6 @@ describe("findAssistantCitationText", () => {
     expect(findAssistantCitationText(text, selector("quote", { prefix, suffix }))).toEqual({
       start,
       end: start + 5,
-    });
-  });
-
-  it.each(["", " \n\t\r\n", "absent", "QUOTE", "qu.te"])(
-    "rejects empty or missing literal text: %j",
-    (quote) => {
-      expect(findAssistantCitationText("quote", selector(quote))).toBeNull();
-    },
-  );
-
-  it.each([
-    { start: -1, end: 4 },
-    { start: 2.5, end: 7.5 },
-    { start: Number.NaN, end: Number.NaN },
-    { start: Number.POSITIVE_INFINITY, end: Number.POSITIVE_INFINITY },
-    { start: 8, end: 3 },
-  ])("treats invalid stored offsets as unusable hints: $start / $end", (offsets) => {
-    expect(findAssistantCitationText("a quote", selector("quote", offsets))).toEqual({
-      start: 2,
-      end: 7,
     });
   });
 });

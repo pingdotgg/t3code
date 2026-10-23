@@ -68,9 +68,9 @@ function buildDefinitionRegistry(
   return registry;
 }
 
-export const CONTEXT_PRESENTATION_DEFINITIONS = buildDefinitionRegistry(DEFINITIONS);
+const CONTEXT_PRESENTATION_DEFINITIONS = buildDefinitionRegistry(DEFINITIONS);
 
-export function contextPresentationDefinition(
+function contextPresentationDefinition(
   kind: KnownComposerContextKind,
 ): ContextPresentationDefinition {
   return CONTEXT_PRESENTATION_DEFINITIONS.get(kind)!;

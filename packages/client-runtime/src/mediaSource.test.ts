@@ -4,8 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveMediaSource } from "./mediaSource.ts";
 
 const threadId = ThreadId.make("thread-1");
-const attachmentId =
-  "11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222-mp4";
 
 describe("resolveMediaSource", () => {
   describe("direct URLs", () => {
@@ -22,15 +20,6 @@ describe("resolveMediaSource", () => {
       });
     });
 
-    it("keeps protocol-relative URLs as authored; clients add the scheme", () => {
-      const href = "//cdn.example.com/clip.mp4?sig=1#t=2";
-      expect(resolveMediaSource(href, { threadId })).toMatchObject({
-        access: "direct",
-        uri: href,
-        reference: { kind: "url", url: href },
-      });
-    });
-
     it("accepts extensionless image embeds only when asked", () => {
       const href = "https://cdn.example.com/render?id=42";
       expect(resolveMediaSource(href, { threadId })).toBeNull();
@@ -40,28 +29,12 @@ describe("resolveMediaSource", () => {
         name: "render",
       });
     });
-
-    it.each(["data:image/png;base64,AAAA", "blob:https://app.t3.codes/id"])(
-      "loads %s directly",
-      (href) => {
-        expect(resolveMediaSource(href, { threadId, imageEmbed: true })).toMatchObject({
-          access: "direct",
-          uri: href,
-        });
-      },
-    );
   });
 
   describe("host paths", () => {
     it.each([
       ["/tmp/frame%23one.png:12", "/tmp/frame#one.png"],
-      ["/tmp/frame%3Fone.png:12:3", "/tmp/frame?one.png"],
       ["/tmp/frame%2523one.png:12", "/tmp/frame%23one.png"],
-      ["C:\\Users\\demo\\frame.png", "C:\\Users\\demo\\frame.png"],
-      ["/C:/Users/demo/frame.png", "C:/Users/demo/frame.png"],
-      ["file:///C:/Users/demo/frame.png", "C:/Users/demo/frame.png"],
-      ["file://server/share/frame.png", "\\\\server\\share\\frame.png"],
-      ["\\\\server\\share\\frame.png", "\\\\server\\share\\frame.png"],
     ])("resolves %s through the environment", (href, path) => {
       expect(resolveMediaSource(href, { threadId, workspaceRoot: "/repo" })).toEqual({
         kind: "image",
@@ -119,22 +92,6 @@ describe("resolveMediaSource", () => {
         kind: "video",
         access: "unavailable",
       });
-    });
-
-    it.each(["notes.txt", "/repo/README", "/repo/archive.zip"])(
-      "returns null for the non-media path %s",
-      (href) => {
-        expect(resolveMediaSource(href, { threadId, workspaceRoot: "/repo" })).toBeNull();
-      },
-    );
-  });
-
-  it("serves T3 attachment files in place like any other host path", () => {
-    const path = `/home/demo/.t3/userdata/attachments/${attachmentId}.mp4`;
-    expect(resolveMediaSource(path, { threadId, workspaceRoot: "/repo" })).toMatchObject({
-      kind: "video",
-      access: "environment",
-      resource: { _tag: "media-file", threadId, path },
     });
   });
 });

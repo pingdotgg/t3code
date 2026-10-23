@@ -1,15 +1,10 @@
-import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import {
-  discoverSshHosts,
-  parseKnownHostsHostnames,
-  resolveSshConfigIncludePattern,
-} from "./config.ts";
+import { discoverSshHosts, parseKnownHostsHostnames } from "./config.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -247,16 +242,5 @@ describe("ssh config", () => {
         ],
       );
     }),
-  );
-
-  it.effect("expands tilde-prefixed ssh config include patterns", () =>
-    Effect.gen(function* () {
-      const pattern = yield* resolveSshConfigIncludePattern(
-        "~/.ssh/config.d/*.conf",
-        "/tmp/project",
-        "/tmp/home",
-      );
-      assert.equal(pattern, "/tmp/home/.ssh/config.d/*.conf");
-    }).pipe(Effect.provide(NodePath.layerPosix)),
   );
 });

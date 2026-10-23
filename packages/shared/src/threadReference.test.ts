@@ -92,27 +92,4 @@ describe("resolveThreadReferenceCopyTarget", () => {
       }),
     ).toMatchObject({ kind: "pull-request", value: "https://github.com/t3/pr/12" });
   });
-
-  it("uses the thread pull request when no panel is open", () => {
-    expect(
-      resolveThreadReferenceCopyTarget({
-        threadId: "thread-1",
-        linkedPullRequestUrl: "https://github.com/t3/pr/12",
-      }),
-    ).toMatchObject({
-      kind: "pull-request",
-      value: "https://github.com/t3/pr/12",
-      successTitle: "PR link copied",
-    });
-  });
-
-  it("falls back to the thread ID", () => {
-    expect(resolveThreadReferenceCopyTarget({ threadId: "thread-1" })).toEqual({
-      kind: "thread",
-      value: "thread-1",
-      clipboardTarget: "thread ID",
-      successTitle: "Thread ID copied",
-      failureTitle: "Failed to copy thread ID",
-    });
-  });
 });

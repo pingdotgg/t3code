@@ -29,7 +29,6 @@ import {
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
-import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -43,6 +42,7 @@ import {
   PaceIcon,
   ResetCreditDialog,
   barColor,
+  usePaceMark,
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
@@ -286,7 +286,6 @@ function PoolSegment({
   readonly color: string;
   readonly now: number;
   readonly index: number;
-  readonly labeled: boolean;
   readonly showAccountName: boolean;
 }) {
   return account.redeem ? (
@@ -332,20 +331,19 @@ function SegmentTriggers({
   color,
   now,
   index,
-  labeled,
   showAccountName,
 }: SegmentPayload & {
   readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
-  readonly labeled: boolean;
   readonly showAccountName: boolean;
 }) {
   const popover = use(SegmentPopoverContext) ?? undefined;
   const payload: SegmentPayload = { account, window, reset, redeem };
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
+  const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
@@ -356,55 +354,48 @@ function SegmentTriggers({
         openOnHover
         render={
           <button
+            ref={segmentRef}
             type="button"
-            style={{ gridColumn: index, gridRow: 1 }}
+            style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
             aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className={cn(
-              "relative min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border",
-              labeled ? "h-8" : "h-5",
-            )}
+            className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
       >
         <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
-          <div
-            aria-hidden
-            className="absolute inset-y-0 left-0 rounded-md opacity-35"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
-          />
-          {remaining < 100 && reset && refillPercent > 0 ? (
+          {/* Clipped inside the rounded clip so the bar's own corners keep their antialiasing. */}
+          <div className="absolute inset-0" style={paceMark?.gap}>
             <div
               aria-hidden
-              className="absolute inset-y-0 right-0 opacity-20"
-              style={{
-                width: `${Math.min(100 - remaining, refillPercent)}%`,
-                backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
-              }}
+              className="absolute inset-y-0 left-0 rounded-md opacity-35"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
             />
-          ) : null}
+            {remaining < 100 && reset && refillPercent > 0 ? (
+              <div
+                aria-hidden
+                className="absolute inset-y-0 right-0 opacity-20"
+                style={{
+                  width: `${Math.min(100 - remaining, refillPercent)}%`,
+                  backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+                }}
+              />
+            ) : null}
+          </div>
         </div>
-        {timeLeft !== null ? (
+        {paceMark ? (
           <span
             aria-hidden
-            className="absolute -inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-muted-foreground"
-            style={{ left: `${timeLeft}%` }}
+            className="absolute inset-y-0.5 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={paceMark.tick}
           />
         ) : null}
         <span
           aria-hidden
-          className={cn(
-            "absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums",
-            labeled && "hidden",
-          )}
+          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
         >
           {index}
         </span>
-        <div
-          className={cn(
-            "relative h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs",
-            labeled ? "flex" : "hidden",
-          )}
-        >
+        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
           {showAccountName ? (
             <AccountName
               account={account}
@@ -432,7 +423,7 @@ function SegmentTriggers({
           ) : null}
         </div>
       </PopoverTrigger>
-      {labeled ? null : <LegendRow payload={payload} color={color} now={now} index={index} />}
+      <LegendRow payload={payload} color={color} now={now} index={index} />
     </>
   );
 }
@@ -459,7 +450,7 @@ function LegendRow({
       payload={payload}
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
       render={<Button variant="ghost" size="compact" />}
-      className="min-w-0"
+      className="min-w-0 @2xl/pool:hidden"
     >
       <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
         <span
@@ -494,8 +485,6 @@ function LegendRow({
   );
 }
 
-const LABELED_SEGMENT_MIN_WIDTH = 224;
-
 function PoolBar({
   pool,
   color,
@@ -506,32 +495,11 @@ function PoolBar({
   readonly now: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
-  const columns = pool.columns.length;
-  const [dimensions, setDimensions] = useState({ width: 0, gap: 0 });
-  const probeRef = useRef<HTMLDivElement>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const probe = probeRef.current;
-    const grid = gridRef.current;
-    if (!probe || !grid) return;
-    return observeResize(probe, ([entry]) => {
-      if (!entry) return;
-      setDimensions({
-        width: entry.contentRect.width,
-        gap: Number.parseFloat(getComputedStyle(grid).columnGap) || 0,
-      });
-    });
-  }, []);
-  const labeled =
-    (dimensions.width - dimensions.gap * (columns - 1)) / columns >= LABELED_SEGMENT_MIN_WIDTH;
   return (
-    <div className="min-w-0">
-      {/* A height-independent probe keeps legend changes from triggering resize feedback. */}
-      <div ref={probeRef} />
+    <div className="@container/pool min-w-0">
       <div
-        ref={gridRef}
         className="grid gap-x-1 gap-y-1"
-        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+        style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
       >
         {pool.columns.map((member, position) =>
           member.window ? (
@@ -544,8 +512,7 @@ function PoolBar({
               color={color}
               now={now}
               index={position + 1}
-              labeled={labeled}
-              showAccountName={columns > 1}
+              showAccountName={pool.columns.length > 1}
             />
           ) : null,
         )}

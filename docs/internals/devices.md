@@ -18,10 +18,31 @@ middleware because serve-sim loads private CoreSimulator frameworks through a
 native addon, and a crash there must not take the server down.
 
 Everything platform-specific sits behind
-[`DeviceHost`](../../apps/server/src/device/DeviceHost.ts). The service, the
-proxy, and the MCP tools only see a hub origin and an agent-device endpoint.
+[`DeviceHost`](../../apps/server/src/device/DeviceHost.ts). The service lists,
+boots, and shuts down devices through the host's device operations, and the
+proxy and the MCP tools only see a hub origin and an agent-device endpoint.
+Hosts that run expo-device-hub share one hub-backed implementation of those
+operations, so a host whose devices live elsewhere only replaces them.
 SSH hosts forward both endpoints to server loopback. Every proxied request
 also carries the host id; device ids alone are not unique across hosts.
+
+## EAS Simulator hosts are billed sessions
+
+An [EAS host](../../apps/server/src/device/EasDeviceHost.ts) has no machine:
+each opened device is an EAS Simulator session that bills the Expo account
+until it stops. Every session is created with the host's run and idle limits,
+the host refuses to start past its session limit, and closing the host stops
+its sessions. Sessions it starts are recorded under the state directory and
+stopped by the next server if this one dies; sessions other tools started on
+the same account are never touched.
+
+Each session brings its own serve-sim preview host and agent-device daemon,
+with their own tokens. The proxy asks the host to route each request
+(`DeviceHostReady.upstream`) and adds the session token server-side, so
+clients never hold it. Agent config files are written per device
+(`DeviceOperations.agentEndpoint`), which is why `device_open` opens the
+device before targeting it. Device settings run `simctl` on the simulator's
+machine, which EAS does not expose, so they are unavailable there.
 
 ## The hub is never exposed
 
@@ -84,7 +105,18 @@ binary WebSocket; Android multiplexes SEMU-framed H.264 and JSON gestures over
 one WebSocket. [`deviceStream.ts`](../../apps/web/src/components/device/deviceStream.ts)
 speaks both so one panel covers both platforms.
 
-Simulators encode H.264 High 5.1. Hardware decoders on some machines and all
-headless browsers reject that profile, and WebCodecs is secure-context only, so
-the viewer probes `isConfigSupported` and falls back to the MJPEG endpoint on
-iOS. Android has no MJPEG; there the panel reports that it cannot decode.
+Simulators encode H.264 High 5.1 without frame reordering, but the hub's fallback
+encoder can omit the SPS VUI that declares its reorder limits. Chromium's hardware
+decoder then retains frames for seconds despite `optimizeForLatency` and an empty
+`decodeQueueSize`. The iOS AVCC viewer restores the missing metadata before
+configuring the decoder so hardware decoding can remain enabled. WebCodecs is
+secure-context only, so the viewer probes `isConfigSupported` and falls back to
+MJPEG on iOS when decoding is unavailable. Android has no MJPEG; there the panel
+reports that it cannot decode.
+
+serve-sim can also be locked to WebRTC, as on EAS Simulator, and then refuses
+AVCC with a 409 naming the transport. The viewer still asks for AVCC first, so
+hubs that serve it pay nothing, and switches on that 409, or when its MJPEG
+image fails in a browser that has `RTCPeerConnection`. Offers are not trickled:
+serve-sim takes one offer with every candidate. The video element only feeds
+the same canvas sink, so the panel and the mobile WebView keep one surface.

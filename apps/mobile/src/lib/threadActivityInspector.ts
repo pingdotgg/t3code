@@ -169,7 +169,7 @@ export function buildThreadActivityInspector(
       addBlock(blocks, "Query", item.pattern);
       for (const result of item.results ?? []) {
         fileLinks.push({
-          label: result.preview ? `${result.fileName} — ${result.preview}` : result.fileName,
+          label: result.preview ? `${result.fileName}: ${result.preview}` : result.fileName,
           path: result.fileName,
           ...(result.line === undefined ? {} : { line: result.line }),
         });

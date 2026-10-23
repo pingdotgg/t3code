@@ -1,14 +1,19 @@
-// @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram.
+// @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram, and node:os the load average.
+import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
 
+import type { ServerEventLoopStall } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as Metrics from "./Metrics.ts";
@@ -21,6 +26,20 @@ const RESOLUTION_MS = 1000;
 const STALL_THRESHOLD_MS = 2000;
 const SAMPLE_INTERVAL = "30 seconds";
 const STALL_LOG_MAX_BYTES = 256 * 1024;
+// Long enough that users felt it. Shorter stalls stay in the log only.
+const NOTICEABLE_STALL_MS = 5000;
+// Clients show what they get, so an old stall must not explain a new drop.
+const NOTICEABLE_STALL_MAX_AGE_MS = 5 * 60_000;
+
+export class EventLoopMonitor extends Context.Reference<{
+  /**
+   * The latest stall of 5 s or more, if seen in the last 5 minutes. It samples
+   * first, so a stall that ended just before a client reconnected is included.
+   */
+  readonly latestNoticeableStall: Effect.Effect<ServerEventLoopStall | undefined>;
+}>("t3/observability/EventLoopMonitor", {
+  defaultValue: () => ({ latestNoticeableStall: Effect.succeed(undefined) }),
+}) {}
 
 /** Delay in ns, active time in ms, CPU in µs. */
 export interface EventLoopReadings {
@@ -39,6 +58,9 @@ export interface EventLoopReadings {
   readonly heapUsedBytes: number;
   /** Wall time the readings cover. */
   readonly elapsedMs: number;
+  /** One-minute load average, undefined on Windows. */
+  readonly loadAverage: number | undefined;
+  readonly cpuCount: number;
 }
 
 // Node skips the first gap after a reset, so a stall right at a sample boundary can be missed.
@@ -77,6 +99,9 @@ const makeNodeSampler = Effect.gen(function* () {
       rssBytes: memory.rss,
       heapUsedBytes: memory.heapUsed,
       elapsedMs: nextSampledAt - sampledAt,
+      // Windows has no load average and reports 0, which a running process never sees elsewhere.
+      loadAverage: NodeOS.loadavg()[0] || undefined,
+      cpuCount: NodeOS.availableParallelism(),
     };
     histogram.reset();
     elu = nextElu;
@@ -116,13 +141,20 @@ export interface StallLogOptions {
   readonly maxBytes: number;
 }
 
-export const layerWith = (
+const layerWith = (
   makeSampler: Effect.Effect<Effect.Effect<EventLoopReadings>, never, Scope.Scope>,
   stallLog: StallLogOptions,
 ) =>
-  Layer.effectDiscard(
+  Layer.effect(
+    EventLoopMonitor,
     Effect.gen(function* () {
       const sample = yield* makeSampler;
+      // Clients sample on connect as well as the timer, and the sampler resets shared state.
+      const sampling = yield* Semaphore.make(1);
+      const warmedUp = yield* Ref.make(false);
+      const latestNoticeableStall = yield* Ref.make<
+        { readonly stall: ServerEventLoopStall; readonly detectedAtMs: number } | undefined
+      >(undefined);
       const stallSink = yield* Effect.try(
         () =>
           new RotatingFileSink({
@@ -143,7 +175,22 @@ export const layerWith = (
         yield* recordGauges(readings);
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
-        const { utilization, usage, rssBytes } = readings;
+        const { utilization, usage, rssBytes, loadAverage, cpuCount } = readings;
+        const now = yield* DateTime.now;
+        const detectedAt = DateTime.formatIso(now);
+        if (delayMaxMs >= NOTICEABLE_STALL_MS) {
+          yield* Ref.set(latestNoticeableStall, {
+            detectedAtMs: DateTime.toEpochMillis(now),
+            stall: {
+              detectedAt,
+              durationMs: delayMaxMs,
+              ...(loadAverage === undefined
+                ? {}
+                : { loadAverage: Math.round(loadAverage * 10) / 10 }),
+              cpuCount,
+            },
+          });
+        }
         const attributes = {
           delayMaxMs,
           utilization: Math.round(utilization * 100) / 100,
@@ -158,8 +205,7 @@ export const layerWith = (
           Effect.withSpan("server.eventLoop.stall", { root: true, level: "Warn", attributes }),
         );
         if (stallSink !== undefined) {
-          const time = DateTime.formatIso(yield* DateTime.now);
-          yield* encodeStallLine({ time, ...attributes }).pipe(
+          yield* encodeStallLine({ time: detectedAt, ...attributes }).pipe(
             Effect.flatMap((line) => Effect.try(() => stallSink.write(`${line}\n`))),
             Effect.catch(() =>
               Effect.logWarning("event loop stall log write failed", {
@@ -168,17 +214,28 @@ export const layerWith = (
             ),
           );
         }
-      });
+      }).pipe(sampling.withPermits(1));
       const wait = Effect.sleep(SAMPLE_INTERVAL);
       // The layer builds before the rest of the server, so the first sample covers
       // startup work such as migrations and projection bootstrap. That can block the
       // loop for seconds on a large database, so skip it rather than warn at every
       // launch.
       yield* wait.pipe(
-        Effect.andThen(sample),
+        Effect.andThen(sampling.withPermits(1)(sample)),
+        Effect.andThen(Ref.set(warmedUp, true)),
         Effect.andThen(wait.pipe(Effect.andThen(tick), Effect.forever)),
         Effect.forkScoped,
       );
+
+      return EventLoopMonitor.of({
+        latestNoticeableStall: Effect.gen(function* () {
+          if (yield* Ref.get(warmedUp)) yield* tick;
+          const latest = yield* Ref.get(latestNoticeableStall);
+          if (latest === undefined) return undefined;
+          const ageMs = DateTime.toEpochMillis(yield* DateTime.now) - latest.detectedAtMs;
+          return ageMs <= NOTICEABLE_STALL_MAX_AGE_MS ? latest.stall : undefined;
+        }),
+      });
     }),
   );
 

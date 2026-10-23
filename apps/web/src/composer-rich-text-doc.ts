@@ -35,7 +35,7 @@ import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-import { markdownMathRanges } from "@t3tools/shared/markdownMath";
+import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -126,9 +126,14 @@ function codePairCaretPlugin(type: MarkType) {
  */
 export const ComposerCodeExtension = Code.extend({
   excludes: "code",
-  // ArrowRight leaves code through the caret stops at styled edges, so the
-  // stock exit (inserting a space at the end of a line) is not needed.
+  // The forward arrow leaves code through the caret stops at styled edges, so
+  // the stock exit (inserting a space at the end of a line) is not needed.
   exitable: false,
+  // Code reads left to right inside an Arabic or Hebrew line, and the isolate
+  // keeps its punctuation from trading places with the text around it.
+  addOptions() {
+    return { ...this.parent!(), HTMLAttributes: { dir: "ltr" } };
+  },
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
   },
@@ -576,7 +581,7 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  const formulas = markdownMathRanges(remainder);
+  const formulas = composerMathRanges(remainder);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {
@@ -1140,7 +1145,7 @@ function listItemTypeAt($pos: ResolvedPos): "listItem" | "taskItem" | null {
  * Tiptap's list keymap, which StarterKit loads, does both by moving nodes
  * without touching their indent or marker, so the composer turns it off.
  */
-export function backspaceAcrossList(editor: Editor): boolean {
+function backspaceAcrossList(editor: Editor): boolean {
   const { state } = editor;
   const { $from, empty } = state.selection;
   if (!empty || $from.parentOffset !== 0) return false;
@@ -1166,7 +1171,7 @@ export function backspaceAcrossList(editor: Editor): boolean {
  * Tiptap's default would instead nest the next item, or a whole list, under
  * this one at its old indent.
  */
-export function deleteAcrossList(editor: Editor): boolean {
+function deleteAcrossList(editor: Editor): boolean {
   const { state } = editor;
   const { $from, empty } = state.selection;
   if (!empty || !$from.parent.isTextblock || $from.depth === 0) return false;

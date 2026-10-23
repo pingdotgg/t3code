@@ -206,7 +206,7 @@ export function closeFinishedUpdateRun(run: UpdateEverythingRun): UpdateEverythi
     : run;
 }
 
-export const UPDATE_SLOW_AFTER_MS = 3 * 60 * 1000;
+const UPDATE_SLOW_AFTER_MS = 3 * 60 * 1000;
 
 export function formatUpdateElapsed(ms: number): string {
   const minutes = Math.floor(ms / 60_000);

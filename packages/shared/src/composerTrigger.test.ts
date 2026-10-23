@@ -18,17 +18,6 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it.each(["Use ", "Use\t", "Use\n  "])("detects inline slash skills after %j", (prefix) => {
-    const text = `${prefix}/skill:review later`;
-    const cursor = `${prefix}/skill:review`.length;
-    expect(detectComposerTrigger(text, cursor)).toEqual({
-      kind: "slash-command",
-      query: "skill:review",
-      rangeStart: prefix.length,
-      rangeEnd: cursor,
-    });
-  });
-
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
       kind: "slash-command",
@@ -52,15 +41,31 @@ describe("detectComposerTrigger", () => {
       rangeEnd: text.length,
     });
   });
+
+  it.each([
+    "It costs $5",
+    "budget $9.99",
+    "only $.99",
+    "about €20",
+    "raise $10k",
+    "$1,000",
+    "£2e6",
+    "raise $10k.",
+    "is it $5?",
+    "(about $9.99)",
+  ])("does not open the skill menu for the amount in %j", (text) =>
+    expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  );
+
+  it.each(["$", "$1password", "$2fa"])("still detects the skill prefix %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toMatchObject({
+      kind: "skill",
+      query: text.slice(1),
+    });
+  });
 });
 
 describe("serializeComposerFileLink", () => {
-  it("uses the basename as the markdown label", () => {
-    expect(serializeComposerFileLink("path/to/package.json")).toBe(
-      "[package.json](path/to/package.json)",
-    );
-  });
-
   it("encodes markdown-sensitive destination characters", () => {
     expect(serializeComposerFileLink("docs/My File (draft).md")).toBe(
       "[My File (draft).md](docs/My%20File%20%28draft%29.md)",

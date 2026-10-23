@@ -22,9 +22,12 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  launcherOwnsVersionsDir,
   pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
   pinnedRuntimePaths,
+  prunePinnedRuntimes,
+  windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -87,15 +90,6 @@ export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(funct
   return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
 });
 
-export function launcherOwnsVersionsDir(
-  path: Path.Path,
-  versionsDir: string,
-  candidate: string,
-): boolean {
-  const relative = path.relative(versionsDir, path.resolve(candidate));
-  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
-}
-
 /**
  * Only a launcher that already points into this home's `runtime/versions` tree is touched; a
  * plain copy of the executable, or a launcher for some other install, is left alone.
@@ -116,7 +110,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const shimPath = yield* findWindowsShim(input.launchedAs);
     if (shimPath === undefined) return Option.none<string>();
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
+    const quoted = Option.isSome(current) ? windowsShimTarget(current.value) : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
     yield* fs
       .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
@@ -188,7 +182,7 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
     const shimPath = path.join(directory, "t3.cmd");
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
     if (Option.isNone(contents)) continue;
-    const target = /^"([^"]+)"/m.exec(contents.value)?.[1];
+    const target = windowsShimTarget(contents.value);
     if (
       target !== undefined &&
       path.resolve(target).toLowerCase() === path.resolve(executablePath).toLowerCase()
@@ -519,6 +513,17 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
           }),
       ),
     );
+  }
+
+  // A handed-off service install rewrites the unit later, while the old launcher may be stopped.
+  if (servicePlan?.handedOff !== true) {
+    // A stopped service's unit still names the launcher runtime it will start.
+    const unit = yield* fs.readFileString(status.unitPath).pipe(Effect.option);
+    yield* prunePinnedRuntimes({
+      baseDir: input.baseDir,
+      keep: [currentVersion, targetVersion],
+      references: Option.toArray(Option.flatMapNullishOr(unit, BootService.bootServiceProgramOf)),
+    });
   }
 
   progress.success(`Installed T3 Code ${targetVersion}`);

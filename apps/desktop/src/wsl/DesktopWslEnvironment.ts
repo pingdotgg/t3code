@@ -463,14 +463,14 @@ cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The sentinel must be a package the CLI bundle leaves external. It used to be
 // "effect", back when the bundle externalized its runtime deps and the whole
 // node_modules tree was unpacked. The bundle now inlines its JS dependencies,
-// so "effect" no longer exists on disk and only the native packages do —
-// resolving node-pty is what actually validates the unpacked tree.
+// so "effect" no longer exists on disk and only the native packages do.
+// Resolving node-pty is what actually validates the unpacked tree.
 try { require.resolve("node-pty/package.json"); } catch (_e) { process.exit(3); }
 const fs = require("node:fs");
 const path = require("node:path");
 const pkgDir = path.dirname(require.resolve("node-pty/package.json"));
 // node-pty 1.x is N-API based, so a single Linux pty.node is ABI-stable across
-// Node versions — require() succeeding IS the real compatibility test. Look in
+// Node versions, so require() succeeding IS the real compatibility test. Look in
 // the same places node-pty's own loader does.
 const candidates = [
   path.join(pkgDir, "build", "Release", "pty.node"),
@@ -513,7 +513,7 @@ export interface ToolchainReport {
   readonly nodeVersion: string | null;
 }
 
-export const parseToolchainReport = (stdout: string): ToolchainReport => {
+const parseToolchainReport = (stdout: string): ToolchainReport => {
   const lines = stdout
     .split("\n")
     .map((line) => line.trim())
@@ -528,7 +528,7 @@ export const parseToolchainReport = (stdout: string): ToolchainReport => {
   return { missingTools, nodeVersion };
 };
 
-export const parseNodePath = (stdout: string): string | null => {
+const parseNodePath = (stdout: string): string | null => {
   const path = stdout
     .split("\n")
     .map((line) => line.trim())
@@ -538,7 +538,7 @@ export const parseNodePath = (stdout: string): string | null => {
   return path ?? null;
 };
 
-export const parseNodeVersion = (stdout: string): string | null => {
+const parseNodeVersion = (stdout: string): string | null => {
   const version = stdout
     .split("\n")
     .map((line) => line.trim())
@@ -558,7 +558,7 @@ export const parseResolvedPath = (stdout: string): string | null => {
   return resolvedPath.length > 0 ? resolvedPath : null;
 };
 
-export const formatMissingToolsReason = (
+const formatMissingToolsReason = (
   report: ToolchainReport,
   requiredRange: string | null,
 ): string | null => {
@@ -699,7 +699,7 @@ const ensureNodePtyImpl = Effect.fn("DesktopWslEnvironment.ensureNodePtyImpl")(f
     return {
       ok: false,
       reason:
-        'WSL server dependencies could not be loaded (for example "node-pty"). The native packages the server needs are not unpacked where the WSL distro\'s Node can read them — this is a packaging problem with this build. Please report it.',
+        'WSL server dependencies could not be loaded (for example "node-pty"). The native packages the server needs are not unpacked where the WSL distro\'s Node can read them. This is a packaging problem with this build. Please report it.',
       fatal: true,
     } as const;
   }
@@ -888,7 +888,7 @@ const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(
   });
 });
 
-export const probeWslDistros: Effect.Effect<
+const probeWslDistros: Effect.Effect<
   readonly WslDistro[],
   DesktopWslDistroListError,
   ChildProcessSpawner.ChildProcessSpawner

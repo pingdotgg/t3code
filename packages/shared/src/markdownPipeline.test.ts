@@ -55,3 +55,25 @@ it("keeps backslashes that CommonMark would read as escapes in prose Windows pat
     String.raw`<code>C:\me\.t3</code> and C:\me\.t3`,
   );
 });
+
+it("keeps an image on its own line under a label but leaves inline images inline", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { type: string; value?: string; tagName?: string; children?: Node[] };
+  const shape = (node: Node): string =>
+    node.type === "text"
+      ? (node.value ?? "")
+      : node.tagName === "br" || node.tagName === "img"
+        ? `<${node.tagName}>`
+        : (node.children ?? []).map(shape).join("");
+  const render = (markdown: string) => shape(processor.runSync(processor.parse(markdown)) as Node);
+
+  expect(
+    render("**Palette**\n![Palette](/tmp/palette.png)\n**Hero** (dark)\n![Hero](/tmp/hero.png)"),
+  ).toBe("Palette<br>\n<img><br>\nHero (dark)<br>\n<img>");
+  expect(render("Built [![CI](/ci.svg)](/ci)\nand wrapped")).toBe("Built <img>\nand wrapped");
+  expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
+});

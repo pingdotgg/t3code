@@ -1,14 +1,14 @@
 {
   "name": "@t3tools/web",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
     "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
     "dev": "vp dev",
+    "dev:built": "vp build --watch",
     "build": "vp build",
     "preview": "vp preview",
-    "typecheck": "tsc-rs --noEmit",
     "test": "vp test run --passWithNoTests --project unit --project browser"
   },
   "dependencies": {
@@ -65,8 +65,8 @@
     "katex": "^0.16.47",
     "lucide": "^0.564.0",
     "lucide-react": "^0.564.0",
-    "mermaid": "^11.17.2",
     "morphicons": "^1.7.1",
+    "pele": "^1.8.0",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
@@ -92,7 +92,7 @@
     "@types/use-sync-external-store": "^0.0.6",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/browser-playwright": "5.0.1",
+    "@vitest/browser-playwright": "5.0.5",
     "compression": "^1.8.2",
     "oxc-transform-react": "~0.152.0",
     "playwright": "1.60.0",

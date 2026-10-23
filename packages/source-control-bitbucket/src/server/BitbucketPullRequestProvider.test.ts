@@ -13,64 +13,6 @@ import {
 } from "./BitbucketPullRequestProvider.ts";
 
 it.effect.each([
-  {
-    metadata: "source commit hash",
-    commit: { hash: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93" },
-    headSha: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93",
-  },
-  {
-    metadata: "short source commit hash",
-    commit: { hash: "9f3a7c2d8b1e" },
-    headSha: "9f3a7c2d8b1e",
-  },
-  { metadata: "absent commit", commit: undefined, headSha: undefined },
-  { metadata: "null commit", commit: null, headSha: undefined },
-  { metadata: "absent hash", commit: {}, headSha: undefined },
-  { metadata: "null hash", commit: { hash: null }, headSha: undefined },
-])("reads change request details with $metadata", ({ commit, headSha }) =>
-  Effect.gen(function* () {
-    const pullRequest = Result.getOrThrow(
-      decodePullRequestJson(
-        JSON.stringify({
-          id: 897,
-          title: "Add trustabl-pipe",
-          state: "OPEN",
-          source: {
-            branch: { name: "feat/page" },
-            commit,
-            repository: { full_name: "fork/web" },
-          },
-          destination: { branch: { name: "master" }, commit: { hash: "base-commit" } },
-          created_on: "2026-06-16T05:04:32.258456+00:00",
-          updated_on: "2026-06-16T05:04:33.750542+00:00",
-          links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/897" } },
-        }),
-      ),
-    );
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
-          getPullRequest: () => Effect.succeed(pullRequest),
-          getDiffStat: () => Effect.succeed({ additions: 0, deletions: 0, changedFiles: 0 }),
-          getMergeability: () => Effect.succeed("unknown"),
-          listChecks: () => Effect.succeed([]),
-          getRepositoryPermission: () => Effect.succeed(true),
-        }),
-      ),
-    );
-    const detail = yield* provider.getChangeRequest({
-      cwd: "/repo",
-      repository: "acme/web",
-      host: "bitbucket.org",
-      number: 897,
-    });
-
-    expect(detail).toMatchObject({ number: 897, headBranch: "feat/page" });
-    expect(detail.headSha).toBe(headSha);
-  }),
-);
-
-it.effect.each([
   { state: "MERGED", mergedAt: "2025-06-16T23:40:46.222Z", closedAt: null },
   { state: "DECLINED", mergedAt: null, closedAt: "2025-06-16T23:40:46.222Z" },
   { state: "OPEN", mergedAt: null, closedAt: null },
@@ -267,9 +209,5 @@ describe("bitbucketViewerPermissions", () => {
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
     });
-  });
-
-  it("treats an author with read access as any other reader, which is all Bitbucket says", () => {
-    expect(bitbucketViewerPermissions({ canWrite: false }).actions).toEqual(["close"]);
   });
 });

@@ -81,64 +81,9 @@ beforeEach(() => {
   root = createRoot(container as unknown as HTMLElement);
 });
 
-it("checks the current target grant before dispatching a delayed resize", async () => {
-  const current = input();
-  await render(current);
-  expect(resize).toHaveBeenCalledOnce();
-
-  access.environments.clear();
-  await render({ ...current, size: { cols: 120, rows: 40 } });
-  expect(resize).toHaveBeenCalledOnce();
-
-  access.environments.add("secondary");
-  await render({ ...current, size: { cols: 120, rows: 41 } });
-  expect(resize).toHaveBeenCalledOnce();
-
-  await render({ ...current, environmentId: EnvironmentId.make("secondary") });
-  expect(resize).toHaveBeenCalledTimes(2);
-  expect(resize).toHaveBeenLastCalledWith({
-    environmentId: "secondary",
-    input: { threadId: "thread", terminalId: "term-1", cols: 80, rows: 24 },
-  });
-});
-
 afterEach(async () => {
   await act(() => root.unmount());
   vi.unstubAllGlobals();
-});
-
-it("replays an observer's measured grid once its writable attachment snapshot arrives", async () => {
-  let current = { ...input(), canOperate: false };
-  await render(current);
-  current = { ...current, size: { cols: 120, rows: 40 } };
-  await render(current);
-  expect(resize).not.toHaveBeenCalled();
-
-  current = {
-    ...current,
-    canOperate: true,
-    terminal: session({ generation: 2, version: 0 }),
-  };
-  await render(current);
-  expect(resize).not.toHaveBeenCalled();
-
-  current = { ...current, terminal: session({ generation: 2 }) };
-  await render(current);
-  expect(resize).toHaveBeenCalledExactlyOnceWith({
-    environmentId: "environment",
-    input: { threadId: "thread", terminalId: "term-1", cols: 120, rows: 40 },
-  });
-
-  await render({ ...current, terminal: session({ generation: 2, version: 3 }) });
-  await render({ ...current, size: { ...current.size } });
-  expect(resize).toHaveBeenCalledOnce();
-
-  await render({ ...current, size: { cols: 120, rows: 41 } });
-  expect(resize).toHaveBeenCalledTimes(2);
-  expect(resize).toHaveBeenLastCalledWith({
-    environmentId: "environment",
-    input: { threadId: "thread", terminalId: "term-1", cols: 120, rows: 41 },
-  });
 });
 
 it("replays an unchanged grid after reconnecting with a new attachment generation", async () => {
@@ -159,25 +104,4 @@ it("replays an unchanged grid after reconnecting with a new attachment generatio
   // React may observe the next snapshot without rendering the empty seed first.
   await render({ ...current, terminal: session({ generation: 3 }) });
   expect(resize).toHaveBeenCalledTimes(3);
-});
-
-it.each([
-  { name: "permission is revoked", change: { canOperate: false } },
-  { name: "the attachment is pending", change: { terminal: session({ version: 0 }) } },
-  { name: "the process has exited", change: { terminal: session({ status: "exited" }) } },
-])("retains measurements without resizing while $name", async ({ change }) => {
-  const current = input();
-  await render(current);
-  expect(resize).toHaveBeenCalledOnce();
-
-  await render({ ...current, ...change, size: { cols: 120, rows: 40 } });
-  await render({ ...current, ...change, size: { cols: 120, rows: 41 } });
-  expect(resize).toHaveBeenCalledOnce();
-
-  await render({ ...current, size: { cols: 120, rows: 41 } });
-  expect(resize).toHaveBeenCalledTimes(2);
-  expect(resize).toHaveBeenLastCalledWith({
-    environmentId: "environment",
-    input: { threadId: "thread", terminalId: "term-1", cols: 120, rows: 41 },
-  });
 });

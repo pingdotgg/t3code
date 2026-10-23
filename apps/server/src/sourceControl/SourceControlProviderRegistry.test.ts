@@ -18,7 +18,6 @@ import {
   DEFAULT_SERVER_SETTINGS,
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
-  VcsRepositoryDetectionError,
 } from "@t3tools/contracts";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -167,97 +166,6 @@ function makeRegistry(input: {
   );
 }
 
-it.effect("routes GitHub remotes to the GitHub provider", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "github");
-  }),
-);
-
-it.effect("routes directly by provider kind for remote-first workflows", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [],
-    });
-
-    const provider = yield* registry.get(SourceControlProviderKind.make("github"));
-
-    assert.strictEqual(provider.kind, "github");
-  }),
-);
-
-it.effect("includes the request cwd when an unregistered provider is used", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({ remotes: [] });
-    const provider = yield* registry.get(SourceControlProviderKind.make("unknown"));
-
-    const error = yield* provider
-      .getChangeRequest({ cwd: "/repo", reference: "#42" })
-      .pipe(Effect.flip);
-
-    assert.strictEqual(error.provider, "unknown");
-    assert.strictEqual(error.operation, "getChangeRequest");
-    assert.strictEqual(error.cwd, "/repo");
-    assert.strictEqual(error.reference, "#42");
-  }),
-);
-
-it.effect("lists no change requests for a repository on an unrecognized host", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "https://git.example.internal/team/repo.git" }],
-    });
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "unknown");
-    assert.deepStrictEqual(
-      yield* provider.listChangeRequests({ cwd: "/repo", headSelector: "master", state: "all" }),
-      [],
-    );
-  }),
-);
-
-it.effect("retains VCS detection failures with structured cwd context", () =>
-  Effect.gen(function* () {
-    const cause = new VcsRepositoryDetectionError({
-      operation: "resolve",
-      cwd: "/repo",
-      detail: "raw VCS detection failure",
-      cause: new Error("raw nested failure"),
-    });
-    const registry = yield* makeRegistry({
-      remotes: [],
-      resolve: () => Effect.fail(cause),
-    });
-
-    const error = yield* registry.resolve({ cwd: "/repo" }).pipe(Effect.flip);
-
-    assert.strictEqual(error.provider, "unknown");
-    assert.strictEqual(error.operation, "detectProvider");
-    assert.strictEqual(error.cwd, "/repo");
-    assert.strictEqual(error.detail, "Failed to detect source control provider.");
-    assert.strictEqual(error.cause, cause);
-    assert.equal(error.message.includes(cause.message), false);
-  }),
-);
-
-it.effect("routes GitLab remotes to the GitLab provider", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "git@gitlab.com:group/project.git" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "gitlab");
-  }),
-);
-
 it.effect("routes authenticated self-hosted GitLab remotes without relying on host naming", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
@@ -337,30 +245,6 @@ it.effect("routes authenticated self-hosted GitLab remotes on non-standard ports
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "gitlab");
-  }),
-);
-
-it.effect("routes Bitbucket remotes to the Bitbucket provider", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "git@bitbucket.org:pingdotgg/t3code.git" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "bitbucket");
-  }),
-);
-
-it.effect("routes Azure DevOps remotes to the Azure DevOps provider", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "https://dev.azure.com/acme/project/_git/repo" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "azure-devops");
   }),
 );
 

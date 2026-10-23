@@ -6,6 +6,15 @@ export function isUncPath(value: string): boolean {
   return value.startsWith("\\\\");
 }
 
+/**
+ * Windows treats `/` and `\` alike, so any two leading separators name a UNC
+ * or device path. Touching one makes Windows sign in to that host with the
+ * user's NTLM credentials, so agent-authored paths must not reach one.
+ */
+export function isNetworkPath(value: string): boolean {
+  return /^[\\/]{2}/.test(value);
+}
+
 export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
@@ -98,7 +107,15 @@ export function workspaceRelativeFilePath(
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  return normalizedPath.slice(normalizedRoot.length + 1);
+  const relativePath = normalizedPath.slice(normalizedRoot.length + 1);
+  // `/repo/../x` starts with the root but escapes it; the server rejects that as a workspace path.
+  let depth = 0;
+  for (const segment of relativePath.split("/")) {
+    if (segment === "..") depth -= 1;
+    else if (segment.length > 0 && segment !== ".") depth += 1;
+    if (depth < 0) return null;
+  }
+  return relativePath;
 }
 
 export function isAbsolutePath(value: string): boolean {

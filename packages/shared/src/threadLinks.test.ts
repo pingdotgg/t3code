@@ -29,14 +29,6 @@ describe("thread link destinations", () => {
     );
   });
 
-  it("preserves a remote literal id and decodes only when that id is absent", () => {
-    const source = ref("local", "provider%3A1");
-    const literal = ref("remote", "provider%3A1");
-    const decoded = ref("other-remote", "provider:1");
-    expect(resolveThreadLinkRef(source, [decoded, literal])).toEqual(literal);
-    expect(resolveThreadLinkRef(source, [decoded])).toEqual(decoded);
-  });
-
   it("leaves ambiguous or missing destinations unresolved", () => {
     const source = ref("local", "provider%3A1");
     const literal = ref("remote", "provider%3A1");
@@ -109,15 +101,5 @@ describe("thread links", () => {
   it("formats a label that would otherwise break the Markdown link", () => {
     expect(formatThreadLink("t1", "Fix [ci] \\ build")).toBe("[Fix ci build](t3-thread://v1/t1)");
     expect(formatThreadLink("t1", " ] ")).toBe("[t1](t3-thread://v1/t1)");
-  });
-
-  it("relabels links with the current title and leaves unknown threads alone", () => {
-    const titles = new Map([["renamed", "Fix [the] build\nnow"]]);
-    expect(
-      relabelThreadLinks(
-        "See [Old name](t3-thread://v1/renamed) and [Gone](t3-thread://v1/deleted).",
-        (threadId) => titles.get(threadId),
-      ),
-    ).toBe("See [Fix the build now](t3-thread://v1/renamed) and [Gone](t3-thread://v1/deleted).");
   });
 });

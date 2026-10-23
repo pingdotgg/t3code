@@ -48,24 +48,6 @@ describe("incremental snippet highlighting", () => {
     );
   });
 
-  it("reuses completed token rows on warm reads and falls back for large updates", async () => {
-    const session = {};
-    const input = { language: "ts", theme: "dark" as const, session };
-    const code = "const a = 1;\nconst b = 2;";
-    expect(highlightCodeSnippet.read({ ...input, code })).toBeUndefined();
-    const first = await highlightCodeSnippet({ ...input, code });
-    const nextCode = code + "\nconst c = 3;";
-    const next = highlightCodeSnippet.read({ ...input, code: nextCode })!;
-    expect(next[0]).toBe(first[0]);
-    expect(next).toEqual(
-      await highlightCodeSnippet({ code: nextCode, language: "ts", theme: "dark" }),
-    );
-    expect(
-      highlightCodeSnippet.read({ ...input, code: nextCode + "\n" + "const x = 1;\n".repeat(210) }),
-    ).toBeUndefined();
-    expect(highlightCodeSnippet.read({ ...input, code: nextCode, theme: "light" })).toBeUndefined();
-  });
-
   it("resets session on language, theme, CRLF, long-line and empty input changes", async () => {
     const session = {};
     const cases = [

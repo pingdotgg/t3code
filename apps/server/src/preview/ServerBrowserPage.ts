@@ -18,7 +18,7 @@ import {
   type PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
-import type { CDPSession, Frame, Locator, Page } from "playwright-core";
+import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
 
@@ -149,6 +149,54 @@ const SNAPSHOT_SCRIPT = `(() => {
 })()`;
 
 const MASKED_VALUE = "••••••••";
+
+/**
+ * A `data:` URL carries its content, which can be a whole file, and URLs and diagnostics
+ * reach tool results and provider logs. Keeps only the media type: the payload can hold any
+ * character and parameters are page-chosen too.
+ */
+export const withoutDataPayload = (url: string) => {
+  // Read the scheme as a browser would: it ignores leading controls and spaces, and tabs and
+  // newlines anywhere. A snapshot's YAML value may be quoted and escaped; an escape that isn't a
+  // tab or newline still decodes to something that can't start a scheme.
+  const value = url
+    .replace(/^["']/, "")
+    .replace(/\\(x[\da-f]{2}|u[\da-f]{4}|.)/gi, (_escape, code: string) =>
+      code.length > 1
+        ? String.fromCharCode(Number.parseInt(code.slice(1), 16))
+        : ({ t: "\t", n: "\n", r: "\r", '"': '"', "\\": "\\" }[code] ?? "\u0001"),
+    )
+    .replace(/[\t\n\r]/g, "")
+    // eslint-disable-next-line no-control-regex -- URL parsing ignores these controls.
+    .replace(/^[\u0000-\u0020]+/, "");
+  const parsed = /^data:([^,;]*)/i.exec(value);
+  if (!parsed) return url;
+  const type = parsed[1]!.trim();
+  const mediaType = /^[\w.+-]{1,64}\/[\w.+-]{1,64}$/.test(type) ? type : "";
+  return `data:${mediaType},…`;
+};
+
+/**
+ * Chromium's own console messages, which carry no arguments, quote `data:` URLs whole, as in a
+ * blocked navigation or a CSP violation. Everything after the first one goes, since Chromium
+ * accepts any type and a payload can hold any character. What a page logs itself is its own
+ * text, like anything else it shows, so it stays.
+ */
+export const consoleText = (message: ConsoleMessage) =>
+  message.args().length > 0
+    ? message.text()
+    : message.text().replace(/(?<![a-z\d])data:[^,;]*[,;][\s\S]*/i, withoutDataPayload);
+
+// Split on LF alone: a value keeps any U+2028 that a multiline regex would treat as a line end.
+const withoutTreeDataPayloads = (tree: string) =>
+  tree
+    .split("\n")
+    .map((line) => {
+      const url = /^(\s*- \/url: )(.*)$/s.exec(line);
+      return url ? url[1] + withoutDataPayload(url[2]!) : line;
+    })
+    .join("\n");
+
 // The broker waits 15s for the host; a snapshot, retry included, answers well before.
 const SNAPSHOT_TIMEOUT_MS = 10_000;
 // How long a frame in another process gets to answer; one that crashed never does.
@@ -385,7 +433,7 @@ type Viewport = { readonly width: number; readonly height: number };
  * A page's display ratio and CSS viewport, read in an isolated world since page script can
  * reassign `devicePixelRatio`, `innerWidth`, and `innerHeight` in its own, and its page zoom.
  */
-export const readPageMetrics = async (cdp: CDPSession) => {
+const readPageMetrics = async (cdp: CDPSession) => {
   const { frameTree } = await cdp.send("Page.getFrameTree");
   const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
     frameId: frameTree.frame.id,
@@ -534,7 +582,10 @@ const capture = async (
   const [page, data] = await pageAndScreenshot;
   if (state.generation !== generation) throw pageChanged();
   const mask = (text: string) => (dotted ? text.replace(dotted, MASKED_VALUE) : text);
-  const accessibilityTree = (dotted ? maskTree(tree, dotted) : tree)
+  // Redacted before the cut, so a payload crossing it can't leave its start showing, and before
+  // masking, which could hide the `data:` scheme behind a password value's dots.
+  const redacted = withoutTreeDataPayloads(tree);
+  const accessibilityTree = (dotted ? maskTree(redacted, dotted) : redacted)
     .slice(0, MAX_VISIBLE_TEXT_LENGTH)
     .replace(/\[ref=((?:f\d+)?e\d+)\]/g, (_match, nativeRef: string) => {
       const ref = `t3-${generation}-${nativeRef}`;

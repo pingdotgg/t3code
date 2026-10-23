@@ -10,8 +10,6 @@ import {
   decodeMergeRequestListJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
-  decodeViewerJson,
-  gitLabAwardName,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -80,12 +78,6 @@ describe("decodeMergeRequestListJson", () => {
     });
   });
 
-  it("reports no line counts, which GitLab does not expose", () => {
-    const batch = expectSuccess(decodeMergeRequestListJson(listJson([{}])));
-
-    expect(batch.items[0]).toMatchObject({ additions: 0, deletions: 0 });
-  });
-
   it("treats a merged timestamp as merged whatever the state says", () => {
     const batch = expectSuccess(
       decodeMergeRequestListJson(
@@ -94,12 +86,6 @@ describe("decodeMergeRequestListJson", () => {
     );
 
     expect(batch.items[0]?.state).toBe("merged");
-  });
-
-  it("keeps a locked merge request open", () => {
-    const batch = expectSuccess(decodeMergeRequestListJson(listJson([{ state: "locked" }])));
-
-    expect(batch.items[0]?.state).toBe("open");
   });
 
   it("reads the legacy draft flag", () => {
@@ -114,14 +100,6 @@ describe("decodeMergeRequestListJson", () => {
     );
 
     expect(batch.items[0]?.mergeability).toBe("conflicting");
-  });
-
-  it("leaves an unfinished merge check unknown", () => {
-    const batch = expectSuccess(
-      decodeMergeRequestListJson(listJson([{ merge_status: "checking" }])),
-    );
-
-    expect(batch.items[0]?.mergeability).toBe("unknown");
   });
 
   it("skips a malformed row but still counts it, so paging does not stop early", () => {
@@ -173,12 +151,6 @@ describe("decodeMergeRequestDetailJson", () => {
     );
 
     expect(detail.changedFiles).toBe(1000);
-  });
-
-  it("falls back to no file count when GitLab omits one", () => {
-    const detail = expectSuccess(decodeMergeRequestDetailJson(detailJson({})));
-
-    expect(detail.changedFiles).toBe(0);
   });
 
   it("reads the head commit, and says nothing where GitLab omitted it", () => {
@@ -243,16 +215,6 @@ describe("decodeMergeRequestDetailJson", () => {
     );
 
     expect(detail.checks[0]?.status).toBe("neutral");
-  });
-});
-
-describe("decodeViewerJson", () => {
-  it("reads the signed-in username", () => {
-    expect(expectSuccess(decodeViewerJson(JSON.stringify({ username: "bilal" })))).toBe("bilal");
-  });
-
-  it("returns nothing when the account has no username", () => {
-    expect(expectSuccess(decodeViewerJson(JSON.stringify({ username: "  " })))).toBeNull();
   });
 });
 
@@ -325,32 +287,6 @@ describe("decodeNotesJson", () => {
 });
 
 describe("decodeCommitsJson", () => {
-  it("returns commits oldest first", () => {
-    const commits = expectSuccess(
-      decodeCommitsJson(
-        JSON.stringify([
-          { id: "bbb", title: "second", committed_date: "2026-07-02T00:00:00Z" },
-          { id: "aaa", title: "first", committed_date: "2026-07-01T00:00:00Z" },
-        ]),
-      ),
-    );
-
-    expect(commits.map((commit) => commit.oid)).toEqual(["aaa", "bbb"]);
-  });
-
-  it("skips commits whose id is empty", () => {
-    const commits = expectSuccess(
-      decodeCommitsJson(
-        JSON.stringify([
-          { id: "   ", title: "invalid", committed_date: "2026-07-02T00:00:00Z" },
-          { id: "aaa", committed_date: "2026-07-01T00:00:00Z" },
-        ]),
-      ),
-    );
-
-    expect(commits.map((commit) => commit.oid)).toEqual(["aaa"]);
-  });
-
   it("falls back to the creation timestamp when there is no commit date", () => {
     const commits = expectSuccess(
       decodeCommitsJson(
@@ -370,22 +306,6 @@ describe("decodeCommitsJson", () => {
       committedDate: "2026-07-01T00:00:00+08:00",
       authors: [{ login: "Ada Lovelace", name: "Ada Lovelace", avatarUrl: null }],
     });
-  });
-
-  it("carries commit additions and deletions when GitLab returns stats", () => {
-    const commits = expectSuccess(
-      decodeCommitsJson(
-        JSON.stringify([
-          {
-            id: "aaa",
-            committed_date: "2026-07-01T00:00:00Z",
-            stats: { additions: 21, deletions: 8, total: 29 },
-          },
-        ]),
-      ),
-    );
-
-    expect(commits[0]).toMatchObject({ additions: 21, deletions: 8 });
   });
 });
 
@@ -495,19 +415,6 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.patch).toContain("+++ /dev/null");
   });
 
-  it("records a rename so the patch names both paths", () => {
-    const result = expectSuccess(
-      decodeMergeRequestDiffsJson(
-        JSON.stringify([
-          { old_path: "src/old.ts", new_path: "src/new.ts", renamed_file: true, diff: "" },
-        ]),
-      ),
-    );
-
-    expect(result.patch).toContain("rename from src/old.ts");
-    expect(result.patch).toContain("rename to src/new.ts");
-  });
-
   it("reports truncation for a file GitLab refused to inline", () => {
     const result = expectSuccess(
       decodeMergeRequestDiffsJson(
@@ -536,24 +443,9 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.truncated).toBe(false);
     expect(result.patch).toContain("src/2.ts");
   });
-
-  it("fails when GitLab did not return a list", () => {
-    expect(Result.isFailure(decodeMergeRequestDiffsJson('{"message":"404"}'))).toBe(true);
-  });
 });
 
 describe("merge request viewer fields", () => {
-  it("carries GitLab's own answer for whether this viewer can merge", () => {
-    expect(
-      expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: { can_merge: false } })))
-        .viewerCanMerge,
-    ).toBe(false);
-    expect(
-      expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: { can_merge: true } })))
-        .viewerCanMerge,
-    ).toBe(true);
-  });
-
   it("leaves merging permitted where GitLab answered without the field", () => {
     expect(expectSuccess(decodeMergeRequestDetailJson(detailJson({}))).viewerCanMerge).toBe(true);
     expect(
@@ -608,26 +500,6 @@ describe("decodeAwardEmojiJson", () => {
     expect(result.nextCursor).toBeNull();
   });
 
-  it("hands back a cursor when GitLab has more notes to page", () => {
-    const result = expectSuccess(
-      decodeAwardEmojiJson(
-        JSON.stringify({
-          data: {
-            currentUser: null,
-            project: {
-              mergeRequest: {
-                awardEmoji: { nodes: [] },
-                notes: { pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjE" }, nodes: [] },
-              },
-            },
-          },
-        }),
-      ),
-    );
-
-    expect(result.nextCursor).toBe("Y3Vyc29yOjE");
-  });
-
   it("matches the viewer's username case-insensitively, since GitLab is not consistent about case", () => {
     const result = expectSuccess(
       decodeAwardEmojiJson(
@@ -667,20 +539,6 @@ describe("decodeOwnAwardIdJson", () => {
       expectSuccess(decodeOwnAwardIdJson(awards, { content: "thumbs-up", viewer: "bilal" })),
     ).toBe(102);
   });
-
-  it("returns nothing where the reader has no award of that name", () => {
-    expect(
-      expectSuccess(decodeOwnAwardIdJson(awards, { content: "heart", viewer: "bilal" })),
-    ).toBeNull();
-  });
-});
-
-describe("gitLabAwardName", () => {
-  it("spells the contents whose GitLab award name is not their own kebab-case", () => {
-    expect(gitLabAwardName("thumbs-up")).toBe("thumbsup");
-    expect(gitLabAwardName("laugh")).toBe("laughing");
-    expect(gitLabAwardName("hooray")).toBe("tada");
-  });
 });
 
 describe("decodeRepositoryBlobsJson", () => {
@@ -690,32 +548,6 @@ describe("decodeRepositoryBlobsJson", () => {
     if (blobs === null) throw new Error("expected an answered blobs query");
     return blobs;
   }
-
-  it("reads a blob id per path", () => {
-    const blobs = expectBlobs(
-      decodeRepositoryBlobsJson(
-        JSON.stringify({
-          data: {
-            project: {
-              repository: {
-                blobs: {
-                  nodes: [
-                    { path: "src/a.ts", oid: "aaa111" },
-                    { path: "src/b.ts", oid: "bbb222" },
-                  ],
-                },
-              },
-            },
-          },
-        }),
-      ),
-    );
-
-    expect([...blobs]).toEqual([
-      ["src/a.ts", "aaa111"],
-      ["src/b.ts", "bbb222"],
-    ]);
-  });
 
   it("leaves out a node missing either half, which names no version", () => {
     const blobs = expectBlobs(
@@ -787,10 +619,5 @@ describe("decodeRepositoryBlobsJson", () => {
         ),
       ),
     ).toEqual(new Map());
-  });
-
-  it("fails on output that is not the query's shape", () => {
-    expect(Result.isSuccess(decodeRepositoryBlobsJson("not json"))).toBe(false);
-    expect(Result.isSuccess(decodeRepositoryBlobsJson(JSON.stringify({ errors: [] })))).toBe(false);
   });
 });

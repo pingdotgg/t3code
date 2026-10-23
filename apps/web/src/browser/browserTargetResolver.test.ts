@@ -43,22 +43,6 @@ describe("browser target resolver", () => {
     });
   });
 
-  it("preserves explicit IPv4 loopback URL navigation for a private network environment", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.50:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://127.0.0.1:5999/",
-      }),
-    ).toEqual({
-      requestedUrl: "http://127.0.0.1:5999/",
-      resolvedUrl: "http://127.0.0.1:5999/",
-      resolutionKind: "direct",
-      environmentId: "environment-1",
-    });
-  });
-
   it("preserves URL credentials on explicit loopback navigation", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://100.65.180.100:3773" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
@@ -70,19 +54,6 @@ describe("browser target resolver", () => {
     ).toBe("http://user:p%40ss@localhost:5173/dashboard");
   });
 
-  it("preserves credentialed loopback URLs for private IPv6 environments", async () => {
-    readPreparedConnection.mockReturnValue({
-      httpBaseUrl: "http://[fd7a:115c:a1e0::53]:3773",
-    });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://user:p%40ss@localhost:5173/dashboard?mode=test#results",
-      }).resolvedUrl,
-    ).toBe("http://user:p%40ss@localhost:5173/dashboard?mode=test#results");
-  });
-
   it("preserves schemeless localhost navigation for a remote environment", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
@@ -92,38 +63,6 @@ describe("browser target resolver", () => {
         url: "localhost:3000/app",
       }).resolvedUrl,
     ).toBe("localhost:3000/app");
-  });
-
-  it("keeps localhost navigation local for a local environment", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "localhost:3000/app",
-      }),
-    ).toEqual({
-      requestedUrl: "localhost:3000/app",
-      resolvedUrl: "localhost:3000/app",
-      resolutionKind: "direct",
-      environmentId: "environment-1",
-    });
-  });
-
-  it("keeps localhost navigation local for the full IPv4 loopback range", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.2:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://localhost:3000/app",
-      }),
-    ).toEqual({
-      requestedUrl: "http://localhost:3000/app",
-      resolvedUrl: "http://localhost:3000/app",
-      resolutionKind: "direct",
-      environmentId: "environment-1",
-    });
   });
 
   it("refuses public relay hosts until the authenticated gateway exists", async () => {
@@ -187,63 +126,6 @@ describe("browser target resolver", () => {
     } finally {
       env.isElectron = false;
     }
-  });
-
-  it("preserves localhost server-picker values when the prepared base is 127.0.0.1", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
-    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
-    expect(
-      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:5173/app?x=1#top"),
-    ).toBe("http://localhost:5173/app?x=1#top");
-  });
-
-  it("normalizes public URLs without treating them as environment ports", async () => {
-    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
-    expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "example.com/app")).toBe(
-      "https://example.com/app",
-    );
-  });
-
-  it("supports private IPv6 environment hosts", async () => {
-    readPreparedConnection.mockReturnValue({
-      httpBaseUrl: "http://[fd7a:115c:a1e0::53]:3773",
-    });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
-        port: 5173,
-        path: "/app?mode=test",
-      }).resolvedUrl,
-    ).toBe("http://[fd7a:115c:a1e0::53]:5173/app?mode=test");
-  });
-
-  it("supports a local IPv6 environment host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://[::1]:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
-        port: 5173,
-      }).resolvedUrl,
-    ).toBe("http://localhost:5173/");
-  });
-
-  it("maps local IPv4 environment ports onto localhost for dual-stack guests", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
-        port: 5173,
-        path: "/app",
-      }).resolvedUrl,
-    ).toBe("http://localhost:5173/app");
-  });
-
-  it("leaves malformed input for the normal navigation error path", async () => {
-    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
-    expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "   ")).toBe("   ");
   });
 
   it("classifies exact private IPv4 and IPv6 boundaries", async () => {

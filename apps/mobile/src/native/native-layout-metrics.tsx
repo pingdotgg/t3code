@@ -1,6 +1,6 @@
 import { createContext, use, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
-import { deriveDeviceType, type DeviceType } from "../lib/device-type";
+import { deriveDeviceType, isDuoDevice, type DeviceType } from "../lib/device-type";
 import type { NativeLayoutMetrics } from "../lib/reserved-regions";
 import { NativeLayoutObserver } from "./NativeLayoutObserver";
 
@@ -37,4 +37,17 @@ export function useNativeColumnLayoutMetrics() {
 
 export function useDeviceType() {
   return use(DeviceTypeContext);
+}
+
+/**
+ * Where the Duo's floating bottom controls end in this column. Its tab bar floats below the safe
+ * area, and the controls beside it sit on the same line.
+ */
+export function useDuoBottomBarInset() {
+  const deviceType = useDeviceType();
+  const metrics = use(NativeColumnLayoutMetricsContext);
+  // Sheets have no rail to align with and can report zero for the bar region.
+  // Their controls must keep using the sheet's bottom safe area.
+  const inset = metrics?.bottomBarInset;
+  return isDuoDevice(deviceType) && inset !== undefined && inset > 0 ? inset : undefined;
 }

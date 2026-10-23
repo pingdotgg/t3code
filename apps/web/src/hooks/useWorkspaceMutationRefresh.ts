@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export function workspaceMutationRefreshToken(
+function workspaceMutationRefreshToken(
   resourceKey: string,
   mutationId: string | null,
 ): string | null {

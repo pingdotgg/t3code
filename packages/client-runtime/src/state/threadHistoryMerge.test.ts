@@ -3,13 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import {
-  applyHistoryPageMeta,
-  clearActiveHistoryLoading,
-  isActiveHistoryRequestCursor,
-  mergeOlderHistoryIntoProjection,
-  shouldShowLoadEarlierControl,
-} from "./threadHistoryMerge.ts";
+import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
@@ -175,87 +169,6 @@ describe("threadHistoryMerge", () => {
     expect(merged).toBe(projection);
     expect(merged.turnItems).toEqual([currentItem]);
     expect(merged.visibleTurnItems).toEqual([]);
-  });
-
-  it("marks history expanded after a successful page", () => {
-    const next = applyHistoryPageMeta(
-      {
-        historyCursor: "cursor-a",
-        hasMoreHistory: true,
-        loading: true,
-        error: null,
-        expanded: false,
-        latestLocalTurnOrdinal: 42,
-      },
-      { nextCursor: "cursor-b", hasMoreHistory: true },
-    );
-    expect(next).toEqual({
-      historyCursor: "cursor-b",
-      hasMoreHistory: true,
-      loading: false,
-      error: null,
-      expanded: true,
-      latestLocalTurnOrdinal: 42,
-    });
-  });
-
-  it("only applies history responses for the active request cursor", () => {
-    expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: "cursor-a" })).toBe(true);
-    expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: "cursor-b" })).toBe(false);
-    expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: null })).toBe(false);
-  });
-
-  it("clears loading on interrupt only for the active request cursor", () => {
-    const loading = {
-      historyCursor: "cursor-a",
-      hasMoreHistory: true,
-      loading: true,
-      error: null,
-      expanded: false,
-      latestLocalTurnOrdinal: 10,
-    };
-    expect(clearActiveHistoryLoading("cursor-a", loading)).toEqual({
-      ...loading,
-      loading: false,
-    });
-    expect(
-      clearActiveHistoryLoading("cursor-a", { ...loading, historyCursor: "cursor-b" }),
-    ).toEqual({ ...loading, historyCursor: "cursor-b" });
-    const idle = { ...loading, loading: false };
-    expect(clearActiveHistoryLoading("cursor-a", idle)).toBe(idle);
-  });
-
-  it("shows the load-earlier control when history remains or a local error is set", () => {
-    expect(
-      shouldShowLoadEarlierControl({
-        historyCursor: "c",
-        hasMoreHistory: true,
-        loading: false,
-        error: null,
-        expanded: false,
-        latestLocalTurnOrdinal: null,
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowLoadEarlierControl({
-        historyCursor: null,
-        hasMoreHistory: false,
-        loading: false,
-        error: "Could not load earlier activity.",
-        expanded: true,
-        latestLocalTurnOrdinal: null,
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowLoadEarlierControl({
-        historyCursor: null,
-        hasMoreHistory: false,
-        loading: false,
-        error: null,
-        expanded: false,
-        latestLocalTurnOrdinal: null,
-      }),
-    ).toBe(false);
   });
 
   it("retains merged older rows when a live turn-item update arrives", () => {

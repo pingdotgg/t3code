@@ -97,7 +97,7 @@ export interface AntigravityAuthConfig {
   readonly gcpLocation: string;
 }
 
-export const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
+const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
   authMethod: "oauth-personal",
   apiKey: "",
   gcpProject: "",
@@ -142,7 +142,7 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
  * `auth.type` names the selected method so a native logout clears only that method's credentials
  * instead of every stored token. Never holds a credential.
  */
-export function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
+function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
   const gcp = {
     ...(auth.gcpProject ? { project: auth.gcpProject } : {}),
     ...(auth.gcpLocation ? { location: auth.gcpLocation } : {}),

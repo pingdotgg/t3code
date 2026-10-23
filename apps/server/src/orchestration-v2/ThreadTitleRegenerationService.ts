@@ -115,6 +115,7 @@ const make = Effect.gen(function* () {
         message: context.message,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
+        instructions: settings.threadTitleInstructions,
         modelSelection: settings.textGenerationModelSelection,
       });
       const generatedTitle = result.title.trim();

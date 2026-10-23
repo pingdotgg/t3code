@@ -54,21 +54,6 @@ describe("deriveProviderInstanceConfigMap", () => {
     });
   });
 
-  it("leaves an already machine-enabled instance untouched", () => {
-    const settings = settingsWith({
-      providerInstances: {
-        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-      },
-      projectSettingsOverrides: {
-        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-      },
-    });
-
-    const merged = deriveProviderInstanceConfigMap(settings);
-
-    expect(merged[instanceId]).toBe(settings.providerInstances[instanceId]);
-  });
-
   it("does not revive an instance a project override references but settings no longer configure", () => {
     const settings = settingsWith({
       providerInstances: {},

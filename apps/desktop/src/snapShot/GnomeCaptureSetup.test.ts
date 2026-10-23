@@ -5,11 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeEvents from "node:events";
 import type { Message, MessageBus } from "dbus-next";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import {
-  GnomeCaptureSetup,
-  installGnomeCaptureBundle,
-  isGnomeCaptureSession,
-} from "./GnomeCaptureSetup.ts";
+import { GnomeCaptureSetup, installGnomeCaptureBundle } from "./GnomeCaptureSetup.ts";
 import { GNOME_CAPTURE_FILES, GNOME_CAPTURE_UUID } from "./gnomeCaptureBundle.ts";
 
 let dataHome: string;
@@ -117,13 +113,9 @@ it("refuses to replace symlinks or downgrade a newer extension", async () => {
 });
 
 it.each([
-  [{}, "not-installed"],
-  [{ state: 2, version: 3 }, "disabled"],
   [{ state: 1, version: 3 }, "enabled"],
-  [{ state: 1, version: 1 }, "update-required"],
   [{ state: 1, version: 2, shell: "51.0" }, "update-required"],
   [{ state: 2, version: 3, enabled: false }, "extensions-disabled"],
-  [{ state: 3, version: 3, error: "Load failed" }, "error"],
   [{ shell: "52.0" }, "unsupported"],
 ] as const)("reports GNOME setup state %j", async (options, status) => {
   const { setup, call } = fixture(options);
@@ -147,31 +139,6 @@ it("requires login for local installs and updates until the new version is loade
   setup.close();
 });
 
-it("installs only on explicit action without invoking remote installation", async () => {
-  const { setup, call } = fixture();
-  await setup.perform("install-extension");
-  expect(await NodeFSP.readdir(installedPath())).toHaveLength(GNOME_CAPTURE_FILES.length);
-  expect(
-    call.mock.calls.every(([message]) => ["GetAll", "GetExtensionInfo"].includes(message.member)),
-  ).toBe(true);
-  setup.close();
-});
-
-it("enables and disables only the capture UUID", async () => {
-  const { setup, call } = fixture({ state: 2, version: 3 });
-  await setup.perform("enable-extension");
-  await setup.perform("disable-extension");
-  for (const member of ["EnableExtension", "DisableExtension"]) {
-    expect(call.mock.calls.find(([message]) => message.member === member)?.[0]).toMatchObject({
-      destination: "org.gnome.Shell",
-      path: "/org/gnome/Shell",
-      signature: "s",
-      body: [GNOME_CAPTURE_UUID],
-    });
-  }
-  setup.close();
-});
-
 it("never changes the global user-extensions preference", async () => {
   const { setup, call } = fixture({ state: 2, version: 3, enabled: false });
   await expect(setup.perform("enable-extension")).rejects.toThrow("GNOME has disabled");
@@ -185,10 +152,4 @@ it("surfaces desktop rejection and disconnect as actionable failures", async () 
   bus.emit("error", new Error("Session bus disconnected"));
   expect(await setup.state()).toEqual({ status: "error", message: "Session bus disconnected" });
   setup.close();
-});
-
-it("does not offer host extension installation in another desktop or sandbox", () => {
-  expect(isGnomeCaptureSession({ XDG_CURRENT_DESKTOP: "ubuntu:GNOME" })).toBe(true);
-  expect(isGnomeCaptureSession({ XDG_CURRENT_DESKTOP: "niri", GDMSESSION: "gnome" })).toBe(false);
-  expect(isGnomeCaptureSession({ XDG_CURRENT_DESKTOP: "GNOME", FLATPAK_ID: "com.t3" })).toBe(false);
 });

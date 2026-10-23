@@ -30,6 +30,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -40,7 +41,6 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -307,7 +307,6 @@ function ReviewFileNavigator({
   onSelectFile,
   ref,
 }: ReviewFileNavigatorProps) {
-  const insets = useSafeAreaInsets();
   const theme = useUniwindTheme();
   const sheetColor = theme["--color-sheet"];
   const foregroundColor = theme["--color-foreground"];
@@ -359,15 +358,8 @@ function ReviewFileNavigator({
       data={files}
       extraData={selectedFileId}
       keyExtractor={(file) => file.id}
-      contentContainerStyle={{
-        paddingHorizontal: 8,
-        paddingBottom: 8,
-
-        paddingTop: Platform.OS === "ios" ? insets.top + IOS_NAV_BAR_HEIGHT + 8 : 8,
-      }}
-      scrollIndicatorInsets={
-        Platform.OS === "ios" ? { top: insets.top + IOS_NAV_BAR_HEIGHT } : undefined
-      }
+      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      contentContainerStyle={{ paddingHorizontal: 8, paddingVertical: 8 }}
       renderItem={renderFile}
     />
   );
@@ -384,7 +376,7 @@ function ReviewFileNavigator({
             scrollEdgeEffects={headerScrollEdgeEffects}
             style={{ backgroundColor: sheetColor, flex: 1 }}
           >
-            {fileList}
+            <NativeInspectorContent>{fileList}</NativeInspectorContent>
             <ScreenStackHeaderConfig
               backgroundColor="rgba(0,0,0,0)"
               color={foregroundColor}

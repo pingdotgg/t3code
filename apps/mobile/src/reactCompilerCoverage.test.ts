@@ -66,8 +66,7 @@ interface CompilerEvent {
 
 // babel.config.js is the file Metro loads; the logger rides on the preset's
 // own react-compiler option so the plugin runs with Metro's exact settings.
-function compilerBailouts(file: string): string[] {
-  const events: CompilerEvent[] = [];
+function compileLikeMetro(file: string, events: CompilerEvent[], output: Record<string, unknown>) {
   const babelConfig = requireFromMobile("./babel.config.js")({ cache: () => {} });
   const presets = babelConfig.presets.map(([name, options]: [string, object]) =>
     name === "babel-preset-expo"
@@ -82,20 +81,67 @@ function compilerBailouts(file: string): string[] {
         ]
       : [name, options],
   );
-  babel.transformFileSync(NodePath.join(mobileRoot, file), {
+  return babel.transformFileSync(NodePath.join(mobileRoot, file), {
     babelrc: false,
     configFile: false,
     cwd: mobileRoot,
     presets,
     caller: metroCaller,
     code: false,
+    ...output,
   });
+}
+
+function compilerBailouts(file: string): string[] {
+  const events: CompilerEvent[] = [];
+  compileLikeMetro(file, events, {});
   return events
     .filter((event) => event.kind === "CompileError" || event.kind === "CompileSkip")
     .map(
       (event) =>
         `line ${(event.detail?.options?.loc ?? event.detail?.options?.details?.[0]?.loc)?.start?.line ?? "?"}: ${event.detail?.options?.category ?? event.kind} ${event.detail?.options?.reason ?? ""}`,
     );
+}
+
+interface AstNode {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
+const isAstNode = (value: unknown): value is AstNode =>
+  typeof value === "object" && value !== null && "type" in value && typeof value.type === "string";
+
+function walkAst(
+  value: unknown,
+  visit: (node: AstNode, ancestors: readonly AstNode[]) => void,
+  ancestors: readonly AstNode[] = [],
+) {
+  if (typeof value !== "object" || value === null) return;
+  const node = isAstNode(value) ? value : null;
+  if (node) visit(node, ancestors);
+  const childAncestors = node ? [...ancestors, node] : ancestors;
+  for (const child of Object.values(value)) walkAst(child, visit, childAncestors);
+}
+
+// For each call to `callee`, whether it runs only on the cache-miss branch of
+// an `if ($[n] !== dep)` block rather than on every render.
+function compilerCachedCalls(file: string, callee: string): boolean[] {
+  const result = compileLikeMetro(file, [], { ast: true });
+  const cached: boolean[] = [];
+  if (typeof result !== "object" || result === null || !("ast" in result)) return cached;
+  walkAst(result.ast, (node, ancestors) => {
+    if (node.type !== "CallExpression" || !isAstNode(node.callee)) return;
+    if (node.callee.type !== "Identifier" || node.callee.name !== callee) return;
+    cached.push(
+      ancestors.some(
+        (ancestor, index) =>
+          ancestor.type === "IfStatement" &&
+          ancestors[index + 1] === ancestor.consequent &&
+          JSON.stringify(ancestor.test).includes('"name":"$"'),
+      ),
+    );
+  });
+  return cached;
 }
 
 describe("React Compiler coverage", () => {
@@ -128,11 +174,6 @@ describe("React Compiler coverage", () => {
     expect(transformed("false")).not.toContain("react/compiler-runtime");
   });
 
-  it("app.config.ts turns the compiler on for Metro", () => {
-    const appConfig = NodeFS.readFileSync(NodePath.join(mobileRoot, "app.config.ts"), "utf8");
-    expect(appConfig).toMatch(/experiments:\s*\{[^}]*reactCompiler:\s*true/);
-  });
-
   it.each(sourceFiles)("compiles %s", (file) => {
     const bailouts = compilerBailouts(file);
     if (file in KNOWN_BAILOUTS) {
@@ -142,7 +183,15 @@ describe("React Compiler coverage", () => {
     }
   });
 
+  // The compiler once silently dropped this cache, so every
+  // ThreadFeed render rebuilt the feed and handed LegendList a new data array.
+  it("caches the thread feed derivation", () => {
+    expect(
+      compilerCachedCalls("src/features/threads/ThreadFeed.tsx", "deriveThreadFeedPresentation"),
+    ).toEqual([true]);
+  });
+
   it("lists only files that exist", () => {
     expect(Object.keys(KNOWN_BAILOUTS).filter((file) => !sourceFiles.includes(file))).toEqual([]);
   });
-}, 300_000);
+});

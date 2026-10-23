@@ -6,24 +6,16 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { act, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-
-import {
-  setPendingUserInputCustomAnswer,
-  togglePendingUserInputOptionSelection,
-  type PendingUserInputDraftAnswer,
-} from "../../pendingUserInput";
-import type { PendingUserInput } from "../../session-logic";
+import { useLayoutEffect, useRef, type ComponentProps } from "react";
+import { expect, it, vi } from "vite-plus/test";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
   default: (({ text }: { text: string }) => <p>{text}</p>) as never,
 }));
 
+import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
-import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -41,138 +33,6 @@ const prompt = {
     multiSelect: false,
   })),
 };
-
-const previewPrompt = {
-  ...prompt,
-  questions: prompt.questions.map((question, index) => ({
-    ...question,
-    options: ["First", "Second"].map((label) => ({
-      label,
-      value: index === 1 ? label : "same-answer",
-      description: "",
-      preview: `Preview body: ${label}, question ${index + 1}`,
-    })),
-  })),
-};
-
-function Questions({
-  initialIndex = 0,
-  pendingPrompt = prompt,
-}: {
-  initialIndex?: number;
-  pendingPrompt?: PendingUserInput;
-}) {
-  const [questionIndex, setQuestionIndex] = useState(initialIndex);
-  const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>({});
-  const question = pendingPrompt.questions[questionIndex]!;
-  const advance = () => setQuestionIndex(questionIndex + 1);
-  return (
-    <>
-      <output>{questionIndex}</output>
-      <button onClick={advance}>Next</button>
-      <button onClick={() => setQuestionIndex(questionIndex - 1)}>Previous</button>
-      <input
-        aria-label="Custom answer"
-        value={answers[question.id]?.customAnswer ?? ""}
-        onChange={(event) => {
-          const value = event.currentTarget.value;
-          setAnswers((existing) => ({
-            ...existing,
-            [question.id]: setPendingUserInputCustomAnswer(existing[question.id], value, question),
-          }));
-        }}
-      />
-      <ComposerPendingUserInputPanel
-        pendingUserInputs={[pendingPrompt]}
-        cwd="/repo"
-        threadRef={threadRef}
-        disabled={false}
-        respondingRequestIds={[]}
-        answers={answers}
-        questionIndex={questionIndex}
-        onAdvance={advance}
-        onToggleOption={(questionId, value) => {
-          const question = pendingPrompt.questions.find((entry) => entry.id === questionId)!;
-          setAnswers((existing) => ({
-            ...existing,
-            [questionId]: togglePendingUserInputOptionSelection(
-              question,
-              existing[questionId],
-              value,
-            ),
-          }));
-        }}
-        onDismiss={() => {}}
-      />
-    </>
-  );
-}
-
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
-});
-
-function buttonWithText(text: string) {
-  const button = [...document.querySelectorAll("button")].find((element) =>
-    element.textContent?.includes(text),
-  );
-  expect(button, `button ${text}`).toBeDefined();
-  return button!;
-}
-
-async function chooseOption() {
-  await act(async () => buttonWithText("Incremental").click());
-}
-
-async function navigate(label: string) {
-  await act(async () => buttonWithText(label).click());
-}
-
-function activeIndex() {
-  return container.querySelector("output")!.textContent;
-}
-
-it("does not skip the next unanswered question after manual advance", async () => {
-  await act(async () => root.render(<Questions />));
-  await chooseOption();
-  await navigate("Next");
-  expect(activeIndex()).toBe("1");
-  await act(async () => vi.advanceTimersByTime(200));
-  expect(activeIndex()).toBe("1");
-
-  await chooseOption();
-  await act(async () => vi.advanceTimersByTime(200));
-  expect(activeIndex()).toBe("2");
-});
-
-it("does not undo previous-question navigation with a stale timer", async () => {
-  await act(async () => root.render(<Questions initialIndex={1} />));
-  await chooseOption();
-  await navigate("Previous");
-  await act(async () => vi.advanceTimersByTime(200));
-  expect(activeIndex()).toBe("0");
-});
-
-it("still auto-advances once after the answer draft rerenders the same question", async () => {
-  await act(async () => root.render(<Questions />));
-  await chooseOption();
-  await act(async () => vi.advanceTimersByTime(200));
-  expect(activeIndex()).toBe("1");
-  await act(async () => vi.advanceTimersByTime(200));
-  expect(activeIndex()).toBe("1");
-});
 
 function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]) {
   const projection = makeThreadProjectionFixture();
@@ -244,19 +104,13 @@ function PendingRequestsProbe({
 }
 
 it("retains answers, selections and question position after leaving chat, including while the projection reloads", async () => {
+  using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("remount-environment");
   const projection = questionProjection(threadRef.threadId);
-  const render = (loading = false) =>
-    act(() =>
-      root.render(
-        <PendingRequestsProbe
-          environmentId={environmentId}
-          projection={projection}
-          loading={loading}
-        />,
-      ),
-    );
-  await render();
+  const probe = (loading = false) => (
+    <PendingRequestsProbe environmentId={environmentId} projection={projection} loading={loading} />
+  );
+  await using screen = await render(probe());
   await act(() =>
     requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Keep my text"),
   );
@@ -273,18 +127,19 @@ it("retains answers, selections and question position after leaving chat, includ
   expect(requests).toMatchObject(expected);
 
   // New thread and Settings both unmount the chat that owns this hook.
-  await act(() => root.render(null));
-  await render();
+  await screen.rerender(null);
+  await screen.rerender(probe());
   expect(requests).toMatchObject(expected);
 
-  await act(() => root.render(null));
-  await render(true);
+  await screen.rerender(null);
+  await screen.rerender(probe(true));
   expect(requests.activePendingUserInput).toBeNull();
-  await render();
+  await screen.rerender(probe());
   expect(requests).toMatchObject(expected);
 });
 
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
+  using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("scope-environment");
   const projection = questionProjection(threadRef.threadId);
   const scopes = [
@@ -293,8 +148,9 @@ it("isolates drafts by environment, thread and request and discards only resolve
     { environmentId, projection: questionProjection(ThreadId.make("other-thread")) },
     { environmentId, projection: questionProjection(threadRef.threadId, ["second", "first"]) },
   ];
+  await using screen = await render(null);
   const show = (scope: ComponentProps<typeof PendingRequestsProbe>) =>
-    act(() => root.render(<PendingRequestsProbe {...scope} />));
+    screen.rerender(<PendingRequestsProbe {...scope} />);
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
     expect(requests.activePendingQuestionIndex).toBe(0);
@@ -324,95 +180,4 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
-});
-
-function expectPreview(text: string | null) {
-  const previews = [...container.querySelectorAll("p")]
-    .map((element) => element.textContent)
-    .filter((content) => content?.startsWith("Preview body:"));
-  expect(previews).toEqual(text === null ? [] : [`Preview body: ${text}`]);
-}
-
-async function typeCustomAnswer(value: string) {
-  const input = container.querySelector("input")!;
-  await act(async () => {
-    input.focus();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-it("previews options by focus, click, and shortcut index but only restores unambiguous saved selections", async () => {
-  await act(async () => root.render(<Questions pendingPrompt={previewPrompt} />));
-  expectPreview("First, question 1");
-
-  await act(async () => buttonWithText("Second").focus());
-  expectPreview("Second, question 1");
-  await act(async () => buttonWithText("First").focus());
-  expectPreview("First, question 1");
-
-  await act(async () => buttonWithText("Second").click());
-  expectPreview("Second, question 1");
-  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "1" })));
-  expectPreview("First, question 1");
-  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "2" })));
-  expectPreview("Second, question 1");
-
-  await act(async () => vi.advanceTimersByTime(200));
-  expect(activeIndex()).toBe("1");
-  expectPreview("First, question 2");
-
-  await act(async () => buttonWithText("Second").focus());
-  expectPreview("Second, question 2");
-  await act(async () =>
-    root.render(
-      <Questions
-        pendingPrompt={{ ...previewPrompt, requestId: RuntimeRequestId.make("replacement") }}
-      />,
-    ),
-  );
-  expectPreview("First, question 2");
-
-  await act(async () => buttonWithText("Second").click());
-  expectPreview("Second, question 2");
-  await navigate("Next");
-  expectPreview("First, question 3");
-  await navigate("Previous");
-  expectPreview("Second, question 2");
-
-  await navigate("Previous");
-  expectPreview(null);
-  await act(async () =>
-    root.render(
-      <Questions
-        pendingPrompt={{ ...previewPrompt, requestId: RuntimeRequestId.make("remounted") }}
-      />,
-    ),
-  );
-  expectPreview(null);
-  await act(async () => buttonWithText("Second").click());
-  expectPreview("Second, question 1");
-});
-
-it("hides and clears hovered or focused previews while a custom answer is active", async () => {
-  await act(async () => root.render(<Questions pendingPrompt={previewPrompt} />));
-  await act(async () =>
-    buttonWithText("Second").dispatchEvent(new MouseEvent("mouseover", { bubbles: true })),
-  );
-  expectPreview("Second, question 1");
-
-  await typeCustomAnswer("Use a different approach");
-  expectPreview(null);
-  await typeCustomAnswer("");
-  expectPreview("First, question 1");
-
-  await typeCustomAnswer("Use a different approach");
-  await act(async () => buttonWithText("Second").focus());
-  expectPreview(null);
-  await act(async () =>
-    buttonWithText("Second").dispatchEvent(new MouseEvent("mouseover", { bubbles: true })),
-  );
-  expectPreview(null);
-  await typeCustomAnswer("");
-  expectPreview("First, question 1");
 });

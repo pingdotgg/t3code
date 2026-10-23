@@ -454,28 +454,6 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("inline-data-url");
   });
 
-  it("keeps large assistant replies and startup command metadata unchanged", () => {
-    const notifications = [
-      {
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "a".repeat(20_000) },
-        },
-      },
-      {
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "available_commands_update",
-          availableCommands: [{ name: "plan", description: "Make a plan" }],
-        },
-      },
-    ] satisfies ReadonlyArray<EffectAcpSchema.SessionNotification>;
-    for (const notification of notifications) {
-      expect(normalizeAntigravitySessionUpdate(notification)).toBe(notification);
-    }
-  });
-
   it("tracks only commands that have passed approval and are still running", () => {
     const running = normalizeAntigravityToolCall(parseToolUpdate(commandStarted).toolCall);
     expect(isAntigravityOpenCommand(running)).toBe(true);

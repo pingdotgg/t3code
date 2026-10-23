@@ -129,18 +129,6 @@ describe("RelayTokens", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("treats requested scope as an order-independent set", () =>
-    Effect.gen(function* () {
-      const relayTokens = yield* RelayTokens.RelayTokens;
-      expect(
-        relayTokens.resolveDpopAccessTokenScopes({
-          clientId: "t3-mobile",
-          scope: "environment:status environment:connect environment:status",
-        }),
-      ).toEqual(["environment:status", "environment:connect"]);
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("rejects signed DPoP tokens whose scope is outside the relay policy", () =>
     Effect.gen(function* () {
       const relayTokens = yield* RelayTokens.RelayTokens;

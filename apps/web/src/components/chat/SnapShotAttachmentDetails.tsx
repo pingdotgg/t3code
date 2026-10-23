@@ -67,7 +67,7 @@ export function snapShotAccessibilityDetails(
   return text ? { content: text, format: "text" } : undefined;
 }
 
-export function snapShotIncludesAccessibility(source: SnapShotSource): boolean {
+function snapShotIncludesAccessibility(source: SnapShotSource): boolean {
   return Boolean(source.accessibility || source.accessibleText?.trim());
 }
 

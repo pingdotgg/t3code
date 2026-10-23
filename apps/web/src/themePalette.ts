@@ -23,9 +23,9 @@ import {
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
-export const T3_CHAT_THEME_ID = "t3-chat" as const;
+const T3_CHAT_THEME_ID = "t3-chat" as const;
 const GROVE_THEME_ID = "grove" as const;
-export const OCEAN_THEME_ID = "ocean" as const;
+const OCEAN_THEME_ID = "ocean" as const;
 const EMBER_THEME_ID = "ember" as const;
 const IRIS_THEME_ID = "iris" as const;
 export const THEME_FILE_VERSION = 1 as const;
@@ -556,6 +556,25 @@ function solveOklchLightness(
     }
   }
   return { ...base, L: direction === "lighter" ? high : low };
+}
+
+/**
+ * Moves only the lightness, so a color that is too dim on `surface` keeps its
+ * hue instead of collapsing to black or white.
+ */
+export function readableThemeColorOn(color: string, surface: string, minContrast: number): string {
+  const parsedColor = parseThemeColor(color);
+  const parsedSurface = parseThemeColor(surface);
+  if (!parsedColor || !parsedSurface) return color;
+  const surfaceRgb = themeOklchToRgb(parsedSurface.color);
+  if (themeContrastRatio(themeOklchToRgb(parsedColor.color), surfaceRgb) >= minContrast) {
+    return color;
+  }
+  const direction = themeRelativeLuminance(surfaceRgb) < 0.179 ? "lighter" : "darker";
+  const solved = solveOklchLightness(parsedColor.color, surfaceRgb, minContrast, direction);
+  // Return the 8-bit color the solver measured: the unrounded OKLCH can round
+  // to a neighbor just under the target once it is stored and read back.
+  return themeRgbToHexColor(themeOklchToRgb(solved));
 }
 
 const STANDARD_STATUS_COLORS = {

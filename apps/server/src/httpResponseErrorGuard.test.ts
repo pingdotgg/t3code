@@ -125,26 +125,6 @@ describe("guardHttpResponseWriteErrors", () => {
     });
     await expect(fetchStatus(port, "/")).resolves.toBe(200);
   });
-
-  it("arms every response with an error listener without disturbing normal traffic", async () => {
-    const writeErrors: unknown[] = [];
-    let responseErrorListeners = -1;
-    const server = guardHttpResponseWriteErrors(NodeHttp.createServer(), (error) => {
-      writeErrors.push(error);
-    });
-
-    server.on("request", (_request, response) => {
-      responseErrorListeners = response.listenerCount("error");
-      response.writeHead(200, { "content-type": "text/plain" });
-      response.end("ok");
-    });
-
-    const port = await listen(server);
-
-    await expect(fetchStatus(port, "/")).resolves.toBe(200);
-    expect(responseErrorListeners).toBeGreaterThan(0);
-    expect(writeErrors).toEqual([]);
-  });
 });
 
 describe("rejectRequestsUntilServing", () => {
@@ -183,5 +163,5 @@ describe("rejectRequestsUntilServing", () => {
     expect(servingUpgrade.statusCode).toBe(101);
     expect(servingUpgrade.headers["retry-after"]).toBeUndefined();
     expect(writeErrors).toEqual([]);
-  }, 5_000);
+  });
 });

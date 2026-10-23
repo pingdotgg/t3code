@@ -526,7 +526,7 @@ export function createEnvironmentServerConfigsAtom(input: {
  * Every shell push replaces the state, so views that gate on load progress read these
  * primitives instead and stay put while threads stream.
  */
-export function createEnvironmentShellProgressAtoms(
+function createEnvironmentShellProgressAtoms(
   stateValueAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>,
 ) {
   return {

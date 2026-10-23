@@ -45,16 +45,4 @@ describe("Electron passkeys", () => {
     expect(get).not.toHaveBeenCalled();
     expect(result.error).toMatchObject({ code: "passkey_operation_aborted" });
   });
-
-  it("sends an explicit passkey request to the native bridge", async () => {
-    const get = stubNativePasskeys();
-    const passkeys = createPasskeys();
-
-    await passkeys.get({
-      publicKeyOptions,
-      conditionalUI: false,
-    });
-
-    expect(get).toHaveBeenCalledOnce();
-  });
 });

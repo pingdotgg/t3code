@@ -304,6 +304,25 @@ export const ProjectListEntriesResult = Schema.Struct({
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 
+// Untracked files git ignores. Wholly ignored folders such as `node_modules`
+// are left out, so the list stays small enough to pick from.
+export const ProjectListIgnoredFilesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.Type;
+
+export const ProjectIgnoredFile = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  byteLength: NonNegativeInt,
+});
+export type ProjectIgnoredFile = typeof ProjectIgnoredFile.Type;
+
+export const ProjectListIgnoredFilesResult = Schema.Struct({
+  files: Schema.Array(ProjectIgnoredFile),
+  truncated: Schema.Boolean,
+});
+export type ProjectListIgnoredFilesResult = typeof ProjectListIgnoredFilesResult.Type;
+
 export const ProjectEntriesFailure = Schema.Literals([
   "workspace_root_not_found",
   "workspace_root_create_failed",

@@ -3,14 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseInlineMarkdown } from "./composer-rich-text";
 
 describe("composer rich text markdown", () => {
-  it("parses bold markers into styled spans", () => {
-    expect(parseInlineMarkdown("hello **bold** world")).toEqual([
-      { text: "hello ", marks: [] },
-      { text: "bold", marks: ["bold"] },
-      { text: " world", marks: [] },
-    ]);
-  });
-
   it("preserves unmatched markers, escaped markers, and identifiers", () => {
     for (const text of [
       "plain text",

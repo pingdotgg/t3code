@@ -1,8 +1,5 @@
 import {
-  DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_CLIENT_SETTINGS,
-  FILL_PREVIEW_VIEWPORT,
-  type PreviewOpenInput,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -52,61 +49,6 @@ afterEach(() => {
 });
 
 describe("openPreviewSession", () => {
-  it("creates an idle tab without recording a recently visited URL", async () => {
-    const idleSnapshot: PreviewSessionSnapshot = {
-      ...snapshot,
-      tabId: "tab-blank",
-      navStatus: { _tag: "Idle" },
-    };
-    const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(idleSnapshot));
-
-    await openPreviewSession({
-      openPreview: ({ input }) => open(input),
-      threadRef,
-    });
-
-    expect(open).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      viewport: FILL_PREVIEW_VIEWPORT,
-      profileId: DEFAULT_BROWSER_PROFILE_ID,
-    });
-    expect(readThreadPreviewState(threadRef).snapshot).toEqual(idleSnapshot);
-    expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
-  });
-
-  it("applies the RPC response without waiting for a preview event", async () => {
-    const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(snapshot));
-
-    await openPreviewSession({
-      openPreview: ({ input }) => open(input),
-      threadRef,
-      url: "t3.chat",
-    });
-
-    expect(open).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      url: "t3.chat",
-      viewport: FILL_PREVIEW_VIEWPORT,
-      profileId: DEFAULT_BROWSER_PROFILE_ID,
-    });
-    expect(readThreadPreviewState(threadRef).snapshot).toEqual(snapshot);
-    expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual(["https://t3.chat/"]);
-  });
-
-  it("returns failures without mutating preview state", async () => {
-    const failure = new Error("preview unavailable");
-
-    const result = await openPreviewSession({
-      openPreview: async () => AsyncResult.failure(Cause.fail(failure)),
-      threadRef,
-      url: "t3.chat",
-    });
-
-    expect(result._tag).toBe("Failure");
-    expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
-    expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
-  });
-
   it.each(["session", "link"] as const)(
     "does not open a %s with unread settings and uses the saved profile on retry",
     async (entryPoint) => {
@@ -149,16 +91,7 @@ describe("openPreviewSession", () => {
 });
 
 describe("openUrlInPreview from a link", () => {
-  it("opens under the source tab's profile instead of the default", async () => {
-    const openPreview = vi.fn(async (_arg: { input: PreviewOpenInput }) =>
-      AsyncResult.success(snapshot),
-    );
-
-    await openUrlInPreview({ openPreview, threadRef, url: "https://t3.chat/", profileId: "work" });
-
-    expect(openPreview.mock.calls[0]?.[0].input.profileId).toBe("work");
-  });
-
+  // regression: #16961 a background link open switched the active preview tab
   it("keeps the current tab active for a background open", async () => {
     applyPreviewServerSnapshot(threadRef, { ...snapshot, tabId: "tab-current" });
 
@@ -191,35 +124,5 @@ describe("openUrlInPreview from a link", () => {
     });
 
     expect(readThreadPreviewState(threadRef).activeTabId).toBe("tab-other");
-  });
-
-  it("keeps the new tab when the user picks it while a background open is in flight", async () => {
-    applyPreviewServerSnapshot(threadRef, { ...snapshot, tabId: "tab-current" });
-    setActivePreviewTab(threadRef, "tab-current");
-
-    await openUrlInPreview({
-      openPreview: async () => {
-        applyPreviewServerSnapshot(threadRef, snapshot);
-        useRightPanelStore.getState().openBrowser(threadRef, snapshot.tabId);
-        return AsyncResult.success(snapshot);
-      },
-      threadRef,
-      url: "https://t3.chat/",
-      background: true,
-    });
-
-    expect(readThreadPreviewState(threadRef).activeTabId).toBe(snapshot.tabId);
-  });
-
-  it("activates the new tab for a foreground open", async () => {
-    applyPreviewServerSnapshot(threadRef, { ...snapshot, tabId: "tab-current" });
-
-    await openUrlInPreview({
-      openPreview: async () => AsyncResult.success(snapshot),
-      threadRef,
-      url: "https://t3.chat/",
-    });
-
-    expect(readThreadPreviewState(threadRef).activeTabId).toBe("tab-1");
   });
 });

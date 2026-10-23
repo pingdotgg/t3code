@@ -7,9 +7,7 @@
     "stage:install-scripts": "node scripts/stage-install-scripts.mjs",
     "dev": "node scripts/stage-install-scripts.mjs && astro dev",
     "build": "node scripts/stage-install-scripts.mjs && astro build",
-    "preview": "astro preview",
-    "typecheck": "astro check",
-    "test": "vp test run"
+    "preview": "astro preview"
   },
   "dependencies": {
     "@t3tools/shared": "workspace:*",

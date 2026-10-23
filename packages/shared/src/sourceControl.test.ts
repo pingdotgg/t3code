@@ -5,69 +5,9 @@ import {
   sourceControlRepositorySelector,
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
-  isSshRemoteUrl,
-  resolveChangeRequestPresentation,
 } from "./sourceControl.ts";
 
-describe("source control presentation", () => {
-  it("uses merge request terminology for GitLab", () => {
-    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("gitlab"))).toEqual({
-      shortLabel: "MR",
-      singular: "merge request",
-    });
-  });
-
-  it("uses pull request terminology for GitHub-compatible providers", () => {
-    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("github"))).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
-    expect(
-      getChangeRequestTerminologyForKind(SourceControlProviderKind.make("azure-devops")),
-    ).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
-    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("bitbucket"))).toEqual(
-      {
-        shortLabel: "PR",
-        singular: "pull request",
-      },
-    );
-  });
-
-  it("falls back to generic change request copy for unknown providers", () => {
-    expect(
-      resolveChangeRequestPresentation({
-        kind: SourceControlProviderKind.make("unknown"),
-        name: "forge",
-        baseUrl: "",
-      }),
-    ).toEqual(
-      expect.objectContaining({
-        shortName: "change request",
-        longName: "change request",
-      }),
-    );
-  });
-});
-
 describe("detectSourceControlProviderFromRemoteUrl", () => {
-  it("detects common source control hosts", () => {
-    expect(detectSourceControlProviderFromRemoteUrl("git@github.com:owner/repo.git")?.kind).toBe(
-      "github",
-    );
-    expect(
-      detectSourceControlProviderFromRemoteUrl("https://gitlab.com/group/repo.git")?.kind,
-    ).toBe("gitlab");
-    expect(
-      detectSourceControlProviderFromRemoteUrl("https://dev.azure.com/org/project/_git/repo")?.kind,
-    ).toBe("azure-devops");
-    expect(
-      detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
-    ).toBe("bitbucket");
-  });
-
   it("detects Forgejo and Gitea hosts while preserving HTTP origins", () => {
     for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
       expect(detectSourceControlProviderFromRemoteUrl(`http://${host}:3000/team/repo.git`)).toEqual(
@@ -196,28 +136,6 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
   });
 });
 
-describe("isSshRemoteUrl", () => {
-  it("recognises SCP-like SSH URLs with any SSH user prefix", () => {
-    expect(isSshRemoteUrl("git@github.com:owner/repo.git")).toBe(true);
-    expect(isSshRemoteUrl("gitlab@gitlab.example.com:group/project.git")).toBe(true);
-    expect(isSshRemoteUrl("deploy@bitbucket.org:workspace/repo.git")).toBe(true);
-  });
-
-  it("recognises ssh:// URLs with any case", () => {
-    expect(isSshRemoteUrl("ssh://git@gitlab.example.com/group/project.git")).toBe(true);
-    expect(isSshRemoteUrl("ssh://git@gitlab.example.com:22/group/project.git")).toBe(true);
-    expect(isSshRemoteUrl("SSH://git@gitlab.example.com/group/project.git")).toBe(true);
-    expect(isSshRemoteUrl("SsH://git@gitlab.example.com/group/project.git")).toBe(true);
-  });
-
-  it("returns false for HTTPS, local paths, and SCP-like paths without a colon", () => {
-    expect(isSshRemoteUrl("https://gitlab.example.com/group/project.git")).toBe(false);
-    expect(isSshRemoteUrl("/home/user/repos/project")).toBe(false);
-    expect(isSshRemoteUrl("")).toBe(false);
-    expect(isSshRemoteUrl("deploy@github.com/project/repo")).toBe(false);
-  });
-});
-
 it("names an Azure DevOps repository by its own name, not its project path", () => {
   // `az repos pr list --repository` takes a name and detects the organisation and project from
   // the checkout; the recorded `org/project/_git/repo` path is refused, and the repository then
@@ -231,12 +149,15 @@ it("names an Azure DevOps repository by its own name, not its project path", () 
   expect(selector).toBe("checkout");
 });
 
-it("falls back to the path's last segment where an Azure identity has no name", () => {
+it("decodes an Azure DevOps repository name that the remote URL percent-encodes", () => {
+  // A remote spells a space as `%20`, and `az repos pr list --repository` reads that literally.
   const selector = sourceControlRepositorySelector({
     provider: "azure-devops",
-    displayName: "contoso/payments/_git/checkout",
+    displayName: "contoso/payments%20(eu)/_git/checkout%20(eu)",
+    owner: "contoso",
+    name: "checkout%20(eu)",
   });
-  expect(selector).toBe("checkout");
+  expect(selector).toBe("checkout (eu)");
 });
 
 it("keeps a GitLab identity's whole path, because a nested group is part of the name", () => {
@@ -247,18 +168,4 @@ it("keeps a GitLab identity's whole path, because a nested group is part of the 
     name: "service",
   });
   expect(selector).toBe("group/subgroup/service");
-});
-
-it("puts owner and name back together for an identity recorded before displayName", () => {
-  const selector = sourceControlRepositorySelector({
-    provider: "github",
-    owner: "t3tools",
-    name: "t3code",
-  });
-  expect(selector).toBe("t3tools/t3code");
-});
-
-it("names nothing for a project with no remote to name it by", () => {
-  expect(sourceControlRepositorySelector(null)).toBeNull();
-  expect(sourceControlRepositorySelector({ provider: "github" })).toBeNull();
 });

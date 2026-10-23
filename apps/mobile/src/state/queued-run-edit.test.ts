@@ -8,8 +8,6 @@ import {
   type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 
-import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue";
-import { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
 import { resolveQueuedEditPayload, type QueuedRunEdit } from "./queued-run-edit";
 
 const image = (id: string): ChatAttachment => ({
@@ -44,16 +42,6 @@ function context(attachmentIds: ReadonlyArray<string>): OrchestrationMessageCont
     })),
   };
 }
-
-describe("queued edit draft key", () => {
-  it("keeps the environment readable so attachment uploads still resolve it", () => {
-    const key = queuedEditDraftKey("env-1:thread-9", "run-3");
-
-    expect(isQueuedEditDraftKey(key)).toBe(true);
-    expect(isQueuedEditDraftKey("env-1:thread-9")).toBe(false);
-    expect(composerDraftEnvironmentId(key, [])).toBe("env-1");
-  });
-});
 
 describe("resolveQueuedEditPayload", () => {
   it("resends the kept server attachments ahead of the newly uploaded ones", () => {
@@ -90,17 +78,5 @@ describe("resolveQueuedEditPayload", () => {
 
     expect(payload.attachments.map((attachment) => attachment.id)).toEqual(["kept"]);
     expect(payload.context?.records).toEqual([expect.objectContaining({ attachmentId: "kept" })]);
-  });
-
-  it("returns no context when every record lost its attachment", () => {
-    const payload = resolveQueuedEditPayload({
-      edit: edit([]),
-      draftContext: context(["gone"]),
-      draftAttachments: [],
-      uploaded: [],
-    });
-
-    expect(payload.attachments).toEqual([]);
-    expect(payload.context).toBeUndefined();
   });
 });

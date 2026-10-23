@@ -1,5 +1,3 @@
-"use client";
-
 import { useCommitOnBlur } from "~/hooks/useCommitOnBlur";
 import { Input, type InputProps } from "./input";
 

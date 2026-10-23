@@ -91,7 +91,13 @@ function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
   if (typeof unsafe === "function" && schema !== undefined) {
-    return unsafe(schema);
+    // Zero-argument MCP tools may omit "properties", which some OpenAI-compatible
+    // servers reject. Declare it, as Pi does for its own MCP tools.
+    return unsafe({
+      ...schema,
+      type: schema.type ?? "object",
+      ...(schema.properties === undefined ? { properties: {} } : {}),
+    });
   }
   return Type.Object({}, { additionalProperties: true });
 }

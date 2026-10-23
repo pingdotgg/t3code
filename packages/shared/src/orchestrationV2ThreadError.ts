@@ -5,12 +5,18 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+type ErrorTurnItem = Extract<OrchestrationV2TurnItem, { type: "error" }>;
+/** Only error items are read, so callers may pass items stripped of other fields. */
+type FailureScanTurnItem =
+  | ErrorTurnItem
+  | { readonly type: Exclude<OrchestrationV2TurnItem["type"], "error"> };
+
 export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
 ): OrchestrationV2ProviderFailure | null {
   if (run?.status !== "failed") return null;
-  let latest: Extract<OrchestrationV2TurnItem, { type: "error" }> | null = null;
+  let latest: ErrorTurnItem | null = null;
   for (const item of turnItems) {
     if (
       item.type !== "error" ||
@@ -41,8 +47,8 @@ export function threadErrorSummary(
     usageLimitResetAt:
       currentFailure?.class === "usage_limit" ? (currentFailure.resetAt ?? null) : null,
     lastError: sessionError ?? failure?.message ?? null,
-    lastErrorClass:
-      sessionError !== null && sessionError !== failure?.message ? null : (failure?.class ?? null),
+    lastErrorClass: currentFailure?.class ?? null,
+    lastErrorCode: currentFailure?.code ?? null,
   };
 }
 
@@ -77,7 +83,7 @@ export function runRanAfter(
 
 export function usageLimitBlockedRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
   sessionError: string | null,
 ): OrchestrationV2Run | null {
   const executed = latestExecutedRun(runs);
@@ -93,7 +99,7 @@ export function usageLimitBlockedRun(
  */
 export function usageLimitRunPresentedAsLatest(
   runs: ReadonlyArray<OrchestrationV2Run>,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
   sessionError: string | null,
 ): OrchestrationV2Run | null {
   const blocked = usageLimitBlockedRun(runs, turnItems, sessionError);

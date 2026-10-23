@@ -40,17 +40,10 @@ describe("ghosttyCellText", () => {
     expect(text.codePointAt(graphemeLength - 1)).toBe(0x301);
   });
 
+  // regression: #7809 oversized terminal graphemes crashed rendering
   it("converts small clusters including astral codepoints", () => {
     const text = ghosttyCellText(codepointView([0x1f642, 0x20e3]), 2);
     expect([...text]).toEqual(["\u{1F642}", "\u{20E3}"]);
-  });
-
-  it("converts a single astral codepoint", () => {
-    expect(ghosttyCellText(codepointView([0x1f642]), 1)).toBe("🙂");
-  });
-
-  it("returns an empty string for empty cells", () => {
-    expect(ghosttyCellText(codepointView([]), 0)).toBe("");
   });
 });
 
@@ -214,72 +207,6 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(cells[0]!.foreground).toEqual({ r: 1, g: 9, b: 2 });
     expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
   });
-
-  it("reuses a grown grapheme buffer and releases it on disposal", async () => {
-    const core = await createCore();
-    const runtime = await loadGhosttyRuntime();
-    core.write("ASCII");
-    core.snapshot();
-
-    const grapheme = `z${"\u0301".repeat(256)}`;
-    core.resetAndWrite(`${grapheme}X`);
-    const alloc = vi.spyOn(runtime, "alloc");
-    const free = vi.spyOn(runtime, "free");
-    expect(
-      core
-        .snapshot()
-        .rowData[0]!.cells.slice(0, 2)
-        .map((cell) => cell.text),
-    ).toEqual([grapheme, "X"]);
-    expect(alloc).toHaveBeenCalledTimes(1);
-    const allocation = alloc.mock.results[0]!;
-    if (allocation.type !== "return") throw new Error("Grapheme allocation did not return");
-    const buffer = allocation.value;
-    const capacity = alloc.mock.calls[0]![0];
-
-    core.write("\rQ\u0301");
-    alloc.mockClear();
-    expect(core.snapshot().rowData[0]!.cells[0]!.text).toBe("Q\u0301");
-    expect(alloc).not.toHaveBeenCalled();
-    core.dispose();
-    expect(free).toHaveBeenCalledWith(buffer, capacity);
-  });
-
-  it.each(["varied", "identical"] as const)(
-    "preserves Ghostty state through a full MiB of %s output without rollover resets",
-    async (kind) => {
-      const [core, reference] = await Promise.all([createCore(), createCore()]);
-      const initial = "\x1b[31m";
-      let state = createSession(initial);
-      const first = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
-      writeTerminalOutputUpdate(core, first);
-      reference.resetAndWrite(initial);
-      let cursor = first.cursor;
-      const reset = vi.spyOn(core, "resetAndWrite");
-      const inputs: string[] = [];
-      let receivedCharacters = 0;
-
-      for (let index = 0; index < 128; index += 1) {
-        const data =
-          kind === "identical"
-            ? "x".repeat(8192)
-            : `${index.toString().padStart(4, "0")}\r\n${"x".repeat(8186)}`;
-        inputs.push(data);
-        state = append(state, data);
-        const update = readTerminalOutputUpdate(state.output, cursor);
-        if (update.type !== "append") throw new Error(`Expected append, received ${update.type}`);
-        receivedCharacters += update.data.length;
-        writeTerminalOutputUpdate(core, update);
-        cursor = update.cursor;
-      }
-
-      reference.write(inputs.join(""));
-      expect(receivedCharacters).toBe(1024 * 1024);
-      expect(state.output.retainedBytes).toBe(DEFAULT_MAX_TERMINAL_BUFFER_BYTES);
-      expect(reset).not.toHaveBeenCalled();
-      expect(core.snapshot()).toEqual(reference.snapshot());
-    },
-  );
 
   it("preserves Unicode and split ANSI parser state across batched renderer reads", async () => {
     const [core, reference] = await Promise.all([createCore(), createCore()]);

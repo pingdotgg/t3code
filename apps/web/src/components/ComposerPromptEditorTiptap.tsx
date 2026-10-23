@@ -45,6 +45,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
 } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 
@@ -55,6 +56,7 @@ import {
   pastedPathQueryLength,
 } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -138,6 +140,7 @@ export interface ComposerPromptEditorHandle {
 }
 
 export interface ComposerPromptEditorProps {
+  draftKey?: string;
   value: string;
   cursor: number;
   richTextEnabled?: boolean;
@@ -262,6 +265,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
   const chip = (
     <ContextChip
       kind="mention"
+      dir="ltr"
       render={<button type="button" />}
       onClick={() => actions.openMention(path)}
       aria-label={`Preview ${path}`}
@@ -725,6 +729,7 @@ const ComposerMarkerPlugin = new Plugin({
 function decorationsForSelection(state: EditorState): DecorationSet {
   const { doc, selection } = state;
   const caretSide = caretTakesMarksBefore(state) ? 3 : 0;
+  const rtl = caretLineDirection(state) === "rtl";
   const decorations: Decoration[] = [];
   if (!selection.empty) {
     doc.nodesBetween(selection.from, selection.to, (node, pos) => {
@@ -748,8 +753,19 @@ function decorationsForSelection(state: EditorState): DecorationSet {
       marker.className = "composer-rich-marker";
       marker.textContent = text;
       marker.setAttribute("aria-hidden", "true");
+      // Inline code is isolated left to right. In a right-to-left line its
+      // opening backtick joins the closing one inside the isolate, or the line
+      // would put both on the same side of the code.
+      const codeMarks =
+        rtl && baseSide === -1 && /^`+$/.test(text)
+          ? doc.resolve(at).nodeAfter?.marks.filter((mark) => mark.type.spec.code)
+          : undefined;
       decorations.push(
-        Decoration.widget(at, marker, { side, key: `marker-${at}-${side}-${marker.textContent}` }),
+        Decoration.widget(at, marker, {
+          side,
+          key: `marker-${at}-${side}-${marker.textContent}`,
+          ...(codeMarks?.length ? { marks: codeMarks } : {}),
+        }),
       );
     }
   }
@@ -775,6 +791,7 @@ function replaceSkillChips(
 }
 
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
+  const restoreFocusRef = useRef(false);
   const { onChange: onPromptChange } = props;
   const [selection, setSelection] = useState<{
     value: string;
@@ -794,8 +811,9 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   // a caret inside unknown `$name` text, so retain the exact Markdown offset here.
   return (
     <ComposerPromptEditorTiptapInner
-      key={props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}
+      key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}`}
       {...props}
+      restoreFocusRef={restoreFocusRef}
       initialExpandedCursor={
         selection?.value === props.value && selection.cursor === props.cursor
           ? selection.expandedCursor
@@ -848,6 +866,7 @@ function createComposerExtensions(richText: boolean) {
       ...(richText ? {} : { bold: false, strike: false }),
     }),
     ComposerUndoGroupingExtension,
+    ComposerTextDirectionExtension,
     ComposerMentionExtension,
     ComposerSkillExtension,
     ComposerCitationExtension,
@@ -935,7 +954,10 @@ const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
 const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 
 function ComposerPromptEditorTiptapInner(
-  props: ComposerPromptEditorProps & { initialExpandedCursor: number },
+  props: ComposerPromptEditorProps & {
+    initialExpandedCursor: number;
+    restoreFocusRef: RefObject<boolean>;
+  },
 ) {
   const {
     value,
@@ -965,6 +987,7 @@ function ComposerPromptEditorTiptapInner(
     onCitationDraftSave,
     onPaste,
     editorRef,
+    restoreFocusRef,
   } = props;
   const richText = !literalText && (richTextEnabled ?? false);
   const clampEditorCursor = (text: string, position: number) =>
@@ -1138,6 +1161,8 @@ function ComposerPromptEditorTiptapInner(
       editorProps: {
         attributes: editorAttributes,
         handleKeyDown: (view, event) => {
+          // In a right-to-left line the start is on the right.
+          const backArrow = caretLineDirection(view.state) === "rtl" ? "ArrowRight" : "ArrowLeft";
           const boundary = event.metaKey
             ? event.key === "ArrowLeft" || event.key === "ArrowRight"
               ? "lineboundary"
@@ -1163,7 +1188,7 @@ function ComposerPromptEditorTiptapInner(
               event.preventDefault();
               event.stopPropagation();
               const backward =
-                event.key === "Home" || event.key === "ArrowLeft" || event.key === "ArrowUp";
+                event.key === "Home" || event.key === "ArrowUp" || event.key === backArrow;
               selection.modify(
                 event.shiftKey ? "extend" : "move",
                 backward ? "backward" : "forward",
@@ -1198,7 +1223,7 @@ function ComposerPromptEditorTiptapInner(
             view.state.selection.empty
           ) {
             const { $from } = view.state.selection;
-            const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+            const direction = event.key === "ArrowUp" || event.key === backArrow ? -1 : 1;
             const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
             // At the document's ends, native Up/Down can cross a marker without
             // changing the document position. Record the stop so DOM selection
@@ -1643,6 +1668,19 @@ function ComposerPromptEditorTiptapInner(
     );
     if (replacements.length > 0) replaceSkillChips(editor, replacements);
   }, [editor, literalText, skills]);
+
+  useLayoutEffect(() => {
+    if (!editor) return;
+    if (restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      editor.view.focus();
+      scrollTiptapCaretIntoView(editor);
+    }
+    return () => {
+      // Capture focus before the keyed editor's DOM is removed.
+      restoreFocusRef.current = editor.view.hasFocus();
+    };
+  }, [editor, restoreFocusRef]);
 
   const focusAt = (nextCursor: number, exactExpandedCursor?: number) => {
     if (!editor) return;

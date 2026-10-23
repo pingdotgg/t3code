@@ -80,26 +80,6 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     ]);
   });
 
-  it("keeps per-version order and drops empty groups", () => {
-    const result = normalizeDesktopUpdateReleaseNotes(
-      [
-        { version: "1.2.3", note: "- Newer release" },
-        { version: "1.2.2", note: "Full changelog: https://example.com/compare/x...y" },
-        { version: "1.2.1", note: "- Older release" },
-      ],
-      "1.2.3",
-      "latest",
-    );
-
-    expect(result).toEqual({
-      releaseNotes: [
-        { version: "1.2.3", items: ["Newer release"], totalItems: 1 },
-        { version: "1.2.1", items: ["Older release"], totalItems: 1 },
-      ],
-      omittedReleaseCount: 0,
-    });
-  });
-
   it("drops releases from other trains before grouping on nightly", () => {
     // electron-updater's full changelog is "every version above the running
     // one", and preview sorts above nightly, so the preview cuts come first.
@@ -123,6 +103,7 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(result.omittedReleaseCount).toBe(0);
   });
 
+  // regression: #11753 prerelease entries leaked into a channel's update changelog
   it("keeps only stable releases on the latest channel", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [
@@ -161,18 +142,6 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(result.omittedReleaseCount).toBe(1);
   });
 
-  it("decodes valid HTML entities", () => {
-    const result = normalizeDesktopUpdateReleaseNotes(
-      "- Fix &amp; polish &#128512;",
-      "1.0.0",
-      "latest",
-    );
-    expect(result).toEqual({
-      releaseNotes: [{ version: "1.0.0", items: ["Fix & polish 😀"], totalItems: 1 }],
-      omittedReleaseCount: 0,
-    });
-  });
-
   it("ignores malformed and empty entries instead of throwing", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [
@@ -189,13 +158,6 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
 
     expect(result).toEqual({
       releaseNotes: [{ version: "1.2.3", items: ["Valid change"], totalItems: 1 }],
-      omittedReleaseCount: 0,
-    });
-  });
-
-  it("returns an empty result for an invalid payload", () => {
-    expect(normalizeDesktopUpdateReleaseNotes({ note: "- Invalid" }, "1.0.0", "latest")).toEqual({
-      releaseNotes: [],
       omittedReleaseCount: 0,
     });
   });

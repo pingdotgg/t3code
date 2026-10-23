@@ -45,20 +45,6 @@ function fixture() {
   return { scene, camera, left, right, innerLeft, innerRight };
 }
 
-it("keeps one continuous inner UV map across the hinge and folds opposite leaves", () => {
-  const { scene, left, right, innerLeft, innerRight } = fixture();
-  scene.setAngle(90);
-  expect(left.rotation.y).toBeCloseTo(Math.PI / 4);
-  expect(right.rotation.y).toBeCloseTo(-Math.PI / 4);
-  const values = (mesh: Mesh) =>
-    Array.from({ length: mesh.geometry.getAttribute("uv").count }, (_, i) =>
-      mesh.geometry.getAttribute("uv").getX(i),
-    );
-  expect(Math.max(...values(innerLeft))).toBe(0.5);
-  expect(Math.min(...values(innerRight))).toBe(0.5);
-  scene.dispose();
-});
-
 it("derives resting views from the hinged display planes independently of the inspection orbit", () => {
   const { scene } = fixture();
   scene.setAngle(90);

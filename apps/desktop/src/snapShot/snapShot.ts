@@ -168,7 +168,7 @@ export function boundedSnapShotString(
   return candidate.slice(0, end).trimEnd();
 }
 
-export function capturedImageBounds(
+function capturedImageBounds(
   bounds: WindowBounds | null | undefined,
   sourceBounds: WindowBounds,
   imageSize: CapturedImageSize,

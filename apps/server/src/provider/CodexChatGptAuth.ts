@@ -9,10 +9,13 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { codexCallbackUrl } from "@t3tools/shared/codexAuthHandoff";
+import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import { openAiUserId } from "../telemetry/Identify.ts";
 import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import { codexAuthCallbackPage, codexAuthReturnUrl } from "./CodexAuthCallbackPage.ts";
 import * as Effect from "effect/Effect";
@@ -106,6 +109,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
   readonly defaultReturnUrl?: string;
   readonly reconnectProfile?: ChatGptReconnectProfile | null;
   readonly telemetryFlow?: "direct" | "primary_handoff";
+  readonly expectedProfileKey?: string;
 }) {
   const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
   const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
@@ -221,6 +225,18 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         saved.sessions.find((session) => session.clientId === saved.activeClientId),
       ),
     ),
+    // The OpenAI account is the person, so it marks who owns this install.
+    Effect.tap((credentials) => {
+      const userId = Option.flatMap(credentials, (saved) =>
+        Option.flatMap(Option.fromUndefinedOr(saved.idToken), openAiUserId),
+      );
+      return Option.isSome(userId) && Option.isSome(analytics)
+        ? analytics.value.recordOwners(
+            [{ source: "openai", ownerId: hashTelemetryId(userId.value) }],
+            "server",
+          )
+        : Effect.void;
+    }),
   );
   const writeSessions = (saved: typeof Sessions.Type) =>
     encodeSessions(saved).pipe(
@@ -712,6 +728,17 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       ),
     );
   });
+  // ID tokens survive renewal but change on sign-in. Bind active children to the
+  // launch profile without putting an identity token or subject in their argv.
+  const profileKey = (record: CodexChatGptCredentials) =>
+    crypto
+      .digest(
+        "SHA-256",
+        new TextEncoder().encode(
+          JSON.stringify([record.clientId, record.subject, record.idToken ?? null]),
+        ),
+      )
+      .pipe(Effect.map(Hex.encode), Effect.orDie);
   const access = lock.withPermit(
     withSessionLock(
       Effect.uninterruptible(
@@ -720,6 +747,11 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           if (Option.isNone(saved))
             return yield* failure("access", "Sign in with ChatGPT to use managed Codex.");
           let record = saved.value;
+          if (
+            options.expectedProfileKey !== undefined &&
+            (yield* profileKey(record)) !== options.expectedProfileKey
+          )
+            return yield* failure("access", "The ChatGPT connection changed. Start a new session.");
           if (!record.scopes.includes(REQUIRED_SCOPE))
             return yield* failure(
               "sharing",
@@ -977,6 +1009,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     controller: { ...controller, reconnectProfile, importProfile },
     read,
     access,
+    profileKey,
     exportProfile,
     revoke: lock.withPermit(withSessionLock(remove)),
   };

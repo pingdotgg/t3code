@@ -256,7 +256,7 @@ jobs:
         run: vp run typecheck
 
   # Keep tests on their own runners, using the same package split and server
-  # shards as CI, so the release check job does not spend its budget on tests.
+  # shards as CI (test, test_web, test_server in ci.yml). Keep the two in sync.
   test:
     name: Release tests
     needs: [preflight]
@@ -286,23 +286,67 @@ jobs:
           sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config build-essential
 
-      # The web package's browser project runs React tests in headless Chromium.
-      - name: Install Chromium for web browser tests
-        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
-
       - name: Test
-        run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
+        run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
 
-  test_server:
-    name: Release server tests ${{ matrix.shard }}
+  # Web browser tests time out when they share a runner with the other package
+  # suites: Chromium gets too little CPU and diff workers miss their 10s start budget.
+  test_web:
+    name: Release web tests
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for web browser tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
+      - name: Test
+        run: vp run --filter @t3tools/web test
+
+  # Server test files run one at a time, so more small runners beat fewer big ones.
+  test_server:
+    name: Release server tests ${{ matrix.shard }}
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -529,8 +573,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # One job per platform and architecture (see release-desktop.yml), each on
-  # hardware of its own architecture, and each gated only on the JS bundle.
+  # One job per platform and architecture (see release-desktop.yml), each
+  # gated only on the JS bundle. Windows targets build on Linux and run their
+  # native checks on a Windows runner of their own architecture.
   # The Windows jobs also embed the same-arch Linux CLI archive as the WSL
   # runtime; they wait for that artifact partway through instead of for the
   # whole Linux job. Every job builds the desktop app; all but macOS x64 also
@@ -633,9 +678,11 @@ jobs:
       resource_key: linux-arm64
       cli_archive: true
 
-  # The Windows jobs start with the other platforms. Their checkout, install,
-  # and toolchain setup take longer than the same-arch Linux job needs to
-  # upload its CLI archive, so the wait inside is usually instant.
+  # The Windows jobs start with the other platforms and wait for the same-arch
+  # Linux CLI archive after their other setup. Packaging is mostly CPU and
+  # small-file work, which Linux runners do faster than Windows ones, so both
+  # Windows targets build and sign on Linux and only the native checks run on
+  # Windows.
   desktop_win_x64:
     name: Desktop Windows x64
     needs: [preflight, relay_public_config, build_bundle]
@@ -651,7 +698,8 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Windows x64
-      runner: blacksmith-32vcpu-windows-2025
+      runner: blacksmith-16vcpu-ubuntu-2404
+      verify_runner: windows-2025
       platform: win
       target: nsis
       arch: x64
@@ -674,7 +722,8 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Windows arm64
-      runner: windows-11-arm
+      runner: blacksmith-16vcpu-ubuntu-2404
+      verify_runner: windows-11-arm
       platform: win
       target: nsis
       arch: arm64
@@ -690,6 +739,7 @@ jobs:
         relay_public_config,
         quality,
         test,
+        test_web,
         test_server,
         desktop_mac_arm64,
         desktop_mac_x64,
@@ -698,7 +748,7 @@ jobs:
         desktop_win_x64,
         desktop_win_arm64,
       ]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_web.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -1022,7 +1072,7 @@ jobs:
           fi
 
           echo "Building hosted web app for $channel_name channel."
-          deployment_url="$(
+          deployment_output="$(
             vp dlx vercel@53.1.1 deploy \
               --archive=tgz \
               --prod \
@@ -1041,6 +1091,13 @@ jobs:
               --build-env "VITE_HOSTED_APP_URL=$router_url" \
               --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
           )"
+          printf '%s\n' "$deployment_output"
+          # Vercel can print lockfile warnings to stdout before the deployment URL.
+          deployment_url="$(printf '%s\n' "$deployment_output" | grep -E '^https://[[:alnum:].-]+\.vercel\.app$')"
+          if [[ "$deployment_url" == *$'\n'* ]]; then
+            echo "Vercel returned multiple deployment URLs." >&2
+            exit 1
+          fi
           echo "Staged $deployment_url."
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
 
@@ -1169,7 +1226,7 @@ jobs:
           )"
           export VERCEL_PROJECT_ID
 
-          deployment_url="$(
+          deployment_output="$(
             vp dlx vercel@53.1.1 deploy \
               --archive=tgz \
               --prod \
@@ -1178,6 +1235,13 @@ jobs:
               --token "$VERCEL_TOKEN" \
               --scope "${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
           )"
+          printf '%s\n' "$deployment_output"
+          # Vercel can print lockfile warnings to stdout before the deployment URL.
+          deployment_url="$(printf '%s\n' "$deployment_output" | grep -E '^https://[[:alnum:].-]+\.vercel\.app$')"
+          if [[ "$deployment_url" == *$'\n'* ]]; then
+            echo "Vercel returned multiple deployment URLs." >&2
+            exit 1
+          fi
           echo "Staged $deployment_url."
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
           echo "project_id=$VERCEL_PROJECT_ID" >> "$GITHUB_OUTPUT"

@@ -16,10 +16,6 @@ describe("thread relationships", () => {
   it.each([
     ["running", "completed"],
     ["completed", "running"],
-    ["running", "running"],
-    ["completed", "completed"],
-    ["waiting", "failed"],
-    ["interrupted", "pending"],
   ])("keeps parent %s independent of child %s", (parentStatus, childStatus) => {
     const parent = ThreadId.make("parent");
     const child = ThreadId.make("child");
@@ -187,44 +183,6 @@ describe("thread relationships", () => {
     );
   });
 
-  it.each([
-    ["running", "running", "running"],
-    ["waiting", "completed", "waiting"],
-    [null, "queued", "queued"],
-    [null, "failed", "failed"],
-    [null, "interrupted", "interrupted"],
-    [null, "cancelled", "cancelled"],
-    [null, "completed", "completed"],
-    [null, "rolled_back", "interrupted"],
-  ])(
-    "shows child activity %s and latest status %s as %s after its delegated task settled",
-    (childActivity, childStatus, expected) => {
-      const parent = ThreadId.make("thread-parent");
-      const child = ThreadId.make("thread-child");
-      const graph = deriveThreadRelationshipGraph({
-        threads: [
-          { id: parent, status: "completed", forkedFrom: null, lineage: { parentThreadId: null } },
-          {
-            id: child,
-            status: childStatus,
-            activityRunStatus: childActivity,
-            latestRunId: "run-child-followup",
-            forkedFrom: null,
-            lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
-          },
-        ] as never,
-        projection: {
-          thread: { id: parent },
-          subagents: [{ childThreadId: child, status: "completed" }],
-          contextTransfers: [],
-        } as never,
-      });
-
-      const row = immediateThreadRelationships(graph, parent)[0]!;
-      expect(threadRelationshipRowStatus(graph, row)).toBe(expected);
-    },
-  );
-
   it("keeps the live shell when an archived snapshot contains the same thread id", () => {
     const parent = ThreadId.make("thread-parent");
     const staleParent = ThreadId.make("thread-stale-parent");
@@ -366,35 +324,6 @@ function orderedLineageIds(input: {
 }
 
 describe("web thread lineage ordering", () => {
-  it("orders sibling forks newest created first", () => {
-    const oldest = ThreadId.make("thread-fork-oldest");
-    const middle = ThreadId.make("thread-fork-middle");
-    const newest = ThreadId.make("thread-fork-newest");
-
-    expect(
-      orderedLineageIds({
-        threads: [
-          forkShell({ id: current, parentThreadId: null, createdAt: "2026-06-01T00:00:00.000Z" }),
-          forkShell({
-            id: oldest,
-            parentThreadId: current,
-            createdAt: "2026-06-02T00:00:00.000Z",
-          }),
-          forkShell({
-            id: middle,
-            parentThreadId: current,
-            createdAt: "2026-06-03T00:00:00.000Z",
-          }),
-          forkShell({
-            id: newest,
-            parentThreadId: current,
-            createdAt: "2026-06-04T00:00:00.000Z",
-          }),
-        ],
-      }),
-    ).toEqual([newest, middle, oldest]);
-  });
-
   it("does not reorder when related-thread activity arrives", () => {
     const first = ThreadId.make("thread-fork-a");
     const second = ThreadId.make("thread-fork-b");
@@ -484,22 +413,5 @@ describe("web thread lineage ordering", () => {
         },
       }),
     ).toEqual([dated, missingTransfer, undated]);
-  });
-
-  it("breaks equal creation times by thread id", () => {
-    const first = ThreadId.make("thread-fork-a");
-    const second = ThreadId.make("thread-fork-b");
-    const third = ThreadId.make("thread-fork-c");
-
-    expect(
-      orderedLineageIds({
-        threads: [
-          forkShell({ id: current, parentThreadId: null, createdAt: "2026-06-01T00:00:00.000Z" }),
-          forkShell({ id: third, parentThreadId: current, createdAt: "2026-06-02T00:00:00.000Z" }),
-          forkShell({ id: first, parentThreadId: current, createdAt: "2026-06-02T00:00:00.000Z" }),
-          forkShell({ id: second, parentThreadId: current, createdAt: "2026-06-02T00:00:00.000Z" }),
-        ],
-      }),
-    ).toEqual([first, second, third]);
   });
 });

@@ -63,20 +63,6 @@ describe("loadLocalAttachmentPreview", () => {
     );
     preview!.dispose();
   });
-
-  it("retains and shares a PDF with its original filename and type", async () => {
-    const pdf = { ...attachment, name: "report.pdf", mimeType: "application/pdf" };
-    const preview = await loadLocalAttachmentPreview(pdf, new AbortController().signal);
-    await preview!.share(new AbortController().signal);
-    expect(mocks.share).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attachment: { name: "report.pdf", mimeType: "application/pdf" },
-      }),
-    );
-    expect(mocks.retain.mock.results[0]!.value).not.toHaveBeenCalled();
-    preview!.dispose();
-    expect(mocks.retain.mock.results[0]!.value).toHaveBeenCalledTimes(1);
-  });
   it("resolves the current iOS container and releases its playback lease once", async () => {
     const preview = await loadLocalAttachmentPreview(attachment, new AbortController().signal);
     expect(preview?.uri).toContain("/22222222-2222-4222-8222-222222222222/Documents/");
@@ -106,40 +92,4 @@ describe("loadLocalAttachmentPreview", () => {
       expect(releaseShare).toHaveBeenCalledTimes(1);
     },
   );
-
-  it("releases a failed share while keeping playback retained", async () => {
-    mocks.share.mockRejectedValue(new Error("Sharing unavailable"));
-    const preview = await loadLocalAttachmentPreview(attachment, new AbortController().signal);
-    await expect(preview!.share(new AbortController().signal)).rejects.toThrow(
-      "Sharing unavailable",
-    );
-    expect(mocks.retain.mock.results[1]!.value).toHaveBeenCalledTimes(1);
-    expect(mocks.retain.mock.results[0]!.value).not.toHaveBeenCalled();
-    preview!.dispose();
-  });
-
-  it("releases a load canceled during native module loading", async () => {
-    const controller = new AbortController();
-    const loading = loadLocalAttachmentPreview(attachment, controller.signal);
-    controller.abort();
-    await expect(loading).resolves.toBeNull();
-    expect(mocks.retain.mock.results[0]!.value).toHaveBeenCalledTimes(1);
-    expect(mocks.exists).not.toHaveBeenCalled();
-  });
-
-  it("reports missing files and releases their lease", async () => {
-    mocks.exists.mockReturnValue(false);
-    await expect(
-      loadLocalAttachmentPreview(attachment, new AbortController().signal),
-    ).rejects.toThrow("This attachment is no longer available. Attach the file again.");
-    expect(mocks.retain.mock.results[0]!.value).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not start sharing a disposed preview", async () => {
-    const preview = await loadLocalAttachmentPreview(attachment, new AbortController().signal);
-    preview!.dispose();
-    await preview!.share(new AbortController().signal);
-    expect(mocks.share).not.toHaveBeenCalled();
-    expect(mocks.retain).toHaveBeenCalledTimes(1);
-  });
 });

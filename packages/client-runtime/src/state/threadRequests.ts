@@ -2,20 +2,67 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2UserInputQuestion,
+  ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
+  ProviderApprovalDecision,
   ProviderRequestKind,
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import type { AtomCommandResult } from "./runtime.ts";
+import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
+
+export type ApprovalResponder = (
+  requestId: RuntimeRequestId,
+  decision: ProviderApprovalDecision,
+  feedback?: string,
+) => Promise<AtomCommandResult<unknown, unknown> | undefined>;
+
+/** Feedback belongs to the displayed request, which may be a native child's tool call. */
+export async function sendApprovalFeedback(
+  approval: ThreadPendingApproval,
+  feedback: string,
+  respond: ApprovalResponder,
+): Promise<boolean> {
+  if (!approval.supportsFeedback || approval.responseCapability !== "live" || !feedback.trim())
+    return false;
+  return (await respond(approval.requestId, "decline", feedback.trim()))?._tag === "Success";
+}
+
+/** Declines every approval a redirect replaces; any one still pending would block the agent. */
+export async function declinePendingApprovals(
+  approvals: ReadonlyArray<ThreadPendingApproval>,
+  respond: ApprovalResponder,
+): Promise<boolean> {
+  for (const approval of approvals) {
+    // A request the provider can no longer answer has nothing to decline.
+    if (approval.responseCapability !== "live") continue;
+    if ((await respond(approval.requestId, "decline"))?._tag !== "Success") return false;
+  }
+  return true;
+}
 
 export interface ThreadPendingApproval {
   readonly requestId: RuntimeRequestId;
   readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
   readonly detail?: string;
+  readonly reason?: string;
+  readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
   readonly appName?: string;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
+  readonly supportsFeedback?: boolean;
+}
+
+export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
+
+export function fullAccessOverrideExplanation(
+  override: ProviderApprovalFullAccessOverride,
+): string {
+  return override === "ask_rule"
+    ? "Full access skips approvals, but an ask rule in the agent's own settings matches this action, so it still asks. Remove or narrow that rule to stop these prompts."
+    : "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.";
 }
 
 export interface ThreadUserInputQuestion extends Omit<
@@ -60,7 +107,7 @@ export function seedUserInputDraftAnswers<Draft extends { readonly customAnswer?
 }
 
 export function derivePendingThreadRequests(
-  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,
+  projection: Pick<ThreadStructure, "runtimeRequests" | "turnItems">,
 ): PendingThreadRequests {
   const approvals: ThreadPendingApproval[] = [];
   const userInputs: ThreadPendingUserInput[] = [];
@@ -99,32 +146,43 @@ export function derivePendingThreadRequests(
       requestKind: request.kind,
       createdAt: DateTime.formatIso(request.createdAt),
       ...(item?.type === "approval_request" && item.prompt ? { detail: item.prompt } : {}),
+      ...(item?.type === "approval_request" && item.reason ? { reason: item.reason } : {}),
+      ...(item?.type === "approval_request" && item.fullAccessOverride
+        ? { fullAccessOverride: item.fullAccessOverride }
+        : {}),
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
         : {}),
       responseCapability: responseCapability === "live" ? "live" : "not_resumable",
+      ...(request.responseCapability.type === "live" && request.responseCapability.supportsFeedback
+        ? { supportsFeedback: true }
+        : {}),
     });
   }
 
   return { approvals, userInputs };
 }
 
-export function createQuestionHistoryProjector() {
-  type Rows = OrchestrationV2ThreadProjection["visibleTurnItems"];
+export function createQuestionHistoryProjector<
+  Row extends ThreadStructureVisibleTurnItem =
+    OrchestrationV2ThreadProjection["visibleTurnItems"][number],
+>() {
+  type Rows = ReadonlyArray<Row>;
   type Requests = OrchestrationV2ThreadProjection["runtimeRequests"];
   let previousRows: Rows | undefined;
   let previousRequests: Requests | undefined;
   let previousResult: Rows | undefined;
-  const cache = new WeakMap<Rows[number], { request: Requests[number]; row: Rows[number] }>();
-  return (
-    projection: Pick<OrchestrationV2ThreadProjection, "visibleTurnItems" | "runtimeRequests">,
-  ): Rows => {
+  const cache = new WeakMap<Row, { request: Requests[number]; row: Row }>();
+  return (projection: {
+    readonly visibleTurnItems: Rows;
+    readonly runtimeRequests: Requests;
+  }): Rows => {
     const { visibleTurnItems: rows, runtimeRequests: requests } = projection;
     if (rows === previousRows && requests === previousRequests && previousResult)
       return previousResult;
     const byId = new Map(requests.map((request) => [request.id, request]));
-    let result: Rows[number][] | undefined;
+    let result: Row[] | undefined;
     for (const [index, row] of rows.entries()) {
       const item = row.item;
       const request =

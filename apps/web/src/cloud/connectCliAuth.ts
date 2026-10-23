@@ -13,7 +13,7 @@ function resolveConnectCliOAuthClientId(): string | null {
   return trimNonEmpty(import.meta.env.VITE_CLERK_CLI_OAUTH_CLIENT_ID as string | undefined);
 }
 
-export function hasConnectCliAuthConfig(): boolean {
+function hasConnectCliAuthConfig(): boolean {
   return Boolean(
     resolveCloudPublicConfig().clerkPublishableKey && resolveConnectCliOAuthClientId(),
   );

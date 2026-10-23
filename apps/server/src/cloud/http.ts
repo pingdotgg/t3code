@@ -17,6 +17,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as CloudLink from "./CloudLink.ts";
+import * as ConnectReachability from "./ConnectReachability.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -107,6 +108,7 @@ export const layer = HttpApiBuilder.group(
   "connect",
   Effect.fnUntraced(function* (handlers) {
     const cloudLink = yield* CloudLink.CloudLink;
+    const reachability = yield* ConnectReachability.ConnectReachability;
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
@@ -126,6 +128,9 @@ export const layer = HttpApiBuilder.group(
         requireEnvironmentScope(AuthRelayReadScope).pipe(
           Effect.andThen(toHttpError(cloudLink.linkState())),
         ),
+      )
+      .handle("checkReachability", () =>
+        requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
       )
       .handle("unlink", () =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(

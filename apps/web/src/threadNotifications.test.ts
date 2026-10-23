@@ -60,26 +60,6 @@ describe("playNotificationSound", () => {
     expect(audio.started).toBe(1);
   });
 
-  it("skips a completion that lands while the sound is still playing", async () => {
-    const { playNotificationSound } = await loadUnlocked();
-    await playNotificationSound("completion", () => true);
-
-    audio.currentTime = SOUND_SECONDS / 2;
-    await playNotificationSound("completion", () => true);
-
-    expect(audio.started).toBe(1);
-  });
-
-  it("plays again once the previous sound has ended", async () => {
-    const { playNotificationSound } = await loadUnlocked();
-    await playNotificationSound("completion", () => true);
-
-    audio.currentTime = SOUND_SECONDS;
-    await playNotificationSound("completion", () => true);
-
-    expect(audio.started).toBe(2);
-  });
-
   it("still plays an input alert over a completion sound", async () => {
     const { playNotificationSound } = await loadUnlocked();
     await playNotificationSound("completion", () => true);

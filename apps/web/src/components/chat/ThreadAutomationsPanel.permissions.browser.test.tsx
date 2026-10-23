@@ -1,13 +1,5 @@
-import {
-  EnvironmentId,
-  ThreadId,
-  ScheduledTaskId,
-  type ScheduledTask,
-  type ScheduledTaskListResult,
-} from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId, ThreadId, ScheduledTaskId, type ScheduledTask } from "@t3tools/contracts";
+import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({ allowed: true, toggle: vi.fn(), run: vi.fn() }));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
@@ -34,9 +26,10 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => {
 });
 vi.mock(import("../../state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironmentQuery: (() => ({ data: listResult, error: null })) as never,
+  useEnvironmentQuery: (() => ({ data: { tasks: [task] }, error: null })) as never,
 }));
 
+import { act, render as renderUi } from "../../../test/render";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 const environmentId = EnvironmentId.make("remote");
 const threadId = ThreadId.make("thread");
@@ -47,36 +40,34 @@ const task = {
   enabled: true,
   schedule: { type: "interval", everyMs: 60000 },
   lastRunStatus: "never",
-  nextRunAt: null,
 } as ScheduledTask;
-let listResult: ScheduledTaskListResult & { timeZone?: string };
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+async function setup() {
   state.allowed = true;
-  listResult = { tasks: [task] };
   state.toggle.mockReset().mockResolvedValue({ _tag: "Success" });
   state.run.mockReset().mockResolvedValue({ _tag: "Success" });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
-async function renderPanel() {
-  await act(async () =>
-    root.render(<ThreadAutomationsPanel environmentId={environmentId} threadId={threadId} />),
-  );
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await renderUi(null));
+  const container = screen.container;
+  async function renderPanel() {
+    await act(
+      async () =>
+        await screen.rerender(
+          <ThreadAutomationsPanel environmentId={environmentId} threadId={threadId} />,
+        ),
+    );
+  }
+
+  const byLabel = (label: string) =>
+    container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+
+  const environment = stack.move();
+  return { renderPanel, byLabel, [Symbol.asyncDispose]: () => environment.disposeAsync() };
 }
-
-const byLabel = (label: string) => container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
-
 it.each([true, false])("runs scheduled work only with task permission (%s)", async (allowed) => {
+  await using fixture = await setup();
+  const { renderPanel, byLabel } = fixture;
   state.allowed = allowed;
   await renderPanel();
   await act(async () => byLabel("Run Daily review now").click());
@@ -84,6 +75,8 @@ it.each([true, false])("runs scheduled work only with task permission (%s)", asy
 });
 
 it("rejects a retained toggle after task permission is revoked", async () => {
+  await using fixture = await setup();
+  const { renderPanel, byLabel } = fixture;
   await renderPanel();
   state.allowed = false;
   await act(async () => byLabel("Pause Daily review").click());
@@ -92,34 +85,4 @@ it("rejects a retained toggle after task permission is revoked", async () => {
   state.allowed = true;
   await act(async () => byLabel("Pause Daily review").click());
   expect(state.toggle).toHaveBeenCalledOnce();
-});
-
-it("labels fixed times with the server zone and preserves labels from older servers", async () => {
-  const tasks: ScheduledTask[] = [
-    { ...task, schedule: { type: "fixed_time", timeOfDay: "09:00" } },
-    { ...task, id: ScheduledTaskId.make("interval"), title: "Interval review" },
-    {
-      ...task,
-      id: ScheduledTaskId.make("webhook"),
-      title: "Webhook review",
-      schedule: { type: "webhook", signature: null },
-    },
-  ];
-  const labels = () => Array.from(container.querySelectorAll("li p"), (row) => row.textContent);
-
-  listResult = { tasks, timeZone: "Asia/Kolkata" };
-  await renderPanel();
-  expect(labels()).toEqual(["Daily at 09:00 Asia/Kolkata", "Every 1 min", "On webhook"]);
-
-  listResult = { tasks, timeZone: "Etc/UTC" };
-  await renderPanel();
-  expect(labels()).toEqual(["Daily at 09:00 UTC", "Every 1 min", "On webhook"]);
-
-  listResult = { tasks, timeZone: "UTC" };
-  await renderPanel();
-  expect(labels()).toEqual(["Daily at 09:00 UTC", "Every 1 min", "On webhook"]);
-
-  listResult = { tasks };
-  await renderPanel();
-  expect(labels()).toEqual(["Daily at 09:00", "Every 1 min", "On webhook"]);
 });

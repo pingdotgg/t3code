@@ -323,7 +323,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
 export type WindowsShellEnvironmentReader = (
   names: ReadonlyArray<string>,
   options?: WindowsEnvironmentProbeOptions,
-) => Partial<Record<string, string>>;
+) => Effect.Effect<Partial<Record<string, string>>>;
 
 export const WindowsShellEnvironment = Context.Reference<WindowsShellEnvironmentReader>(
   "@t3tools/shared/shell/WindowsShellEnvironment",
@@ -339,59 +339,62 @@ export const CommandAvailability = Context.Reference<CommandAvailabilityChecker>
   },
 );
 
-export function readEnvironmentFromWindowsShell(
-  names: ReadonlyArray<string>,
-  execFile?: ExecFileSyncLike,
-): Partial<Record<string, string>>;
-export function readEnvironmentFromWindowsShell(
-  names: ReadonlyArray<string>,
-  options?: WindowsEnvironmentProbeOptions,
-  execFile?: ExecFileSyncLike,
-): Partial<Record<string, string>>;
-export function readEnvironmentFromWindowsShell(
-  names: ReadonlyArray<string>,
-  optionsOrExecFile?: WindowsEnvironmentProbeOptions | ExecFileSyncLike,
-  maybeExecFile?: ExecFileSyncLike,
-): Partial<Record<string, string>> {
-  if (names.length === 0) {
-    return {};
-  }
-
-  const options =
-    typeof optionsOrExecFile === "function"
-      ? ({} satisfies WindowsEnvironmentProbeOptions)
-      : (optionsOrExecFile ?? {});
-  const execFile: ExecFileSyncLike =
-    typeof optionsOrExecFile === "function"
-      ? optionsOrExecFile
-      : (maybeExecFile ?? (NodeChildProcess.execFileSync as ExecFileSyncLike));
-  const command = buildWindowsEnvironmentCaptureCommand(names);
-  const args = [
-    "-NoLogo",
-    ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),
-    "-NonInteractive",
-    "-Command",
-    command,
-  ];
-  for (const shell of WINDOWS_SHELL_CANDIDATES) {
+const execWindowsEnvironmentProbe = (
+  file: string,
+  args: ReadonlyArray<string>,
+  options: { encoding: "utf8"; timeout: number },
+) =>
+  Effect.callback<Option.Option<string>>((resume) => {
+    let child: NodeChildProcess.ChildProcess;
     try {
-      const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      child = NodeChildProcess.execFile(
+        file,
+        args,
+        { ...options, windowsHide: true },
+        (error, stdout) => {
+          resume(Effect.succeed(error ? Option.none() : Option.some(stdout)));
+        },
+      );
+    } catch {
+      resume(Effect.succeedNone);
+      return;
+    }
+    return Effect.sync(() => {
+      child.kill();
+    });
+  });
+
+export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentFromWindowsShell")(
+  function* (
+    names: ReadonlyArray<string>,
+    options: WindowsEnvironmentProbeOptions = {},
+    execFile: typeof execWindowsEnvironmentProbe = execWindowsEnvironmentProbe,
+  ) {
+    if (names.length === 0) return {};
+
+    const command = buildWindowsEnvironmentCaptureCommand(names);
+    const args = [
+      "-NoLogo",
+      ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),
+      "-NonInteractive",
+      "-Command",
+      command,
+    ];
+    for (const shell of WINDOWS_SHELL_CANDIDATES) {
+      const output = yield* execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      if (Option.isNone(output)) continue;
 
       const environment: Partial<Record<string, string>> = {};
       for (const name of names) {
-        const value = extractEnvironmentValue(output, name);
-        if (value !== undefined) {
-          environment[name] = value;
-        }
+        const value = extractEnvironmentValue(output.value, name);
+        if (value !== undefined) environment[name] = value;
       }
       return environment;
-    } catch {
-      continue;
     }
-  }
 
-  return {};
-}
+    return {};
+  },
+);
 
 function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
@@ -549,11 +552,11 @@ export const withPathDirectoryListings =
     return yield* effect.pipe(Effect.provideService(PathDirectoryListings, listings));
   });
 
-// An injected resolver may answer differently for the same search, so its
+// An injected resolver or locator may answer differently for the same search, so its
 // entries are kept apart from every other resolver's.
 let spawnResolverCacheIdCount = 0;
-const spawnResolverCacheIds = new WeakMap<SpawnExecutableResolver, number>();
-function spawnResolverCacheId(resolver: SpawnExecutableResolver): number {
+const spawnResolverCacheIds = new WeakMap<SpawnExecutableResolver | XcodeGitLocator, number>();
+function spawnResolverCacheId(resolver: SpawnExecutableResolver | XcodeGitLocator): number {
   const known = spawnResolverCacheIds.get(resolver);
   if (known !== undefined) return known;
   const id = spawnResolverCacheIdCount++;
@@ -765,6 +768,71 @@ export function npmShimExecutable(
   return isFile(executable) ? executable : undefined;
 }
 
+export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => string | undefined;
+
+// xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.
+function locateXcodeGitWithXcrun(env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    const located = NodeChildProcess.execFileSync("/usr/bin/xcrun", ["--find", "git"], {
+      encoding: "utf8",
+      env,
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return NodePath.isAbsolute(located) ? located : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
+  "@t3tools/shared/shell/XcodeGitLocation",
+  { defaultValue: () => locateXcodeGitWithXcrun },
+);
+
+const MACOS_GIT_SHIM = "/usr/bin/git";
+
+/**
+ * /usr/bin/git is an xcrun shim that finds the active developer directory on
+ * every run: about 8 ms per spawn, against under 3 ms for the git behind it.
+ * Only the shim is replaced, so a git the user put first on PATH (Homebrew,
+ * Nix) still wins, and git's own children keep the same PATH. Any lookup
+ * failure keeps plain `git`.
+ */
+const resolveMacosGit = Effect.fnUntraced(function* (
+  env: NodeJS.ProcessEnv,
+  resolveExecutable: SpawnExecutableResolver,
+) {
+  const locateXcodeGit = yield* XcodeGitLocation;
+  const cache = yield* CommandResolutionCache;
+  const cacheKey = [
+    "xcode-git",
+    String(spawnResolverCacheId(resolveExecutable)),
+    String(spawnResolverCacheId(locateXcodeGit)),
+    resolvePathEnvironmentVariable(env),
+    env.DEVELOPER_DIR ?? "",
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
+  const nowNanos = yield* Clock.currentTimeNanos;
+  const cached = cache.get(cacheKey);
+  // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
+  if (
+    cached !== undefined &&
+    cached.expiresAtNanos > nowNanos &&
+    (cached.resolvedPath === null ||
+      resolveExecutable(cached.resolvedPath, "darwin", env) !== undefined)
+  ) {
+    return cached.resolvedPath ?? "git";
+  }
+  const located =
+    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const realGit =
+    located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
+      ? located
+      : null;
+  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
+  return realGit ?? "git";
+});
+
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   /** Run the executable behind an npm cmd-shim directly (see `npmShimExecutable`). */
   readonly bypassNpmShim?: boolean;
@@ -776,7 +844,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   options: SpawnCommandOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
-  if (platform !== "win32") {
+  const isMacosGit = platform === "darwin" && command === "git";
+  if (platform !== "win32" && !isMacosGit) {
     return { command, args: [...args], shell: false };
   }
 
@@ -788,6 +857,13 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
+  if (isMacosGit) {
+    return {
+      command: yield* resolveMacosGit(env, resolveExecutable),
+      args: [...args],
+      shell: false,
+    };
+  }
   // The scan is synchronous and runs before every child process, so it shares
   // the PATH scan cache above. Explicit paths stay uncached for the same reason,
   // and so do misses: a failed spawn is how providers report "not installed",
@@ -842,7 +918,7 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
   return (yield* resolveCommandPath(command, options)) !== null;
 });
 
-export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
   const appData = env.APPDATA?.trim();
   const localAppData = env.LOCALAPPDATA?.trim();
   const userProfile = env.USERPROFILE?.trim();
@@ -855,18 +931,6 @@ export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArra
       ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
       : []),
   ];
-}
-
-function readWindowsEnvironmentSafely(
-  readEnvironment: WindowsShellEnvironmentReader,
-  names: ReadonlyArray<string>,
-  options?: WindowsEnvironmentProbeOptions,
-): Partial<Record<string, string>> {
-  try {
-    return readEnvironment(names, options);
-  } catch {
-    return {};
-  }
 }
 
 /** Keep one PATH spelling in copied Windows environment records. */
@@ -901,9 +965,7 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
   const readEnvironment = yield* WindowsShellEnvironment;
   const commandAvailable = yield* CommandAvailability;
   const inheritedPath = readEnvPath(env);
-  const shellPath = readWindowsEnvironmentSafely(readEnvironment, ["PATH"], {
-    loadProfile: false,
-  }).PATH;
+  const shellPath = (yield* readEnvironment(["PATH"], { loadProfile: false })).PATH;
   const mergedPath = mergePathValues(shellPath, inheritedPath, "win32");
   const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
   const baselinePath = mergePathValues(mergedPath, knownCliPath, "win32");
@@ -914,11 +976,9 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
     return baselinePatch;
   }
 
-  const profiledEnvironment = readWindowsEnvironmentSafely(
-    readEnvironment,
-    ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"],
-    { loadProfile: true },
-  );
+  const profiledEnvironment = yield* readEnvironment(["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"], {
+    loadProfile: true,
+  });
   const profiledPath = mergePathValues(profiledEnvironment.PATH, baselinePath, "win32");
   const profiledPatch: Partial<NodeJS.ProcessEnv> = {
     ...(profiledPath ? { PATH: profiledPath } : {}),

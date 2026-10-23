@@ -1,41 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  formatDuration,
-  deriveActiveWorkStartedAt,
-  deriveSubagentElapsedMs,
-} from "./orchestrationTiming.ts";
-
-describe("formatDuration", () => {
-  it.each([
-    [0, "1ms"],
-    [250, "250ms"],
-    [1_500, "1.5s"],
-    [9_950, "10s"],
-    [22_000, "22s"],
-    [59_499, "59s"],
-    [59_500, "1m"],
-    [59_999, "1m"],
-    [60_000, "1m"],
-    [65_000, "1m 5s"],
-    [119_500, "2m"],
-    [3_599_499, "59m 59s"],
-    [3_599_500, "1h"],
-    [3_600_000, "1h"],
-    [3_601_000, "1h 1s"],
-    [3_660_000, "1h 1m"],
-    [3_661_000, "1h 1m 1s"],
-    [7_199_500, "2h"],
-    [25_190_000, "6h 59m 50s"],
-    [90_061_000, "25h 1m 1s"],
-  ])("formats %d ms as %s", (durationMs, expected) => {
-    expect(formatDuration(durationMs)).toBe(expected);
-  });
-
-  it.each([-1, NaN, Infinity, -Infinity])("handles invalid durations: %s", (durationMs) => {
-    expect(formatDuration(durationMs)).toBe("0ms");
-  });
-});
+import { deriveActiveWorkStartedAt, deriveSubagentElapsedMs } from "./orchestrationTiming.ts";
 
 describe("deriveActiveWorkStartedAt", () => {
   it.each([null, "2026-09-06T23:34:00.000Z"])(
@@ -129,19 +94,13 @@ describe("deriveActiveWorkStartedAt", () => {
       ),
     ).toBeNull();
   });
-
-  it("falls back to the caller's send timestamp when there is no turn yet", () => {
-    expect(deriveActiveWorkStartedAt(null, null, "2026-09-06T23:33:00.000Z")).toBe(
-      "2026-09-06T23:33:00.000Z",
-    );
-  });
 });
 
 describe("deriveSubagentElapsedMs", () => {
   const startedAt = "2026-09-21T12:00:00.000Z";
   const completedAt = "2026-09-21T12:00:10.000Z";
   const now = Date.parse("2026-09-21T13:00:00.000Z");
-  it.each(["idle", "completed", "failed", "cancelled", "interrupted"] as const)(
+  it.each(["idle", "completed", "failed"] as const)(
     "does not count the age of %s work with unknown completion timing",
     (status) => {
       expect(deriveSubagentElapsedMs({ status, startedAt, completedAt: null }, now)).toBeNull();

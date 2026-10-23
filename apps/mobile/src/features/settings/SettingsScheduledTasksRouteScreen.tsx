@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+  MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -24,7 +25,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_WEBHOOK_PROMPT,
+  emptyWebhookFilterDraft,
   parseMaxDeliveryAge,
+  parseWebhookFilterDrafts,
+  removeWebhookFilterDraft,
+  WEBHOOK_FILTER_OPS,
+  type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
@@ -219,6 +225,84 @@ function SelectRow(props: {
         />
       </Pressable>
     </Menu>
+  );
+}
+
+function WebhookFilterRows(props: {
+  readonly filters: ReadonlyArray<WebhookFilterDraft>;
+  readonly disabled: boolean;
+  readonly onChange: (filters: ReadonlyArray<WebhookFilterDraft>) => void;
+}) {
+  const update = (index: number, patch: Partial<WebhookFilterDraft>) =>
+    props.onChange(
+      props.filters.map((filter, at) => (at === index ? { ...filter, ...patch } : filter)),
+    );
+  return (
+    <>
+      {props.filters.map((filter, index) => (
+        <View key={filter.id}>
+          <View className="flex-row items-center gap-3 border-t border-border-subtle px-4 pt-3">
+            <Text className="min-w-0 flex-1 text-sm text-foreground-muted">Filter {index + 1}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Remove filter ${index + 1}`}
+              disabled={props.disabled}
+              hitSlop={8}
+              onPress={() => props.onChange(removeWebhookFilterDraft(props.filters, filter.id))}
+              className="active:opacity-70"
+            >
+              <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
+            </Pressable>
+          </View>
+          <FormField
+            label="Path"
+            value={filter.path}
+            placeholder="body.action"
+            disabled={props.disabled}
+            onChange={(path) => update(index, { path })}
+          />
+          <SelectRow
+            label="Test"
+            value={WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label ?? ""}
+            actions={WEBHOOK_FILTER_OPS.map((option) => ({
+              id: option.op,
+              title: option.label,
+              state: option.op === filter.op ? ("on" as const) : undefined,
+            }))}
+            onSelect={(id) => {
+              const known = WEBHOOK_FILTER_OPS.find((option) => option.op === id);
+              if (known) update(index, { op: known.op });
+            }}
+          />
+          {filter.op === "exists" ? null : (
+            <FormField
+              label={filter.op === "in" ? "Values, comma-separated" : "Value"}
+              value={filter.value}
+              placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
+              disabled={props.disabled}
+              onChange={(value) => update(index, { value })}
+            />
+          )}
+        </View>
+      ))}
+      {props.filters.length < MAX_WEBHOOK_FILTERS ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={props.disabled}
+          onPress={() => props.onChange([...props.filters, emptyWebhookFilterDraft()])}
+          className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+        >
+          <Text className="min-w-0 flex-1 text-lg text-foreground">Add filter</Text>
+          <SymbolView name="plus" size={16} tintColorClassName="accent-icon" />
+        </Pressable>
+      ) : null}
+      {props.filters.length > 0 ? (
+        <Text className="px-4 pb-3 text-sm text-foreground-muted">
+          Runs only when every filter matches. Other requests are logged as filtered. Separate “is
+          one of” values with commas; a value can't contain a comma.
+        </Text>
+      ) : null}
+    </>
   );
 }
 
@@ -627,6 +711,18 @@ function TaskForm({
       );
       return;
     }
+    const parsedFilters = parseWebhookFilterDrafts(draft.schedule.filters);
+    if (draft.schedule.mode === "webhook" && "error" in parsedFilters) {
+      Dialog.alert("Invalid filter", parsedFilters.error);
+      return;
+    }
+    if (draft.schedule.mode === "webhook" && schedule === null) {
+      Dialog.alert(
+        "Invalid webhook settings",
+        "Each dedupe key must contain a valid request placeholder. The coalesce window must be whole seconds from 10 to 3600, or blank.",
+      );
+      return;
+    }
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
@@ -964,6 +1060,48 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
                 }
               />
+              <WebhookFilterRows
+                filters={draft.schedule.filters}
+                disabled={saving}
+                onChange={(filters) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, filters } })
+                }
+              />
+              <FormField
+                label="Replay key template"
+                value={draft.schedule.replayKey}
+                placeholder="{{headers.delivery-id}}"
+                disabled={saving}
+                borderTop
+                onChange={(replayKey) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, replayKey } })
+                }
+              />
+              <FormField
+                label="Coalesce key template"
+                value={draft.schedule.coalesceKey}
+                placeholder="{{body.id}}"
+                disabled={saving}
+                borderTop
+                onChange={(coalesceKey) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceKey } })
+                }
+              />
+              <FormField
+                label="Coalesce window (seconds, 10–3600)"
+                value={draft.schedule.coalesceWindowSeconds}
+                placeholder="120"
+                keyboardType="number-pad"
+                disabled={saving}
+                borderTop
+                onChange={(coalesceWindowSeconds) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceWindowSeconds } })
+                }
+              />
+              <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                Replay keys suppress repeats for 7 days. Coalescing runs the latest payload when the
+                window from the first delivery closes. Empty keys run normally.
+              </Text>
             </>
           ) : (
             <>

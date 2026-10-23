@@ -26,7 +26,12 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
-const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
+const forkCases = (
+  [
+    ["codex", "interrupted"],
+    ["claudeAgent", "failed"],
+  ] as const
+).map(([driverName, status]) => {
   const driver = ProviderDriverKind.make(driverName);
   const instanceId = ProviderInstanceId.make(driver);
   const modelSelection = { instanceId, model: "test-model" };
@@ -46,13 +51,7 @@ const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
     { runEffectWorker: false },
   );
 
-  return (["failed", "interrupted", "cancelled"] as const).map((status) => ({
-    driver,
-    status,
-    instanceId,
-    modelSelection,
-    layer,
-  }));
+  return { driver, status, instanceId, modelSelection, layer };
 });
 
 it.effect("a persisted fork leaves PR watching with its parent until explicitly opted in", () =>

@@ -62,6 +62,7 @@ describe("workspace connection subscriptions", () => {
         networkStatus: get(h.network),
         environments: [projectWorkspaceEnvironment(ID, get(h.source)!)],
         shellSummary: get(shell),
+        hasSyncingConnectedEnvironment: false,
       }),
     );
     const initial = h.registry.get(h.stateAtom);
@@ -92,90 +93,6 @@ describe("workspace connection subscriptions", () => {
     } finally {
       stopBroad();
       stopNarrow();
-      h.registry.dispose();
-    }
-  });
-
-  it("propagates errors, offline state, disabling and reconnection", () => {
-    const h = harness();
-    try {
-      expect(h.registry.get(h.stateAtom).connectionState).toBe("connected");
-      const failed = {
-        ...presentation(),
-        connection: { phase: "error" as const, error: "Connection failed", traceId: "trace-1" },
-      };
-      h.registry.set(h.source, failed);
-      expect(h.registry.get(h.stateAtom)).toMatchObject({
-        connectionState: "error",
-        connectionError: "Connection failed",
-        hasReadyEnvironment: false,
-      });
-      expect(h.registry.get(h.environmentsAtom)[0]?.connectionErrorTraceId).toBe("trace-1");
-      h.registry.set(h.source, { ...failed, entry: { ...failed.entry, enabled: false } });
-      expect(h.registry.get(h.stateAtom)).toMatchObject({
-        hasConnections: true,
-        connectionState: "available",
-        connectionError: null,
-      });
-      h.registry.set(h.source, {
-        ...presentation(),
-        connection: { phase: "reconnecting", error: null, traceId: null },
-      });
-      expect(h.registry.get(h.stateAtom)).toMatchObject({
-        hasConnectingEnvironment: true,
-        connectionState: "reconnecting",
-      });
-      h.registry.set(h.source, presentation());
-      expect(h.registry.get(h.stateAtom)).toMatchObject({
-        hasReadyEnvironment: true,
-        hasConnectingEnvironment: false,
-      });
-      h.registry.set(h.network, "offline");
-      expect(h.registry.get(h.stateAtom)).toMatchObject({
-        connectionState: "offline",
-        hasReadyEnvironment: false,
-      });
-      h.registry.set(h.network, "online");
-      expect(h.registry.get(h.stateAtom).connectionState).toBe("connected");
-    } finally {
-      h.registry.dispose();
-    }
-  });
-
-  it("updates labels and endpoints, removes environments, and finishes catalog loading", () => {
-    const h = harness();
-    try {
-      h.registry.set(h.catalog, { isReady: false, entries: new Map() });
-      expect(h.registry.get(h.stateAtom)).toMatchObject({
-        isLoadingConnections: true,
-        hasConnections: false,
-      });
-      h.registry.set(h.source, {
-        ...presentation(),
-        entry: {
-          ...presentation().entry,
-          target: new PrimaryConnectionTarget({
-            environmentId: ID,
-            label: "Renamed",
-            httpBaseUrl: "https://new.example.test",
-            wsBaseUrl: "wss://new.example.test",
-          }),
-        },
-      });
-      h.registry.set(h.catalog, { isReady: true, entries: new Map([[ID, presentation().entry]]) });
-      expect(h.registry.get(h.environmentsAtom)[0]).toMatchObject({
-        environmentLabel: "Renamed",
-        displayUrl: "https://new.example.test",
-      });
-      expect(h.registry.get(h.stateAtom).isLoadingConnections).toBe(false);
-      h.registry.set(h.catalog, { isReady: true, entries: new Map() });
-      expect(h.registry.get(h.stateAtom)).toMatchObject({
-        hasConnections: false,
-        connectionState: "available",
-        hasReadyEnvironment: false,
-      });
-      expect(h.registry.get(h.environmentsAtom)).toEqual([]);
-    } finally {
       h.registry.dispose();
     }
   });

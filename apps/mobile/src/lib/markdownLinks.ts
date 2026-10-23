@@ -1,5 +1,5 @@
 import { fileBasename } from "@t3tools/shared/path";
-import { formatFilePathPosition } from "@t3tools/shared/fileLinks";
+import { fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
   inlineCodeFilePathCandidate,
   normalizeMarkdownLinkDestination,
@@ -273,13 +273,17 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
     }
   } catch {}
 
-  const target = parseMarkdownFileLink(normalized);
+  const target =
+    parseMarkdownFileLink(normalized) ??
+    (/^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+$/.test(normalized)
+      ? { path: normalized }
+      : null);
   if (target) {
     return {
       kind: "file",
       href: normalized,
       icon: resolveMarkdownFileIcon(target.path),
-      label: fileBasename(formatFilePathPosition(target)),
+      label: fileLinkLabel(target, new Map()),
       path: target.path,
       ...(target.line ? { line: target.line } : {}),
       ...(target.column ? { column: target.column } : {}),

@@ -77,13 +77,20 @@ jobs:
 
           vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
 
-          deployment_url="$(
+          deployment_output="$(
             vp dlx vercel@53.1.1 deploy \
               --archive=tgz \
               --yes \
               --token "$VERCEL_TOKEN" \
               --scope "$vercel_scope"
           )"
+          printf '%s\n' "$deployment_output"
+          # Vercel can print lockfile warnings to stdout before the deployment URL.
+          deployment_url="$(printf '%s\n' "$deployment_output" | grep -E '^https://[[:alnum:].-]+\.vercel\.app$')"
+          if [[ "$deployment_url" == *$'\n'* ]]; then
+            echo "Vercel returned multiple deployment URLs." >&2
+            exit 1
+          fi
 
           echo "Deployed $deployment_url"
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"

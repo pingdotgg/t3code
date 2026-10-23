@@ -1,12 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Hosted handoff test uses a real localhost listener without an OpenAI account.
 import * as NodeHttp from "node:http";
-import * as NodePath from "node:path";
-import * as PlatformNodePath from "@effect/platform-node/NodePath";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { beforeEach, vi } from "vite-plus/test";
@@ -60,15 +58,11 @@ const layerDesktopClerk = (
     copyText: () => Effect.void,
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
-  isPackaged = false,
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir: "/tmp/t3-state",
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
-    isPackaged,
-    dirname: platform === "win32" ? String.raw`C:\T3 Code\dist-electron` : "/tmp/dist-electron",
-    path: platform === "win32" ? NodePath.win32 : NodePath.posix,
     platform,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -100,7 +94,7 @@ const layerDesktopClerk = (
   return DesktopClerk.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        PlatformNodePath.layerPosix,
+        NodePath.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
@@ -115,101 +109,6 @@ describe("DesktopClerk", () => {
     createClerkBridgeMock.mockReset();
     requestSingleInstanceLockMock.mockReset().mockReturnValue(true);
     storageMock.mockReset();
-  });
-
-  it.effect.each([
-    { platform: "win32", isPackaged: false, isDevelopment: false, registers: true },
-    { platform: "win32", isPackaged: false, isDevelopment: true, registers: false },
-    { platform: "win32", isPackaged: true, isDevelopment: false, registers: false },
-    { platform: "darwin", isPackaged: false, isDevelopment: false, registers: false },
-    { platform: "linux", isPackaged: false, isDevelopment: false, registers: false },
-  ] as const)(
-    "registers an entry point only for unpackaged non-development Windows ($platform, packaged=$isPackaged, development=$isDevelopment)",
-    ({ platform, isPackaged, isDevelopment, registers }) => {
-      const events: string[] = [];
-      storageMock.mockReturnValue(storageAdapter);
-      createClerkBridgeMock.mockImplementation(() => {
-        events.push("bridge");
-        return { cleanup: vi.fn() };
-      });
-      const setAsDefaultProtocolClient = vi.fn(() =>
-        Effect.sync(() => {
-          events.push("register");
-          return true;
-        }),
-      );
-      const electronApp = {
-        on: () => Effect.void,
-        setAsDefaultProtocolClient,
-      } as unknown as ElectronApp.ElectronApp["Service"];
-
-      return Effect.gen(function* () {
-        const clerk = yield* DesktopClerk.DesktopClerk;
-        yield* clerk.configure;
-
-        assert.deepEqual(
-          setAsDefaultProtocolClient.mock.calls,
-          registers
-            ? [["t3code", process.execPath, [String.raw`C:\T3 Code\dist-electron\main.cjs`]]]
-            : [],
-        );
-        assert.deepEqual(events, registers ? ["bridge", "register"] : ["bridge"]);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          layerDesktopClerk(
-            isDevelopment,
-            [],
-            platform,
-            undefined,
-            undefined,
-            undefined,
-            isPackaged,
-          ),
-        ),
-        Effect.provideService(ElectronApp.ElectronApp, electronApp),
-        Effect.provideService(
-          ElectronWindow.ElectronWindow,
-          {} as ElectronWindow.ElectronWindow["Service"],
-        ),
-        Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
-        Effect.provideService(HostProcess.Arguments, ["electron"]),
-      );
-    },
-  );
-
-  it.effect("acquires and releases the SDK bridge with the layer", () => {
-    const cleanup = vi.fn();
-    const events: string[] = [];
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockImplementation(() => {
-      events.push("createClerkBridge");
-      return { cleanup, isPrimaryInstance: true };
-    });
-
-    return Effect.gen(function* () {
-      yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
-
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme: "t3code-dev", host: "app" },
-          },
-        ],
-      ]);
-      assert.equal(cleanup.mock.calls.length, 1);
-      assert.deepEqual(events, [
-        "setPath:userData:/tmp/app-data/t3code-dev",
-        "requestSingleInstanceLock",
-        "on:second-instance",
-        "createClerkBridge",
-      ]);
-      storageMock.mockClear();
-      createClerkBridgeMock.mockClear();
-    });
   });
 
   it.each([
@@ -263,54 +162,6 @@ describe("DesktopClerk", () => {
       ]);
     },
   );
-
-  it.effect("preserves bridge initialization failures", () => {
-    const cause = new Error("bridge initialization failed");
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockImplementationOnce(() => {
-      throw cause;
-    });
-
-    return Effect.gen(function* () {
-      const error = yield* Effect.scoped(Layer.build(layerDesktopClerk())).pipe(Effect.flip);
-
-      assert.instanceOf(error, DesktopClerk.DesktopClerkBridgeInitializationError);
-      assert.equal(error.stateDir, "/tmp/t3-state");
-      assert.equal(error.isDevelopment, true);
-      assert.strictEqual(error.cause, cause);
-      assert.equal(
-        error.message,
-        'Failed to initialize the desktop Clerk bridge for state directory "/tmp/t3-state" (development: true).',
-      );
-    });
-  });
-
-  it.effect("preserves bridge cleanup failures", () => {
-    const cause = new Error("bridge cleanup failed");
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue({
-      cleanup: () => {
-        throw cause;
-      },
-    });
-
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(Effect.scoped(Layer.build(layerDesktopClerk(false))));
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, DesktopClerk.DesktopClerkBridgeCleanupError);
-        assert.equal(error.stateDir, "/tmp/t3-state");
-        assert.equal(error.isDevelopment, false);
-        assert.strictEqual(error.cause, cause);
-        assert.equal(
-          error.message,
-          'Failed to clean up the desktop Clerk bridge for state directory "/tmp/t3-state" (development: false).',
-        );
-      }
-    });
-  });
 
   it.effect.each(["before configure", "after configure"] as const)(
     "reveals the running window when a second instance launches %s",

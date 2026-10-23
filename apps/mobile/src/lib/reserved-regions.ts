@@ -19,6 +19,8 @@ export interface NativeLayoutMetrics {
     readonly right: number;
   };
   readonly reservedRegions: ReadonlyArray<ReservedRegion>;
+  /** How far above the bottom edge UIKit floats a 48pt bottom bar, level with its tab bar. iOS 27.1+. */
+  readonly bottomBarInset?: number;
 }
 
 export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {

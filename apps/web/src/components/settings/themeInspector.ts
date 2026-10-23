@@ -292,7 +292,7 @@ function getThemePaintSnapshot(
   };
 }
 
-export function changedThemePaintKinds(
+function changedThemePaintKinds(
   before: ThemePaintSnapshot,
   after: ThemePaintSnapshot,
 ): ReadonlyArray<ThemePaintKind> {
@@ -349,10 +349,7 @@ function themeInspectorCandidates(): ReadonlyArray<Element> {
   );
 }
 
-export function themeRoleFromUtilityClass(
-  className: string,
-  kind: ThemePaintKind,
-): ThemeColorRole | null {
+function themeRoleFromUtilityClass(className: string, kind: ThemePaintKind): ThemeColorRole | null {
   if (className.includes(":")) return null;
   for (const prefix of THEME_UTILITY_PREFIXES[kind]) {
     if (!className.startsWith(prefix)) continue;

@@ -198,16 +198,7 @@ export function makeAntigravityAcpAdapterFlavor(
       const question = extractAntigravityUserInputQuestion(request);
       if (question === undefined) return undefined;
       return {
-        question: {
-          id: question.id,
-          header: question.header,
-          question: question.question,
-          options: question.options.map((option) => ({
-            label: option.label,
-            description: option.description,
-          })),
-          multiSelect: false,
-        },
+        question,
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },

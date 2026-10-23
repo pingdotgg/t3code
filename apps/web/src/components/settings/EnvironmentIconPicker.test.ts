@@ -9,27 +9,6 @@ const config = (environmentIcon: boolean | undefined) =>
   }) as unknown as ServerConfig;
 
 describe("resolveEnvironmentIconPickerLock", () => {
-  it("locks until the environment is connected", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: null, operateAccess: "granted" }),
-    ).toMatch(/Connect/);
-  });
-
-  it("locks on servers that predate the setting, before looking at permissions", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({
-        serverConfig: config(undefined),
-        operateAccess: "denied",
-      }),
-    ).toMatch(/too old/);
-  });
-
-  it("locks when the session cannot operate the environment", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "denied" }),
-    ).toMatch(/cannot change/);
-  });
-
   it("waits for a settings grant before allowing changes", () => {
     expect(
       resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "pending" }),

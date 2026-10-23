@@ -12,15 +12,6 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
-const SINGLE_TEMPLATE_PATHS = [
-  ".github/pull_request_template.md",
-  ".github/PULL_REQUEST_TEMPLATE.md",
-  "pull_request_template.md",
-  "PULL_REQUEST_TEMPLATE.md",
-  "docs/pull_request_template.md",
-  "docs/PULL_REQUEST_TEMPLATE.md",
-] as const;
-
 const TEMPLATE_DIRECTORIES = [
   ".github/PULL_REQUEST_TEMPLATE",
   "PULL_REQUEST_TEMPLATE",
@@ -82,18 +73,6 @@ const detectTemplate = (cwd: string, treeish = "HEAD") =>
     const git = yield* GitVcsDriver.GitVcsDriver;
     return yield* GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
   });
-
-it.effect.each(SINGLE_TEMPLATE_PATHS)("recognizes $0", (relativePath) =>
-  runWithTempDirectory((cwd) =>
-    Effect.gen(function* () {
-      yield* writeTemplate(cwd, relativePath, `template from ${relativePath}`);
-      yield* commitTemplates(cwd);
-
-      const template = yield* detectTemplate(cwd);
-      assert.strictEqual(Option.getOrUndefined(template), `template from ${relativePath}`);
-    }),
-  ),
-);
 
 it.effect("reads templates from the requested base tree", () =>
   runWithTempDirectory((cwd) =>

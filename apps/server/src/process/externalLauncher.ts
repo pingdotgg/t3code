@@ -163,9 +163,10 @@ function resolveCommandEditorArgs(
         onSome: ({ path, line, column }) => [
           "--line",
           line,
+          // JetBrains IDEs count `--column` from 0; targets count columns from 1.
           ...Option.match(column, {
             onNone: () => [],
-            onSome: (value) => ["--column", value],
+            onSome: (value) => ["--column", String(Math.max(0, Number(value) - 1))],
           }),
           path,
         ],

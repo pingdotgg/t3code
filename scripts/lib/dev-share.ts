@@ -127,8 +127,14 @@ export interface DevShareResult {
   readonly host: string;
 }
 
+/**
+ * Publishes `webPort` on the tailnet. The tailnet port always matches the web
+ * port so the URL is stable; `localTarget` points it at the backend instead
+ * when the backend serves a built client (`--built`).
+ */
 export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (input: {
   readonly webPort: number;
+  readonly localTarget?: { readonly port: number; readonly host: string };
 }) {
   const status = yield* readTailscaleStatus.pipe(
     Effect.mapError((error) => new TailscaleUnavailableError({ cause: error })),
@@ -155,9 +161,9 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
   // first, so it only binds the IPv6 loopback and a 127.0.0.1 target has
   // nothing behind it (tailscale answers 502).
   yield* ensureTailscaleServe({
-    localPort: input.webPort,
+    localPort: input.localTarget?.port ?? input.webPort,
     servePort: input.webPort,
-    localHost: "localhost",
+    localHost: input.localTarget?.host ?? "localhost",
   }).pipe(
     Effect.mapError((error) => {
       const explanation = explainCommandFailure(error);

@@ -68,6 +68,34 @@ export class HtmlRenderPageTooLargeError extends Schema.TaggedError<HtmlRenderPa
   }
 }
 
+export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRenderViewportHeightError>()(
+  "HtmlRenderViewportHeightError",
+  { found: Schema.String },
+) {
+  override get message(): string {
+    return `The page uses a viewport height unit (${this.found}). The frame grows to fit the page, so a size that follows the viewport makes it grow again and again. Let content set the height, or use fixed pixel heights.`;
+  }
+}
+
+// Only stylesheets and style attributes are checked, so page text that mentions
+// a unit passes; comments match first so their contents are skipped. Scripts
+// are still checked, since markup they insert applies. An unclosed comment,
+// tag, or quote runs to the end of the page, which keeps both patterns linear
+// on hostile input.
+const CSS_SOURCE =
+  /<!--[\s\S]*?(?:-->|$)|<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
+// The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh".
+const VIEWPORT_HEIGHT_UNIT = /(?<![\w.+/])(?:\d+(?:\.\d+)?|\.\d+)[sld]?vh(?![\w-])/i;
+
+const rejectViewportHeight = (html: string) => {
+  for (const [, sheet, doubleQuoted, singleQuoted, unquoted] of html.matchAll(CSS_SOURCE)) {
+    const css = sheet ?? doubleQuoted ?? singleQuoted ?? unquoted ?? "";
+    const found = VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
+    if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
+  }
+  return Effect.void;
+};
+
 export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreError>()(
   "HtmlRenderStoreError",
   { cause: Schema.Defect() },
@@ -80,7 +108,8 @@ export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreErro
 export type HtmlRenderPrepareError =
   | HtmlRenderImagesNotFoundError
   | HtmlRenderImageTooLargeError
-  | HtmlRenderPageTooLargeError;
+  | HtmlRenderPageTooLargeError
+  | HtmlRenderViewportHeightError;
 
 export interface HtmlPreview {
   readonly png: string;
@@ -380,6 +409,7 @@ const make = Effect.gen(function* () {
     inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
 
   const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
+    yield* rejectViewportHeight(html);
     const inlined = yield* inline(html);
     if (inlined.missing.length > 0) {
       return yield* new HtmlRenderImagesNotFoundError({ paths: inlined.missing });
@@ -447,6 +477,7 @@ const make = Effect.gen(function* () {
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),
     );
     const appearance = input.appearance ?? "dark";
+    yield* rejectViewportHeight(input.html);
     const inlined = yield* inline(input.html);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(

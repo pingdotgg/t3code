@@ -63,7 +63,7 @@ export function HostedEmptyState() {
   );
 }
 
-export function T3ConnectSteps() {
+function T3ConnectSteps() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // Adding the first computer unmounts this screen. Wait for all health checks

@@ -48,6 +48,25 @@ export class OutdatedHostUpdateError extends Schema.TaggedError<OutdatedHostUpda
 
 export type OutdatedHostUpdateStage = "downloading" | "installing" | "resuming";
 
+const reachOutdatedHost = Effect.fn("clientRuntime.connection.reachOutdatedHost")(function* (
+  environmentId: EnvironmentId,
+) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const resolver = yield* ConnectionResolver.ConnectionResolver;
+  const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+  if (entry === undefined) {
+    return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({ environmentId });
+  }
+  const { prepared, descriptor } = yield* Effect.firstSuccessOf(
+    usableRoutes(entry).map((route) => resolver.prepareForUpdate(routeEntry(entry, route))),
+  );
+  return { entry, prepared, descriptor };
+});
+
+// The normal session cannot read config from a host behind the protocol gate.
+export const describeOutdatedHost = (environmentId: EnvironmentId) =>
+  reachOutdatedHost(environmentId).pipe(Effect.map(({ descriptor }) => descriptor));
+
 /**
  * The normal session refuses to open against such a host, so this opens a bare
  * socket and calls only the self-update RPCs, whose wire shape has not changed
@@ -60,16 +79,9 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     onStage: (stage: OutdatedHostUpdateStage) => Effect.Effect<void>,
   ) {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-    const resolver = yield* ConnectionResolver.ConnectionResolver;
     const webSocketConstructor = yield* Socket.WebSocketConstructor;
     const httpClient = yield* HttpClient.HttpClient;
-    const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
-    if (entry === undefined) {
-      return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({ environmentId });
-    }
-    const { prepared, descriptor } = yield* Effect.firstSuccessOf(
-      usableRoutes(entry).map((route) => resolver.prepareForUpdate(routeEntry(entry, route))),
-    );
+    const { entry, prepared, descriptor } = yield* reachOutdatedHost(environmentId);
     // Discovery still holds the old relay descriptor and would re-block the
     // environment from it, so replace that before clearing the block.
     const switchBackOn = Effect.gen(function* () {

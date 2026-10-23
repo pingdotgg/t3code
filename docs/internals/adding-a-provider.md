@@ -117,9 +117,8 @@ A provider lives in its own `packages/provider-<name>` package, with
   and shared. It reaches the server through `ProviderHost` (paths, settings, background demand,
   attachments, stored credentials), never through `apps/server`. Tests use `@t3tools/provider-testing`.
 - **Server registration:** the driver's entry in
-  [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts) and the adapter driver's in
-  [`builtInProviderAdapterDrivers.ts`](../../apps/server/src/orchestration-v2/builtInProviderAdapterDrivers.ts).
-  Also its position in the [status order](../../apps/server/src/provider/providerStatusCache.ts), a
+  [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts). The driver carries its
+  adapter driver. Also its position in the [status order](../../apps/server/src/provider/providerStatusCache.ts), a
   compatibility policy in [`model-manifest.json`](../../apps/server/src/provider/model-manifest.json)
   (bump `updatedAt`; see [model manifest](./model-manifest.md)), and its default model in contracts.
 - **Client registration:** the client definition in the web and mobile provider registries, and

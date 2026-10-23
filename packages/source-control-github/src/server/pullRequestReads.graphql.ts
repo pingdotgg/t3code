@@ -1237,27 +1237,27 @@ export declare namespace LabelCandidates {
 }
 
 /** A file changed in a pull request. */
-export const PullRequestChangedFile = Schema.Struct({
+export const PullRequestFilesViewedRepositoryPullRequestFilesNodesPullRequestChangedFile = Schema.Struct({
   /** The path of the file. */
   path: Schema.String,
   /** The state of the file for the viewer. */
   viewerViewedState: GraphQL.enumLiterals(Shared.FileViewedState.literals)
 })
-export interface PullRequestChangedFile extends Schema.Struct.Type<typeof PullRequestChangedFile.fields> {}
+export interface PullRequestFilesViewedRepositoryPullRequestFilesNodesPullRequestChangedFile extends Schema.Struct.Type<typeof PullRequestFilesViewedRepositoryPullRequestFilesNodesPullRequestChangedFile.fields> {}
 
 /** The connection type for PullRequestChangedFile. */
-export const PullRequestChangedFileConnection = Schema.Struct({
+export const PullRequestFilesViewedRepositoryPullRequestFilesPullRequestChangedFileConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PullRequestCheckContextsRepositoryPullRequestCommitsNodesCommitStatusCheckRollupContextsPageInfoPageInfo,
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestChangedFile)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestFilesViewedRepositoryPullRequestFilesNodesPullRequestChangedFile)))
 })
-export interface PullRequestChangedFileConnection extends Schema.Struct.Type<typeof PullRequestChangedFileConnection.fields> {}
+export interface PullRequestFilesViewedRepositoryPullRequestFilesPullRequestChangedFileConnection extends Schema.Struct.Type<typeof PullRequestFilesViewedRepositoryPullRequestFilesPullRequestChangedFileConnection.fields> {}
 
 /** A repository pull request. */
 export const PullRequestFilesViewedRepositoryPullRequestPullRequest = Schema.Struct({
   /** Lists the files changed within this pull request. */
-  files: Schema.NullOr(PullRequestChangedFileConnection)
+  files: Schema.NullOr(PullRequestFilesViewedRepositoryPullRequestFilesPullRequestChangedFileConnection)
 })
 export interface PullRequestFilesViewedRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof PullRequestFilesViewedRepositoryPullRequestPullRequest.fields> {}
 
@@ -1296,6 +1296,70 @@ export const PullRequestFilesViewed = GraphQL.query("PullRequestFilesViewed", {
 export declare namespace PullRequestFilesViewed {
   export type Variables = typeof PullRequestFilesViewed.variables.Type
   export type Result = typeof PullRequestFilesViewed.result.Type
+}
+
+/** A file changed in a pull request. */
+export const PullRequestFileStatsRepositoryPullRequestFilesNodesPullRequestChangedFile = Schema.Struct({
+  /** The path of the file. */
+  path: Schema.String,
+  /** The number of additions to the file. */
+  additions: Shared.Int,
+  /** The number of deletions to the file. */
+  deletions: Shared.Int
+})
+export interface PullRequestFileStatsRepositoryPullRequestFilesNodesPullRequestChangedFile extends Schema.Struct.Type<typeof PullRequestFileStatsRepositoryPullRequestFilesNodesPullRequestChangedFile.fields> {}
+
+/** The connection type for PullRequestChangedFile. */
+export const PullRequestFileStatsRepositoryPullRequestFilesPullRequestChangedFileConnection = Schema.Struct({
+  /** Information to aid in pagination. */
+  pageInfo: PullRequestCheckContextsRepositoryPullRequestCommitsNodesCommitStatusCheckRollupContextsPageInfoPageInfo,
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestFileStatsRepositoryPullRequestFilesNodesPullRequestChangedFile)))
+})
+export interface PullRequestFileStatsRepositoryPullRequestFilesPullRequestChangedFileConnection extends Schema.Struct.Type<typeof PullRequestFileStatsRepositoryPullRequestFilesPullRequestChangedFileConnection.fields> {}
+
+/** A repository pull request. */
+export const PullRequestFileStatsRepositoryPullRequestPullRequest = Schema.Struct({
+  /** Lists the files changed within this pull request. */
+  files: Schema.NullOr(PullRequestFileStatsRepositoryPullRequestFilesPullRequestChangedFileConnection)
+})
+export interface PullRequestFileStatsRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof PullRequestFileStatsRepositoryPullRequestPullRequest.fields> {}
+
+/** A repository contains the content for a project. */
+export const PullRequestFileStatsRepositoryRepository = Schema.Struct({
+  /** Returns a single pull request from the current repository by number. */
+  pullRequest: Schema.NullOr(PullRequestFileStatsRepositoryPullRequestPullRequest)
+})
+export interface PullRequestFileStatsRepositoryRepository extends Schema.Struct.Type<typeof PullRequestFileStatsRepositoryRepository.fields> {}
+
+/** `query PullRequestFileStats` */
+export const PullRequestFileStats = GraphQL.query("PullRequestFileStats", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "number", body: "Int!" },
+      { name: "after", body: "String" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){files(first:100 after:$", "after", "){pageInfo{hasNextPage endCursor}nodes{path additions deletions}}}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    number: Shared.Int,
+    after: Schema.optional(Schema.NullOr(Schema.String))
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(PullRequestFileStatsRepositoryRepository)
+  })
+})
+export declare namespace PullRequestFileStats {
+  export type Variables = typeof PullRequestFileStats.variables.Type
+  export type Result = typeof PullRequestFileStats.result.Type
 }
 
 /** A repository pull request. */
@@ -1523,4 +1587,4 @@ export declare namespace PullRequestSourceBranch {
 }
 
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, PullRequestFilesViewed, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)

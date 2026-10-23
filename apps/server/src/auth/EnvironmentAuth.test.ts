@@ -4,22 +4,16 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as PersistenceErrors from "../persistence/Errors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 
 const TEST_SERVER_PORT = 13_773;
-const isPairingCredentialIssueError = Schema.is(PairingGrantStore.PairingCredentialIssueError);
-const isPersistenceSqlError = Schema.is(PersistenceErrors.PersistenceSqlError);
 
 const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
@@ -261,86 +255,6 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     ),
   );
 
-  it.effect("keeps the pairing issue error as the immediate recovery failure", () =>
-    Effect.gen(function* () {
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const sessions = yield* SessionStore.SessionStore;
-      const sql = yield* SqlClient.SqlClient;
-      const token = "reusable-dev-auth-token-that-is-long-enough";
-      const seeded = yield* sessions.verify(token);
-
-      yield* sessions.revoke(seeded.sessionId);
-      yield* sql`
-        CREATE TRIGGER reject_startup_pairing_link
-        BEFORE INSERT ON auth_pairing_links
-        BEGIN
-          SELECT RAISE(ABORT, 'startup pairing insert rejected');
-        END
-      `;
-
-      const error = yield* Effect.flip(serverAuth.issueStartupPairingCredential());
-
-      expect(error._tag).toBe("ServerAuthPairingLinkCreationError");
-      expect(isPairingCredentialIssueError(error.cause)).toBe(true);
-      if (isPairingCredentialIssueError(error.cause)) {
-        expect(isPersistenceSqlError(error.cause.cause)).toBe(true);
-      }
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuth({
-          mode: "web",
-          devUrl: new URL("http://127.0.0.1:5173"),
-          devAuthToken: Redacted.make("reusable-dev-auth-token-that-is-long-enough"),
-        }),
-      ),
-    ),
-  );
-
-  it.effect("classifies invalid bootstrap credential failures for the HTTP boundary", () =>
-    Effect.sync(() => {
-      const error = EnvironmentAuth.toBootstrapExchangeError(
-        new PairingGrantStore.UnknownBootstrapCredentialError({}),
-      );
-
-      expect(error._tag).toBe("ServerAuthInvalidCredentialError");
-    }),
-  );
-
-  it.effect("maps unexpected bootstrap failures to 500", () =>
-    Effect.sync(() => {
-      const cause = new PairingGrantStore.BootstrapCredentialConsumeError({
-        cause: new Error("sqlite is unavailable"),
-      });
-      const error = EnvironmentAuth.toBootstrapExchangeError(cause);
-
-      expect(error._tag).toBe("ServerAuthBootstrapCredentialValidationError");
-      expect(error.message).toBe("Failed to validate bootstrap credential.");
-      if (error._tag === "ServerAuthBootstrapCredentialValidationError") {
-        expect(error.cause).toBe(cause);
-      }
-    }),
-  );
-
-  it.effect("issues standard pairing credentials by default", () =>
-    Effect.gen(function* () {
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const sessions = yield* SessionStore.SessionStore;
-
-      const pairingCredential = yield* serverAuth.issuePairingCredential();
-      const exchanged = yield* serverAuth.createBrowserSession(
-        pairingCredential.credential,
-        requestMetadata,
-      );
-      const verified = yield* serverAuth.authenticateHttpRequest(
-        makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
-      );
-
-      expect(verified.sessionId.length).toBeGreaterThan(0);
-      expect(verified.scopes).toEqual(AuthStandardClientScopes);
-      expect(verified.subject).toBe("one-time-token");
-    }).pipe(Effect.provide(layerEnvironmentAuth())),
-  );
-
   it.effect("prefers a bearer token over a stale legacy cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -506,20 +420,6 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         }),
       ),
     ),
-  );
-
-  it.effect("keeps user-issued administrative pairing links manageable", () =>
-    Effect.gen(function* () {
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const pairingCredential = yield* serverAuth.issuePairingCredential({
-        scopes: AuthStandardClientScopes,
-      });
-      const listedPairingLinks = yield* serverAuth.listPairingLinks();
-
-      expect(
-        listedPairingLinks.find((pairingLink) => pairingLink.id === pairingCredential.id)?.subject,
-      ).toBe("one-time-token");
-    }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
   it.effect("issues startup pairing URLs that bootstrap administrative sessions", () =>

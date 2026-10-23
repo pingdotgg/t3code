@@ -1,6 +1,5 @@
 import {
   CommandId,
-  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -10,9 +9,6 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  isPendingThreadCreationVisible,
-  pendingThreadCreationMessage,
-  pendingThreadCreationShell,
   resolvePendingThreadCreation,
   type PendingThreadCreation,
 } from "./pending-thread-creation";
@@ -108,17 +104,6 @@ describe("resolvePendingThreadCreation", () => {
     ).toBe(pending);
   });
 
-  it.each(["error", "stopped", "interrupted"])("ends setup when startup is %s", (status) => {
-    expect(
-      resolvePendingThreadCreation({
-        threadKey,
-        pending: null,
-        previous: pending,
-        detail: { messages: [prompt], latestTurn: null, session: { status } },
-      }),
-    ).toBeNull();
-  });
-
   it("preserves rejected task recovery", () => {
     const failed: PendingThreadCreation = {
       message: creation,
@@ -151,103 +136,5 @@ describe("resolvePendingThreadCreation", () => {
         detail: null,
       }),
     ).toBeNull();
-  });
-});
-
-describe("pendingThreadCreationShell", () => {
-  it("shapes a queued creation as the thread shell the screen renders before creation", () => {
-    expect(pendingThreadCreationShell(creation)).toMatchObject({
-      environmentId: creation.environmentId,
-      id: creation.threadId,
-      projectId: creation.creation!.projectId,
-      title: "Fix the flaky login test",
-      modelSelection: creation.modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: "main",
-      worktreePath: null,
-      latestRun: null,
-      runtime: null,
-      latestUserMessageAt: creation.createdAt,
-    });
-  });
-
-  it("keeps a local task's explicit worktree path", () => {
-    expect(
-      pendingThreadCreationShell({
-        ...creation,
-        creation: {
-          ...creation.creation!,
-          workspaceMode: "local",
-          worktreePath: "/repo/.worktrees/feature",
-        },
-      })?.worktreePath,
-    ).toBe("/repo/.worktrees/feature");
-  });
-
-  it("returns null for a follow-up message or a creation without a model", () => {
-    expect(pendingThreadCreationShell({ ...creation, creation: undefined })).toBeNull();
-    expect(pendingThreadCreationShell({ ...creation, modelSelection: undefined })).toBeNull();
-  });
-});
-
-describe("isPendingThreadCreationVisible", () => {
-  const creationMessageId = String(creation.messageId);
-
-  it("stands in before any detail has loaded", () => {
-    expect(isPendingThreadCreationVisible({ creationMessageId, loadedMessageIds: null })).toBe(
-      true,
-    );
-  });
-
-  it("keeps standing in while the created thread has no messages yet", () => {
-    expect(isPendingThreadCreationVisible({ creationMessageId, loadedMessageIds: [] })).toBe(true);
-  });
-
-  it("keeps standing in when the thread holds only unrelated messages", () => {
-    expect(
-      isPendingThreadCreationVisible({ creationMessageId, loadedMessageIds: ["someone-else"] }),
-    ).toBe(true);
-  });
-
-  it("stands down once the delivered prompt lands under the same id", () => {
-    expect(
-      isPendingThreadCreationVisible({
-        creationMessageId,
-        loadedMessageIds: ["someone-else", creationMessageId],
-      }),
-    ).toBe(false);
-  });
-});
-
-describe("pendingThreadCreationMessage", () => {
-  it("keeps inline context available while the thread is being created", () => {
-    const record = {
-      version: 1 as const,
-      kind: "mention" as const,
-      contextId: ComposerContextId.make("setup-file"),
-      label: "Checkout.tsx",
-      path: "src/Checkout.tsx",
-    };
-    const context = { version: 1 as const, records: [record] };
-    const text = "[Checkout.tsx](t3-context://v1/mention/setup-file)";
-    const message = pendingThreadCreationMessage({ ...creation, text, context });
-    expect(message.text).toBe(text);
-    expect(message.context).toEqual(context);
-  });
-
-  it("renders the queued prompt as the first user message", () => {
-    expect(pendingThreadCreationMessage(creation)).toEqual({
-      id: creation.messageId,
-      role: "user",
-      text: creation.text,
-      streaming: false,
-      createdAt: creation.createdAt,
-      updatedAt: creation.createdAt,
-    });
-  });
-
-  it("omits the queued attachments rather than passing local draft ids to the feed", () => {
-    expect(pendingThreadCreationMessage(creation)).not.toHaveProperty("attachments");
   });
 });

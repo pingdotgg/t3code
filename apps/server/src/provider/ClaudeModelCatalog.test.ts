@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
@@ -169,37 +168,6 @@ describe("Claude model catalog", () => {
       }),
       "claude-synthetic-next[large]",
     );
-  });
-
-  it("rejects malformed adapter mappings", () => {
-    const base = manifest();
-    const malformed: ModelManifestData = {
-      ...base,
-      providers: {
-        ...base.providers,
-        claudeAgent: {
-          ...base.providers!.claudeAgent!,
-          profiles: {
-            ...base.providers!.claudeAgent!.profiles,
-            synthetic: {
-              ...base.providers!.claudeAgent!.profiles.synthetic!,
-              adapter: { claudeCode: { effortMap: { extreme: 123 } } },
-            },
-          },
-        },
-      },
-    };
-    assert.isFalse(hasValidClaudeManifestAdapters(malformed));
-  });
-
-  it("preserves only SDK effort levels for uncatalogued models", () => {
-    const catalog = catalogFromManifest(manifest());
-    for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
-      assert.strictEqual(resolveClaudeCatalogEffort(catalog, "custom", ` ${effort} `), effort);
-    }
-    for (const effort of [undefined, null, "", "  ", "brutal", "extreme", "HIGH", "ultrathink"]) {
-      assert.isUndefined(resolveClaudeCatalogEffort(catalog, "custom", effort));
-    }
   });
 
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {

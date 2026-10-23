@@ -10,6 +10,7 @@ import {
   type DevicePlatform,
   type DevicePlatformAvailability,
   LOCAL_DEVICE_HOST_ID,
+  LOCAL_DEVICE_HOST_LABEL,
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -40,6 +41,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -324,7 +326,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       tools,
       id: hostId,
       kind: "local",
-      label: "This machine",
+      label: LOCAL_DEVICE_HOST_LABEL,
       platforms,
       hubInstalled,
       agentDeviceInstalled,
@@ -823,6 +825,15 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
+    devices: makeDeviceHubOperations({
+      hostId,
+      origin: running.hub.origin,
+      http: httpClient,
+      run,
+      androidAvailable: platformAvailability("android").pipe(
+        Effect.map((availability) => availability.available),
+      ),
+    }),
     nodePath: running.hub.nodePath,
     run,
     helpers: running.helpers,
@@ -854,6 +865,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const host: DeviceHost.DeviceHost["Service"] = {
     id: hostId,
+    label: LOCAL_DEVICE_HOST_LABEL,
     summary,
     platformAvailability,
     ensureReady,

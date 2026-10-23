@@ -1,13 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Keyboard, View } from "react-native";
-import {
-  CommonActions,
-  type NavigationState,
-  type PartialState,
-  StackActions,
-  useNavigation,
-} from "@react-navigation/native";
+import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
+import { requireOptionalNativeModule } from "expo";
 
 import { useConnectionController } from "../connection/useConnectionController";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -42,8 +37,6 @@ import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const SHOWCASE_THREAD_ID = "remote-command-center";
 
-type ShowcaseResetRoute = PartialState<NavigationState>["routes"][number];
-
 function sceneFromPathname(pathname: string): ShowcaseScene | null {
   const routePath = pathname.split(/[?#]/u, 1)[0] ?? pathname;
   if (routePath === "/settings" || routePath.endsWith("/settings/environments")) {
@@ -63,6 +56,18 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
 
 function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string }) {
   const navigation = useNavigation();
+  useEffect(() => {
+    const menu = requireOptionalNativeModule<{
+      closeMenu(): void;
+      setToolsButtonVisible(visible: boolean): void;
+    }>("ExpoDevMenu");
+    // The dev menu can open after bundle loading and block orientation requests.
+    const timer = setInterval(() => {
+      menu?.closeMenu();
+      menu?.setToolsButtonVisible(false);
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, []);
   const { connectPairingUrl } = useConnectionController();
   const {
     isReady: appearancePreferencesReady,
@@ -237,40 +242,22 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: "Home" }] }));
       return;
     }
-    const routes: ShowcaseResetRoute[] = [{ name: "Home" }];
     if (requestedScene === "environments") {
-      routes.push({
-        name: "SettingsSheet",
-        state: {
-          index: 0,
-          routes: [
-            {
-              name: "SettingsContent",
-              state: {
-                index: 1,
-                routes: [{ name: "Settings" }, { name: "SettingsEnvironments" }],
-              },
-            },
-          ],
-        },
-      });
+      navigation.dispatch(
+        CommonActions.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsEnvironments" },
+        }),
+      );
+    } else if (requestedScene === "terminal") {
+      navigation.dispatch(
+        CommonActions.navigate("ThreadTerminal", { ...params, terminalId: "term-1" }),
+      );
+    } else if (requestedScene === "review") {
+      navigation.dispatch(CommonActions.navigate("ThreadReview", params));
     } else {
-      routes.push({ name: "Thread", params });
-      if (requestedScene === "terminal") {
-        routes.push({
-          name: "ThreadTerminal",
-          params: { ...params, terminalId: "term-1" },
-        });
-      } else if (requestedScene === "review") {
-        routes.push({ name: "ThreadReview", params });
-      }
+      navigation.dispatch(CommonActions.navigate("Thread", params));
     }
-    navigation.dispatch(
-      CommonActions.reset({
-        index: routes.length - 1,
-        routes,
-      }),
-    );
   }, [hasFixture, navigation, requestedScene, scene, showcaseThread]);
 
   useEffect(() => {

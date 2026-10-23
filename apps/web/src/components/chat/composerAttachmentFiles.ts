@@ -32,7 +32,7 @@ const IMAGE_MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
  * Some sources (drags from other apps, files piped through a shell) hand over a
  * `File` with an empty or generic MIME type.
  */
-export function inferImageMimeTypeFromName(name: string): string | null {
+function inferImageMimeTypeFromName(name: string): string | null {
   const dotIndex = name.lastIndexOf(".");
   if (dotIndex <= 0) {
     return null;

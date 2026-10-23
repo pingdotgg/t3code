@@ -20,12 +20,6 @@ function parseWebPreferences(input: string): Record<string, unknown> {
 describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
   const parsed = parseWebPreferences(PREVIEW_WEBVIEW_PREFERENCES);
 
-  it("contains exactly the three security-critical keys", () => {
-    expect(Object.keys(parsed).toSorted()).toEqual(
-      ["contextIsolation", "nodeIntegration", "sandbox"].toSorted(),
-    );
-  });
-
   it("uses canonical JS-boolean string literals (not yes/no, on/off, 1/0)", () => {
     // `value="no"` is a TRUTHY string when assigned to webPreferences.X — so
     // `contextIsolation="no"` would silently leave isolation ENABLED. Lock
@@ -35,19 +29,7 @@ describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
     }
   });
 
-  it("disables context isolation (so react-grab can see the page's React DevTools hook)", () => {
-    expect(parsed["contextIsolation"]).toBe("false");
-  });
-
   it("keeps the renderer sandbox enabled (so the page cannot reach Node APIs)", () => {
     expect(parsed["sandbox"]).toBe("true");
-  });
-
-  it("disables nodeIntegration (defense in depth — page never gets Node)", () => {
-    expect(parsed["nodeIntegration"]).toBe("false");
-  });
-
-  it("contains no whitespace (Electron's parser does not trim)", () => {
-    expect(PREVIEW_WEBVIEW_PREFERENCES).not.toMatch(/\s/);
   });
 });

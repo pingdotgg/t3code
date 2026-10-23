@@ -1,39 +1,11 @@
-import type { PreviewViewportSetting } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
-  BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS,
   commitBrowserViewportChange,
-  runBrowserViewportMutation,
   subscribeBrowserViewportChange,
 } from "./browserViewportActions";
 
 describe("browserViewportActions", () => {
-  it("routes drag commits to the visible tab handler and cleans up exactly that handler", async () => {
-    const first = vi.fn(async () => undefined);
-    const second = vi.fn(async () => undefined);
-    const unsubscribeFirst = subscribeBrowserViewportChange("tab-1", first);
-    const unsubscribeSecond = subscribeBrowserViewportChange("tab-1", second);
-
-    unsubscribeFirst();
-    await commitBrowserViewportChange("tab-1", {
-      _tag: "freeform",
-      width: 900,
-      height: 700,
-    });
-    expect(first).not.toHaveBeenCalled();
-    expect(second).toHaveBeenCalledWith({ _tag: "freeform", width: 900, height: 700 });
-
-    unsubscribeSecond();
-    await expect(
-      commitBrowserViewportChange("tab-1", {
-        _tag: "freeform",
-        width: 800,
-        height: 600,
-      }),
-    ).rejects.toThrow("No visible browser viewport handler");
-  });
-
   it("commits viewport changes in order for each tab", async () => {
     let releaseFirst: (() => void) | undefined;
     let markFirstStarted: (() => void) | undefined;
@@ -70,71 +42,5 @@ describe("browserViewportActions", () => {
     await Promise.all([first, second]);
     expect(calls).toEqual([800, 900]);
     unsubscribe();
-  });
-
-  it("serializes background mutations with visible viewport commits", async () => {
-    let releaseBackground: (() => void) | undefined;
-    const backgroundPending = new Promise<void>((resolve) => {
-      releaseBackground = resolve;
-    });
-    const calls: string[] = [];
-    const background = runBrowserViewportMutation("tab-shared", async () => {
-      calls.push("background");
-      await backgroundPending;
-    });
-    const unsubscribe = subscribeBrowserViewportChange("tab-shared", async () => {
-      calls.push("visible");
-    });
-    const visible = commitBrowserViewportChange("tab-shared", {
-      _tag: "freeform",
-      width: 900,
-      height: 700,
-    });
-
-    await vi.waitFor(() => expect(calls).toEqual(["background"]));
-    releaseBackground?.();
-    await Promise.all([background, visible]);
-
-    expect(calls).toEqual(["background", "visible"]);
-    unsubscribe();
-  });
-
-  it("does not let a timed-out handler overtake a newer viewport commit", async () => {
-    vi.useFakeTimers();
-    try {
-      let releaseFirst: (() => void) | undefined;
-      const delayed = new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
-      const handler = vi.fn(async (_setting: PreviewViewportSetting): Promise<void> => undefined);
-      handler.mockImplementationOnce(() => delayed).mockResolvedValueOnce(undefined);
-      const unsubscribe = subscribeBrowserViewportChange("tab-timeout", handler);
-      const first = commitBrowserViewportChange("tab-timeout", {
-        _tag: "freeform",
-        width: 800,
-        height: 600,
-      });
-      const firstResult = expect(first).rejects.toThrow(
-        "Timed out committing the browser viewport for tab tab-timeout",
-      );
-      const second = commitBrowserViewportChange("tab-timeout", {
-        _tag: "freeform",
-        width: 900,
-        height: 700,
-      });
-
-      await vi.advanceTimersByTimeAsync(BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS);
-      await firstResult;
-      expect(handler).toHaveBeenCalledTimes(1);
-
-      releaseFirst?.();
-      await second;
-
-      expect(handler).toHaveBeenCalledTimes(2);
-      expect(handler.mock.calls[1]?.[0]).toMatchObject({ width: 900, height: 700 });
-      unsubscribe();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

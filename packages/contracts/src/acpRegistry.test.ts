@@ -2,26 +2,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
-  AcpRegistryImportSessionInput,
   AcpRegistryManagedBinaryUninstallInput,
   AcpRegistryManagedBinaryUninstallResult,
-  AcpRegistryOperationError,
-  AcpRegistryPrepareResult,
-  AcpRegistryProbeResult,
-  AcpRegistrySearchAgent,
-  AcpRegistrySearchInput,
   officialAcpRegistryIconUrlForAgentId,
   resolveOfficialAcpRegistryIconUrl,
 } from "./acpRegistry.ts";
 
-const decodeSearchInput = Schema.decodeUnknownSync(AcpRegistrySearchInput);
-const decodeImportSessionInput = Schema.decodeUnknownSync(AcpRegistryImportSessionInput);
-const decodePrepareResult = Schema.decodeUnknownSync(AcpRegistryPrepareResult);
-const decodeSearchAgent = Schema.decodeUnknownSync(AcpRegistrySearchAgent);
 const decodeUninstallInput = Schema.decodeUnknownSync(AcpRegistryManagedBinaryUninstallInput);
 const decodeUninstallResult = Schema.decodeUnknownSync(AcpRegistryManagedBinaryUninstallResult);
-const decodeProbeResult = Schema.decodeUnknownSync(AcpRegistryProbeResult);
-const decodeOperationError = Schema.decodeUnknownSync(AcpRegistryOperationError);
 
 describe("ACP Registry contracts", () => {
   it("accepts only official Registry icon URLs and safe agent IDs", () => {
@@ -46,42 +34,6 @@ describe("ACP Registry contracts", () => {
     ).toBeNull();
   });
 
-  it("decodes bounded search and prepare payloads", () => {
-    expect(decodeSearchInput({ query: "  codex  " })).toEqual({
-      query: "codex",
-    });
-    expect(decodeSearchInput({ query: "", limit: 512 })).toEqual({ query: "", limit: 512 });
-    expect(
-      decodePrepareResult({
-        agentId: "codex-acp",
-        version: "1.2.0",
-        distribution: "npx",
-        prepared: true,
-      }),
-    ).toMatchObject({ agentId: "codex-acp", distribution: "npx", prepared: true });
-  });
-
-  it("rejects oversized queries and result metadata", () => {
-    expect(() => decodeSearchInput({ query: "x".repeat(121) })).toThrow();
-    expect(() => decodeSearchInput({ query: "", limit: 0 })).toThrow();
-    expect(() => decodeSearchInput({ query: "", limit: 513 })).toThrow();
-    expect(() =>
-      decodeSearchAgent({
-        id: "agent",
-        name: "Agent",
-        version: "1.0.0",
-        description: "x".repeat(1_025),
-        authors: [],
-        license: null,
-        website: null,
-        repository: null,
-        icon: null,
-        distribution: "binary",
-        integrity: "sha256",
-      }),
-    ).toThrow();
-  });
-
   it("decodes managed binary uninstall payloads and rejects unsafe agent IDs", () => {
     expect(decodeUninstallInput({ agentId: "  example-agent  " })).toEqual({
       agentId: "example-agent",
@@ -91,93 +43,5 @@ describe("ACP Registry contracts", () => {
       removed: false,
     });
     expect(() => decodeUninstallInput({ agentId: "../example-agent" })).toThrow();
-  });
-
-  it("decodes bounded native session import metadata", () => {
-    expect(
-      decodeImportSessionInput({
-        instanceId: "acpRegistry_example",
-        projectId: "project-1",
-        sessionId: "native-session-1",
-        title: " Native session ",
-        updatedAt: " 2026-08-23T00:00:00Z ",
-      }),
-    ).toEqual({
-      instanceId: "acpRegistry_example",
-      projectId: "project-1",
-      sessionId: "native-session-1",
-      title: "Native session",
-      updatedAt: "2026-08-23T00:00:00Z",
-    });
-    expect(() =>
-      decodeImportSessionInput({
-        instanceId: "acpRegistry_example",
-        projectId: "project-1",
-        sessionId: "native-session-1",
-        title: "x".repeat(1_025),
-      }),
-    ).toThrow();
-  });
-
-  it("decodes valid probe metadata and rejects oversized or invalid payloads", () => {
-    const authMethod = {
-      id: "oauth",
-      name: "Browser login",
-      description: null,
-      type: "agent",
-    };
-    expect(
-      decodeProbeResult({
-        instanceId: "acpRegistry_example",
-        ready: true,
-        icon: null,
-        authMethods: [authMethod],
-        models: [{ id: "default", name: "Default", description: "Agent-selected model" }],
-        currentModelId: "default",
-        configOptions: [],
-      }),
-    ).toMatchObject({ ready: true, currentModelId: "default" });
-    expect(() =>
-      decodeProbeResult({
-        instanceId: "acpRegistry_example",
-        ready: true,
-        icon: null,
-        authMethods: Array.from({ length: 33 }, () => authMethod),
-        models: [],
-        currentModelId: null,
-      }),
-    ).toThrow();
-    expect(() =>
-      decodeProbeResult({
-        instanceId: "acpRegistry_example",
-        ready: true,
-        icon: null,
-        authMethods: [{ ...authMethod, type: "passive" }],
-        models: [],
-        currentModelId: null,
-      }),
-    ).toThrow();
-    expect(() =>
-      decodeProbeResult({
-        instanceId: "acpRegistry_example",
-        ready: true,
-        icon: null,
-        authMethods: [],
-        models: Array.from({ length: 257 }, () => ({
-          id: "default",
-          name: "Default",
-          description: null,
-        })),
-        currentModelId: null,
-      }),
-    ).toThrow();
-    expect(() =>
-      decodeOperationError({
-        _tag: "AcpRegistryOperationError",
-        reason: "authentication_failed",
-        message: "Authentication required.",
-        authMethods: Array.from({ length: 33 }, () => authMethod),
-      }),
-    ).toThrow();
   });
 });

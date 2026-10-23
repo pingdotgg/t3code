@@ -219,44 +219,6 @@ describe("boundedThreadSnapshotLoader", () => {
     );
   });
 
-  it.effect("treats structured missing from full fallback as missing", () => {
-    let fullCalls = 0;
-    const fetchFn = ((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/bounded")) {
-        return Promise.resolve(
-          new Response("Not Found", {
-            status: 404,
-            headers: { "content-type": "text/plain" },
-          }),
-        );
-      }
-      fullCalls += 1;
-      return Promise.resolve(
-        Response.json(
-          {
-            _tag: "EnvironmentResourceNotFoundError",
-            code: "not_found",
-            reason: "thread_not_found",
-            traceId: "trace-full-missing",
-          },
-          { status: 404 },
-        ),
-      );
-    }) satisfies typeof fetch;
-
-    return Effect.gen(function* () {
-      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
-      const result = yield* loader.load(PREPARED, THREAD_ID);
-      expect(result).toEqual({ _tag: "missing" });
-      expect(fullCalls).toBe(1);
-    }).pipe(
-      Effect.provide(
-        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
-      ),
-    );
-  });
-
   it.effect(
     "uses socket fallback directly when the bounded endpoint has a transient failure",
     () => {

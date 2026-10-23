@@ -37,9 +37,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
  */
 
 /** Fastest a subscriber receives frames while output flows. */
-export const COMMAND_OUTPUT_FRAME_INTERVAL_MS = 100;
+const COMMAND_OUTPUT_FRAME_INTERVAL_MS = 100;
 /** After a subscriber falls behind and is sent the whole tail, it waits this long. */
-export const COMMAND_OUTPUT_REPLACE_INTERVAL_MS = 500;
+const COMMAND_OUTPUT_REPLACE_INTERVAL_MS = 500;
 /** Raw text a subscriber may accumulate before it is sent the tail instead. */
 const COMMAND_OUTPUT_MAX_APPEND_CHARS = 16 * 1024;
 /** Running commands tracked at once; the least recently written is dropped beyond this. */

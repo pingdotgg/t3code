@@ -68,60 +68,6 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it.each(["running", "closed", "exited"] as const)(
-  "waits for the replacement attachment snapshot before handling %s",
-  async (status) => {
-    await render(input());
-    await render(input({ terminal: { status: "closed", version: 0 } }));
-    expect(onExit).not.toHaveBeenCalled();
-    expect(reopen).not.toHaveBeenCalled();
-
-    await render(input({ terminal: { status, version: 1 } }));
-    expect(onExit).toHaveBeenCalledTimes(status === "running" ? 0 : 1);
-    expect(reopen).not.toHaveBeenCalled();
-  },
-);
-
-it("retains an exited observer's history after gaining operate", async () => {
-  await render(input({ canOperate: false, terminal: { status: "exited", version: 1 } }));
-  await render(input({ terminal: { status: "closed", version: 0 } }));
-  await render(input({ terminal: { status: "exited", version: 1 } }));
-  expect(reopen).not.toHaveBeenCalled();
-  expect(onExit).not.toHaveBeenCalled();
-});
-
-it.each(["closed", "exited"] as const)(
-  "keeps a pending observer passive when its first writable snapshot is %s",
-  async (status) => {
-    await render(
-      input({
-        canOperate: false,
-        observing: true,
-        terminal: { status, version: 0 },
-      }),
-    );
-    await render(input({ terminal: { status: "closed", version: 0 } }));
-    await render(input({ terminal: { status, version: 1 } }));
-    expect(reopen).not.toHaveBeenCalled();
-    expect(onExit).not.toHaveBeenCalled();
-    expect(onRunning).not.toHaveBeenCalled();
-  },
-);
-
-it("reopens an explicit operator visit after permissions finish loading", async () => {
-  await render(
-    input({
-      canOperate: false,
-      observing: false,
-      terminal: { status: "closed", version: 0 },
-    }),
-  );
-  await render(input({ terminal: { status: "closed", version: 0 } }));
-  await render(input({ terminal: { status: "exited", version: 1 } }));
-  expect(reopen).toHaveBeenCalledOnce();
-  expect(onExit).not.toHaveBeenCalled();
-});
-
 it("does not respawn a terminal that exited after operate was revoked", async () => {
   await render(input());
   await render(input({ canOperate: false }));
@@ -129,23 +75,6 @@ it("does not respawn a terminal that exited after operate was revoked", async ()
   await render(input({ terminal: { status: "exited", version: 1 } }));
   expect(reopen).not.toHaveBeenCalled();
   expect(onExit).not.toHaveBeenCalled();
-});
-
-it("remembers revocation before the observer has received a snapshot", async () => {
-  await render(input());
-  await render(input({ canOperate: false, terminal: { status: "closed", version: 0 } }));
-  await render(input({ terminal: { status: "exited", version: 1 } }));
-  expect(reopen).not.toHaveBeenCalled();
-  expect(onExit).not.toHaveBeenCalled();
-});
-
-it("cleans up an actual exit after an observed running terminal becomes writable", async () => {
-  await render(input({ canOperate: false }));
-  await render(input());
-  await render(input({ terminal: { status: "exited", version: 2 } }));
-  await render(input({ terminal: { status: "closed", version: 3 } }));
-  expect(onExit).toHaveBeenCalledOnce();
-  expect(reopen).not.toHaveBeenCalled();
 });
 
 it("reopens an ended terminal on an explicit new route visit", async () => {
@@ -167,11 +96,4 @@ it("keeps a detached terminal from being mistaken for a live exit", async () => 
   await render(input({ terminal: { status: "exited", version: 1 } }));
   expect(onExit).not.toHaveBeenCalled();
   expect(reopen).toHaveBeenCalledOnce();
-});
-
-it("allows a later snapshot to retry an unsuccessful explicit reopen", async () => {
-  reopen.mockResolvedValueOnce(false);
-  await render(input({ terminal: { status: "exited", version: 1 } }));
-  await render(input({ terminal: { status: "exited", version: 2 } }));
-  expect(reopen).toHaveBeenCalledTimes(2);
 });

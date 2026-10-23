@@ -1,0 +1,616 @@
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { Dispatch } from "react";
+import type { ComposerThreadTarget } from "../../composerDraftStore";
+import type { ComposerHandleRef } from "../../composerHandleContext";
+import {
+  isThreadWokeUnseen,
+  branchMismatchKey,
+  isBranchMismatchDismissedForSession,
+  shouldShowBranchMismatchBanner,
+  chatActionErrorMessage,
+  makeThreadErrorSetter,
+} from "../ChatView.logic";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import type { usePendingThreadRequests } from "./usePendingThreadRequests";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  type EnvironmentId,
+  type ScopedThreadRef,
+  type ThreadId,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "@t3tools/contracts";
+import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
+import { settleAndAdvance } from "../../settleAndAdvance";
+import type { ChatShortcutCommands } from "./useChatShortcuts";
+import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { type SetStateAction, useEffect, useRef, useState } from "react";
+import { useNavigate, useRouter } from "@tanstack/react-router";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import { useUiStateStore } from "../../uiStateStore";
+import { type ChatMessage } from "../../types";
+import { AlarmClockIcon, CheckCircle2Icon } from "lucide-react";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import { newMessageId } from "~/lib/utils";
+import { buildThreadRouteParams } from "../../threadRoutes";
+import { composerDraftHasUserContent, useComposerDraftStore } from "../../composerDraftStore";
+import { useEnvironmentScope } from "~/state/session";
+import { threadEnvironment } from "../../state/threads";
+import { vcsEnvironment } from "../../state/vcs";
+import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
+import { environmentShell } from "../../state/shell";
+import { ThreadStatusLine } from "./ThreadStatusLine";
+import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../../timestampFormat";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { readEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import {
+  backgroundWorkBannerItem,
+  childInputBannerItem,
+  goalBannerItem,
+} from "./ThreadActivityBanners";
+import type { useLocalDispatchState } from "./useLocalDispatchState";
+const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
+
+type PendingThreadRequests = ReturnType<typeof usePendingThreadRequests>;
+type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
+
+interface ThreadLifecycleInput {
+  readonly environmentId: EnvironmentId;
+  readonly routeThreadKey: string;
+  readonly currentRouteThreadKeyRef: { readonly current: string | null };
+  readonly canOperateThread: boolean;
+  readonly clientSettingsHydrated: boolean;
+  readonly activeThread: EnvironmentThreadShell | undefined;
+  readonly activeThreadId: ThreadId | null;
+  readonly activeThreadRef: ScopedThreadRef | null;
+  readonly activeThreadKey: string | null;
+  readonly activeThreadShell: EnvironmentThreadShell | null;
+  readonly activeLatestRun: EnvironmentThreadShell["latestRun"];
+  readonly activeProjectCwd: string | null;
+  readonly serverConfig: EnvironmentServerConfig | null;
+  readonly runtimeMode: RuntimeMode;
+  readonly isWorking: boolean;
+  readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkBannerItem>[0]["tasks"];
+  readonly activePendingApproval: PendingThreadRequests["activePendingApproval"];
+  readonly activePendingUserInput: PendingThreadRequests["activePendingUserInput"];
+  readonly localCheckoutBranchMismatch: {
+    readonly threadBranch: string;
+    readonly currentBranch: string;
+  } | null;
+  readonly gitStatusQuery: { readonly refresh: () => void };
+  readonly nowMinute: string;
+  readonly composerRef: ComposerHandleRef;
+  readonly composerDraftTarget: ComposerThreadTarget;
+  readonly sendInFlightRef: { current: boolean };
+  readonly setOptimisticUserMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
+  readonly clearUsageLimitsFor: (threadKey: string) => void;
+  readonly beginLocalDispatch: LocalDispatchState["beginLocalDispatch"];
+  readonly resetLocalDispatch: LocalDispatchState["resetLocalDispatch"];
+  readonly scheduleComposerFocus: () => void;
+  readonly scrollToEnd: (animated?: boolean) => void;
+  readonly persistThreadSettingsForNextTurn: (input: {
+    threadId: ThreadId;
+    createdAt: string;
+    branch?: string;
+    runtimeMode: RuntimeMode;
+    interactionMode: ProviderInteractionMode;
+  }) => Promise<AtomCommandResult<void, unknown>>;
+}
+
+/**
+ * Thread state the chat shows and changes outside a normal send: snooze and settle with
+ * their status line, the local checkout's branch, background work, child-thread and goal
+ * banners, opening related threads, and standalone slash commands.
+ */
+export function useThreadLifecycle(input: ThreadLifecycleInput) {
+  const {
+    environmentId,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    canOperateThread,
+    clientSettingsHydrated,
+    activeThread,
+    activeThreadId,
+    activeThreadRef,
+    activeThreadKey,
+    activeThreadShell,
+    activeLatestRun,
+    activeProjectCwd,
+    serverConfig,
+    runtimeMode,
+    isWorking,
+    pendingBackgroundTasks,
+    activePendingApproval,
+    activePendingUserInput,
+    localCheckoutBranchMismatch,
+    gitStatusQuery,
+    nowMinute,
+    composerRef,
+    composerDraftTarget,
+    sendInFlightRef,
+    setOptimisticUserMessages,
+    setThreadError,
+    clearUsageLimitsFor,
+    beginLocalDispatch,
+    resetLocalDispatch,
+    scheduleComposerFocus,
+    scrollToEnd,
+    persistThreadSettingsForNextTurn,
+  } = input;
+  const navigate = useNavigate();
+  const router = useRouter();
+  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
+  const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
+    reportFailure: false,
+  });
+  const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+
+  const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
+  const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
+  const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
+  // The compiler caches render results on their inputs, so a clock read in render
+  // stays frozen until the shell changes. The clock is state: reset with the shell,
+  // and moved by the wake timer.
+  const [snoozeClockState, setSnoozeClockState] = useState(() => ({
+    shell: activeThreadShell,
+    now: new Date().toISOString(),
+  }));
+  if (snoozeClockState.shell !== activeThreadShell) {
+    setSnoozeClockState({ shell: activeThreadShell, now: new Date().toISOString() });
+  }
+  const snoozeClock = snoozeClockState.now;
+  const activeThreadSnoozed =
+    activeThreadShell !== null &&
+    supportsSnooze &&
+    effectiveSnoozed(activeThreadShell, { now: snoozeClock });
+  useEffect(() => {
+    if (!activeThreadSnoozed) return;
+    const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
+    if (!Number.isFinite(wakeAtMs)) return;
+    const id = window.setTimeout(
+      () => setSnoozeClockState((clock) => ({ ...clock, now: new Date().toISOString() })),
+      Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
+    );
+    return () => window.clearTimeout(id);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A clock that lands before the wake time (timer clamping, clock skew) re-arms the timer.
+  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeClock]);
+  const activeThreadWokeAt =
+    activeThreadShell !== null && supportsSnooze
+      ? threadWokeAt(activeThreadShell, { now: snoozeClock })
+      : null;
+  const acknowledgeThreadWoke = useAcknowledgeThreadWoke();
+  const acknowledgeActiveThreadWoke = () => {
+    if (activeThreadRef === null || activeThreadWokeAt === null) return;
+    acknowledgeThreadWoke(activeThreadRef, activeThreadWokeAt);
+  };
+  const acknowledgeActiveThreadWokeStable = useStableCallback(acknowledgeActiveThreadWoke);
+  const activeThreadLocalVisitedAt = useUiStateStore((store) =>
+    activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
+  );
+  const activeThreadLastVisitedAt = resolveThreadLastVisitedAt(
+    activeThreadShell?.lastVisitedAt,
+    activeThreadLocalVisitedAt,
+  );
+  const activeThreadWokeVisible = isThreadWokeUnseen({
+    wokeAt: activeThreadWokeAt,
+    settled: activeThreadShell?.settledOverride === "settled",
+    lastVisitedAt: activeThreadLastVisitedAt,
+    latestRunCompletedAt: activeLatestRun?.completedAt ?? null,
+  });
+  const activeThreadSettled =
+    supportsSettlement && activeThreadShell?.settledOverride === "settled";
+  const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
+    reportFailure: false,
+  });
+  const [unsettlingThreadKey, setUnsettlingThreadKey] = useState<string | null>(null);
+  const isUnsettling = unsettlingThreadKey !== null && unsettlingThreadKey === activeThreadKey;
+  const handleUnsettleActiveThread = async () => {
+    if (
+      !activeThreadRef ||
+      !readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    setUnsettlingThreadKey(threadKey);
+    // Commands settle into a result, so this always runs.
+    const result = await unsettleThreadMutation({
+      environmentId: activeThreadRef.environmentId,
+      input: { threadId: activeThreadRef.threadId, reason: "user" },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to un-settle thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+    setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
+  };
+  const handleUnsettleActiveThreadStable = useStableCallback(handleUnsettleActiveThread);
+  const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
+    reportFailure: false,
+  });
+  const [unsnoozingThreadKey, setUnsnoozingThreadKey] = useState<string | null>(null);
+  const isUnsnoozing = unsnoozingThreadKey !== null && unsnoozingThreadKey === activeThreadKey;
+  const handleUnsnoozeActiveThread = async () => {
+    if (
+      !activeThreadRef ||
+      !readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    setUnsnoozingThreadKey(threadKey);
+    // Commands settle into a result, so this always runs.
+    const recovery = activeThreadShell?.limitRecovery;
+    const recoveryOwnsSnooze =
+      recovery?.snooze === true &&
+      recovery.runId === activeThreadShell?.latestRun?.runId &&
+      activeThreadShell?.snoozedUntil != null &&
+      Date.parse(activeThreadShell.snoozedUntil) === Date.parse(recovery.resetAt);
+    const result = recoveryOwnsSnooze
+      ? await updateThreadMetadata({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadRef.threadId,
+            limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, snooze: false },
+          },
+        })
+      : await unsnoozeThreadMutation({
+          environmentId: activeThreadRef.environmentId,
+          input: { threadId: activeThreadRef.threadId, reason: "user" },
+        });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to wake thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+    setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
+  };
+  const handleUnsnoozeActiveThreadStable = useStableCallback(handleUnsnoozeActiveThread);
+  const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
+  const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
+  const [, setBranchMismatchDismissTick] = useState(0);
+  const composerHasDraftContent = useComposerDraftStore((store) =>
+    composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
+  );
+  const activeBranchMismatchKey = branchMismatchKey(
+    activeThread?.id ?? null,
+    localCheckoutBranchMismatch,
+  );
+  const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
+    hasMismatch: localCheckoutBranchMismatch !== null,
+    isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
+    composerHasContent: composerHasDraftContent,
+    wasShownForCurrentMismatch:
+      revealedBranchMismatchKey !== null && revealedBranchMismatchKey === activeBranchMismatchKey,
+  });
+  const nextRevealedBranchMismatchKey = showBranchMismatchBanner
+    ? activeBranchMismatchKey
+    : revealedBranchMismatchKey !== activeBranchMismatchKey
+      ? null
+      : revealedBranchMismatchKey;
+  if (nextRevealedBranchMismatchKey !== revealedBranchMismatchKey) {
+    setRevealedBranchMismatchKey(nextRevealedBranchMismatchKey);
+  }
+  const handleSwitchCheckoutToThread = async () => {
+    if (!canWriteSourceControl) return;
+    if (
+      !activeProjectCwd ||
+      !activeThread ||
+      !localCheckoutBranchMismatch ||
+      isRestoringThreadBranch
+    ) {
+      return;
+    }
+    setIsRestoringThreadBranch(true);
+    const checkoutResult = await switchGitRef({
+      environmentId,
+      input: {
+        cwd: activeProjectCwd,
+        refName: localCheckoutBranchMismatch.threadBranch,
+      },
+    });
+    if (checkoutResult._tag === "Failure") {
+      setIsRestoringThreadBranch(false);
+      if (!isAtomCommandInterrupted(checkoutResult)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to switch checkout",
+            description: chatActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
+          }),
+        );
+      }
+      return;
+    }
+
+    if (!readEnvironmentScope(environmentId, AuthSourceControlWriteScope)) {
+      setIsRestoringThreadBranch(false);
+      return;
+    }
+    const nextBranch = checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch;
+    if (nextBranch !== activeThread.branch) {
+      const updateResult = await updateThreadMetadata({
+        environmentId,
+        input: { threadId: activeThread.id, branch: nextBranch, worktreePath: null },
+      });
+      if (updateResult._tag === "Failure") {
+        setIsRestoringThreadBranch(false);
+        if (!isAtomCommandInterrupted(updateResult)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Checkout switched, but the thread could not be updated",
+              description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
+            }),
+          );
+        }
+        gitStatusQuery.refresh();
+        return;
+      }
+    }
+    gitStatusQuery.refresh();
+    setIsRestoringThreadBranch(false);
+    scheduleComposerFocus();
+  };
+  const handleSwitchCheckoutToThreadStable = useStableCallback(() => {
+    void handleSwitchCheckoutToThread();
+  });
+  // The interrupt path also accepts a completed run while its provider still
+  // has background work.
+  const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
+  const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
+  const isStoppingBackgroundWork =
+    stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
+  const handleStopBackgroundWork = async () => {
+    if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      return;
+    const requestKey = `${environmentId}:${activeThread.id}`;
+    setStoppingBackgroundWorkKey(requestKey);
+    const result = await interruptThreadTurn({
+      environmentId,
+      input: { threadId: activeThread.id },
+    });
+    // Acceptance does not confirm termination. Allow retry while the provider
+    // finishes stopping the tasks or reports a failure.
+    setStoppingBackgroundWorkKey((current) => (current === requestKey ? null : current));
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to stop background work.",
+        );
+      }
+    }
+  };
+  const handleStopBackgroundWorkStable = useStableCallback(handleStopBackgroundWork);
+  const openRelatedThreadGenerationRef = useRef(0);
+  const onOpenRelatedThread = async (threadId: ThreadId) => {
+    const generation = ++openRelatedThreadGenerationRef.current;
+    const threadRef = scopeThreadRef(environmentId, threadId);
+    const isEnvironmentLive = () =>
+      appAtomRegistry.get(environmentShell.stateValueAtom(environmentId)).status === "live";
+    // A just-launched child can reach this timeline before its shell syncs.
+    if (isEnvironmentLive() && readThreadShell(threadRef) === null) {
+      const location = router.latestLocation;
+      await waitForThreadShell(threadRef, RELATED_THREAD_SHELL_WAIT_MS);
+      if (
+        generation !== openRelatedThreadGenerationRef.current ||
+        currentRouteThreadKeyRef.current !== routeThreadKey ||
+        router.latestLocation !== location
+      ) {
+        return;
+      }
+    }
+    const shell = readThreadShell(threadRef);
+    if (shell === null ? isEnvironmentLive() : shell.deletedAt != null) {
+      toastManager.add({ type: "info", title: "This thread is no longer available" });
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+    });
+  };
+  const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
+  const childThreadInputs = useChildThreadInputs(activeThreadRef);
+  const childInputBanner = childInputBannerItem({
+    childThreadInputs,
+    parentAwaitingUser: Boolean(
+      activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput,
+    ),
+    onOpenThread: onOpenRelatedThreadStable,
+  });
+
+  const sendStandaloneCommand = async (text: string, failureMessage: string) => {
+    if (!activeThread || !clientSettingsHydrated || sendInFlightRef.current) return;
+    const context = composerRef.current?.getSendContext();
+    if (!context?.providerAvailable) return;
+
+    const threadId = activeThread.id;
+    const messageId = newMessageId();
+    const createdAt = new Date().toISOString();
+    sendInFlightRef.current = true;
+    beginLocalDispatch();
+    setThreadError(threadId, null);
+    setOptimisticUserMessages((messages) => [
+      ...messages,
+      {
+        id: messageId,
+        role: "user",
+        text,
+        runId: null,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    ]);
+    scrollToEnd();
+    // Commands settle into a result, so this always runs.
+    const settingsResult = await persistThreadSettingsForNextTurn({
+      threadId,
+      createdAt,
+      ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
+      runtimeMode,
+      interactionMode: context.interactionMode,
+    });
+    const result =
+      settingsResult._tag === "Failure"
+        ? settingsResult
+        : await startThreadTurn({
+            environmentId,
+            input: {
+              threadId,
+              message: { messageId, role: "user", text, attachments: [] },
+              modelSelection: context.selectedModelSelection,
+              runtimeMode,
+              interactionMode: context.interactionMode,
+              createdAt,
+            },
+          });
+    if (result._tag === "Failure") {
+      setOptimisticUserMessages((messages) =>
+        messages.filter((message) => message.id !== messageId),
+      );
+      resetLocalDispatch();
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(threadId, error instanceof Error ? error.message : failureMessage);
+      }
+    } else {
+      clearUsageLimitsFor(routeThreadKey);
+    }
+    sendInFlightRef.current = false;
+  };
+  const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
+  const activeGoal = activeThreadShell?.goal ?? null;
+  const goalBanner =
+    activeThread && activeGoal !== null
+      ? goalBannerItem({
+          threadId: activeThread.id,
+          goal: activeGoal,
+          isWorking,
+          onSendCommand: sendStandaloneCommandStable,
+        })
+      : null;
+
+  const backgroundWorkBanner = activeThread
+    ? backgroundWorkBannerItem({
+        threadId: activeThread.id,
+        tasks: activeBackgroundTasks,
+        stopDisabled: !canOperateThread || isStoppingBackgroundWork,
+        stopping: isStoppingBackgroundWork,
+        onStop: handleStopBackgroundWorkStable,
+        onOpenThread: onOpenRelatedThreadStable,
+      })
+    : null;
+  // The relative times read the clock; nowMinute re-renders them on the minute.
+  const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
+  const settledAt = activeThreadShell?.settledAt ?? null;
+  const threadStatusLine = activeThreadSnoozed ? (
+    <ThreadStatusLine
+      icon={<AlarmClockIcon />}
+      label={snoozedUntil ? `Snoozed, ${formatRelativeTimeUntilLabel(snoozedUntil)}` : "Snoozed"}
+      clockMinute={nowMinute}
+      actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+      actionDisabled={!canOperateThread || isUnsnoozing}
+      onAction={() => void handleUnsnoozeActiveThreadStable()}
+    />
+  ) : activeThreadSettled ? (
+    <ThreadStatusLine
+      icon={<CheckCircle2Icon />}
+      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      clockMinute={nowMinute}
+      actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
+      actionDisabled={!canOperateThread || isUnsettling}
+      onAction={() => void handleUnsettleActiveThreadStable()}
+    />
+  ) : activeThreadWokeVisible ? (
+    <ThreadStatusLine
+      icon={<AlarmClockIcon />}
+      label="Woke from snooze"
+      actionLabel="Dismiss"
+      onAction={acknowledgeActiveThreadWokeStable}
+    />
+  ) : null;
+  const toastThreadActionFailure =
+    (title: string) => (result: AtomCommandResult<unknown, unknown>) => {
+      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    };
+  const shortcuts = {
+    "thread.settle": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !supportsSettlement) return;
+      if (activeThreadSettled) {
+        void handleUnsettleActiveThread();
+        return;
+      }
+      if (settleAndAdvance(activeThreadRef)) return;
+      void settleThread(activeThreadRef).then(toastThreadActionFailure("Failed to settle thread"));
+    },
+    "thread.pin": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !supportsPinning) return;
+      void (
+        activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
+      ).then(
+        toastThreadActionFailure(
+          activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread",
+        ),
+      );
+    },
+  } satisfies ChatShortcutCommands;
+  return {
+    shortcuts,
+    acknowledgeActiveThreadWoke,
+    activeBranchMismatchKey,
+    backgroundWorkBanner,
+    childInputBanner,
+    goalBanner,
+    handleSwitchCheckoutToThread,
+    handleSwitchCheckoutToThreadStable,
+    isRestoringThreadBranch,
+    onOpenRelatedThread,
+    onOpenRelatedThreadStable,
+    sendStandaloneCommand,
+    setBranchMismatchDismissTick,
+    showBranchMismatchBanner,
+    threadStatusLine,
+  };
+}

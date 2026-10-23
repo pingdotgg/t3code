@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -537,6 +538,7 @@ export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 export const PullRequestReportStateInput = Schema.Struct({
   reference: PullRequestRef,
   state: PullRequestState,
+  isDraft: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
@@ -587,6 +589,7 @@ export const PullRequestDetail = Schema.Struct({
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
 export const PullRequestChecks = Schema.Struct({
+  observedAt: Schema.optional(Schema.Finite),
   state: PullRequestState,
   checks: Schema.Array(PullRequestCheck),
 });
@@ -681,6 +684,30 @@ export const PullRequestFilesViewedResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.Type;
+
+const PullRequestLineCount = Schema.Struct({
+  additions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+
+/**
+ * A change's line counts split by what the changed files are, judged from their paths. Null when
+ * the host gives no per-file counts, or has more files than one read covers: a split of part of
+ * the change would not add up to the totals shown beside it.
+ */
+export const PullRequestChangeBreakdown = Schema.NullOr(
+  Schema.Struct({
+    code: PullRequestLineCount,
+    tests: PullRequestLineCount,
+    mocks: PullRequestLineCount,
+    generated: PullRequestLineCount,
+    // Servers from before the docs split send no key; their docs lines sit in `code`.
+    docs: PullRequestLineCount.pipe(
+      Schema.withDecodingDefault(Effect.succeed({ additions: 0, deletions: 0 })),
+    ),
+  }),
+);
+export type PullRequestChangeBreakdown = typeof PullRequestChangeBreakdown.Type;
 
 const MAX_FILES_VIEWED_PRESSES = 500;
 

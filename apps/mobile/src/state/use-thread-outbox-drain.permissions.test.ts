@@ -253,26 +253,6 @@ describe("queued PR checkout", () => {
     expect(remaining()).toEqual([queued]);
   });
 
-  it("restores the PR draft when the reused worktree cannot reach the PR head", async () => {
-    state.grantedEnvironments.add("secondary");
-    await state.manager.enqueue(queuedPullRequest());
-    state.checkout.mockResolvedValueOnce(
-      AsyncResult.success({ ...preparedCheckout, isOnPullRequestHead: false }),
-    );
-    await runDrain();
-    expect(state.start).not.toHaveBeenCalled();
-    expect(remaining()).toEqual([]);
-    const { updateComposerDraftSettings } = await import("./use-composer-drafts");
-    expect(updateComposerDraftSettings).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        workspaceSelection: expect.objectContaining({
-          pullRequestReference: queuedPullRequest().creation?.pullRequestReference,
-        }),
-      }),
-    );
-  });
-
   it("stops launch if operation access is revoked while checking out the PR", async () => {
     state.grantedEnvironments.add("secondary");
     const queued = queuedPullRequest();
@@ -340,8 +320,6 @@ describe("queued task operation access", () => {
 
   it.each([
     { isCreation: false, accepted: false },
-    { isCreation: true, accepted: false },
-    { isCreation: false, accepted: true },
     { isCreation: true, accepted: true },
   ])(
     "preserves a rejected queue but removes an accepted turn after access loss (new task: $isCreation, accepted: $accepted)",

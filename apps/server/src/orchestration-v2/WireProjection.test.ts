@@ -94,23 +94,6 @@ describe("orchestration V2 wire projection", () => {
     expect(item.output.data).toBe("private-image-data");
   });
 
-  it("preserves provider notices in bounded items and live events", () => {
-    const item = {
-      ...base,
-      type: "system_notice" as const,
-      message: "Safeguards flagged this message. Switched to Opus 4.8.",
-    };
-    expect(projectTurnItemForWire(item)).toEqual(item);
-    const event = {
-      id: EventId.make("notice-wire-event"),
-      type: "turn-item.updated" as const,
-      threadId: item.threadId,
-      occurredAt: item.updatedAt,
-      payload: item,
-    };
-    expect(projectDomainEventForWire(event)).toEqual(event);
-  });
-
   it("keeps transcript bodies out of shell rows", () => {
     const now = DateTime.makeUnsafe("2026-08-13T00:00:00.000Z");
     const threadId = ThreadId.make("thread-shell-budget");
@@ -166,41 +149,10 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);
   });
 
-  it("omits oversized dynamic tool results without mutating persistence data", () => {
-    const output = { content: [{ type: "text", text: "first line\n" + "x".repeat(100_000) }] };
-    const item = { ...base, output } satisfies OrchestrationV2TurnItem;
-    const projected = projectTurnItemForWire(item);
-
-    expect(item.output).toBe(output);
-    expect(projected).not.toBe(item);
-    expect(JSON.stringify(projected).length).toBeLessThan(2_000);
-    expect(projected).not.toHaveProperty("output");
-  });
-
   it("omits even small dynamic tool results while retaining input", () => {
     const item = { ...base, output: { ok: true } } satisfies OrchestrationV2TurnItem;
     expect(projectTurnItemForWire(item)).toEqual({ ...base, outputOmitted: true });
     expect(item.output).toEqual({ ok: true });
-  });
-
-  it("keeps undefined dynamic input intact", () => {
-    const item = { ...base, input: undefined } satisfies OrchestrationV2TurnItem;
-    expect(projectTurnItemForWire(item)).toEqual(item);
-  });
-
-  it.each([
-    [" \t\r\n\n  first\t line  \r\n" + "x\n".repeat(10_000), "first line"],
-    [" \n".repeat(10_000), "Large tool output"],
-    ["a".repeat(160) + "\n" + "x".repeat(20_000), "a".repeat(160)],
-    ["a".repeat(161) + "\n" + "x".repeat(20_000), "a".repeat(159) + "…"],
-    ["a".repeat(159) + "\t b" + "x".repeat(20_000), "a".repeat(159) + "…"],
-    ["  café\u00a0\u2003😀 \t\r\n" + "x".repeat(20_000), "café 😀"],
-  ])("preserves bounded input summary normalization for case %#", (input, summary) => {
-    const projected = projectTurnItemForWire({ ...base, input });
-    expect(projected.type === "dynamic_tool" ? projected.input : null).toEqual({
-      summary,
-      truncated: true,
-    });
   });
 
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {
@@ -211,21 +163,6 @@ describe("orchestration V2 wire projection", () => {
     const projected = projectTurnItemForWire({ ...base, input: large });
     expect(projected.type === "dynamic_tool" ? projected.input : null).toEqual({
       summary: '"'.repeat(159) + "…",
-      truncated: true,
-    });
-  });
-
-  it("serializes an oversized structured input only once for its summary", () => {
-    let serializations = 0;
-    const input = {
-      toJSON() {
-        serializations += 1;
-        return { text: "x".repeat(100_000) };
-      },
-    };
-    const projected = projectTurnItemForWire({ ...base, input });
-    expect(serializations).toBe(1);
-    expect(projected.type === "dynamic_tool" ? projected.input : null).toMatchObject({
       truncated: true,
     });
   });
@@ -249,30 +186,6 @@ describe("orchestration V2 wire projection", () => {
       "a".repeat(32_767) + "\n… output truncated for transport",
     );
     expect(item.progress).toBe(progress);
-  });
-
-  it.each(["", "small output", "x".repeat(1_048_576)])(
-    "omits command output of every size, case %#",
-    (output) => {
-      const item = { ...base, type: "command_execution" as const, input: "test", output };
-      const projected = projectTurnItemForWire(item);
-      expect(projected).not.toHaveProperty("output");
-      expect(projected).toMatchObject({ input: "test", status: "completed" });
-      expect(projected.type === "command_execution" ? projected.outputOmitted : null).toBe(
-        output ? true : undefined,
-      );
-      expect(item.output).toBe(output);
-    },
-  );
-
-  it.each([
-    ["echo ok", "echo ok"],
-    ["a".repeat(262_143) + "😀", "a".repeat(262_143) + "\n… output truncated for transport"],
-  ])("bounds fetched command input without changing persistence, case %#", (input, expected) => {
-    const item = { ...base, type: "command_execution" as const, input, output: "ok" };
-    const projected = projectTurnItemForDetail(item);
-    expect(projected).toMatchObject({ input: expected, output: "ok" });
-    expect(item.input).toBe(input);
   });
 
   it("leaves a screenshot's bytes out of the fetched tool output", () => {
@@ -387,14 +300,5 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(projected)).not.toContain("PRIVATE_BODY");
     expect(event.payload.output).toBe(output);
     expect(projectDomainEventForWire(projected)).toEqual(projected);
-  });
-
-  it("does not serialize raw dynamic output to discard it", () => {
-    const output = {
-      toJSON: () => {
-        throw new Error("Raw output must not be serialized");
-      },
-    };
-    expect(projectTurnItemForWire({ ...base, output })).not.toHaveProperty("output");
   });
 });

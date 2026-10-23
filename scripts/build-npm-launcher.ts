@@ -26,7 +26,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
-import { windowsSystemTar } from "./build-cli-archive.ts";
+import { windowsSystemTar } from "./lib/windows-tar.ts";
 
 export const NPM_LAUNCHER_PACKAGE_NAME = "t3";
 

@@ -110,7 +110,7 @@ function suggestedPackageSpec(version: string): string {
   return channel === undefined ? "t3" : `t3@${channel}`;
 }
 
-export function formatCliCommand(input: {
+function formatCliCommand(input: {
   readonly subcommand: string;
   readonly entryPath: string;
   readonly version: string;

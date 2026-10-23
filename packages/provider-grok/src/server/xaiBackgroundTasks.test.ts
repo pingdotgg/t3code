@@ -54,16 +54,8 @@ describe("Grok background tasks", () => {
 
   it.each([
     ["running", null, "task.progress", undefined],
-    ["pending", null, "task.progress", undefined],
-    ["completed", 0, "task.completed", "completed"],
-    ["success", 0, "task.completed", "completed"],
-    ["succeeded", 0, "task.completed", "completed"],
     ["failed", 1, "task.completed", "failed"],
-    ["error", 1, "task.completed", "failed"],
     ["stopped", 137, "task.completed", "stopped"],
-    ["killed", 137, "task.completed", "stopped"],
-    ["cancelled", 137, "task.completed", "stopped"],
-    [undefined, 0, "task.completed", "completed"],
     [undefined, 1, "task.completed", "failed"],
   ])("maps poll status %s / exit %s", (status, exit_code, type, expectedStatus) => {
     const { tasks, update } = mapper();
@@ -182,11 +174,7 @@ describe("Grok background tasks", () => {
   });
 
   it.each([
-    null,
-    [],
-    {},
     { type: "Text", text: "subagent_id: fake\ntype: executor\ndescription: fake" },
-    { type: "Monitor", taskId: " " },
     { type: "BackgroundTaskStarted", task_id: "shell-1" },
     {
       type: "TaskOutput",

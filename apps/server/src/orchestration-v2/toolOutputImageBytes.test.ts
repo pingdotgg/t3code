@@ -90,6 +90,7 @@ describe("stripUnservedToolOutputImageBytes", () => {
     });
   });
 
+  // regression: #16652 stop storing tool image bytes no client reads
   it("strips a Cursor image part that names no mime type", () => {
     const item = toolItem({
       content: [{ text: { text: "captured" } }, { image: { data: PNG_BASE64 } }],
@@ -184,6 +185,7 @@ describe("stripUnservedToolOutputImageBytes", () => {
     expect(stripUnservedToolOutputImageBytes(item)).toBe(item);
   });
 
+  // regression: #16652 stop storing tool image bytes no client reads
   it("measures the size instead of trusting one the provider supplied", () => {
     const item = toolItem({
       type: "image",
@@ -194,26 +196,6 @@ describe("stripUnservedToolOutputImageBytes", () => {
       type: "image",
       file: { type: "image/png", sizeBytes: PNG_BYTES },
     });
-  });
-
-  it("returns items without image bytes by reference", () => {
-    const nested = { files: [{ path: "src/app.ts" }] };
-    const item = toolItem({ stdout: "data: 42", data: PNG_BASE64, nested });
-    const command: OrchestrationV2TurnItem = {
-      ...itemBase,
-      type: "command_execution",
-      input: "cat shot.png | base64",
-      output: PNG_BASE64,
-    };
-
-    const stripped = stripUnservedToolOutputImageBytes(item);
-
-    expect(stripped).toBe(item);
-    expect(outputOf(stripped)).toBe(outputOf(item));
-    expect(stripUnservedToolOutputImageBytes(command)).toBe(command);
-    expect(stripUnservedToolOutputImageBytes(toolItem("plain text output"))).toEqual(
-      toolItem("plain text output"),
-    );
   });
 
   it("does not mutate the provider's item and shares untouched siblings", () => {

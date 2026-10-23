@@ -61,7 +61,7 @@ function fillSolidPowerlineSeparator(
   context.fill();
 }
 
-export function ghosttyTextRunEnd(
+function ghosttyTextRunEnd(
   cells: readonly GhosttyCell[],
   start: number,
   sameStyle: (cell: GhosttyCell) => boolean,

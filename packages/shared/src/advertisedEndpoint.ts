@@ -45,7 +45,7 @@ export function deriveWsBaseUrl(httpBaseUrl: string): string {
   return url.toString();
 }
 
-export function classifyHostedHttpsCompatibility(
+function classifyHostedHttpsCompatibility(
   httpBaseUrl: string,
   fallback: AdvertisedEndpointHostedHttpsCompatibility = "unknown",
 ): AdvertisedEndpointHostedHttpsCompatibility {

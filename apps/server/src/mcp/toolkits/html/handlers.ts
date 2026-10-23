@@ -10,6 +10,7 @@ const INVALID_PAGE_ERRORS = new Set([
   "HtmlRenderImagesNotFoundError",
   "HtmlRenderImageTooLargeError",
   "HtmlRenderPageTooLargeError",
+  "HtmlRenderViewportHeightError",
 ]);
 
 const toFailure = (error: { readonly _tag: string; readonly message: string }) =>

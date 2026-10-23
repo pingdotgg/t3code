@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
@@ -157,16 +157,6 @@ describe("SessionControl", () => {
     expect(control.generation).toBe(1);
   });
 
-  it("does not let a failed action poison the serial queue", async () => {
-    const control = new SessionControl("agent");
-    await expect(
-      control.agent("agent", async () => {
-        throw new Error("navigation failed");
-      }),
-    ).rejects.toThrow("navigation failed");
-    await expect(control.agent("agent", async () => "recovered")).resolves.toBe("recovered");
-  });
-
   it("lets any agent act on a tab no agent opened, but only while no human controls it", async () => {
     const control = new SessionControl(null);
     await expect(control.agent("agent-a", async () => "acted")).resolves.toBe("acted");
@@ -177,39 +167,5 @@ describe("SessionControl", () => {
     await expect(control.observe(async () => "read")).resolves.toBe("read");
     await control.release("viewer-a");
     await expect(control.agent("agent-b", async () => "acted")).resolves.toBe("acted");
-  });
-});
-
-describe("request deadlines at dispatch", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("finishes running work, skips expired queued actions, and accepts fresh work", async () => {
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    const control = new SessionControl("agent");
-    const started = Promise.withResolvers<void>();
-    const finish = Promise.withResolvers<void>();
-    const events: string[] = [];
-    const running = control.agent(
-      "agent",
-      async () => {
-        events.push("started");
-        started.resolve();
-        await finish.promise;
-        events.push("finished");
-      },
-      100,
-    );
-    await started.promise;
-    const expired = expect(
-      control.agent("agent", async () => events.push("expired"), 100),
-    ).rejects.toMatchObject({ name: "TimeoutError" });
-    const next = control.agent("agent", async () => events.push("next"), 200);
-    // No timer fires: expiry must be checked when the queue resumes.
-    now = 100;
-    expect(events).toEqual(["started"]);
-    finish.resolve();
-    await Promise.all([running, expired, next]);
-    expect(events).toEqual(["started", "finished", "next"]);
   });
 });

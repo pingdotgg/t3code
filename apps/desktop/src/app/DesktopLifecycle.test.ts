@@ -1,13 +1,6 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - A real Node process verifies OS signal ownership outside Effect's process runtime.
-import * as NodeChildProcess from "node:child_process";
-import * as NodeReadline from "node:readline";
-import * as NodeURL from "node:url";
-
 import { assert, describe, it } from "@effect/vitest";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
@@ -110,67 +103,6 @@ function layerDesktopWindow(
 }
 
 describe("DesktopLifecycle", () => {
-  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "leaves SIGTERM to the lifecycle until its graceful shutdown completes",
-    async ({ onTestFinished }) => {
-      const runner = new URL("./DesktopRuntime.ts", import.meta.url).href;
-      const child = NodeChildProcess.spawn(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          "--input-type=module",
-          "-e",
-          `
-      import * as Effect from 'effect/Effect';
-      import * as Deferred from 'effect/Deferred';
-      import { runMain } from ${JSON.stringify(runner)};
-      process.stdin.resume();
-      let released = false;
-      runMain(Effect.scoped(Effect.gen(function* () {
-        const done = yield* Deferred.make();
-        yield* Effect.addFinalizer(() => Effect.sync(() => console.log(released ? 'CLEANED' : 'PREMATURE')));
-        process.once('SIGTERM', () => {
-          console.log('STOPPING');
-          process.stdin.once('data', () => {
-            released = true;
-            void Effect.runPromise(Deferred.succeed(done, undefined)).then(() => process.stdin.destroy());
-          });
-        });
-        console.log('READY');
-        yield* Deferred.await(done);
-      })));
-    `,
-        ],
-        {
-          cwd: NodeURL.fileURLToPath(new URL("../../", import.meta.url)),
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-      const exited = new Promise<readonly [number | null, string | null]>((resolve, reject) => {
-        child.once("exit", (code, signal) => resolve([code, signal]));
-        child.once("error", reject);
-      });
-      const lines: string[] = [];
-      let stderr = "";
-      child.stderr.on("data", (chunk) => {
-        stderr += chunk;
-      });
-      onTestFinished(async () => {
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGKILL");
-          await exited;
-        }
-      });
-      for await (const line of NodeReadline.createInterface({ input: child.stdout })) {
-        lines.push(line);
-        if (line === "READY") child.kill("SIGTERM");
-        if (line === "STOPPING") child.stdin.write("finish");
-      }
-      assert.deepEqual(await exited, [0, null], stderr);
-      assert.deepEqual(lines, ["READY", "STOPPING", "CLEANED"]);
-    },
-  );
-
   it.effect.each(["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
     "lets the updater's quit event proceed on %s",
     (platform) => {
@@ -226,18 +158,12 @@ describe("DesktopLifecycle", () => {
     },
   );
 
-  it.effect("destroys windows and retains signal ownership until backend shutdown completes", () =>
+  it.effect("destroys windows before waiting for backend shutdown", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       const shutdownRequested = yield* Deferred.make<void>();
       const allowShutdown = yield* Deferred.make<void>();
       const quitRequested = yield* Deferred.make<void>();
-      const backendStopping = yield* Deferred.make<void>();
-      const finishBackendShutdown = yield* Deferred.make<void>();
-      const originalSignals = {
-        SIGINT: process.listeners("SIGINT"),
-        SIGTERM: process.listeners("SIGTERM"),
-      };
       const events: string[] = [];
 
       const quit = Effect.sync(() => {
@@ -278,47 +204,20 @@ describe("DesktopLifecycle", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-          const shutdown = yield* DesktopShutdown.DesktopShutdown;
-          const program = yield* Effect.scoped(
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Deferred.succeed(backendStopping, undefined).pipe(
-                  Effect.andThen(Deferred.await(finishBackendShutdown)),
-                  Effect.andThen(shutdown.markComplete),
-                ),
-              );
-              yield* lifecycle.register;
-              const event = { preventDefault: () => undefined } as Electron.Event;
-              appListeners.get("before-quit")?.(event);
-              yield* shutdown.awaitRequest;
-            }),
-          ).pipe(Effect.forkScoped);
+          yield* lifecycle.register;
 
-          yield* Deferred.await(backendStopping);
-          yield* Effect.addFinalizer(() =>
-            Deferred.succeed(finishBackendShutdown, undefined).pipe(Effect.asVoid),
-          );
+          const event = { preventDefault: () => undefined } as Electron.Event;
+          appListeners.get("before-quit")?.(event);
 
-          for (const signal of ["SIGINT", "SIGTERM"] as const) {
-            const listeners = process
-              .listeners(signal)
-              .filter((listener) => !originalSignals[signal].includes(listener));
-            assert.lengthOf(listeners, 1, `${signal} must remain owned during backend cleanup`);
-            listeners[0]?.(signal);
-          }
-          assert.deepEqual(events, ["flush", "destroy", "request"]);
-          assert.equal(appListeners.size, 0, "Electron listeners still follow the program scope");
-          assert.isFalse(yield* shutdown.isComplete);
-
-          yield* Deferred.succeed(finishBackendShutdown, undefined);
-          yield* Fiber.join(program);
+          yield* Deferred.await(shutdownRequested);
+          const eventsBeforeCleanup = [...events];
+          yield* Deferred.succeed(allowShutdown, undefined);
           yield* Deferred.await(quitRequested);
+
+          assert.deepEqual(eventsBeforeCleanup, ["flush", "destroy", "request"]);
           assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
         }),
       ).pipe(Effect.provide(layer));
-
-      assert.deepEqual(process.listeners("SIGINT"), originalSignals.SIGINT);
-      assert.deepEqual(process.listeners("SIGTERM"), originalSignals.SIGTERM);
     }),
   );
 

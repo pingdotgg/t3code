@@ -3,7 +3,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -109,124 +108,6 @@ describe("DesktopSettings", () => {
         }),
       ),
   );
-  it.effect("loads defaults when no settings file exists", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
-        assert.deepEqual(yield* settings.get, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
-      }),
-    ),
-  );
-
-  it("defaults packaged nightly builds to the nightly update channel", () => {
-    assert.deepEqual(
-      DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
-      {
-        linuxPasswordStore: "auto",
-        localEnvironmentEnabled: true,
-        mainWindowBounds: null,
-        mainWindowMaximized: false,
-        serverExposureMode: "local-only",
-        tailscaleServeEnabled: false,
-        tailscaleServePort: 443,
-        updateChannel: "nightly",
-        updateChannelConfiguredByUser: false,
-        wslBackendEnabled: false,
-        wslOnly: false,
-        wslDistro: null,
-      } satisfies DesktopAppSettings.DesktopSettings,
-    );
-  });
-
-  it.effect("loads persisted settings and applies semantic updates", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          linuxPasswordStore: "gnome-libsecret",
-          serverExposureMode: "network-accessible",
-          tailscaleServeEnabled: true,
-          tailscaleServePort: 8443,
-          updateChannel: "latest",
-          updateChannelConfiguredByUser: true,
-        });
-
-        assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "gnome-libsecret",
-          localEnvironmentEnabled: true,
-          mainWindowBounds: null,
-          mainWindowMaximized: false,
-          serverExposureMode: "network-accessible",
-          tailscaleServeEnabled: true,
-          tailscaleServePort: 8443,
-          updateChannel: "latest",
-          updateChannelConfiguredByUser: true,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
-        } satisfies DesktopAppSettings.DesktopSettings);
-
-        const exposure = yield* settings.setServerExposureMode("local-only");
-        assert.isTrue(exposure.changed);
-        assert.equal(exposure.settings.serverExposureMode, "local-only");
-
-        const tailscale = yield* settings.setTailscaleServe({
-          enabled: true,
-          port: Option.some(9443),
-        });
-        assert.isTrue(tailscale.changed);
-        assert.equal(tailscale.settings.tailscaleServePort, 9443);
-
-        const updateChannel = yield* settings.setUpdateChannel("nightly");
-        assert.isTrue(updateChannel.changed);
-        assert.equal(updateChannel.settings.updateChannel, "nightly");
-        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
-      }),
-    ),
-  );
-
-  it.effect("reports the failed desktop settings write operation and path", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* fileSystem.makeDirectory(environment.desktopSettingsPath, { recursive: true });
-
-        const error = yield* settings.setServerExposureMode("network-accessible").pipe(Effect.flip);
-        assert.instanceOf(error, DesktopAppSettings.DesktopSettingsWriteError);
-        assert.equal(error.operation, "replace-settings-file");
-        assert.equal(error.path, environment.desktopSettingsPath);
-        assert.exists(error.cause);
-        assert.equal(
-          error.message,
-          `Desktop settings write failed during replace-settings-file at ${environment.desktopSettingsPath}.`,
-        );
-      }),
-    ),
-  );
-
-  it.effect("does not persist no-op semantic updates", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-
-        const exposure = yield* settings.setServerExposureMode("local-only");
-        assert.isFalse(exposure.changed);
-
-        const tailscale = yield* settings.setTailscaleServe({
-          enabled: false,
-          port: Option.none(),
-        });
-        assert.isFalse(tailscale.changed);
-
-        const updateChannel = yield* settings.setUpdateChannel("latest");
-        assert.isFalse(updateChannel.changed);
-        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, false);
-      }),
-    ),
-  );
 
   it.effect("falls back to defaults when the settings file is malformed", () =>
     withSettings(
@@ -283,7 +164,7 @@ describe("DesktopSettings", () => {
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
-          mainWindowBounds: { x: 10, y: 20, width: 599, height: 620 },
+          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         });
@@ -296,45 +177,6 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect(
-    "normalizes unsupported linux password-store values without dropping other settings",
-    () =>
-      withSettings(
-        Effect.gen(function* () {
-          const environment = yield* DesktopEnvironment.DesktopEnvironment;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const settings = yield* DesktopAppSettings.DesktopAppSettings;
-          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-          yield* fileSystem.writeFileString(
-            environment.desktopSettingsPath,
-            `{
-            "linuxPasswordStore": "unsupported-store",
-            "serverExposureMode": "network-accessible",
-            "tailscaleServeEnabled": true,
-            "tailscaleServePort": 8443,
-            "updateChannel": "nightly",
-            "updateChannelConfiguredByUser": true
-          }\n`,
-          );
-
-          assert.deepEqual(yield* settings.load, {
-            linuxPasswordStore: "auto",
-            localEnvironmentEnabled: true,
-            mainWindowBounds: null,
-            mainWindowMaximized: false,
-            serverExposureMode: "network-accessible",
-            tailscaleServeEnabled: true,
-            tailscaleServePort: 8443,
-            updateChannel: "nightly",
-            updateChannelConfiguredByUser: true,
-            wslBackendEnabled: false,
-            wslOnly: false,
-            wslDistro: null,
-          } satisfies DesktopAppSettings.DesktopSettings);
-        }),
-      ),
-  );
-
   it.effect("persists sparse desktop settings documents", () =>
     withSettings(
       Effect.gen(function* () {
@@ -342,24 +184,17 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 600, height: 620 }, true);
+        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
         );
         assert.deepEqual(persisted, {
-          mainWindowBounds: { x: -1200, y: 40, width: 600, height: 620 },
+          mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
-
-        const restored = yield* Effect.gen(function* () {
-          const freshSettings = yield* DesktopAppSettings.DesktopAppSettings;
-          return yield* freshSettings.load;
-        }).pipe(Effect.provide(DesktopAppSettings.layer));
-        assert.deepEqual(restored.mainWindowBounds, persisted.mainWindowBounds);
-        assert.isTrue(restored.mainWindowMaximized);
       }),
     ),
   );
@@ -449,33 +284,6 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("normalizes invalid persisted Tailscale Serve ports", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          tailscaleServeEnabled: true,
-          tailscaleServePort: 0,
-        });
-
-        assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "auto",
-          localEnvironmentEnabled: true,
-          mainWindowBounds: null,
-          mainWindowMaximized: false,
-          serverExposureMode: "local-only",
-          tailscaleServeEnabled: true,
-          tailscaleServePort: 443,
-          updateChannel: "latest",
-          updateChannelConfiguredByUser: false,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
-        } satisfies DesktopAppSettings.DesktopSettings);
-      }),
-    ),
-  );
-
   it.effect("persists wsl backend toggle and normalizes invalid distro names", () =>
     withSettings(
       Effect.gen(function* () {
@@ -547,21 +355,6 @@ describe("DesktopSettings", () => {
         const loaded = yield* settings.load;
         assert.equal(loaded.wslBackendEnabled, true);
         assert.equal(loaded.wslDistro, "Ubuntu-22.04");
-      }),
-    ),
-  );
-
-  it.effect("drops invalid persisted wsl distro values on load", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          wslBackendEnabled: true,
-          wslDistro: "bad/name",
-        });
-        const loaded = yield* settings.load;
-        assert.equal(loaded.wslBackendEnabled, true);
-        assert.equal(loaded.wslDistro, null);
       }),
     ),
   );

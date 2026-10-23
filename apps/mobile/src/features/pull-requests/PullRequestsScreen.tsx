@@ -21,12 +21,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useRestingTopOffset } from "../../native/useRestingTopOffset";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
 import { PullRequestListFilters } from "./PullRequestListFilters";
+import { PullRequestCardRow } from "./PullRequestControls";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -45,15 +47,39 @@ import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSe
 
 function PullRequestScrollView(props: ScrollViewProps) {
   const insets = useSafeAreaInsets();
+  const restingOffset = useRestingTopOffset(insets.top, props);
   return (
     <ScrollViewMarker style={{ flex: 1 }}>
       <ScrollView
         {...props}
+        {...restingOffset}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
-        contentOffset={props.contentOffset ?? { x: 0, y: -insets.top }}
       />
     </ScrollViewMarker>
+  );
+}
+
+function PullRequestListErrors(props: { readonly messages: readonly string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const title = `${props.messages.length} ${props.messages.length === 1 ? "error" : "errors"} loading pull requests`;
+  return (
+    <View>
+      <PullRequestCardRow
+        title={title}
+        icon="exclamationmark.triangle"
+        compact
+        last
+        expanded={expanded}
+        accessibilityLabel={`${title}. ${expanded ? "Hide" : "Show"} details`}
+        onPress={() => setExpanded((value) => !value)}
+      />
+      {expanded ? (
+        <Text selectable className="px-4 pb-3 text-sm text-foreground-muted">
+          {props.messages.join("\n")}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -295,14 +321,13 @@ export function PullRequestsScreen(
               projects={projects}
             />
             {result.data?.errors.length ? (
-              <Text className="px-4 py-3 text-sm text-foreground-muted">
-                {result.data.errors
-                  .map(
-                    (error) =>
-                      `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`,
-                  )
-                  .join("\n")}
-              </Text>
+              <PullRequestListErrors
+                key={JSON.stringify(targets)}
+                messages={result.data.errors.map(
+                  (error) =>
+                    `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`,
+                )}
+              />
             ) : null}
           </>
         }

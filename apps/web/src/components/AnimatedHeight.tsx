@@ -1,5 +1,3 @@
-"use client";
-
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { observeResize } from "../lib/observeResize";
 

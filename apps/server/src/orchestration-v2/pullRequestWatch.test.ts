@@ -1,5 +1,6 @@
-import type {
-  PullRequestCheck,
+import {
+  SourceControlProviderKind,
+  type PullRequestCheck,
   PullRequestComment,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
@@ -7,9 +8,13 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
-  evaluatePullRequestWatch,
-  pullRequestWatchMessage,
+  evaluatePullRequestWatch as evaluate,
 } from "./pullRequestWatch.ts";
+
+// These cases read the head once or at one moment, so the no-checks notice never comes due.
+const evaluatePullRequestWatch = (
+  ...args: Parameters<typeof evaluate> extends [...infer Head, number] ? Head : never
+) => evaluate(...args, 0);
 
 const STARTED = "2026-10-02T12:00:00.000Z";
 
@@ -36,6 +41,7 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
 type Detail = Parameters<typeof evaluatePullRequestWatch>[1];
 
 const detail = (overrides: Partial<Detail> = {}): Detail => ({
+  provider: SourceControlProviderKind.make("github"),
   headSha: "aaaaaaaaaa",
   checks: [check("lint", "success"), check("test", "pending")],
   mergeability: "mergeable",
@@ -128,6 +134,86 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  // regression: #23712 required checks woke the agent early and the rest finishing never did
+  it("wakes again when the other checks finish after the required ones passed", () => {
+    const required = (name: string, status: PullRequestCheck["status"]) => ({
+      ...check(name, status),
+      required: true,
+    });
+    const early = detail({
+      checks: [required("test", "success"), check("e2e", "pending")],
+    });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+
+    const done = detail({
+      checks: [required("test", "success"), check("e2e", "success")],
+    });
+    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
+    assert.deepEqual(
+      final.changes.map((change) => change.kind),
+      ["checks-passed"],
+    );
+    assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+    // A later advisory job running and passing is not more news.
+    const botPending = detail({ checks: [...done.checks, check("bot", "pending")] });
+    const churn = evaluatePullRequestWatch(final.next, botPending, noRemarks);
+    assert.deepEqual(churn.changes, []);
+    const botDone = detail({ checks: [...done.checks, check("bot", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(churn.next, botDone, noRemarks).changes, []);
+
+    // A pending check that turns required on the next read still finishes with one wake.
+    const promoted = detail({
+      checks: [required("test", "success"), required("e2e", "success")],
+    });
+    const gated = evaluatePullRequestWatch(first.next, promoted, noRemarks);
+    assert.deepEqual(gated.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+    assert.deepEqual(evaluatePullRequestWatch(gated.next, promoted, noRemarks).changes, []);
+
+    // Nothing else was pending when the required ones passed, so nothing more is owed.
+    const green = evaluatePullRequestWatch(watch(), done, noRemarks);
+    assert.deepEqual(green.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(evaluatePullRequestWatch(green.next, botDone, noRemarks).changes, []);
+  });
+
+  it("reports an owed non-required failure once after the required notice", () => {
+    const required = { ...check("test", "success"), required: true };
+    const early = detail({ checks: [required, check("e2e", "pending")] });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    const failed = detail({ checks: [required, check("e2e", "failure")] });
+    const failure = evaluatePullRequestWatch(first.next, failed, noRemarks);
+    assert.deepEqual(failure.changes, [
+      { kind: "checks-failed", failed: [check("e2e", "failure")] },
+    ]);
+    const repeated = evaluatePullRequestWatch(failure.next, failed, noRemarks);
+    assert.deepEqual(repeated.changes, []);
+    const recovered = detail({ checks: [required, check("e2e", "success")] });
+    const final = evaluatePullRequestWatch(repeated.next, recovered, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, recovered, noRemarks).changes, []);
+  });
+
+  it("clears old-head owed checks when a new head is pushed", () => {
+    const required = { ...check("test", "success"), required: true };
+    const early = detail({ checks: [required, check("e2e", "pending")] });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.next.owedChecks, ["e2e"]);
+    const unreadHead = detail({ headSha: "bbbbbbbbbb", checks: [] });
+    const unread = evaluatePullRequestWatch(first.next, unreadHead, noRemarks);
+    assert.deepEqual(unread.changes, []);
+    assert.deepEqual(unread.next.owedChecks, []);
+    const pushed = detail({ ...unreadHead, checks: [required] });
+    const newHead = evaluatePullRequestWatch(unread.next, pushed, noRemarks);
+    assert.deepEqual(newHead.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(newHead.next.owedChecks, []);
+    const lateResult = detail({ ...pushed, checks: [required, check("e2e", "success")] });
+    const final = evaluatePullRequestWatch(newHead.next, lateResult, noRemarks);
+    assert.deepEqual(final.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, lateResult, noRemarks).changes, []);
+  });
+
+  // regression: #16208 PR watches burned GitHub's rate limit and gave up
   it("does not report passed again for a new passed check where none is required", () => {
     const first = evaluatePullRequestWatch(
       watch(),
@@ -255,29 +341,34 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(pushed.exhausted);
     assert.equal(pushed.next.wakes, 1);
   });
-});
 
-describe("pullRequestWatchMessage", () => {
-  it("tells the agent what changed and marks failures for the timeline", () => {
-    const report = evaluatePullRequestWatch(
-      watch(),
-      detail({ checks: [check("lint", "failure")] }),
-      [remark("reviewer", "2026-10-02T12:10:00Z", "<!-- bot -->Needs a test.")],
-    );
-    const message = pullRequestWatchMessage({
-      number: 12,
-      url: "https://github.com/o/r/pull/12",
-      baseBranch: "main",
-      headSha: report.next.headSha,
-      report,
+  const anHourLater = (
+    first: ThreadPullRequestWatch,
+    read: Detail,
+  ): ReadonlyArray<ReadonlyArray<string>> => {
+    const kinds: Array<ReadonlyArray<string>> = [];
+    let current = first;
+    for (let minute = 0; minute <= 60; minute += 10) {
+      const { changes, next } = evaluate(current, read, noRemarks, minute * 60_000);
+      kinds.push(changes.map((change) => change.kind));
+      current = next;
+    }
+    return kinds;
+  };
+
+  it("does not tell a watch saved before the no-checks clock that its seen head has none", () => {
+    // Such a watch may have seen this head's checks pending, which records nothing.
+    const legacy = watch({ headSha: "aaaaaaaaaa" });
+    assert.isTrue(anHourLater(legacy, detail({ checks: [] })).every((kinds) => kinds.length === 0));
+    const pushed = anHourLater(legacy, detail({ headSha: "bbbbbbbbbb", checks: [] }));
+    assert.deepEqual(pushed.flat(), ["no-checks"]);
+  });
+
+  it("never reports missing checks on a host whose checks it cannot read", () => {
+    const azure = detail({
+      provider: SourceControlProviderKind.make("azure-devops"),
+      checks: [],
     });
-    assert.include(message.text, "- Checks failed on aaaaaaa:\n  - lint https://ci.example/lint");
-    assert.include(message.text, '  - reviewer on src/index.ts: "Needs a test."');
-    assert.include(message.text, "unwatch_pull_request");
-    assert.deepEqual(message.notification, {
-      source: { kind: "monitor" },
-      outcome: "failed",
-      summary: "#12: checks failed, new comments",
-    });
+    assert.isTrue(anHourLater(watch(), azure).every((kinds) => kinds.length === 0));
   });
 });

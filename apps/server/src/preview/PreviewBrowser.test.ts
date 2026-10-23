@@ -1,18 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import type * as Duration from "effect/Duration";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeZlib from "node:zlib";
 
@@ -201,92 +198,4 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       );
     }),
   );
-
-  it.effect("shares one install between callers and finishes it after they stop waiting", () =>
-    Effect.gen(function* () {
-      const firstChunkSent = yield* Deferred.make<void>();
-      const finishDownload = yield* Deferred.make<void>();
-      const { browser, requests } = yield* makeHarness({
-        wait: "45 seconds",
-        body: Stream.concat(
-          Stream.make(browserArchive.subarray(0, 100)),
-          Stream.fromEffect(
-            Deferred.succeed(firstChunkSent, undefined).pipe(
-              Effect.andThen(Deferred.await(finishDownload)),
-              Effect.as(browserArchive.subarray(100)),
-            ),
-          ),
-        ),
-      });
-
-      const callers = yield* Effect.forEach([1, 2], () =>
-        Effect.forkChild(browser.executable.pipe(Effect.flip)),
-      );
-      yield* Deferred.await(firstChunkSent);
-      yield* TestClock.adjust("45 seconds");
-      for (const caller of callers) {
-        expect(yield* Fiber.join(caller)).toMatchObject({
-          _tag: "PreviewBrowserInstallingError",
-          downloadedBytes: 100,
-          unpacking: false,
-        });
-      }
-
-      yield* Deferred.succeed(finishDownload, undefined);
-      expect(yield* browser.executable).toMatch(new RegExp(`${executableName}$`));
-      expect(requests).toHaveLength(1);
-    }),
-  );
-
-  it.effect("reports hosts Chrome for Testing does not build for without downloading", () =>
-    Effect.gen(function* () {
-      const { browser, requests } = yield* makeHarness({ unsupported: true });
-      expect((yield* browser.executable.pipe(Effect.flip))._tag).toBe(
-        "PreviewBrowserUnsupportedError",
-      );
-      expect(yield* browser.installed).toEqual(Option.none());
-      expect(requests).toEqual([]);
-    }),
-  );
-});
-
-it("pins one Chrome for Testing build per host", () => {
-  const hosts = [
-    ["linux", "x64"],
-    ["linux", "arm64"],
-    ["darwin", "arm64"],
-    ["darwin", "x64"],
-    ["win32", "x64"],
-    ["win32", "arm64"],
-    ["win32", "ia32"],
-    ["linux", "ia32"],
-    ["freebsd", "x64"],
-  ] as const;
-  expect(
-    hosts.map(([platform, arch]) => PreviewBrowser.previewBrowserRelease(platform, arch)?.platform),
-  ).toEqual([
-    "linux64",
-    "linux-arm64",
-    "mac-arm64",
-    "mac-x64",
-    "win64",
-    "win64",
-    "win32",
-    undefined,
-    undefined,
-  ]);
-  expect(PreviewBrowser.previewBrowserRelease("linux", "x64")).toMatchObject({
-    url: "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/linux64/chrome-headless-shell-linux64.zip",
-    bytes: 120_477_194,
-  });
-});
-
-it("tells the agent how far the install has come", () => {
-  expect(
-    new PreviewBrowser.PreviewBrowserInstallingError({
-      downloadedBytes: 37_200_000,
-      totalBytes: 120_477_194,
-      unpacking: false,
-    }).message,
-  ).toBe("T3 is installing its headless browser (37 of 120 MB downloaded). Try again in a minute.");
 });

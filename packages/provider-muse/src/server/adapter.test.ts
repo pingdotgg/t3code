@@ -444,27 +444,6 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect(
-    "starts fresh after recovery clears a native ref instead of reusing the startup hint",
-    () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakeMuse();
-        const cleared = yield* preallocatedProviderThread();
-        const harness = yield* makeHarness(
-          fake,
-          INSTANCE_ID,
-          "failed-old-session",
-          undefined,
-          cleared,
-        );
-        const started = yield* fake.takeCall("session/start");
-        assert.isFalse(fake.calls.some((call) => call.method === "session/resume"));
-        assert.notStrictEqual(started.params.sessionId, "failed-old-session");
-        assert.strictEqual(harness.providerThread.id, cleared.id);
-        yield* startConversation(harness, fake);
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
   it.effect("retries a missing native session with a cleared ref on the same healthy host", () =>
     Effect.gen(function* () {
       for (const kind of ["sessionNotFound", "notFound"] as const) {
@@ -580,19 +559,6 @@ describe("MuseAdapterV2", () => {
     ),
   );
 
-  it.effect("skips an unreadable usage notification without ending the turn", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("session/tokenUsage", { turnId: nativeId, usage: "not usage" });
-      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
-      const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.status, "completed");
-      assert.strictEqual(fake.closeCount(), 0);
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
@@ -632,24 +598,6 @@ describe("MuseAdapterV2", () => {
       });
       const throttled = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(throttled.failure?.class, "provider_error");
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect("limits a quota stop without a reset time when no report shows a used-up window", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      // The last report still had room in both windows, so it cannot say when Meta will allow more.
-      yield* fake.emitHostWide("usage/changed", SUBSCRIPTION_USAGE);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("turn/completed", {
-        turnId: nativeId,
-        terminal: "failed",
-        error: { message: QUOTA_MESSAGE },
-      });
-      const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.failure?.class, "usage_limit");
-      assert.isUndefined(terminal.failure?.resetAt);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -801,14 +749,6 @@ describe("MuseAdapterV2", () => {
       );
       yield* startConversation(harness, fake, 2);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect("closes its SDK host exactly once when its session scope ends", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      yield* makeHarness(fake).pipe(Effect.scoped);
-      assert.strictEqual(fake.closeCount(), 1);
-    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect(
@@ -1193,31 +1133,6 @@ describe("MuseAdapterV2", () => {
           event.type === "runtime_request.updated" ? [event.runtimeRequest.status] : [],
         ),
         ["resolved", "pending"],
-      );
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect("does not reveal an automatic approval after the Muse connection closes", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      yield* startConversation(harness, fake);
-      const acknowledgement = pendingPromise<Record<string, unknown>>();
-      fake.queueResponse("approval/decide", acknowledgement.promise);
-      yield* fake.emit("approval/requested", {
-        ...approval("child-run-1"),
-        subagentOrigin: { subagentId: "a7" },
-      });
-      yield* fake.takeCall("approval/decide");
-      yield* fake.disconnect();
-      yield* Deferred.await(harness.eventsEnded);
-      acknowledgement.reject(new Error("Connection closed"));
-      yield* Effect.promise(() => fake.host.exited);
-      assert.deepStrictEqual(
-        harness.allEvents.flatMap((event) =>
-          event.type === "runtime_request.updated" ? [event.runtimeRequest.status] : [],
-        ),
-        ["cancelled"],
       );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

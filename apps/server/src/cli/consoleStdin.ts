@@ -14,7 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
  * redirected is a valid descriptor and is left alone, as is any run whose
  * output is not a console (the desktop backend, scripts).
  */
-export function needsConsoleStdin(input: {
+function needsConsoleStdin(input: {
   readonly platform: NodeJS.Platform;
   readonly env: NodeJS.ProcessEnv;
   readonly stdinOpen: boolean;

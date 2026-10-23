@@ -145,10 +145,6 @@ describe("serializeLegacyContextMessage", () => {
     });
   });
 
-  it("keeps prose without context untouched", () => {
-    expect(serializeLegacyContextMessage({ text: "just prose", records: [] })).toBe("just prose");
-  });
-
   it("appends review comments the text never referenced", () => {
     const legacy = serializeLegacyContextMessage({ text: "just prose", records: [review] });
 

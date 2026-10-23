@@ -158,6 +158,7 @@ export function AppBar(props: AppBarProps) {
       onBack={props.onBack}
       leading={props.sidebar !== false ? <AndroidWorkspaceSidebarButton /> : undefined}
       hideBottomBorder={props.hideBottomBorder}
+      compact={props.compact}
       actions={
         search
           ? [

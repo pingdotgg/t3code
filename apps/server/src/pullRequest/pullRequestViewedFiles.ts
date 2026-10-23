@@ -19,13 +19,13 @@ import type { PullRequestError, SupportedProject } from "./PullRequestService.ts
 
 const FILE_REVISIONS_CACHE_TTL = Duration.seconds(60);
 const FILE_REVISIONS_STALE_WINDOW = Duration.minutes(10);
-export const FILE_REVISIONS_CACHE_CAPACITY = 64;
+const FILE_REVISIONS_CACHE_CAPACITY = 64;
 
 /**
  * Bounds a single scope, not how many scopes are held: a reader ticking one file after
  * another renews the same scope and grows it without limit otherwise.
  */
-export const MAX_FILE_REVISION_PATHS = 1_000;
+const MAX_FILE_REVISION_PATHS = 1_000;
 
 interface FileRevisionsDependencies {
   readonly runFork: (effect: Effect.Effect<void>) => unknown;

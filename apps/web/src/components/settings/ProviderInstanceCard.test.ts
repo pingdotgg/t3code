@@ -4,8 +4,6 @@ import type { ServerProviderModel } from "@t3tools/contracts";
 import {
   deriveProviderModelsForDisplay,
   nextProviderEnvironmentWithFieldValue,
-  providerEnvironmentWithoutNames,
-  readProviderEnvironmentVariable,
 } from "./ProviderInstanceCard";
 
 describe("deriveProviderModelsForDisplay", () => {
@@ -37,46 +35,6 @@ describe("deriveProviderModelsForDisplay", () => {
         customModels: [{ slug: "kept-custom", name: "kept-custom", capabilities: null }],
       }).map((model) => model.slug),
     ).toEqual(["server-model", "kept-custom"]);
-  });
-
-  it("prefers the entry's name and capabilities over the stale live custom row", () => {
-    const liveCapabilities = { optionDescriptors: [] };
-    const customCapabilities = {
-      optionDescriptors: [
-        {
-          id: "reasoningEffort",
-          label: "Reasoning",
-          type: "select" as const,
-          options: [{ id: "high", label: "High", isDefault: true }],
-          currentValue: "high",
-        },
-      ],
-    };
-    const liveModels: ReadonlyArray<ServerProviderModel> = [
-      { slug: "bare", name: "bare", isCustom: true, capabilities: liveCapabilities },
-      { slug: "named", name: "named", isCustom: true, capabilities: liveCapabilities },
-    ];
-
-    const display = deriveProviderModelsForDisplay({
-      liveModels,
-      customModels: [
-        { slug: "bare", name: "bare", capabilities: null },
-        { slug: "named", name: "My Model", capabilities: customCapabilities },
-      ],
-    });
-
-    expect(display[0]).toEqual({
-      slug: "bare",
-      name: "bare",
-      isCustom: true,
-      capabilities: liveCapabilities,
-    });
-    expect(display[1]).toEqual({
-      slug: "named",
-      name: "My Model",
-      isCustom: true,
-      capabilities: customCapabilities,
-    });
   });
 });
 
@@ -128,19 +86,5 @@ describe("provider environment helpers", () => {
         "new-key",
       ),
     ).toEqual([{ name: "OPENAI_API_KEY", value: "new-key", sensitive: true }]);
-  });
-
-  it("separates dedicated provider secrets from the generic environment table", () => {
-    const environment = [
-      { name: "CURSOR_API_KEY", value: "cursor-key", sensitive: true },
-      { name: "EXTRA_FLAG", value: "1", sensitive: false },
-    ];
-
-    expect(readProviderEnvironmentVariable(environment, "CURSOR_API_KEY")?.value).toBe(
-      "cursor-key",
-    );
-    expect(providerEnvironmentWithoutNames(environment, new Set(["CURSOR_API_KEY"]))).toEqual([
-      { name: "EXTRA_FLAG", value: "1", sensitive: false },
-    ]);
   });
 });

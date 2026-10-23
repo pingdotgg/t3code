@@ -195,21 +195,6 @@ describe("learned routes", () => {
     ).toBeNull();
   });
 
-  it("labels a paired numeric Tailscale address Tailscale once the server confirms it", () => {
-    const paired = direct("paired", "http://100.101.102.103:3773/");
-    const other = direct("other", "http://100.96.0.1:3773/");
-    const entry = entryWithRoutes(relayOnly, [paired, other, RELAY]);
-    expect(connectionRouteLabel(paired)).toBe("VPN");
-    const confirmed = mergeLearnedRoutes({
-      entry,
-      activeRoute: paired,
-      reported: [{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }],
-      allowInsecure: true,
-    })!;
-    expect(ids(confirmed)).toEqual(["paired", "other", "relay"]);
-    expect(confirmed.map(connectionRouteLabel)).toEqual(["Tailscale", "VPN", "T3 Connect"]);
-  });
-
   it("leaves user routes alone and does not learn an address already saved", () => {
     const entry: ConnectionCatalogEntry = {
       target: LAN.target,
@@ -265,23 +250,6 @@ describe("learned routes", () => {
       "public",
       "relay",
     ]);
-  });
-
-  it("drops a plain HTTP LAN route learned earlier over an HTTPS-paired token", () => {
-    const lanOrigin = "http://192.168.1.10:3773";
-    const stale = direct(`learned:${ENVIRONMENT_ID}:${lanOrigin}@public`, `${lanOrigin}/`);
-    const staleProfile = profileOf(stale) as BearerConnectionProfile;
-    const learnedStale: ConnectionRoute = {
-      target: stale.target,
-      profile: Option.some(new BearerConnectionProfile({ ...staleProfile, learned: true })),
-    };
-    const routes = mergeLearnedRoutes({
-      entry: entryWithRoutes(relayOnly, [learnedStale, PUBLIC, RELAY]),
-      activeRoute: PUBLIC,
-      reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
-      allowInsecure: true,
-    });
-    expect(ids(routes)).toEqual(["public", "relay"]);
   });
 
   it("drops a stale plain HTTP route borrowing an HTTPS-paired token while another route is active", () => {

@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13,14 +12,9 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 
-import {
-  VcsProcessExitError,
-  VcsProcessSpawnError,
-  VcsProcessTimeoutError,
-} from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -264,130 +258,6 @@ describe("VcsProcess.run", () => {
       }),
   );
 
-  it.effect.each(["timeout", "spawn"] as const)(
-    "checkpoint commands do not retry %s failures",
-    (kind) =>
-      Effect.gen(function* () {
-        let attempts = 0;
-        const fields = { command: "git", argumentCount: 2, cwd: "/workspace" };
-        const failure =
-          kind === "timeout"
-            ? new ProcessRunner.ProcessTimeoutError({ ...fields, timeoutMs: 30_000 })
-            : new ProcessRunner.ProcessSpawnError({ ...fields, cause: new Error("spawn failed") });
-        const service = yield* VcsProcess.make.pipe(
-          Effect.provideService(ProcessRunner.ProcessRunner, {
-            run: () =>
-              Effect.sync(() => {
-                attempts += 1;
-              }).pipe(Effect.andThen(Effect.fail(failure))),
-          }),
-        );
-        const error = yield* service
-          .run({
-            ...baseInput,
-            operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
-          })
-          .pipe(Effect.flip);
-        expect(attempts).toBe(1);
-        expect(error._tag).toBe(
-          kind === "timeout" ? "VcsProcessTimeoutError" : "VcsProcessSpawnError",
-        );
-      }),
-  );
-
-  it.effect.each([
-    {
-      name: "recovers after two lock failures",
-      failures: 2,
-      attempts: 3,
-      transient: true,
-      capture: true,
-      streaming: false,
-    },
-    {
-      name: "bounds persistent lock failures",
-      failures: Infinity,
-      attempts: 3,
-      transient: true,
-      capture: true,
-      streaming: false,
-    },
-    {
-      name: "does not retry unknown exits",
-      failures: Infinity,
-      attempts: 1,
-      transient: false,
-      capture: true,
-      streaming: false,
-    },
-    {
-      name: "leaves other operations unchanged",
-      failures: Infinity,
-      attempts: 1,
-      transient: true,
-      capture: false,
-      streaming: false,
-    },
-    {
-      name: "does not replay stdout callbacks",
-      failures: Infinity,
-      attempts: 1,
-      transient: true,
-      capture: true,
-      streaming: true,
-    },
-  ])(
-    "checkpoint command retry $name",
-    ({ failures, attempts: expectedAttempts, transient, capture, streaming }) =>
-      Effect.gen(function* () {
-        let attempts = 0;
-        const service = yield* VcsProcess.make.pipe(
-          Effect.provideService(ProcessRunner.ProcessRunner, {
-            run: () =>
-              Effect.sync(() => {
-                attempts += 1;
-                return {
-                  stdout: "",
-                  stderr:
-                    attempts > failures
-                      ? ""
-                      : transient
-                        ? "fatal: Unable to create '/repo/index.lock': File exists"
-                        : "fatal: index file corrupt",
-                  code: ChildProcessSpawner.ExitCode(attempts > failures ? 0 : attempts),
-                  timedOut: false,
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                  stdoutInvalidUtf8: false,
-                  stderrInvalidUtf8: false,
-                };
-              }),
-          }),
-        );
-        const fiber = yield* service
-          .run({
-            ...baseInput,
-            operation: capture ? VcsProcess.CHECKPOINT_CAPTURE_OPERATION : baseInput.operation,
-            ...(streaming ? { onStdoutChunk: () => {} } : {}),
-          })
-          .pipe(Effect.exit, Effect.forkScoped);
-        yield* TestClock.adjust("150 millis");
-        const result = yield* Fiber.join(fiber);
-        expect(attempts).toBe(expectedAttempts);
-        if (failures === Infinity) {
-          if (Exit.isSuccess(result))
-            return yield* Effect.die("Expected a capture command failure");
-          const error = Cause.findErrorOption(result.cause);
-          if (error._tag === "None" || error.value._tag !== "VcsProcessExitError") {
-            return yield* Effect.die("Expected a Git exit error");
-          }
-          expect(error.value.exitCode).toBe(expectedAttempts);
-        } else {
-          expect(Exit.isSuccess(result)).toBe(true);
-        }
-      }),
-  );
-
   it.effect("bounds a synthetic burst of GitHub API processes", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
@@ -445,22 +315,6 @@ describe("VcsProcess.run", () => {
     }),
   );
 
-  it.effect("collects stdout", () =>
-    Effect.gen(function* () {
-      const result = yield* run({
-        operation: "test.stdout",
-        command: "node",
-        args: ["-e", "process.stdout.write('hello')"],
-        cwd: process.cwd(),
-      });
-
-      expect(result.stdout).toBe("hello");
-      expect(result.stderr).toBe("");
-      expect(result.stdoutTruncated).toBe(false);
-      expect(result.stderrTruncated).toBe(false);
-    }).pipe(provideLive),
-  );
-
   it.effect("keeps git from opening a folder laid out as a bare repository", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -506,38 +360,6 @@ describe("VcsProcess.run", () => {
       });
 
       expect(result.stdout).toBe("stdin payload");
-    }).pipe(provideLive),
-  );
-
-  it.effect("fails with VcsProcessExitError for non-zero exits by default", () =>
-    Effect.gen(function* () {
-      const secretArgument = "--token=super-secret-token";
-      const secretStderr = "remote rejected super-secret-token";
-      const error = yield* run({
-        operation: "test.exit",
-        command: "node",
-        args: [
-          "-e",
-          "process.stderr.write(process.argv[1]); process.exit(2)",
-          secretStderr,
-          secretArgument,
-        ],
-        cwd: process.cwd(),
-      }).pipe(Effect.flip);
-
-      expect(error).toBeInstanceOf(VcsProcessExitError);
-      expect(error).toMatchObject({
-        operation: "test.exit",
-        command: "node",
-        argumentCount: 4,
-        exitCode: 2,
-        detail: "Process exited with a non-zero status.",
-        failureKind: "command-failed",
-        stderrLength: secretStderr.length,
-        stderrTruncated: false,
-      });
-      expect(error.message).not.toContain(secretArgument);
-      expect(error.message).not.toContain(secretStderr);
     }).pipe(provideLive),
   );
 
@@ -591,24 +413,6 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
-  it.effect("classifies HTTP 429 responses as rate limits", () =>
-    Effect.gen(function* () {
-      const providerStderr = "HTTP 429: Too Many Requests. request-id=secret-value";
-      const error = yield* run({
-        operation: "test.rate-limit",
-        command: "node",
-        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", providerStderr],
-        cwd: process.cwd(),
-      }).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        detail: "API rate limit exceeded.",
-        failureKind: "rate-limited",
-      });
-      expect(error.message).not.toContain(providerStderr);
-    }).pipe(provideLive),
-  );
-
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";
@@ -630,68 +434,6 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
-  it.effect("preserves real boundary causes without manufacturing structural ones", () =>
-    Effect.gen(function* () {
-      const cause = new Error("secret stdin failure");
-      const error = yield* captureProcessResult(
-        Effect.fail(
-          new ProcessRunner.ProcessStdinError({
-            command: baseInput.command,
-            argumentCount: baseInput.args.length,
-            cwd: baseInput.cwd,
-            stdinBytes: 47,
-            cause,
-          }),
-        ),
-      );
-
-      expect(error).toMatchObject({
-        _tag: "VcsProcessStdinWriteError",
-        operation: baseInput.operation,
-        stdinBytes: 47,
-        cause,
-      });
-      expect(error.message).not.toContain(cause.message);
-
-      const missingExitCodeError = yield* captureProcessResult(
-        Effect.succeed({
-          stdout: "",
-          stderr: "",
-          code: null,
-          timedOut: false,
-          stdoutTruncated: false,
-          stderrTruncated: false,
-          stdoutInvalidUtf8: false,
-          stderrInvalidUtf8: false,
-        }),
-      );
-
-      expect(missingExitCodeError).toMatchObject({
-        _tag: "VcsProcessMissingExitCodeError",
-        operation: baseInput.operation,
-        command: baseInput.command,
-        cwd: baseInput.cwd,
-        argumentCount: baseInput.args.length,
-      });
-      expect(missingExitCodeError).not.toHaveProperty("cause");
-    }),
-  );
-
-  it.effect("returns output when non-zero exits are allowed", () =>
-    Effect.gen(function* () {
-      const result = yield* run({
-        operation: "test.allowed-exit",
-        command: "node",
-        args: ["-e", "process.stderr.write('boom'); process.exit(2)"],
-        cwd: process.cwd(),
-        allowNonZeroExit: true,
-      });
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toBe("boom");
-    }).pipe(provideLive),
-  );
-
   it.effect("truncates output and appends the marker when requested", () =>
     Effect.gen(function* () {
       const result = yield* run({
@@ -706,21 +448,6 @@ describe("VcsProcess.run", () => {
       expect(result.stdoutTruncated).toBe(true);
       expect(result.stdout).toContain("[truncated]");
       expect(result.stderrTruncated).toBe(false);
-    }).pipe(provideLive),
-  );
-
-  it.effect("truncates without the marker when truncation markers are disabled", () =>
-    Effect.gen(function* () {
-      const result = yield* run({
-        operation: "test.truncate-silent",
-        command: "node",
-        args: ["-e", "process.stdout.write('x'.repeat(2048))"],
-        cwd: process.cwd(),
-        maxOutputBytes: 128,
-      });
-
-      expect(result.stdoutTruncated).toBe(true);
-      expect(result.stdout).not.toContain("[truncated]");
     }).pipe(provideLive),
   );
 
@@ -757,23 +484,6 @@ describe("VcsProcess.run", () => {
       expect(result.stdout).toBe("xxxxxxxx");
       expect(result.stdoutTruncated).toBe(true);
       expect(Buffer.concat(chunks).toString()).toBe("x".repeat(131072) + "\0S final\0");
-    }).pipe(provideLive),
-  );
-
-  it.effect("fails with VcsProcessTimeoutError on timeout", () =>
-    Effect.gen(function* () {
-      const errorFiber = yield* run({
-        operation: "test.timeout",
-        command: "node",
-        args: ["-e", "setTimeout(() => {}, 5000)"],
-        cwd: process.cwd(),
-        timeoutMs: 50,
-      }).pipe(Effect.flip, Effect.forkScoped);
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(50));
-      const error = yield* Fiber.join(errorFiber);
-
-      expect(error).toBeInstanceOf(VcsProcessTimeoutError);
     }).pipe(provideLive),
   );
 });

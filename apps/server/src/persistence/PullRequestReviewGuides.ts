@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -52,6 +53,7 @@ const make = Effect.gen(function* () {
   return PullRequestReviewGuideRepository.of({
     get: (key) =>
       findGuide(key).pipe(
+        NodeSqliteClient.readOnly,
         Effect.map(Option.map((row) => row.guide)),
         Effect.mapError((cause) =>
           Schema.isSchemaError(cause)

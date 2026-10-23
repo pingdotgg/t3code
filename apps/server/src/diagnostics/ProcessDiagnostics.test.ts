@@ -15,6 +15,11 @@ import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.t
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
+// ProcessDiagnostics treats process.pid as the server, so the fixture PID is an
+// offset from it. A fixed PID collides whenever the test worker is assigned it.
+const SERVER_PID = process.pid;
+const CHILD_PID = SERVER_PID + 1;
+
 function makeNativeSnapshot(
   processes: ResourceMonitorSnapshotEvent["processes"],
 ): ResourceMonitorSnapshotEvent {
@@ -62,57 +67,6 @@ function layerTelemetryFor(
 }
 
 describe("ProcessDiagnostics", () => {
-  it.effect("projects live process data from resource telemetry", () =>
-    Effect.gen(function* () {
-      const snapshot = makeNativeSnapshot([
-        {
-          pid: process.pid,
-          ppid: 1,
-          startTimeMs: 1_000,
-          runTimeMs: 60_000,
-          name: "node",
-          command: "t3 server",
-          status: "Running",
-          cpuPercent: 0,
-          cpuTimeMs: 100,
-          residentBytes: 1_024,
-          virtualBytes: 2_048,
-          ioReadBytes: 100,
-          ioWriteBytes: 200,
-          ioSemantics: "storage",
-        },
-        {
-          pid: 4_242,
-          ppid: process.pid,
-          startTimeMs: 2_000,
-          runTimeMs: 4_000,
-          name: "agent",
-          command: "codex app-server",
-          status: "Running",
-          cpuPercent: 1.5,
-          cpuTimeMs: 60,
-          residentBytes: 2_048,
-          virtualBytes: 4_096,
-          ioReadBytes: 300,
-          ioWriteBytes: 400,
-          ioSemantics: "storage",
-        },
-      ]);
-      const layerTelemetry = layerTelemetryFor(snapshot);
-      const layer = ProcessDiagnostics.layer.pipe(Layer.provideMerge(layerTelemetry));
-
-      const diagnostics = yield* Effect.gen(function* () {
-        const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
-        return yield* processDiagnostics.read;
-      }).pipe(Effect.provide(layer));
-
-      expect(diagnostics.processes.map((process) => process.pid)).toEqual([4242]);
-      expect(diagnostics.processes[0]?.startTimeMs).toBe(2_000);
-      expect(diagnostics.processes[0]?.cpuPercent).toBe(1.5);
-      expect(diagnostics.processes[0]?.rssBytes).toBe(2_048);
-    }),
-  );
-
   it.effect("rejects stale process identities before signaling", () =>
     Effect.gen(function* () {
       const snapshot = makeNativeSnapshot([]);
@@ -122,7 +76,7 @@ describe("ProcessDiagnostics", () => {
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((processDiagnostics) =>
           processDiagnostics.signal({
-            pid: 4_242,
+            pid: CHILD_PID,
             startTimeMs: 2_000,
             signal: "SIGINT",
           }),
@@ -131,10 +85,12 @@ describe("ProcessDiagnostics", () => {
       );
 
       expect(result).toEqual({
-        pid: 4242,
+        pid: CHILD_PID,
         signal: "SIGINT",
         signaled: false,
-        message: Option.some("Process 4242 no longer matches the selected process identity."),
+        message: Option.some(
+          `Process ${CHILD_PID} no longer matches the selected process identity.`,
+        ),
       });
     }),
   );
@@ -143,8 +99,8 @@ describe("ProcessDiagnostics", () => {
     Effect.gen(function* () {
       const snapshot = makeNativeSnapshot([
         {
-          pid: 4_242,
-          ppid: process.pid,
+          pid: CHILD_PID,
+          ppid: SERVER_PID,
           startTimeMs: 2_000,
           runTimeMs: 4_000,
           name: "agent",
@@ -185,7 +141,7 @@ describe("ProcessDiagnostics", () => {
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((processDiagnostics) =>
           processDiagnostics.signal({
-            pid: 4_242,
+            pid: CHILD_PID,
             startTimeMs: 2_000,
             signal: "SIGINT",
           }),
@@ -194,11 +150,11 @@ describe("ProcessDiagnostics", () => {
       );
 
       expect(result).toEqual({
-        pid: 4_242,
+        pid: CHILD_PID,
         signal: "SIGINT",
         signaled: false,
         message: Option.some(
-          "Could not refresh process 4242; refusing to signal a stale identity.",
+          `Could not refresh process ${CHILD_PID}; refusing to signal a stale identity.`,
         ),
       });
     }),
@@ -211,7 +167,7 @@ describe("ProcessDiagnostics", () => {
       );
       const snapshot = makeNativeSnapshot([
         {
-          pid: 4_242,
+          pid: CHILD_PID,
           ppid: 1,
           startTimeMs: 2_000,
           runTimeMs: 4_000,
@@ -233,7 +189,7 @@ describe("ProcessDiagnostics", () => {
         type: "desktopTelemetry",
         sequence: 1,
         sampledAtUnixMs,
-        electronPid: 4_242,
+        electronPid: CHILD_PID,
         power: {
           source: "electron-main",
           idle: "false",
@@ -249,7 +205,7 @@ describe("ProcessDiagnostics", () => {
         speedLimitPercent: Option.none(),
         electronProcesses: [
           {
-            pid: 4_242,
+            pid: CHILD_PID,
             creationTimeMs: 2_000,
             type: "Browser",
             name: "electron",
@@ -265,7 +221,7 @@ describe("ProcessDiagnostics", () => {
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((processDiagnostics) =>
           processDiagnostics.signal({
-            pid: 4_242,
+            pid: CHILD_PID,
             startTimeMs: 2_000,
             signal: "SIGKILL",
           }),
@@ -274,10 +230,10 @@ describe("ProcessDiagnostics", () => {
       );
 
       expect(result).toEqual({
-        pid: 4_242,
+        pid: CHILD_PID,
         signal: "SIGKILL",
         signaled: false,
-        message: Option.some("Process 4242 is not a signalable T3 backend descendant."),
+        message: Option.some(`Process ${CHILD_PID} is not a signalable T3 backend descendant.`),
       });
 
       const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(

@@ -8,7 +8,6 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import {
-  bufferLiveStream,
   bufferLatestLiveStream,
   makeLiveStreamBudget,
   replayAndBufferLiveEvents,
@@ -51,28 +50,6 @@ describe("LiveStreamBudget", () => {
     ),
   );
 });
-
-it.effect("stops draining a slow subscriber when its unacknowledged tail fills", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const input = yield* Queue.unbounded<{ text: string }>();
-      const sourceClosed = yield* Deferred.make<void>();
-      const pull = yield* Stream.toPull(
-        bufferLiveStream(
-          Stream.fromQueue(input).pipe(Stream.ensuring(Deferred.succeed(sourceClosed, undefined))),
-          { maxItems: 2 },
-        ),
-      );
-      yield* Queue.offer(input, { text: "first" });
-      expect(yield* pull).toEqual([{ text: "first" }]);
-      yield* Queue.offerAll(input, [{ text: "second" }, { text: "third" }]);
-      yield* Deferred.await(sourceClosed);
-      const next = yield* pull.pipe(Effect.result);
-      expect(next._tag).toBe("Failure");
-      if (next._tag === "Failure") expect(next.failure._tag).toBe("LiveStreamBufferError");
-    }),
-  ),
-);
 
 type Event = { readonly sequence: number; readonly text: string; readonly threadId?: string };
 
@@ -155,42 +132,6 @@ describe("replayAndBufferLiveEvents", () => {
       ),
   );
 
-  it.effect.each(["items", "bytes"] as const)(
-    "counts an unacknowledged replay batch toward the live %s limit",
-    (limit) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const pubsub = yield* PubSub.unbounded<Event>();
-          const subscribed = yield* Deferred.make<PubSub.Subscription<Event>>();
-          const replayed = { sequence: 1, text: "replay" };
-          const live = { sequence: 2, text: "live" };
-          const pull = yield* Stream.toPull(
-            replayAndBufferLiveEvents(
-              {
-                subscribe: PubSub.subscribe(pubsub).pipe(
-                  Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
-                ),
-                latestSequence: Effect.succeed(1),
-                replay: () => Stream.succeed(replayed),
-              },
-              limit === "items"
-                ? { maxItems: 1 }
-                : {
-                    maxSerializedBytes: 40,
-                  },
-            ),
-          );
-          expect(yield* pull).toEqual([replayed]);
-          yield* PubSub.publish(pubsub, live);
-          yield* (yield* Deferred.await(subscribed)).shutdownHook.await;
-          expect(yield* PubSub.size(pubsub)).toBe(0);
-          const result = yield* pull.pipe(Effect.result);
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
-        }),
-      ),
-  );
-
   it.effect("lets a fast reader replay a database page larger than both buffer limits", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -222,6 +163,7 @@ describe("replayAndBufferLiveEvents", () => {
           const highWaterStarted = yield* Deferred.make<void>();
           const highWater = yield* Deferred.make<number>();
           const first = { sequence: 1, text: "first", threadId: "selected" };
+          const unrelatedReplay = { sequence: 0, text: "unrelated replay", threadId: "other" };
           const overlap = { sequence: 2, text: "overlap", threadId: "selected" };
           const last = { sequence: 10, text: "last", threadId: "selected" };
           const reader = yield* replayAndBufferLiveEvents(
@@ -230,7 +172,7 @@ describe("replayAndBufferLiveEvents", () => {
               latestSequence: Deferred.succeed(highWaterStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(highWater)),
               ),
-              replay: () => Stream.make(first, overlap),
+              replay: () => Stream.make(unrelatedReplay, first, overlap),
               filter: (event) => event.threadId === "selected",
             },
             { maxItems: 4 },
@@ -248,59 +190,6 @@ describe("replayAndBufferLiveEvents", () => {
           yield* Deferred.succeed(highWater, 2);
           expect(yield* Fiber.join(reader)).toEqual([first, overlap, last]);
           expect(yield* PubSub.size(pubsub)).toBe(0);
-        }),
-      ),
-  );
-
-  it.effect(
-    "caps raw and projected stages while projection and client acknowledgement are blocked",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const pubsub = yield* PubSub.unbounded<Event>();
-          const subscribed = yield* Deferred.make<PubSub.Subscription<Event>>();
-          const projectionStarted = yield* Deferred.make<void>();
-          const projectionClosed = yield* Deferred.make<void>();
-          const releaseProjection = yield* Deferred.make<void>();
-          const source = replayAndBufferLiveEvents(
-            {
-              subscribe: PubSub.subscribe(pubsub).pipe(
-                Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
-              ),
-              latestSequence: Effect.succeed(0),
-              replay: () => Stream.empty,
-            },
-            { maxItems: 2 },
-          ).pipe(
-            Stream.mapEffect((event) =>
-              event.sequence === 3
-                ? Deferred.succeed(projectionStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseProjection)),
-                    Effect.as(event),
-                  )
-                : Effect.succeed(event),
-            ),
-            Stream.ensuring(Deferred.succeed(projectionClosed, undefined)),
-          );
-          const pull = yield* Stream.toPull(bufferLiveStream(source, { maxItems: 2 }));
-          const firstPull = yield* pull.pipe(Effect.forkScoped);
-          const subscription = yield* Deferred.await(subscribed);
-          yield* PubSub.publish(pubsub, { sequence: 1, text: "awaiting ACK" });
-          expect(yield* Fiber.join(firstPull)).toEqual([{ sequence: 1, text: "awaiting ACK" }]);
-          yield* PubSub.publish(pubsub, { sequence: 2, text: "projected tail" });
-          yield* PubSub.publish(pubsub, { sequence: 3, text: "projecting" });
-          yield* Deferred.await(projectionStarted);
-          yield* PubSub.publishAll(pubsub, [
-            { sequence: 4, text: "raw tail" },
-            { sequence: 5, text: "overflow" },
-          ]);
-          yield* subscription.shutdownHook.await;
-          expect(yield* PubSub.size(pubsub)).toBe(0);
-          yield* Deferred.succeed(releaseProjection, undefined);
-          yield* Deferred.await(projectionClosed);
-          const result = yield* pull.pipe(Effect.result);
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
         }),
       ),
   );

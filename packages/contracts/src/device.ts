@@ -1,6 +1,8 @@
-import { Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 
 export const DevicePlatform = Schema.Literals(["ios", "android"]);
 export type DevicePlatform = typeof DevicePlatform.Type;
@@ -9,12 +11,17 @@ export const DeviceHostId = TrimmedNonEmptyString.check(Schema.isMaxLength(128))
 export type DeviceHostId = typeof DeviceHostId.Type;
 
 export const LOCAL_DEVICE_HOST_ID = "local" as DeviceHostId;
+export const LOCAL_DEVICE_HOST_LABEL = "This machine";
+
+const ConfiguredDeviceHostId = DeviceHostId.check(
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
+  Schema.makeFilter((id) => id !== "local" || "The local host id is reserved."),
+);
 
 export const SshDeviceHostConfig = Schema.Struct({
-  id: DeviceHostId.check(
-    Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
-    Schema.makeFilter((id) => id !== "local" || "The local host id is reserved."),
-  ),
+  // Hosts saved before EAS hosts existed carry no kind.
+  kind: Schema.Literal("ssh").pipe(Schema.withDecodingDefaultKey(Effect.succeed("ssh" as const))),
+  id: ConfiguredDeviceHostId,
   label: TrimmedNonEmptyString,
   target: TrimmedNonEmptyString.check(Schema.isPattern(/^[^\s-][^\s]*$/)),
   identityFile: Schema.optional(TrimmedNonEmptyString),
@@ -22,13 +29,86 @@ export const SshDeviceHostConfig = Schema.Struct({
 });
 export type SshDeviceHostConfig = typeof SshDeviceHostConfig.Type;
 
-export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(
+/**
+ * Cloud simulators from EAS Simulator. Sessions bill the Expo account until
+ * they stop, so every one is bounded. The Expo credential is not stored here.
+ */
+export const EasDeviceHostConfig = Schema.Struct({
+  kind: Schema.Literal("eas"),
+  id: ConfiguredDeviceHostId,
+  label: TrimmedNonEmptyString,
+  /** EAS project that sessions run under, when the project's app config does not name one. */
+  appId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Expo access token, kept in the secret store. When empty the server uses
+   * EXPO_TOKEN, then the `eas login` session. This is `secretSetting` from
+   * settings.ts, which imports this module.
+   */
+  accessToken: TrimmedString.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("")),
+    Schema.annotateKey({ settingsSecret: true }),
+  ),
+  /** EAS allows at most 40 minutes on free accounts and 115 on paid ones. */
+  maxSessionMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 115 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(30)),
+  ),
+  idleMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 60 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(10)),
+  ),
+  maxConcurrentSessions: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(2)),
+  ),
+}).check(
+  // EAS requires the idle limit to be smaller than the session limit.
   Schema.makeFilter(
-    (hosts) =>
-      new Set(hosts.map((host) => host.id)).size === hosts.length ||
-      "Device host ids must be unique.",
+    (host: { readonly idleMinutes: number; readonly maxSessionMinutes: number }) =>
+      host.idleMinutes < host.maxSessionMinutes ||
+      "Idle minutes must be smaller than session minutes.",
   ),
 );
+export type EasDeviceHostConfig = typeof EasDeviceHostConfig.Type;
+
+export type DeviceHostConfig = SshDeviceHostConfig | EasDeviceHostConfig;
+
+const uniqueHostIds = Schema.makeFilter(
+  (hosts: ReadonlyArray<{ readonly id: string }>) =>
+    new Set(hosts.map((host) => host.id)).size === hosts.length ||
+    "Device host ids must be unique.",
+);
+
+export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(uniqueHostIds);
+
+/**
+ * Kept apart from the SSH hosts in settings: servers and clients from before
+ * EAS hosts decode `deviceHosts` as SSH hosts and would reject the whole file
+ * or snapshot over one EAS entry.
+ */
+export const EasDeviceHostConfigs = Schema.Array(EasDeviceHostConfig).check(uniqueHostIds);
+
+export const DeviceEasAccountInput = Schema.Struct({
+  /** A saved EAS host whose stored token is checked when no new token is given. */
+  hostId: Schema.optional(DeviceHostId),
+  accessToken: Schema.optional(TrimmedString),
+});
+export type DeviceEasAccountInput = typeof DeviceEasAccountInput.Type;
+
+export const DeviceEasAccount = Schema.Struct({
+  signedInAs: Schema.String,
+  credentialSource: Schema.Literals(["settings", "env", "eas-login"]),
+  apps: Schema.Array(Schema.Struct({ id: Schema.String, fullName: Schema.String })),
+});
+export type DeviceEasAccount = typeof DeviceEasAccount.Type;
+
+/** Checking an Expo credential failed; no device host is involved yet. */
+export class DeviceEasAccountError extends Schema.TaggedError<DeviceEasAccountError>()(
+  "DeviceEasAccountError",
+  // No cause: this error reaches the browser, and the reason already says what Expo answered.
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 export const DeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 export type DeviceId = typeof DeviceId.Type;
@@ -64,16 +144,24 @@ export const DeviceToolVersions = Schema.Struct({
 });
 export type DeviceToolVersions = typeof DeviceToolVersions.Type;
 
-export const DeviceHostSummary = Schema.Struct({
+const deviceHostSummaryFields = {
   id: DeviceHostId,
-  kind: Schema.Literals(["local", "ssh"]),
   label: TrimmedNonEmptyString,
   platforms: Schema.Array(DevicePlatformAvailability),
   tools: Schema.optional(DeviceToolVersions),
   toolInspectionError: Schema.optional(Schema.String),
   hubInstalled: Schema.Boolean,
   agentDeviceInstalled: Schema.Boolean,
+};
+const MachineDeviceHostSummary = Schema.Struct({
+  ...deviceHostSummaryFields,
+  kind: Schema.Literals(["local", "ssh"]),
 });
+const EasDeviceHostSummary = Schema.Struct({
+  ...deviceHostSummaryFields,
+  kind: Schema.Literal("eas"),
+});
+export const DeviceHostSummary = Schema.Union([MachineDeviceHostSummary, EasDeviceHostSummary]);
 export type DeviceHostSummary = typeof DeviceHostSummary.Type;
 
 export const DeviceHostStatus = Schema.Literals([
@@ -95,21 +183,24 @@ export const DeviceSession = Schema.Struct({
 });
 export type DeviceSession = typeof DeviceSession.Type;
 
-export const DeviceServiceState = Schema.Struct({
+export const DeviceHostStatuses = Schema.Record(
+  DeviceHostId,
+  Schema.Struct({
+    status: DeviceHostStatus,
+    detail: Schema.optional(Schema.String),
+    androidDiscoveryIncomplete: Schema.optional(Schema.Boolean),
+  }),
+);
+
+const deviceServiceStateFields = {
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
   supportsToolInspection: Schema.optional(Schema.Boolean),
-  hosts: Schema.Array(DeviceHostSummary),
+  /** Servers from before EAS hosts ignore `easDeviceHosts`, so clients offer them only when set. */
+  supportsEasHosts: Schema.optional(Schema.Boolean),
   hostStatus: DeviceHostStatus,
   hostStatusDetail: Schema.optional(Schema.String),
-  hostStatuses: Schema.Record(
-    DeviceHostId,
-    Schema.Struct({
-      status: DeviceHostStatus,
-      detail: Schema.optional(Schema.String),
-      androidDiscoveryIncomplete: Schema.optional(Schema.Boolean),
-    }),
-  ),
+  hostStatuses: DeviceHostStatuses,
   devices: Schema.Array(DeviceSummary),
   sessions: Schema.Array(DeviceSession),
   bootingDevices: Schema.optional(
@@ -119,7 +210,46 @@ export const DeviceServiceState = Schema.Struct({
   agentAccessEnabled: Schema.Boolean,
   hubBasePath: Schema.String,
   revision: Schema.Int,
+};
+
+/**
+ * EAS host summaries travel as `easHosts`: clients from before EAS hosts
+ * decode `hosts` with a `local | ssh` kind and would reject the whole state.
+ * Decoded, every host is in `hosts`.
+ */
+const DeviceServiceStateWire = Schema.Struct({
+  ...deviceServiceStateFields,
+  hosts: Schema.Array(MachineDeviceHostSummary),
+  easHosts: Schema.optional(Schema.Array(EasDeviceHostSummary)),
 });
+const DeviceServiceStateDecoded = Schema.Struct({
+  ...deviceServiceStateFields,
+  hosts: Schema.Array(DeviceHostSummary),
+});
+
+export const DeviceServiceState = DeviceServiceStateWire.pipe(
+  Schema.decodeTo(
+    Schema.toType(DeviceServiceStateDecoded),
+    SchemaTransformation.transform<
+      typeof DeviceServiceStateDecoded.Type,
+      typeof DeviceServiceStateWire.Type
+    >({
+      decode: ({ easHosts, ...state }) => ({
+        ...state,
+        hosts: [...state.hosts, ...(easHosts ?? [])],
+      }),
+      encode: (state) => ({
+        ...state,
+        hosts: state.hosts.filter(
+          (host): host is typeof MachineDeviceHostSummary.Type => host.kind !== "eas",
+        ),
+        easHosts: state.hosts.filter(
+          (host): host is typeof EasDeviceHostSummary.Type => host.kind === "eas",
+        ),
+      }),
+    }),
+  ),
+);
 export type DeviceServiceState = typeof DeviceServiceState.Type;
 
 export const DeviceListInput = Schema.Struct({
@@ -317,12 +447,14 @@ export class DeviceHostUnavailableError extends Schema.TaggedError<DeviceHostUna
   "DeviceHostUnavailableError",
   {
     hostId: DeviceHostId,
+    /** The host's name in Settings, which the message shows instead of its id. */
+    hostLabel: Schema.optional(Schema.String),
     reason: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Device host ${this.hostId} is unavailable: ${this.reason}`;
+    return `${this.hostLabel ?? `Device host ${this.hostId}`} is unavailable: ${this.reason}`;
   }
 }
 
@@ -423,7 +555,7 @@ export const DeviceError = Schema.Union([
 export type DeviceError = typeof DeviceError.Type;
 
 export const DeviceToolListResult = Schema.Struct({
-  hostStatuses: DeviceServiceState.fields.hostStatuses,
+  hostStatuses: DeviceHostStatuses,
   hosts: Schema.Array(DeviceHostSummary),
   devices: Schema.Array(DeviceSummary),
   open: Schema.Array(Schema.Struct({ hostId: DeviceHostId, deviceId: DeviceId })),

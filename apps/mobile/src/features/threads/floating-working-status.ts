@@ -1,5 +1,12 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
+export interface FloatingStatusAction {
+  readonly label: string;
+  readonly accessibilityLabel: string;
+  readonly disabled: boolean;
+  readonly onPress: () => void;
+}
+
 export type FloatingWorkingStatus =
   | { readonly kind: "working"; readonly startedAt: string }
   | { readonly kind: "syncing"; readonly label: string }
@@ -15,6 +22,14 @@ export type FloatingWorkingStatus =
       readonly label: string;
       readonly accessibilityLabel: string;
       readonly waiting: boolean;
+      readonly onPress: () => void;
+      readonly action: FloatingStatusAction;
+    }
+  | {
+      readonly kind: "lifecycle";
+      readonly state: "snoozed" | "settled" | "woke";
+      readonly label: string;
+      readonly action: FloatingStatusAction;
     }
   | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }
   | { readonly kind: "preparing"; readonly label: string }

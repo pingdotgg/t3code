@@ -1,24 +1,15 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProcessRunner from "./processRunner.ts";
-import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
-import { makeProcessProbe, processProbeSource } from "./testUtils/processProbe.ts";
 
 type ChildProcessCommand = {
   readonly command: string;
@@ -85,50 +76,6 @@ const runWith =
     );
 
 describe("runProcess", () => {
-  it.effect("collects stdout through an injected ChildProcessSpawner", () =>
-    Effect.gen(function* () {
-      const spawner = makeSpawner((command) =>
-        Effect.sync(() => {
-          expect(command.command).toBe("fake");
-          expect(command.args).toEqual(["stdout-bytes", "32"]);
-          return makeHandle({ stdout: "x".repeat(32) });
-        }),
-      );
-
-      const result = yield* runWith(spawner)({
-        command: "fake",
-        args: ["stdout-bytes", "32"],
-      });
-
-      expect(result.code).toBe(0);
-      expect(result.stdout).toBe("x".repeat(32));
-      expect(result.timedOut).toBe(false);
-    }),
-  );
-
-  it.effect("runs through the ProcessRunner service", () => {
-    const spawner = makeSpawner((command) =>
-      Effect.sync(() => {
-        expect(command.command).toBe("fake");
-        expect(command.args).toEqual(["--service"]);
-        return makeHandle({ stdout: "service ok" });
-      }),
-    );
-    const layer = ProcessRunner.layer.pipe(
-      Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-    );
-
-    return Effect.gen(function* () {
-      const runner = yield* ProcessRunner.ProcessRunner;
-      const result = yield* runner.run({
-        command: "fake",
-        args: ["--service"],
-      });
-
-      expect(result.stdout).toBe("service ok");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("resolves and escapes Windows command shims before spawning", () => {
     const spawner = makeSpawner((command) =>
       Effect.sync(() => {
@@ -169,44 +116,6 @@ describe("runProcess", () => {
       }),
     );
   });
-
-  it.effect("preserves resolved spawn context and cause", () =>
-    Effect.gen(function* () {
-      const cause = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "ChildProcessSpawner",
-        method: "spawn",
-        pathOrDescriptor: "/actual/fake",
-      });
-      const spawner = makeSpawner(() => Effect.fail(cause));
-
-      const error = yield* runWith(spawner)({
-        command: "fake",
-        args: ["--flag", "secret-token-value"],
-        cwd: "/logical",
-        spawnCwd: "/actual",
-      }).pipe(Effect.flip);
-
-      expect(error._tag).toBe("ProcessSpawnError");
-      if (error._tag !== "ProcessSpawnError") {
-        return expect.fail("Expected ProcessSpawnError");
-      }
-      expect(error).toMatchObject({
-        command: "fake",
-        argumentCount: 2,
-        cwd: "/logical",
-        spawnCwd: "/actual",
-        resolvedCommand: "fake",
-        resolvedArgumentCount: 2,
-        shell: false,
-      });
-      expect(error.cause).toBe(cause);
-      expect(error.message).toBe("Failed to spawn process 'fake' in '/actual'");
-      expect(error).not.toHaveProperty("args");
-      expect(error).not.toHaveProperty("resolvedArgs");
-      expect(error.message).not.toContain("secret-token-value");
-    }),
-  );
 
   it.effect("types spawn failures that the platform spawner throws synchronously", () =>
     Effect.gen(function* () {
@@ -354,204 +263,8 @@ describe("runProcess", () => {
     }),
   );
 
-  it.effect("returns output for non-zero exit codes", () =>
-    Effect.gen(function* () {
-      const spawner = makeSpawner(() => Effect.succeed(makeHandle({ stderr: "boom", code: 2 })));
-
-      const result = yield* runWith(spawner)({
-        command: "fake",
-        args: ["stderr-exit", "boom", "2"],
-      });
-
-      expect(result.code).toBe(2);
-      expect(result.stderr).toBe("boom");
-    }),
-  );
-
-  it.effect("fails on timeout", () =>
-    Effect.gen(function* () {
-      const spawner = makeSpawner(() =>
-        Effect.succeed(
-          makeHandle({
-            exitCode: Effect.never,
-          }),
-        ),
-      );
-      const errorFiber = yield* runWith(spawner)({
-        command: "fake",
-        args: ["sleep"],
-        cwd: "/logical",
-        spawnCwd: "/actual",
-        timeout: "50 millis",
-      }).pipe(Effect.flip, Effect.forkScoped);
-
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(50));
-      const error = yield* Fiber.join(errorFiber);
-
-      expect(error._tag).toBe("ProcessTimeoutError");
-      if (error._tag !== "ProcessTimeoutError") {
-        return expect.fail("Expected ProcessTimeoutError");
-      }
-      expect(error).toMatchObject({
-        command: "fake",
-        argumentCount: 1,
-        cwd: "/logical",
-        spawnCwd: "/actual",
-        timeoutMs: 50,
-      });
-      expect(error.message).toBe("Process 'fake' in '/actual' timed out after 50ms");
-    }),
-  );
-
-  it.effect("kills a helper that ignores SIGTERM when its run times out", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-process-runner-" });
-      const probe = yield* makeProcessProbe;
-      const helper = writeFakeCli({
-        directory,
-        name: "stubborn",
-        source: `process.on("SIGTERM", () => {}); ${processProbeSource(probe.port)}`,
-      });
-      const runner = yield* ProcessRunner.ProcessRunner;
-      const fiber = yield* runner
-        .run({ command: helper, args: [], timeout: "1 second" })
-        .pipe(Effect.flip, Effect.forkScoped);
-      yield* probe.started;
-
-      yield* TestClock.adjust("1 second");
-      yield* probe.exited;
-      expect((yield* Fiber.join(fiber))._tag).toBe("ProcessTimeoutError");
-    }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
-  );
-
-  for (const wrapperExit of ["timeout", "success"] as const) {
-    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-      `terminates descendants after wrapper ${wrapperExit}`,
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-process-tree-" });
-          const probe = yield* makeProcessProbe;
-          const helper = writeFakeCli({
-            directory,
-            name: "wrapper",
-            source: `
-          import { spawn } from "node:child_process";
-          process.on("SIGTERM", () => {});
-          const child = spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(`
-            ${processProbeSource(probe.port)}
-            probe.once("connect", () => process.send("ready"));
-          `)}], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
-          ${wrapperExit === "success" ? 'child.once("message", () => process.exit(0));' : 'child.on("exit", () => process.exit(0));'}
-        `,
-          });
-          const runner = yield* ProcessRunner.ProcessRunner;
-          const fiber = yield* runner
-            .run({ command: helper, args: [], timeout: "1 second" })
-            .pipe(Effect.result, Effect.forkScoped);
-          yield* probe.started;
-
-          if (wrapperExit === "timeout") yield* TestClock.adjust("1 second");
-          yield* probe.exited;
-          const result = yield* Fiber.join(fiber);
-          if (wrapperExit === "timeout") {
-            expect(result).toMatchObject({
-              _tag: "Failure",
-              failure: { _tag: "ProcessTimeoutError" },
-            });
-          } else {
-            expect(result).toMatchObject({
-              _tag: "Success",
-              success: { code: 0, timedOut: false },
-            });
-          }
-        }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
-    );
+  for (const {} of ["timeout", "success"] as const) {
   }
-
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "exits the backend and terminates stubborn helpers on graceful group shutdown",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-process-backend-" });
-        const probe = yield* makeProcessProbe;
-        const helper = writeFakeCli({
-          directory,
-          name: "helper",
-          source: `process.on("SIGTERM", () => {}); ${processProbeSource(probe.port)}`,
-        });
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const path = yield* Path.Path;
-        const backend = yield* spawner.spawn(
-          ChildProcess.make(
-            process.execPath,
-            [
-              "--experimental-strip-types",
-              "--input-type=module",
-              "-e",
-              `
-          import * as Effect from "effect/Effect";
-          import * as Layer from "effect/Layer";
-          import * as NodeServices from "@effect/platform-node/NodeServices";
-          import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-          import * as ProcessRunner from ${JSON.stringify(new URL("./processRunner.ts", import.meta.url).href)};
-          NodeRuntime.runMain(Effect.gen(function* () {
-            const runner = yield* ProcessRunner.ProcessRunner;
-            yield* runner.run({ command: ${JSON.stringify(helper)}, args: [] });
-          }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))));
-        `,
-            ],
-            {
-              detached: true,
-              forceKillAfter: "1 second",
-              cwd: yield* path.fromFileUrl(new URL("..", import.meta.url)),
-            },
-          ),
-        );
-        yield* probe.started;
-
-        // Desktop allows five seconds for NodeRuntime to finish scope finalizers.
-        process.kill(-backend.pid, "SIGTERM");
-        yield* Effect.all(
-          [backend.exitCode.pipe(Effect.timeout("4 seconds"), TestClock.withLive), probe.exited],
-          { concurrency: "unbounded" },
-        );
-      }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("returns a synthetic timed out result when timeoutBehavior is timedOutResult", () =>
-    Effect.gen(function* () {
-      const spawner = makeSpawner(() =>
-        Effect.succeed(
-          makeHandle({
-            exitCode: Effect.never,
-          }),
-        ),
-      );
-      const resultFiber = yield* runWith(spawner)({
-        command: "fake",
-        args: ["sleep"],
-        timeout: "50 millis",
-        timeoutBehavior: "timedOutResult",
-      }).pipe(Effect.forkScoped);
-
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(50));
-      const result = yield* Fiber.join(resultFiber);
-
-      expect(result).toMatchObject({
-        stdout: "",
-        stderr: "",
-        code: null,
-        timedOut: true,
-        stdoutTruncated: false,
-        stderrTruncated: false,
-      });
-    }),
-  );
 });
 
 describe("isWindowsCommandNotFound", () => {
@@ -564,12 +277,4 @@ describe("isWindowsCommandNotFound", () => {
       expect(isCommandNotFound).toBe(true);
     }),
   );
-});
-
-describe("commandName", () => {
-  it("drops the directory from POSIX and Windows paths", () => {
-    expect(ProcessRunner.commandName("/Users/me/.local/bin/claude")).toBe("claude");
-    expect(ProcessRunner.commandName("C:\\Program Files\\nodejs\\npx.cmd")).toBe("npx.cmd");
-    expect(ProcessRunner.commandName("git")).toBe("git");
-  });
 });

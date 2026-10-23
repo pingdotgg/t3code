@@ -68,14 +68,6 @@ export class PrimaryEnvironmentDisabledError extends Schema.TaggedError<PrimaryE
   }
 }
 
-export const isPrimaryEnvironmentUrlInvalidError = Schema.is(PrimaryEnvironmentUrlInvalidError);
-export const isPrimaryEnvironmentProtocolUnsupportedError = Schema.is(
-  PrimaryEnvironmentProtocolUnsupportedError,
-);
-export const isDesktopEnvironmentBootstrapIncompleteError = Schema.is(
-  DesktopEnvironmentBootstrapIncompleteError,
-);
-
 export interface PrimaryEnvironmentTarget {
   readonly source: PrimaryEnvironmentTargetSource;
   readonly target: {

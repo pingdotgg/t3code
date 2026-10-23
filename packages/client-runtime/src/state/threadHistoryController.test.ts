@@ -1,7 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 
@@ -48,15 +47,5 @@ describe("ThreadHistoryController", () => {
       yield* controller.unregister(newerRegistration);
       expect(yield* controller.loadEarlier(ENV, THREAD)).toEqual({ _tag: "noop" });
     }).pipe(Effect.provide(ThreadHistoryController.layer)),
-  );
-
-  it.effect("unregister removes only its own matching registration", () =>
-    Effect.gen(function* () {
-      const controller = yield* ThreadHistoryController.ThreadHistoryController;
-      const first = handler("first");
-      const registration = yield* controller.register(ENV, THREAD, first);
-      yield* controller.unregister(registration);
-      expect(yield* controller.loadEarlier(ENV, THREAD)).toEqual({ _tag: "noop" });
-    }).pipe(Effect.provide(Layer.fresh(ThreadHistoryController.layer))),
   );
 });

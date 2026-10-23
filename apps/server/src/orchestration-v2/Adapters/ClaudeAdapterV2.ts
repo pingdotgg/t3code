@@ -51,6 +51,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -87,6 +88,8 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
+  type ProviderApprovalFullAccessOverride,
+  type ProviderApprovalOption,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -94,9 +97,11 @@ import {
   type ProviderThreadId,
   type RunId,
   type ThreadId,
+  resolveIdleCompaction,
 } from "@t3tools/contracts";
 
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -129,6 +134,7 @@ import {
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -189,7 +195,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
-export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
+const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
 function claudeContextWindow(modelSelection: ModelSelection): number | null {
   return (
@@ -304,27 +310,45 @@ const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
 // reply can land after the progress frame that settles it. Its transcript
 // stays the source of its answer this long after it settles.
 const WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS = 500;
+// A steer waits at most this long, from its request, for its foreground
+// subagents to move to the background before it is sent.
+const BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
+
+const CLAUDE_GROUP_WATCH_SCRIPT = [
+  "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
+  'exec "$@" 3<&-',
+].join("\n");
 
 /**
  * When the CLI exits it stops the MCP servers it started, but not their children: a plugin's
  * `bun run start` wrapper dies and its `bun server.ts` keeps running, writing to a pipe nobody
  * reads (#3089). Those stay in the CLI's group, so the rest of the group gets SIGKILL once the
  * CLI exits for any reason.
+ *
+ * That cleanup needs this server alive, and the CLI finishes its turn after its pipes close. A
+ * server that crashes or is killed would leave the CLI working next to the session it resumes
+ * (#23370), so a watcher in the group reads a pipe only this server holds and stops the group at
+ * its end-of-file.
  */
-function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
-  const child = NodeChildProcess.spawn(options.command, options.args, {
-    cwd: options.cwd,
-    env: options.env,
-    signal: options.signal,
-    stdio: ["pipe", "pipe", "ignore"],
-    detached: true,
-  });
+export function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
+  const child = NodeChildProcess.spawn(
+    "/bin/sh",
+    ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
+    {
+      cwd: options.cwd,
+      env: options.env,
+      signal: options.signal,
+      stdio: ["pipe", "pipe", "ignore", "pipe"],
+      detached: true,
+    },
+  );
   child.once("exit", () => {
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
     } catch {}
   });
-  return child;
+  // Node's typings make stdin and stdout nullable once stdio has a fourth entry; both are pipes.
+  return child as ClaudeSpawnedProcess;
 }
 
 export const ClaudeProviderCapabilitiesV2 = {
@@ -770,7 +794,7 @@ export function loggedClaudeQueryOptions(
   };
 }
 
-export function makeClaudeAgentSdkProtocolLogger(input: {
+function makeClaudeAgentSdkProtocolLogger(input: {
   readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -1238,6 +1262,24 @@ function claudeLiveSelectionFlagSettings(
     fastMode: selection.settings.fastMode ?? null,
     ultracode: selection.settings.ultracode ?? null,
   };
+}
+
+// A delegated child is its own SDK session, so Claude Code gives it the main-conversation cache
+// TTL. When the user sets Claude's subagentPromptCacheTtl, the child follows it like a native
+// subagent would. An explicit CLAUDE_CODE_PROMPT_CACHE_TTL on the instance still wins.
+export function claudeQueryEnvironment(
+  environment: NodeJS.ProcessEnv,
+  appThread: Pick<OrchestrationV2AppThread, "lineage">,
+  subagentPromptCacheTtl: "5m" | "1h" | undefined,
+): NodeJS.ProcessEnv {
+  if (
+    appThread.lineage.relationshipToParent !== "subagent" ||
+    subagentPromptCacheTtl === undefined ||
+    environment.CLAUDE_CODE_PROMPT_CACHE_TTL !== undefined
+  ) {
+    return environment;
+  }
+  return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
 }
 
 export function makeClaudeQueryOptions(input: {
@@ -2124,6 +2166,17 @@ const decodeClaudeBypassSettings = Schema.decodeUnknownEffect(
   fromLenientJson(ClaudeBypassSettings),
 );
 
+const ClaudePromptCacheTtl = Schema.Literals(["5m", "1h"]);
+const decodeClaudePromptCacheTtl = Schema.decodeUnknownOption(ClaudePromptCacheTtl);
+const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.StructWithRest(
+      Schema.Struct({ subagentPromptCacheTtl: Schema.optionalKey(ClaudePromptCacheTtl) }),
+      [Schema.Record(Schema.String, Schema.Unknown)],
+    ),
+  ),
+);
+
 function claudeBypassAvailability(
   settings: typeof ClaudeBypassSettings.Type,
 ): ClaudeBypassAvailability {
@@ -2215,7 +2268,7 @@ const CLAUDE_KNOWN_TOOL_CLASSIFICATIONS: Record<
   write: { itemType: "file_change", requestKind: "file-change" },
 };
 
-export function classifyClaudeNativeTool(toolName: string): ClaudeToolClassification {
+function classifyClaudeNativeTool(toolName: string): ClaudeToolClassification {
   const normalizedName = normalizedClaudeToolName(toolName);
   const known = CLAUDE_KNOWN_TOOL_CLASSIFICATIONS[normalizedName];
   return known === undefined
@@ -2794,12 +2847,52 @@ function parentToolUseIdFromSdkMessage(message: SDKMessage): string | null {
     : null;
 }
 
+const CLAUDE_NO_STANDING_GRANT_OPTIONS = [
+  { decision: "decline", label: "Decline" },
+  { decision: "accept", label: "Approve" },
+] satisfies ReadonlyArray<ProviderApprovalOption>;
+
+export function claudeApprovalPresentation(input: {
+  readonly permissionMode: PermissionMode;
+  readonly prompt: string;
+  readonly callbackOptions: Pick<
+    Parameters<CanUseTool>[2],
+    "decisionReason" | "matchedAskRule" | "suppressAlwaysAllowRule"
+  >;
+}): {
+  readonly reason?: string;
+  readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
+  readonly options?: ReadonlyArray<ProviderApprovalOption>;
+} {
+  // The reason can carry terminal escapes from the CLI's own prompt renderer.
+  const reason = NodeUtil.stripVTControlCharacters(
+    input.callbackOptions.decisionReason ?? "",
+  ).trim();
+  // Bypass auto-allows everything it can, so any ask that still reaches the
+  // callback is one bypass refused. The SDK drops the CLI's decision_reason_type,
+  // leaving the matched ask rule as the only way to tell the two causes apart.
+  const fullAccessOverride: ProviderApprovalFullAccessOverride | undefined =
+    input.permissionMode !== "bypassPermissions"
+      ? undefined
+      : input.callbackOptions.matchedAskRule === undefined
+        ? "provider_check"
+        : "ask_rule";
+  return {
+    ...(reason === "" || reason === input.prompt ? {} : { reason }),
+    ...(fullAccessOverride === undefined ? {} : { fullAccessOverride }),
+    ...(input.callbackOptions.suppressAlwaysAllowRule === true
+      ? { options: CLAUDE_NO_STANDING_GRANT_OPTIONS }
+      : {}),
+  };
+}
+
 export function permissionResultFromDecision(input: {
   readonly toolName: string;
   readonly decision: ProviderApprovalDecision;
   readonly toolInput: Record<string, unknown>;
   readonly toolUseID: string;
   readonly suggestions?: Parameters<CanUseTool>[2]["suggestions"];
+  readonly feedback?: string;
 }): PermissionResult {
   if (input.decision === "accept" || input.decision === "acceptForSession") {
     return {
@@ -2819,9 +2912,10 @@ export function permissionResultFromDecision(input: {
   return {
     behavior: "deny",
     message:
-      input.decision === "cancel"
+      input.feedback?.trim() ||
+      (input.decision === "cancel"
         ? "User cancelled tool execution."
-        : "User declined tool execution.",
+        : "User declined tool execution."),
     toolUseID: input.toolUseID,
     decisionClassification: "user_reject",
     ...(input.decision === "cancel" ? { interrupt: true } : {}),
@@ -2850,11 +2944,11 @@ function toSessionPermissionUpdates(
 }
 
 export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecision")(function* (
-  decision: Deferred.Deferred<ProviderApprovalDecision>,
+  decision: Deferred.Deferred<ClaudeApprovalResponse>,
   signal: AbortSignal,
 ) {
-  const cancellation = Effect.callback<ProviderApprovalDecision>((resume) => {
-    const abort = () => resume(Effect.succeed("cancel"));
+  const cancellation = Effect.callback<ClaudeApprovalResponse>((resume) => {
+    const abort = () => resume(Effect.succeed({ decision: "cancel" }));
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) {
       abort();
@@ -3533,12 +3627,17 @@ function rememberClaudeSubagentLaunch(
   }
 }
 
+type ClaudeApprovalResponse = {
+  readonly decision: ProviderApprovalDecision;
+  readonly feedback?: string;
+};
+
 type PendingClaudeRuntimeRequest =
   | {
       readonly type: "approval";
       readonly requestId: OrchestrationV2RuntimeRequest["id"];
       readonly requestKind: ProviderRequestKind;
-      readonly decision: Deferred.Deferred<ProviderApprovalDecision, never>;
+      readonly decision: Deferred.Deferred<ClaudeApprovalResponse, never>;
     }
   | {
       readonly type: "user_input";
@@ -3611,7 +3710,7 @@ export function claudeSdkUserInputAnswers(
   );
 }
 
-export function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
+function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
       ? Reflect.get(input, "value")
@@ -3779,7 +3878,7 @@ function claudeTaskSteps(tasks: ClaudeTaskList): ReadonlyArray<OrchestrationV2Pl
   return [...tasks].map(([id, task]) => ({ id: `task-${id}`, ...task }));
 }
 
-export function claudeProposedPlan(input: unknown): string | null {
+function claudeProposedPlan(input: unknown): string | null {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
       ? Reflect.get(input, "value")
@@ -3811,6 +3910,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -3855,6 +3955,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         bypassDisabled: cascade.bypassDisabled || user.bypassDisabled || cached.bypassDisabled,
         autoDisabled: cascade.autoDisabled || user.autoDisabled || cached.autoDisabled,
       };
+    },
+  );
+
+  // Claude Code's own subagent TTL setting, in its precedence order. Unset or unreadable means
+  // Anthropic's default applies.
+  const resolveSubagentPromptCacheTtl = Effect.fn("ClaudeAdapterV2.resolveSubagentPromptCacheTtl")(
+    function* (cwd: string | null) {
+      const fromEnvironment = decodeClaudePromptCacheTtl(
+        adapterOptions.environment.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL,
+      );
+      if (Option.isSome(fromEnvironment)) return fromEnvironment.value;
+      const resolved = yield* Effect.tryPromise(() =>
+        resolveClaudeSettings({
+          ...(cwd === null ? {} : { cwd }),
+          settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
+        }),
+      ).pipe(Effect.orElseSucceed(() => undefined));
+      const home = customHome
+        ? yield* fileSystem.readFileString(path.join(homePath, "settings.json")).pipe(
+            Effect.flatMap(decodeClaudeSubagentCacheSettings),
+            Effect.orElseSucceed(() => ({ subagentPromptCacheTtl: undefined })),
+          )
+        : undefined;
+      return resolved?.effective.subagentPromptCacheTtl ?? home?.subagentPromptCacheTtl;
     },
   );
 
@@ -6290,6 +6414,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly nativeRequestId: string;
           readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
           readonly prompt?: string;
+          readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
           readonly questions?: ReadonlyArray<OrchestrationV2UserInputQuestion>;
         }) {
           const createdAt = yield* DateTime.now;
@@ -6349,6 +6474,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             responseCapability: {
               type: "live",
               providerSessionId,
+              ...(input.questions === undefined ? { supportsFeedback: true } : {}),
             },
             createdAt,
             resolvedAt: null,
@@ -6374,6 +6500,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestId,
                   requestKind: input.requestKind as ProviderRequestKind,
                   ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+                  ...input.presentation,
                 }
               : {
                   type: "user_input_request" as const,
@@ -8861,8 +8988,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeRequestId,
             requestKind,
             prompt,
+            presentation: claudeApprovalPresentation({
+              permissionMode: context.queryPolicy.permissionMode,
+              prompt,
+              callbackOptions,
+            }),
           });
-          const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+          const decision = yield* Deferred.make<ClaudeApprovalResponse, never>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {
             const updated = new Map(current);
             updated.set(String(artifacts.request.id), {
@@ -8909,7 +9041,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           return permissionResultFromDecision({
             toolName,
-            decision: resolvedDecision,
+            ...resolvedDecision,
             toolInput,
             toolUseID: callbackOptions.toolUseID,
             ...(callbackOptions.suggestions === undefined
@@ -8929,6 +9061,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.gen(function* () {
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
+              }
+              const idleCompaction = Option.isSome(serverSettings)
+                ? yield* serverSettings.value.getSettings.pipe(
+                    Effect.map((settings) =>
+                      resolveIdleCompaction(settings, adapterOptions.instanceId),
+                    ),
+                    Effect.orElseSucceed(() => adapterOptions.settings.idleCompaction),
+                  )
+                : adapterOptions.settings.idleCompaction;
+              if (idleCompaction === "off") {
+                return { behavior: "completed" as const, result: "continue" as const };
               }
               const ageMinutes =
                 typeof request.payload.sessionAgeMinutes === "number" &&
@@ -9150,7 +9293,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            environment: adapterOptions.environment,
+            environment: claudeQueryEnvironment(
+              adapterOptions.environment,
+              turnInput.appThread,
+              turnInput.appThread.lineage.relationshipToParent === "subagent"
+                ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
+                : undefined,
+            ),
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}
@@ -9684,6 +9833,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // its result arrives as a task notification like any background agent.
         const backgroundForegroundSubagents = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
+          deadline: number,
         ) {
           const foreground: Array<{
             readonly taskId: string;
@@ -9739,11 +9889,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             backgroundMovesByToolUseId.set(toolUseId, move);
             moves.push(move);
           }
-          yield* Fiber.joinAll(moves).pipe(Effect.timeoutOption("5 seconds"));
+          const remaining = deadline - (yield* Clock.currentTimeMillis);
+          yield* Fiber.joinAll(moves).pipe(Effect.timeoutOption(Math.max(0, remaining)));
         });
 
         const steerTurn = Effect.fn("ClaudeAdapterV2.steerTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2SteerInput) {
+            // Measured from the request, not from when the moves are forked:
+            // building the message and the moves can take clock time a timer
+            // started later would not count, and the steer would wait past it.
+            const backgroundDeadline =
+              (yield* Clock.currentTimeMillis) + BACKGROUND_MOVE_TIMEOUT_MS;
             const existing = yield* Ref.get(queryContext);
             if (existing === null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
@@ -9769,7 +9925,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               fileSystem,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
             });
-            yield* backgroundForegroundSubagents(existing);
+            yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             // The turn can end while the moves are answered. A steer offered
             // then would start a new turn the orchestrator never asked for, so
             // the steer fails and the orchestrator starts the follow-up turn.
@@ -10135,7 +10291,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
                 });
               }
-              yield* Deferred.succeed(pending.decision, requestInput.decision);
+              yield* Deferred.succeed(pending.decision, {
+                decision: requestInput.decision,
+                ...(requestInput.feedback === undefined ? {} : { feedback: requestInput.feedback }),
+              });
             },
             (effect, requestInput) =>
               effect.pipe(

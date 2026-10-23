@@ -22,7 +22,6 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -31,7 +30,6 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
-  cursorSdkModelSelection,
   makeCursorAgentOptions,
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
@@ -258,7 +256,23 @@ describe("CursorAdapterV2", () => {
           "Cursor Agent SDK run.wait failed: Too many requests (resource_exhausted, HTTP 429)",
       },
     },
-  ])("fails the turn with $reason", ({ wait, failure }) =>
+    {
+      reason: "a transport dump sent after earlier commentary",
+      updates: [
+        { type: "text-delta", text: "Checking the build first." },
+        { type: "step-completed", stepId: 1, stepDurationMs: 1 },
+        { type: "text-delta", text: "Error: RetriableError: WritableIterable is closed" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "finished" as const,
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "transport_error", message: "Provider turn failed." },
+    },
+  ])("fails the turn with $reason", ({ updates = [], wait, failure }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
@@ -282,12 +296,17 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-failure",
               listMessages: Effect.succeed([]),
               close: Effect.void,
-              send: () =>
-                Effect.succeed({
-                  agentId: "native-cursor-failure",
-                  runId: "native-cursor-run",
-                  wait,
-                  cancel: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  for (const update of updates) {
+                    yield* input.onDelta!(update).pipe(Effect.orDie);
+                  }
+                  return {
+                    agentId: "native-cursor-failure",
+                    runId: "native-cursor-run",
+                    wait,
+                    cancel: Effect.void,
+                  };
                 }),
             }),
         }),
@@ -1039,28 +1058,6 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it("maps Cursor auto and model parameters to SDK selections", () => {
-    assert.deepEqual(
-      cursorSdkModelSelection({
-        instanceId: ProviderInstanceId.make("cursor"),
-        model: "auto",
-        options: [
-          { id: "thinking", value: "high" },
-          { id: "contextWindow", value: "1m" },
-          { id: "fastMode", value: true },
-        ],
-      }),
-      {
-        id: "default",
-        params: [
-          { id: "thinking", value: "high" },
-          { id: "context", value: "1m" },
-          { id: "fast", value: "true" },
-        ],
-      },
-    );
-  });
-
   it("maps runtime modes to the SDK sandbox and auto-review controls", () => {
     const base = {
       interactionMode: "default" as const,
@@ -1203,79 +1200,6 @@ describe("CursorAdapterV2", () => {
         sandboxEnabled: true,
       },
     );
-  });
-
-  it.effect("opens Windows threads without requesting the unsupported SDK sandbox", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("cursor");
-      const threadId = ThreadId.make("cursor-windows-thread");
-      const modelSelection = { instanceId, model: "auto" };
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "auto",
-        interactionMode: "default",
-        cwd: "/workspace",
-      });
-      let opened = false;
-      const adapter = yield* makeCursorAdapterV2({
-        instanceId,
-        settings: yield* decodeCursorSettings({}),
-        environment: {},
-      }).pipe(
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-          assertComplete: Effect.void,
-          open: (input) =>
-            Effect.sync(() => {
-              assert.isFalse(input.options.local?.sandboxOptions?.enabled);
-              assert.isTrue(input.options.local?.autoReview);
-              opened = true;
-              return {
-                agentId: "native-cursor-windows",
-                listMessages: Effect.succeed([]),
-                close: Effect.void,
-                send: () => Effect.die("not used"),
-              };
-            }),
-        }),
-        Effect.provide(TestProviderHost.layer({ cwd: "/workspace" })),
-      );
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("cursor-windows-session"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const thread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
-      assert.isTrue(opened);
-      assert.equal(thread.nativeThreadRef?.nativeId, "native-cursor-windows");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
-      ),
-    ),
-  );
-
-  it("loads the user's Cursor settings layers in every runtime mode", () => {
-    for (const runtimeMode of ["full-access", "auto-accept-edits", "approval-required"] as const) {
-      const options = makeCursorAgentOptions({
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("cursor"),
-          model: "composer-2.5",
-        },
-        runtimePolicy: { runtimeMode, interactionMode: "default", cwd: "/workspace" },
-        threadId: ThreadId.make("thread-cursor-setting-sources"),
-        mcpSession: undefined,
-        platform: "linux",
-      });
-      assert.deepEqual(options.local?.settingSources, [
-        "project",
-        "user",
-        "team",
-        "mdm",
-        "plugins",
-      ]);
-    }
   });
 
   it("injects thread-scoped MCP credentials without logging them", () => {

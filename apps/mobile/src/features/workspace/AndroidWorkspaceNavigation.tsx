@@ -1,4 +1,5 @@
 export function AndroidWorkspaceNavigation(_props: {
+  readonly onNewThread: () => void;
   readonly rail?: boolean;
   readonly onSelect?: () => void;
   readonly onOverlayChange?: (overlay: boolean) => void;

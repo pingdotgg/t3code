@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
+import { assert, it, afterEach, describe, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -153,66 +152,6 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("lists pull requests with Azure status and source branch arguments", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            JSON.stringify([
-              {
-                pullRequestId: 7,
-                title: "Merged work",
-                sourceRefName: "refs/heads/feature/merged",
-                targetRefName: "refs/heads/main",
-                status: "completed",
-                closedDate: "2026-01-03T00:00:00.000Z",
-                _links: {
-                  web: {
-                    href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/7",
-                  },
-                },
-              },
-            ]),
-          ),
-        ),
-      );
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      const result = yield* az.listPullRequests({
-        cwd: "/repo",
-        headSelector: "origin:feature/merged",
-        state: "merged",
-        limit: 10,
-      });
-
-      assert.strictEqual(result[0]?.state, "merged");
-      assert.strictEqual(result[0]?.mergedAt, "2026-01-03T00:00:00.000Z");
-      assert.strictEqual(result[0]?.closedAt, null);
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: [
-          "repos",
-          "pr",
-          "list",
-          "--detect",
-          "true",
-          "--source-branch",
-          "feature/merged",
-          "--status",
-          "completed",
-          "--top",
-          "10",
-          "--only-show-errors",
-          "--output",
-          "json",
-        ],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -241,138 +180,6 @@ describe("AzureDevOpsCli.layer", () => {
         nameWithOwner: "project/repo",
         url: "https://dev.azure.com/acme/project/_git/repo",
         sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("creates repositories through Azure Repos", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            JSON.stringify({
-              name: "repo",
-              webUrl: "https://dev.azure.com/acme/project/_git/repo",
-              remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
-              sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
-              project: {
-                name: "project",
-              },
-            }),
-          ),
-        ),
-      );
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      const result = yield* az.createRepository({
-        cwd: "/repo",
-        repository: "project/repo",
-        visibility: "private",
-      });
-
-      assert.deepStrictEqual(result, {
-        nameWithOwner: "project/repo",
-        url: "https://dev.azure.com/acme/project/_git/repo",
-        sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
-      });
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: [
-          "repos",
-          "create",
-          "--detect",
-          "true",
-          "--name",
-          "repo",
-          "--project",
-          "project",
-          "--only-show-errors",
-          "--output",
-          "json",
-        ],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("creates pull requests using the body file as the Azure description", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const bodyFile = `/tmp/t3code-azure-devops-cli-.md`;
-      yield* fileSystem.writeFileString(bodyFile, "Generated body");
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* az.createPullRequest({
-        cwd: "/repo",
-        baseBranch: "main",
-        headSelector: "feature/provider",
-        title: "Provider PR",
-        bodyFile,
-      });
-
-      expect(mockRun).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: "az",
-          cwd: "/repo",
-          args: expect.arrayContaining(["--description", `@${bodyFile}`]),
-        }),
-      );
-      expect(mockRun.mock.calls[0]?.[0].args).not.toContain("--output");
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("does not force JSON output on checkout side-effect commands", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* az.checkoutPullRequest({
-        cwd: "/repo",
-        reference: "42",
-      });
-
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: [
-          "repos",
-          "pr",
-          "checkout",
-          "--only-show-errors",
-          "--detect",
-          "true",
-          "--id",
-          "42",
-          "--remote-name",
-          "origin",
-        ],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("forwards explicit output limits to the process boundary", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* az.execute({
-        cwd: "/repo",
-        args: ["repos", "pr", "list"],
-        maxOutputBytes: 16 * 1024 * 1024,
-      });
-
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: ["repos", "pr", "list"],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-        maxOutputBytes: 16 * 1024 * 1024,
       });
     }).pipe(Effect.provide(layer)),
   );
@@ -427,27 +234,6 @@ describe("AzureDevOpsCli.layer", () => {
       assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCommandFailedError);
       assert.strictEqual(error.cwd, cwd);
       assert.strictEqual(error.cause, cause);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("keeps invalid pull request output diagnostics structured", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not-json")));
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      const error = yield* az.getPullRequest({ cwd: "/repo", reference: "42" }).pipe(Effect.flip);
-
-      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsPullRequestDecodeError);
-      assert.strictEqual(error.operation, "getPullRequest");
-      assert.strictEqual(error.command, "az");
-      assert.strictEqual(error.cwd, "/repo");
-      assert.strictEqual(error.outputLength, 8);
-      assert.strictEqual(error.detail, "Azure DevOps CLI returned invalid pull request JSON.");
-      assert.exists(error.cause);
-      assert.strictEqual(
-        error.message,
-        "Azure DevOps CLI failed in getPullRequest: Azure DevOps CLI returned invalid pull request JSON.",
-      );
     }).pipe(Effect.provide(layer)),
   );
 

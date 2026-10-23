@@ -42,7 +42,7 @@ import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullReq
 
 export function usePullRequestDefaultMergeMethodResolver(
   environmentId: EnvironmentId,
-  projectId: ProjectId,
+  projectId: ProjectId | null,
 ) {
   const projectDefault = useEnvironmentSettings(
     environmentId,
@@ -304,8 +304,8 @@ export function usePullRequestHandoffs({
       title: "Asked in a thread",
       description:
         task.prompt.length > 0
-          ? "The question is in the composer — read it over, then send."
-          : "The pull request is in the composer — type your question, then send.",
+          ? "The question is in the composer. Read it over, then send."
+          : "The pull request is in the composer. Type your question, then send.",
     });
   };
 
@@ -396,7 +396,7 @@ export function usePullRequestHandoffs({
         ? {
             type: "success",
             title: "Checkout ready",
-            description: "The task is in the composer — read it over, then send.",
+            description: "The task is in the composer. Read it over, then send.",
           }
         : OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST,
     );

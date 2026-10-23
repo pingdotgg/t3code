@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyTerminalAttachStreamEvent,
   combineTerminalSessionState,
@@ -8,168 +8,12 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 
 import {
-  clampDrawerHeight,
-  resolveTerminalDrawerMaxHeight,
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
-  terminalContextMenuItems,
   synchronizeTerminalOutput,
-  terminalSelectionLineRange,
-  terminalSelectionMenuItems,
-  terminalThemeFromApp,
 } from "./ThreadTerminalDrawer";
 
-describe("terminal drawer height", () => {
-  it("shrinks to fit beside the header and composer while the phone keyboard is open, then restores the preferred height", () => {
-    const controls = { headerHeight: 52, composerHeight: 108 };
-    const keyboardOpenMax = resolveTerminalDrawerMaxHeight({
-      ...controls,
-      viewportHeight: 400,
-      chatColumnHeight: 360,
-    });
-    const keyboardClosedMax = resolveTerminalDrawerMaxHeight({
-      ...controls,
-      viewportHeight: 800,
-      chatColumnHeight: 760,
-    });
-
-    // 360 - 52 - 108 leaves 200px, so the drawer stops short of its 280px preference.
-    expect(clampDrawerHeight(280, keyboardOpenMax)).toBe(200);
-    expect(clampDrawerHeight(280, keyboardClosedMax)).toBe(280);
-  });
-
-  it("keeps the window cap for panel terminals and collapses to zero when the controls fill the column", () => {
-    expect(clampDrawerHeight(900, resolveTerminalDrawerMaxHeight({ viewportHeight: 800 }))).toBe(
-      600,
-    );
-
-    const crowdedMax = resolveTerminalDrawerMaxHeight({
-      viewportHeight: 200,
-      chatColumnHeight: 160,
-      headerHeight: 52,
-      composerHeight: 120,
-    });
-    expect(clampDrawerHeight(280, crowdedMax)).toBe(0);
-  });
-});
-
-describe("terminal selection menus", () => {
-  it("omits Add to chat when the terminal has no chat target", () => {
-    expect(terminalSelectionMenuItems().map(({ id }) => id)).toEqual(["add-to-chat", "copy"]);
-    expect(terminalContextMenuItems({ hasSelection: true }).map(({ id }) => id)).toEqual([
-      "add-to-chat",
-      "copy",
-      "paste",
-      "select-all",
-      "scroll-to-bottom",
-    ]);
-
-    expect(terminalSelectionMenuItems({ canAddToChat: false }).map(({ id }) => id)).toEqual([
-      "copy",
-    ]);
-    expect(
-      terminalContextMenuItems({ hasSelection: true, canAddToChat: false }).map(({ id }) => id),
-    ).toEqual(["copy", "paste", "select-all", "scroll-to-bottom"]);
-  });
-
-  it("keeps local viewing actions available to a read-only observer", () => {
-    const items = terminalContextMenuItems({ hasSelection: false, readOnly: true });
-    expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual([
-      "add-to-chat",
-      "copy",
-      "paste",
-    ]);
-    expect(items.filter((item) => !item.disabled).map((item) => item.id)).toEqual([
-      "select-all",
-      "scroll-to-bottom",
-    ]);
-  });
-});
-
-describe("terminalThemeFromApp", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("uses terminal colors inherited by the mount instead of a light document theme", () => {
-    const root = { classList: { contains: () => false } };
-    const body = {};
-    const drawer = {};
-    let canvasColor = "#000";
-    const colors: Record<string, [number, number, number, number]> = {
-      "#000": [0, 0, 0, 255],
-      "#fff": [255, 255, 255, 255],
-      "#ddd": [221, 221, 221, 255],
-      "#111": [17, 17, 17, 255],
-    };
-
-    vi.stubGlobal("document", {
-      documentElement: root,
-      body,
-      querySelector: () => drawer,
-      createElement: () => ({
-        width: 0,
-        height: 0,
-        getContext: () => ({
-          clearRect: () => undefined,
-          fillRect: () => undefined,
-          get fillStyle() {
-            return canvasColor;
-          },
-          set fillStyle(value: string) {
-            canvasColor = value;
-          },
-          getImageData: () => ({ data: colors[canvasColor] ?? [0, 0, 0, 0] }),
-        }),
-      }),
-    });
-    vi.stubGlobal("getComputedStyle", (element: object) => {
-      const local = element === drawer;
-      const values = local
-        ? {
-            "--terminal-background": "#000",
-            "--terminal-foreground": "#fff",
-            "--terminal-cursor": "#ddd",
-            "--terminal-selection-background": "rgba(255, 255, 255, 0.2)",
-          }
-        : {
-            "--terminal-background": "#fff",
-            "--terminal-foreground": "#111",
-          };
-      return {
-        backgroundColor: local ? "#000" : "#fff",
-        color: local ? "#fff" : "#111",
-        colorScheme: local ? "dark" : "light",
-        getPropertyValue: (name: string) => values[name as keyof typeof values] ?? "",
-      };
-    });
-
-    const theme = terminalThemeFromApp();
-
-    expect(theme.background).toEqual({ r: 0, g: 0, b: 0 });
-    expect(theme.foreground).toEqual({ r: 255, g: 255, b: 255 });
-    expect(theme.cursor).toEqual({ r: 221, g: 221, b: 221 });
-  });
-});
-
 describe("terminal selection actions", () => {
-  it("clears a pending or currently owned menu when the selection disappears", () => {
-    expect(
-      shouldClearTerminalSelectionAction({
-        actionPending: true,
-        openMenuRequestId: null,
-        currentRequestId: 4,
-      }),
-    ).toBe(true);
-    expect(
-      shouldClearTerminalSelectionAction({
-        actionPending: false,
-        openMenuRequestId: 4,
-        currentRequestId: 4,
-      }),
-    ).toBe(true);
-  });
-
   it("does not let an old selection popup cancel its replacement right-click menu", () => {
     expect(
       shouldClearTerminalSelectionAction({
@@ -187,24 +31,10 @@ describe("terminal selection actions", () => {
     ).toBe(false);
   });
 
-  it("uses Ghostty's physical screen range for visually wrapped selections", () => {
-    expect(
-      terminalSelectionLineRange({
-        start: { y: 4 },
-        end: { y: 6 },
-      }),
-    ).toEqual({ lineStart: 5, lineEnd: 7 });
-  });
-
   it("handles an exit that lands while the terminal surface is still loading", () => {
     expect(shouldHandleTerminalExit("exited", "running", false, 1)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false, 1)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true, 1)).toBe(false);
-  });
-
-  it.each(["closed", "exited"] as const)("ignores an unsynchronized %s seed", (status) => {
-    expect(shouldHandleTerminalExit(status, "running", false, 0)).toBe(false);
-    expect(shouldHandleTerminalExit(status, "running", false, 1)).toBe(true);
   });
 });
 

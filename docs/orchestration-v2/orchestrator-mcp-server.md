@@ -207,6 +207,14 @@ Returns:
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
 
+The model list is short on purpose: catalogs such as OpenCode can hold hundreds
+of models, and every call lands in the agent's context. Each provider lists
+custom, favorite, and the caller's own models, plus all current (non-legacy)
+models for Codex, Claude, Muse, and Grok, or the first 8 current models in the
+user's model order for other providers. `omittedModels` counts the rest, and the
+`search` input finds them, legacy models included. `delegate_task` still accepts
+any catalog model.
+
 ### `delegate_task`
 
 Creates a T3-owned child thread and immediately dispatches the supplied task
@@ -391,8 +399,8 @@ relabels local matches; cross-environment links can retain the written label.
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
-wakes early when it has a pending request, fails after snoozing, or completes a
-run requested after snoozing.
+wakes early only when it has a pending request or fails after snoozing. Completed
+runs, background wakes, and delegated completions keep it snoozed.
 
 ### `t3_thread_update`
 

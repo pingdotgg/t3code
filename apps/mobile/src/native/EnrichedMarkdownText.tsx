@@ -4,7 +4,11 @@ import {
   formatComposerContextHref,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
-import { markdownWithHtml, markdownWithTableBreaks } from "../lib/markdownDocument";
+import {
+  markdownWithHtml,
+  markdownWithInlineFileLinks,
+  markdownWithTableBreaks,
+} from "../lib/markdownDocument";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, View } from "react-native";
 import {
@@ -151,7 +155,13 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
   const markdown = useMemo(
-    () => markdownWithTableBreaks(markdownWithHtml(props.markdown)),
+    () =>
+      markdownWithTableBreaks(
+        markdownWithInlineFileLinks(
+          markdownWithHtml(props.markdown),
+          ENRICHED_INLINE_FILE_LINK_REGEX,
+        ),
+      ),
     [props.markdown],
   );
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
@@ -178,7 +188,6 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkRecognition = useMemo(
     () => ({
       text: enrichedSkillLinkRegex(props.skills) ?? undefined,
-      inlineCode: ENRICHED_INLINE_FILE_LINK_REGEX,
     }),
     [props.skills],
   );

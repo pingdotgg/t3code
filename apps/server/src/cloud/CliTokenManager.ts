@@ -79,48 +79,48 @@ const readLoopbackAuthorizationAction = Effect.fn(
   }
 });
 
-export const waitForLoopbackAuthorization = Effect.fn(
-  "cloud.cli_token.wait_for_loopback_authorization",
-)(function* <E, R>(input: {
-  readonly authorizationUrl: string;
-  readonly callback: Effect.Effect<string, E, R>;
-  readonly terminal: Terminal.Terminal;
-  readonly launchBrowser: (
-    url: string,
-  ) => Effect.Effect<void, ExternalLauncher.ExternalLauncherError>;
-}) {
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const terminalInput = yield* input.terminal.readInput;
-      while (true) {
-        const result = yield* Effect.raceFirst(
-          input.callback.pipe(
-            Effect.map((code): LoopbackAuthorizationResult => ({
-              _tag: "AuthorizationCode",
-              code,
-            })),
-          ),
-          readLoopbackAuthorizationAction(terminalInput),
-        );
-        if (typeof result !== "string") {
-          return result;
-        }
-        if (result === "headless") {
-          return { _tag: "HeadlessRequested" } as const;
-        }
-        yield* input
-          .launchBrowser(input.authorizationUrl)
-          .pipe(
-            Effect.catch(() =>
-              Console.warn(
-                `Could not open a browser on this device. Open the URL above manually, or press ${boldTerminalText("H")} to switch to headless mode.`,
-              ),
+const waitForLoopbackAuthorization = Effect.fn("cloud.cli_token.wait_for_loopback_authorization")(
+  function* <E, R>(input: {
+    readonly authorizationUrl: string;
+    readonly callback: Effect.Effect<string, E, R>;
+    readonly terminal: Terminal.Terminal;
+    readonly launchBrowser: (
+      url: string,
+    ) => Effect.Effect<void, ExternalLauncher.ExternalLauncherError>;
+  }) {
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const terminalInput = yield* input.terminal.readInput;
+        while (true) {
+          const result = yield* Effect.raceFirst(
+            input.callback.pipe(
+              Effect.map((code): LoopbackAuthorizationResult => ({
+                _tag: "AuthorizationCode",
+                code,
+              })),
             ),
+            readLoopbackAuthorizationAction(terminalInput),
           );
-      }
-    }),
-  );
-});
+          if (typeof result !== "string") {
+            return result;
+          }
+          if (result === "headless") {
+            return { _tag: "HeadlessRequested" } as const;
+          }
+          yield* input
+            .launchBrowser(input.authorizationUrl)
+            .pipe(
+              Effect.catch(() =>
+                Console.warn(
+                  `Could not open a browser on this device. Open the URL above manually, or press ${boldTerminalText("H")} to switch to headless mode.`,
+                ),
+              ),
+            );
+        }
+      }),
+    );
+  },
+);
 
 const PersistedToken = Schema.Struct({
   accessToken: Schema.String,

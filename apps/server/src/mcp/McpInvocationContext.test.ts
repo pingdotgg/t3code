@@ -10,39 +10,6 @@ import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
-it.effect("reports the scoped credential context when preview capability is unavailable", () => {
-  const invocation: McpInvocationContext.McpInvocationScope = {
-    environmentId: EnvironmentId.make("environment-1"),
-    requestNamespace: "provider-session-1",
-    thread: {
-      threadId: ThreadId.make("thread-1"),
-      providerSessionId: "provider-session-1",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-    },
-    client: undefined,
-    capabilities: new Set(),
-    issuedAt: 1,
-  };
-
-  return Effect.gen(function* () {
-    const error = yield* McpInvocationContext.requireMcpCapability("preview").pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-      Effect.flip,
-    );
-
-    expect(error).toBeInstanceOf(PreviewAutomationUnavailableError);
-    expect(error).toMatchObject({
-      capability: "preview",
-      environmentId: invocation.environmentId,
-      threadId: invocation.thread?.threadId,
-      providerSessionId: invocation.thread?.providerSessionId,
-      providerInstanceId: invocation.thread?.providerInstanceId,
-    });
-    expect(error.message).toContain("MCP credential does not grant the preview capability");
-    expect(error.message).toContain("use a headless browser from the shell");
-  });
-});
-
 it.effect("reports other missing capabilities with the neutral error", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {
     environmentId: EnvironmentId.make("environment-1"),

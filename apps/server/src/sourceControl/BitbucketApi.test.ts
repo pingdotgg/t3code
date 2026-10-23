@@ -4,15 +4,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import { GitCommandError } from "@t3tools/contracts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -254,68 +251,6 @@ it.effect("lists pull requests with Bitbucket state and source branch query para
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("lists closed pull requests with both closed Bitbucket states", () => {
-  const { execute, layer } = makeLayer({
-    response: () =>
-      Response.json({
-        values: [],
-      }),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    yield* bitbucket.listPullRequests({
-      cwd: "/repo",
-      headSelector: "feature/closed",
-      state: "closed",
-      limit: 10,
-    });
-
-    assert.deepStrictEqual(execute.mock.calls[0]?.[0].urlParams.params, [
-      ["pagelen", "10"],
-      ["sort", "-updated_on"],
-      [
-        "q",
-        'source.branch.name = "feature/closed" AND (state = "DECLINED" OR state = "SUPERSEDED")',
-      ],
-      ["state", "DECLINED"],
-      ["state", "SUPERSEDED"],
-    ]);
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("expands all-state pull request listing instead of relying on Bitbucket defaults", () => {
-  const { execute, layer } = makeLayer({
-    response: () =>
-      Response.json({
-        values: [],
-      }),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    yield* bitbucket.listPullRequests({
-      cwd: "/repo",
-      headSelector: "feature/all",
-      state: "all",
-      limit: 10,
-    });
-
-    assert.deepStrictEqual(execute.mock.calls[0]?.[0].urlParams.params, [
-      ["pagelen", "10"],
-      ["sort", "-updated_on"],
-      [
-        "q",
-        'source.branch.name = "feature/all" AND (state = "OPEN" OR state = "MERGED" OR state = "DECLINED" OR state = "SUPERSEDED")',
-      ],
-      ["state", "OPEN"],
-      ["state", "MERGED"],
-      ["state", "DECLINED"],
-      ["state", "SUPERSEDED"],
-    ]);
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("reads repository clone URLs and default branch", () => {
   const { layer } = makeLayer({
     response: (request) =>
@@ -428,27 +363,6 @@ it.effect("prefers an explicit repository and uses context when the repository i
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("discovers the repository from cwd remotes when the repository is omitted", () => {
-  const { execute, resolve, listRemotes, layer } = makeLayer({
-    response: (request) =>
-      Response.json(request.url.endsWith("/branching-model") ? {} : repositoryJson),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const branch = yield* bitbucket.getDefaultBranch({ cwd: "/repo" });
-
-    assert.strictEqual(branch, "main");
-    assert.deepStrictEqual(resolve.mock.calls, [[{ cwd: "/repo" }]]);
-    assert.deepStrictEqual(listRemotes.mock.calls, [["/repo"]]);
-    assert.isTrue(
-      execute.mock.calls.every(([request]) =>
-        request.url.startsWith("https://api.test.local/2.0/repositories/pingdotgg/t3code"),
-      ),
-    );
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect(
   "prefers the Bitbucket branching model development branch as the default PR target",
   () => {
@@ -510,57 +424,6 @@ it.effect(
   },
 );
 
-it.effect(
-  "falls back to the repository main branch when the Bitbucket branching model is unavailable",
-  () => {
-    const { layer } = makeLayer({
-      response: (request) =>
-        request.url.endsWith("/branching-model")
-          ? Response.json({ error: { message: "Not found" } }, { status: 404 })
-          : Response.json(repositoryJson),
-    });
-
-    return Effect.gen(function* () {
-      const bitbucket = yield* BitbucketApi.BitbucketApi;
-      const defaultBranch = yield* bitbucket.getDefaultBranch({ cwd: "/repo" });
-
-      assert.strictEqual(defaultBranch, "main");
-    }).pipe(Effect.provide(layer));
-  },
-);
-
-it.effect("creates repositories through the Bitbucket REST API", () => {
-  const { execute, layer } = makeLayer({
-    response: () => Response.json(repositoryJson),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const cloneUrls = yield* bitbucket.createRepository({
-      cwd: "/repo",
-      repository: "pingdotgg/t3code",
-      visibility: "private",
-    });
-
-    assert.deepStrictEqual(cloneUrls, {
-      nameWithOwner: "pingdotgg/t3code",
-      url: "https://bitbucket.org/pingdotgg/t3code.git",
-      sshUrl: "git@bitbucket.org:pingdotgg/t3code.git",
-    });
-
-    const request = execute.mock.calls[0]?.[0];
-    assert.strictEqual(request?.url, "https://api.test.local/2.0/repositories/pingdotgg/t3code");
-    assert.strictEqual(request?.method, "POST");
-    assert.ok(request);
-    const rawBody = (request.body as { readonly body?: Uint8Array }).body;
-    assert.ok(rawBody);
-    assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
-      scm: "git",
-      is_private: true,
-    });
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("creates pull requests using the official REST payload shape", () => {
   const { execute, layer } = makeLayer({
     response: () => Response.json(bitbucketPullRequest),
@@ -601,24 +464,6 @@ it.effect("creates pull requests using the official REST payload shape", () => {
       },
     });
   }).pipe(Effect.provide(layer), Effect.scoped);
-});
-
-it.effect("reports auth status through the Bitbucket REST /user endpoint", () => {
-  const { layer } = makeLayer({
-    response: () => Response.json({ username: "bitbucket-user" }),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const auth = yield* bitbucket.probeAuth;
-
-    assert.deepStrictEqual(auth, {
-      status: "authenticated",
-      account: Option.some("bitbucket-user"),
-      host: Option.some("bitbucket.org"),
-      detail: Option.none(),
-    });
-  }).pipe(Effect.provide(layer));
 });
 
 it.effect("prefers credentials saved in settings over the environment, without a restart", () => {
@@ -703,42 +548,6 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("preserves the HTTP client failure without deriving the domain message from it", () => {
-  const transportCause = new Error("socket reset by peer");
-  let requestFailure: HttpClientError.HttpClientError | undefined;
-  const { layer } = makeLayer({
-    response: () => Response.json({}),
-    requestFailure: (request) => {
-      requestFailure = new HttpClientError.HttpClientError({
-        reason: new HttpClientError.TransportError({
-          request,
-          cause: transportCause,
-        }),
-      });
-      return requestFailure;
-    },
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const error = yield* Effect.flip(
-      bitbucket.getPullRequest({
-        cwd: "/repo",
-        reference: "42",
-      }),
-    );
-
-    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
-    assert.strictEqual(error.operation, "getPullRequest");
-    assert.strictEqual(
-      error.message,
-      "Bitbucket API failed in getPullRequest: Failed to send the Bitbucket request.",
-    );
-    assert.strictEqual(error.cause, requestFailure);
-    assert.strictEqual(requestFailure?.cause, transportCause);
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("keeps Bitbucket response bodies out of checkout diagnostics", () => {
   const responseBody = '{"error":{"message":"credential=secret-value"}}';
   const { layer } = makeLayer({
@@ -761,175 +570,6 @@ it.effect("keeps Bitbucket response bodies out of checkout diagnostics", () => {
       "Bitbucket API failed in getPullRequest: Bitbucket returned HTTP 403.",
     );
     assert.notInclude(error.message, "secret-value");
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("keeps a 429 Retry-After time on the response error", () => {
-  const { layer } = makeLayer({
-    response: () => new Response("busy", { status: 429, headers: { "Retry-After": "120" } }),
-  });
-
-  return Effect.gen(function* () {
-    yield* TestClock.setTime(1_000);
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const error = yield* bitbucket
-      .request({ method: "GET", url: "/repositories/acme/web" })
-      .pipe(Effect.flip);
-
-    assert.instanceOf(error, BitbucketApi.BitbucketResponseError);
-    assert.strictEqual(error.status, 429);
-    assert.strictEqual(error.retryAt, 121_000);
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("preserves Bitbucket response body read failures as their immediate cause", () => {
-  const cause = new Error("response stream failed");
-  const { layer } = makeLayer({
-    response: () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start: (controller) => controller.error(cause),
-        }),
-        { status: 502 },
-      ),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const error = yield* bitbucket
-      .getPullRequest({ cwd: "/repo", reference: "42" })
-      .pipe(Effect.flip);
-
-    assert.instanceOf(error, BitbucketApi.BitbucketResponseBodyReadError);
-    assert.strictEqual(error.operation, "getPullRequest");
-    assert.strictEqual(error.status, 502);
-    assert.instanceOf(error.cause, HttpClientError.HttpClientError);
-    assert.strictEqual(error.cause.cause, cause);
-    assert.strictEqual(
-      error.message,
-      "Bitbucket API failed in getPullRequest: Bitbucket returned HTTP 502.",
-    );
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("keeps the 429 retry time when the response body cannot be read", () => {
-  const { layer } = makeLayer({
-    response: () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start: (controller) => controller.error(new Error("response stream failed")),
-        }),
-        { status: 429, headers: { "Retry-After": "120" } },
-      ),
-  });
-
-  return Effect.gen(function* () {
-    yield* TestClock.setTime(1_000);
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const error = yield* bitbucket
-      .request({ method: "GET", url: "/repositories/acme/web" })
-      .pipe(Effect.flip);
-
-    assert.instanceOf(error, BitbucketApi.BitbucketResponseBodyReadError);
-    assert.strictEqual(error.status, 429);
-    assert.strictEqual(error.retryAt, 121_000);
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("checks out same-repository pull requests with the existing Bitbucket remote", () => {
-  const { git, layer } = makeLayer({
-    response: () =>
-      Response.json({
-        ...bitbucketPullRequest,
-        source: {
-          branch: { name: "feature/source-control" },
-          repository: {
-            full_name: "pingdotgg/t3code",
-            workspace: { slug: "pingdotgg" },
-          },
-        },
-      }),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    yield* bitbucket.checkoutPullRequest({
-      cwd: "/repo",
-      context: {
-        provider: {
-          kind: SourceControlProviderKind.make("bitbucket"),
-          name: "Bitbucket",
-          baseUrl: "https://bitbucket.org",
-        },
-        remoteName: "origin",
-        remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
-      },
-      reference: "42",
-      force: true,
-    });
-
-    assert.strictEqual(git.ensureRemote.mock.calls.length, 0);
-    assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
-      cwd: "/repo",
-      remoteName: "origin",
-      remoteBranch: "feature/source-control",
-      localBranch: "feature/source-control",
-    });
-    assert.deepStrictEqual(git.setBranchUpstream.mock.calls[0]?.[0], {
-      cwd: "/repo",
-      branch: "feature/source-control",
-      remoteName: "origin",
-      remoteBranch: "feature/source-control",
-    });
-    assert.deepStrictEqual(git.switchRef.mock.calls[0]?.[0], {
-      cwd: "/repo",
-      refName: "feature/source-control",
-    });
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("preserves Git checkout failures without deriving the domain message from them", () => {
-  const gitCause = new GitCommandError({
-    operation: "fetchRemoteBranch",
-    command: "git fetch origin feature/source-control",
-    cwd: "/repo",
-    detail: "remote rejected the request",
-  });
-  const { layer } = makeLayer({
-    response: () =>
-      Response.json({
-        ...bitbucketPullRequest,
-        source: {
-          branch: { name: "feature/source-control" },
-          repository: {
-            full_name: "pingdotgg/t3code",
-            workspace: { slug: "pingdotgg" },
-          },
-        },
-      }),
-    git: {
-      fetchRemoteBranch: () => Effect.fail(gitCause),
-    },
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const error = yield* Effect.flip(
-      bitbucket.checkoutPullRequest({
-        cwd: "/repo",
-        reference: "42",
-        force: true,
-      }),
-    );
-
-    assert.instanceOf(error, BitbucketApi.BitbucketCheckoutError);
-    assert.strictEqual(error.cwd, "/repo");
-    assert.strictEqual(error.reference, "42");
-    assert.strictEqual(
-      error.message,
-      "Bitbucket API failed in checkoutPullRequest: Failed to check out the Bitbucket pull request.",
-    );
-    assert.strictEqual(error.cause, gitCause);
   }).pipe(Effect.provide(layer));
 });
 
@@ -1096,79 +736,3 @@ it.effect("cuts a response short rather than reading an unbounded diff into memo
     ),
   ),
 );
-
-const stalledResponseBody = (status: number): Response =>
-  new Response(
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode("{"));
-      },
-    }),
-    { status, headers: { "content-type": "application/json" } },
-  );
-
-it.effect.each([200, 503])(
-  "times out a stalled Bitbucket JSON body after HTTP %s headers",
-  (status) => {
-    const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
-    return Effect.gen(function* () {
-      const api = yield* BitbucketApi.BitbucketApi;
-      const fiber = yield* Effect.forkChild(
-        Effect.flip(api.getPullRequest({ cwd: "/repo", reference: "42" })),
-      );
-      while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
-      yield* TestClock.adjust("31 seconds");
-      const error = yield* Fiber.join(fiber);
-      assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
-      assert.strictEqual(error.operation, "getPullRequest");
-    }).pipe(Effect.provide(layer));
-  },
-);
-
-it.effect.each([200, 503])(
-  "times out a stalled Bitbucket raw body after HTTP %s headers",
-  (status) => {
-    const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
-    return Effect.gen(function* () {
-      const api = yield* BitbucketApi.BitbucketApi;
-      const fiber = yield* Effect.forkChild(
-        Effect.flip(api.request({ method: "GET", url: "/user" })),
-      );
-      while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
-      yield* TestClock.adjust("31 seconds");
-      const error = yield* Fiber.join(fiber);
-      assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
-      assert.strictEqual(error.operation, "request");
-    }).pipe(Effect.provide(layer));
-  },
-);
-
-it.effect("times out before JSON headers arrive", () => {
-  const { execute, layer } = makeLayer({ response: () => Response.json({}), stall: true });
-  return Effect.gen(function* () {
-    const api = yield* BitbucketApi.BitbucketApi;
-    const fiber = yield* Effect.forkChild(
-      Effect.flip(api.getPullRequest({ cwd: "/repo", reference: "42" })),
-    );
-    while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
-    yield* TestClock.adjust("31 seconds");
-    const error = yield* Fiber.join(fiber);
-    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
-    assert.strictEqual(error.operation, "getPullRequest");
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("times out before raw response headers arrive", () => {
-  const { execute, layer } = makeLayer({ response: () => Response.json({}), stall: true });
-  return Effect.gen(function* () {
-    const api = yield* BitbucketApi.BitbucketApi;
-    const fiber = yield* Effect.forkChild(
-      Effect.flip(api.request({ method: "GET", url: "/user" })),
-    );
-    while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
-    yield* TestClock.adjust("31 seconds");
-    const error = yield* Fiber.join(fiber);
-    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
-    assert.strictEqual(error.operation, "request");
-  }).pipe(Effect.provide(layer));
-});

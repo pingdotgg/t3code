@@ -1,7 +1,9 @@
 # Product usage data
 
 The T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
-associated with a hashed account or installation identifier. The endpoint keeps a copy of each
+associated with a hashed account or installation identifier. To count how many installations one person
+uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
+Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each
 event and forwards events to PostHog. Events include the provider, model, reasoning effort,
 permission mode, turn result, duration, release channel, and main-agent token totals when
 available.
@@ -31,7 +33,8 @@ the signal's currently running endpoint and do not follow redirects. To check a 
 that requires authentication, save it and restart the server first.
 
 `T3CODE_OTLP_*_URL` and standard `OTEL_EXPORTER_OTLP_*` environment variables override the saved
-settings. For endpoints saved here or set with `T3CODE_OTLP_*_URL`, set `T3CODE_OTLP_HEADERS` for
+settings. An overridden signal shows **Set by environment** and names the variable that set it, and its
+**Test** checks the running endpoint instead of the field. For endpoints saved here or set with `T3CODE_OTLP_*_URL`, set `T3CODE_OTLP_HEADERS` for
 receivers that need authentication and `T3CODE_OTLP_PROTOCOL=http/protobuf` for receivers that do
 not accept JSON. An endpoint set with `OTEL_EXPORTER_OTLP_*` takes its headers and protocol from
 `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_PROTOCOL` instead.

@@ -10,7 +10,6 @@ export interface NativeMarkdownTextStyle {
   readonly codeBackgroundColor: string;
   readonly codeBlockBackgroundColor: string;
   readonly fileTextColor: string;
-  readonly skillTextColor: string;
   readonly quoteMarkerColor: string;
   readonly dividerColor: string;
   readonly contextChipBorderColor?: string;
@@ -25,6 +24,7 @@ export interface NativeMarkdownTextStyle {
 export interface SelectableMarkdownSkill {
   readonly name: string;
   readonly displayName?: string | null;
+  readonly path?: string;
 }
 
 export interface MarkdownImageRequest {
@@ -63,6 +63,7 @@ export interface MarkdownLinkCustomization {
   readonly color?: string;
   readonly label?: string;
   readonly icon?: import("react-native").ImageSourcePropType;
+  readonly chip?: { readonly accent?: string; readonly tintsIcon: boolean };
 }
 
 export interface SelectableMarkdownTextProps {

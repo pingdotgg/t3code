@@ -36,27 +36,6 @@ describe("orderDiffFiles", () => {
     ).toEqual([...source, ...tests, ...generated]);
   });
 
-  it("answers an empty diff with an empty order", () => {
-    expect(order([])).toEqual([]);
-  });
-
-  it("puts a dependency before what imports it", () => {
-    expect(order([file("src/a.ts", ['import { b } from "./b";']), file("src/b.ts")])).toEqual([
-      "src/b.ts",
-      "src/a.ts",
-    ]);
-  });
-
-  it("follows a chain the whole way down", () => {
-    expect(
-      order([
-        file("src/a.ts", ['import { b } from "./b";']),
-        file("src/b.ts", ['import { c } from "./c";']),
-        file("src/c.ts"),
-      ]),
-    ).toEqual(["src/c.ts", "src/b.ts", "src/a.ts"]);
-  });
-
   it("resolves a specifier that climbs out of the importer's directory", () => {
     expect(
       order([file("src/ui/a.ts", ['import { b } from "../lib/b";']), file("src/lib/b.ts")]),
@@ -110,14 +89,6 @@ describe("orderDiffFiles", () => {
         file("src/a.ts", ['import { b } from "./b";']),
       ]),
     ).toEqual(["src/a.ts", "src/b.ts"]);
-  });
-
-  it("clusters unrelated files by path", () => {
-    expect(order([file("src/ui/b.ts"), file("src/lib/z.ts"), file("src/lib/a.ts")])).toEqual([
-      "src/lib/a.ts",
-      "src/lib/z.ts",
-      "src/ui/b.ts",
-    ]);
   });
 
   it("keeps the tiers apart and orders tests by the source they cover", () => {

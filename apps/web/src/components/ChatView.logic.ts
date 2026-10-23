@@ -1,5 +1,23 @@
+import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  deriveLatestThreadRun,
+  deriveThreadRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  latestUnheldRun,
+  usageLimitRunPresentedAsLatest,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Option from "effect/Option";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { SetStateAction } from "react";
+import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
+import { getProviderModelCapabilities } from "../providerModels";
+import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import type {
+  EnvironmentThread,
+  ThreadStructure,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -12,7 +30,7 @@ import {
   ProjectId,
   type MessageId,
   type ModelSelection,
-  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationMessageContext,
   type PreviewAnnotationPayload,
   type ProviderInteractionMode,
   ProviderDriverKind,
@@ -48,13 +66,32 @@ import {
   type Thread,
   type TurnDiffSummary,
 } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+  type DraftId,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells, environmentThreadDetails } from "../state/threads";
 import { waitForAtomValue } from "../state/waitForAtomValue";
-import { filterTerminalContextsWithText, type TerminalContextDraft } from "../lib/terminalContext";
-import { stripInlineContextReferences } from "~/lib/composerContextReferences";
+import {
+  filterTerminalContextsWithText,
+  formatTerminalContextLabel,
+  type TerminalContextDraft,
+} from "../lib/terminalContext";
+import {
+  removeInlineContextReference,
+  stripInlineContextReferences,
+} from "~/lib/composerContextReferences";
+import {
+  previewAnnotationContextLabel,
+  reviewCommentContextLabel,
+  terminalContextReference,
+} from "../lib/composerContextRecords";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
@@ -68,10 +105,13 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 
+type ThreadProjection = EnvironmentThread["projection"];
+type ThreadStructureRow = ThreadStructure["visibleTurnItems"][number];
+
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
-export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],
@@ -222,15 +262,6 @@ export function codexArtifactTemplatePromptToAppend(
 }
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
-
-export function resolveEffectiveInteractionMode(input: {
-  planModeEnabled: boolean;
-  composerInteractionMode: ProviderInteractionMode | null;
-  threadInteractionMode: ProviderInteractionMode | null | undefined;
-}): ProviderInteractionMode {
-  if (!input.planModeEnabled) return "default";
-  return input.composerInteractionMode ?? input.threadInteractionMode ?? "default";
-}
 
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
@@ -474,6 +505,7 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
 }): {
   modelSelection?: ModelSelection;
   branch?: string;
+  worktreePath?: null;
 } | null {
   const nextModelSelection = input.nextModelSelection;
   const modelSelectionChanged =
@@ -488,7 +520,7 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
   }
   return {
     ...(modelSelectionChanged ? { modelSelection: nextModelSelection } : {}),
-    ...(branchChanged ? { branch: input.nextBranch } : {}),
+    ...(branchChanged ? { branch: input.nextBranch, worktreePath: null } : {}),
   };
 }
 
@@ -529,25 +561,6 @@ export function buildLocalDraftThread(
     settledAt: null,
     deletedAt: null,
   });
-}
-
-export function shouldWriteThreadErrorToCurrentServerThread(input: {
-  serverThread:
-    | {
-        environmentId: EnvironmentId;
-        id: ThreadId;
-      }
-    | null
-    | undefined;
-  routeThreadRef: ScopedThreadRef;
-  targetThreadId: ThreadId;
-}): boolean {
-  return Boolean(
-    input.serverThread &&
-    input.targetThreadId === input.routeThreadRef.threadId &&
-    input.serverThread.environmentId === input.routeThreadRef.environmentId &&
-    input.serverThread.id === input.targetThreadId,
-  );
 }
 
 export function resolveComposerProviderSelection(input: {
@@ -796,12 +809,7 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
 
 export { readFileAsDataUrl } from "../lib/imageCompression";
 
-export function resolveSendEnvMode(input: {
-  requestedEnvMode: DraftThreadEnvMode;
-  isGitRepo: boolean;
-}): DraftThreadEnvMode {
-  return input.isGitRepo ? input.requestedEnvMode : "local";
-}
+export { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
 
 export function resolveBackgroundDraftWorkspaceOptions(input: {
   envMode: DraftThreadEnvMode;
@@ -1191,7 +1199,7 @@ export function createLocalDispatchSnapshot(
  * turn items avoids dropping steer rows in that gap.
  */
 export function deriveCommittedServerUserMessageIds(
-  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  visibleTurnItems: ReadonlyArray<ThreadStructureRow>,
 ): ReadonlySet<ChatMessage["id"]> {
   return new Set(
     visibleTurnItems.flatMap((row) =>
@@ -1366,21 +1374,397 @@ export function mergeDirectPreviewAnnotation(input: {
   return { images, previewAnnotations };
 }
 
+export { isThreadWokeUnseen } from "@t3tools/client-runtime/state/thread-settled";
+
+export function formatOutgoingPrompt(params: {
+  provider: ProviderDriverKind;
+  model: string | null;
+  models: ReadonlyArray<ServerProvider["models"][number]>;
+  effort: string | null;
+  text: string;
+}): string {
+  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
+  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
+  return applyClaudePromptEffortPrefix(params.text, promptEffort);
+}
+
+export function isCompactCommandMessage(message: ChatMessage): boolean {
+  const text = message.text.trim().toLowerCase();
+  return message.role === "user" && text === "/compact" && !message.attachments?.length;
+}
+
+// Errors surface through two maps (draft-keyed and thread-keyed) whose entries
+// can race around promotion, so each write carries its time to let the latest
+// one win when they collide.
+export type LocalThreadErrorEntry = {
+  readonly message: string | null;
+  readonly at: number;
+};
+
+export function chatActionErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "An error occurred.";
+}
+
+export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
+  current: T,
+): T {
+  return current.messageId === null ? current : { ...current, messageId: null };
+}
+
+// The factories below build functions ChatView calls during render, or hands
+// to ChatComposer, which can call them after an await. They live outside the
+// component so each closure keeps only its inputs, not a whole render scope
+// (see useStableCallback), while still acting on the render that made them.
+
+/** Records a thread error in local state, keyed by the route the making render saw. */
+export function makeThreadErrorSetter(input: {
+  readonly routeThreadRef: ScopedThreadRef;
+  readonly routeThreadKey: string;
+  readonly draftId: DraftId | null;
+  readonly serverThreadRef: ScopedThreadRef | null;
+  readonly setLocalServerErrorsByThreadKey: (
+    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
+  ) => void;
+  readonly setLocalDraftErrorsByDraftId: (
+    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
+  ) => void;
+}) {
+  return (targetThreadId: ThreadId | null, error: string | null) => {
+    if (!targetThreadId) return;
+    const nextError = sanitizeThreadErrorMessage(error);
+    const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
+    const { routeThreadRef, serverThreadRef } = input;
+    if (
+      serverThreadRef &&
+      targetThreadId === routeThreadRef.threadId &&
+      serverThreadRef.environmentId === routeThreadRef.environmentId &&
+      serverThreadRef.threadId === targetThreadId
+    ) {
+      input.setLocalServerErrorsByThreadKey((existing) => {
+        if ((existing[input.routeThreadKey]?.message ?? null) === nextError) {
+          return existing;
+        }
+        return { ...existing, [input.routeThreadKey]: nextEntry };
+      });
+      return;
+    }
+    const localDraftErrorKey = input.draftId ?? targetThreadId;
+    input.setLocalDraftErrorsByDraftId((existing) => {
+      if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
+        return existing;
+      }
+      return { ...existing, [localDraftErrorKey]: nextEntry };
+    });
+  };
+}
+
+/** Why the model picker should disable a model, or null when it can be chosen. */
+export function makeModelDisabledReason(
+  context: Omit<
+    Parameters<typeof getStartedThreadModelChangeBlockReason>[0],
+    "nextModelSelection"
+  > | null,
+) {
+  return (instanceId: ProviderInstanceId, model: string): string | null => {
+    if (!context) return null;
+    const reason = getStartedThreadModelChangeBlockReason({
+      ...context,
+      nextModelSelection: { instanceId, model },
+    });
+    return reason ? `${reason.description} Start a new thread to use this model.` : null;
+  };
+}
+
+/** What the composer held when the user pressed send, after a direct annotation merged in. */
+export interface ComposerSendContents {
+  readonly prompt: string;
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly files: ReadonlyArray<ComposerFileAttachment>;
+  readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly sendableTerminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+  readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+}
+
 /**
- * Whether a woken thread woke after the user last saw it. A run that completed
- * after the last visit counts as seeing it, since the user watched it finish.
+ * Copies the composer contents a send dispatches, so a failed send can put the
+ * same draft back. Terminal contexts that lost their text are dropped from both
+ * the contexts and the prompt's inline references.
  */
-export function isThreadWokeUnseen(input: {
-  readonly wokeAt: string | null;
-  readonly settled: boolean;
-  readonly lastVisitedAt: string | null | undefined;
-  readonly latestRunCompletedAt: string | null;
-}): boolean {
-  if (input.wokeAt === null || input.settled) return false;
-  const wokeAtMs = Date.parse(input.wokeAt);
-  if (Number.isNaN(wokeAtMs)) return false;
-  const seenAt = [input.lastVisitedAt, input.latestRunCompletedAt]
-    .map((value) => (value ? Date.parse(value) : NaN))
-    .filter((ms) => !Number.isNaN(ms));
-  return seenAt.every((ms) => ms < wokeAtMs);
+export function snapshotComposerSend(contents: ComposerSendContents) {
+  const images = [...contents.images];
+  const files = [...contents.files];
+  const terminalContexts = [...contents.sendableTerminalContexts];
+  return {
+    images,
+    files,
+    attachments: [...images, ...files],
+    terminalContexts,
+    previewAnnotations: [...contents.previewAnnotations],
+    reviewComments: [...contents.reviewComments],
+    threadContexts: [...contents.threadContexts],
+    messageText: contents.terminalContexts
+      .filter((context) => !terminalContexts.includes(context))
+      .reduce(
+        (text, context) =>
+          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+        contents.prompt,
+      )
+      .trim(),
+  };
+}
+
+export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
+
+/** How a composer send dispatches: where it runs and whether it waits behind other work. */
+export function planComposerTurn(input: {
+  readonly messageText: string;
+  readonly sendQueuesBehindSetup: boolean;
+  readonly isServerThread: boolean;
+  readonly activeMessageCount: number;
+  readonly sendEnvMode: DraftThreadEnvMode;
+  readonly worktreePath: string | null;
+  readonly activeThreadBranch: string | null;
+  readonly resumeCompactionTokens: number | null;
+  readonly keepFullHistory: boolean;
+  readonly phase: SessionPhase;
+  readonly dispatchMode: ComposerDispatchMode;
+}) {
+  const isFirstMessage =
+    !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
+  const shouldCreateWorktree =
+    isFirstMessage && input.sendEnvMode === "worktree" && !input.worktreePath;
+  // A stale Claude session compacts before this message so the turn does not re-read the
+  // old history. The message queues behind the /compact run, since steering into it is
+  // rejected.
+  const compactBeforeSend =
+    input.resumeCompactionTokens !== null &&
+    !input.keepFullHistory &&
+    input.messageText.toLowerCase() !== "/compact";
+  return {
+    // In worktree mode, require an explicit base branch so we don't silently
+    // fall back to local execution when branch selection is missing.
+    missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
+    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+    compactBeforeSend,
+    turnDispatchMode:
+      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,
+    shouldQueueBehindActiveRun:
+      compactBeforeSend ||
+      input.sendQueuesBehindSetup ||
+      (input.phase === "running" && input.dispatchMode === "queue"),
+  };
+}
+
+/**
+ * The attachment ids a message's context records bind to: the upload id the
+ * server returned, or the local id on the data-URL path.
+ */
+export function boundAttachmentIds(
+  turnAttachments: ReadonlyArray<{ readonly id?: string | undefined }>,
+  attachments: ReadonlyArray<{ readonly id: string }>,
+): string[] {
+  return turnAttachments.map((attachment, index) =>
+    "id" in attachment && attachment.id !== undefined ? attachment.id : attachments[index]!.id,
+  );
+}
+
+/**
+ * The message text and context a turn sends. Servers from before inline
+ * context drop the records and forward the links as literal text, so their
+ * turns carry the payload the legacy way.
+ */
+export function withMessageContext(input: {
+  readonly text: string;
+  readonly context: OrchestrationMessageContext | undefined;
+  readonly supportsInlineMessageContext: boolean;
+}): { readonly text: string; readonly context?: OrchestrationMessageContext } {
+  const { text, context } = input;
+  if (context === undefined) return { text };
+  if (!input.supportsInlineMessageContext) {
+    return { text: serializeLegacyContextMessage({ text, records: context.records }) };
+  }
+  return { text, context };
+}
+
+/** The attachments the optimistic user row shows before the server echoes the message. */
+export function optimisticMessageAttachments(
+  attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
+) {
+  return attachments.map((attachment) =>
+    attachment.type === "image"
+      ? {
+          type: "image" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          previewUrl: attachment.previewUrl,
+          ...(attachment.source ? { source: attachment.source } : {}),
+        }
+      : {
+          type: "file" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          downloadable: false,
+          ...(attachment.source ? { source: attachment.source } : {}),
+        },
+  );
+}
+
+/** Fallback title sources for a message with no text of its own. */
+export function sendTitleFallbackLabels(snapshot: ComposerSendSnapshot) {
+  const terminalContext = snapshot.terminalContexts[0];
+  const reviewComment = snapshot.reviewComments[0];
+  const previewAnnotation = snapshot.previewAnnotations[0];
+  return [
+    terminalContext ? formatTerminalContextLabel(terminalContext) : undefined,
+    reviewComment ? `Review: ${reviewCommentContextLabel(reviewComment)}` : undefined,
+    previewAnnotation ? previewAnnotationContextLabel(previewAnnotation) : undefined,
+  ];
+}
+
+/**
+ * A thread shell built from its loaded detail, for direct links that hydrate the detail first.
+ * `updatedAt` and `lastVisitedAt` are passed live: the thread structure leaves them out.
+ */
+export function presentThreadShellFromProjection(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  projection: ThreadStructure,
+  live: {
+    readonly updatedAt: ThreadProjection["updatedAt"];
+    readonly lastVisitedAt: ThreadProjection["thread"]["lastVisitedAt"];
+  },
+) {
+  const { updatedAt, lastVisitedAt } = live;
+  const latestRun = deriveLatestThreadRun(projection);
+  const runtime = deriveThreadRuntime({ ...projection, updatedAt });
+  const pendingRuntimeRequest =
+    projection.runtimeRequests.findLast((request) => request.status === "pending") ?? null;
+  // Direct links can hydrate detail before the thread enters the shell index.
+  return {
+    ...presentThreadShell(environmentId, {
+      ...projection.thread,
+      lastVisitedAt,
+      latestRunId: latestRun?.runId ?? null,
+      activeRunId: runtime?.activeRunId ?? null,
+      status: runtime?.status ?? "idle",
+      pendingRuntimeRequest,
+      latestVisibleMessage: null,
+      latestUserMessageAt:
+        projection.messages.findLast((message) => message.role === "user")?.updatedAt ?? null,
+      hasActionableProposedPlan: projection.plans.some(
+        (plan) => plan.kind === "proposed_plan" && plan.status === "active",
+      ),
+      providerInstanceHistory: [
+        ...new Set(
+          projection.providerThreads
+            .filter((thread) => thread.appThreadId === threadId && thread.ownerNodeId === null)
+            .map((thread) => thread.providerInstanceId),
+        ),
+      ],
+      goal:
+        projection.providerThreads.find(
+          (thread) => thread.id === projection.thread.activeProviderThreadId,
+        )?.goal ?? null,
+      itemCount: projection.turnItems.length,
+      visibleItemCount: projection.visibleTurnItems.length,
+      updatedAt,
+    }),
+    latestRun,
+    runtime,
+  };
+}
+
+/** Background work the provider still runs after the latest run ended. */
+export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure | null) {
+  if (projection === null) return [];
+  const sessionError =
+    projection.providerSessions.findLast(
+      (session) => session.providerInstanceId === projection.thread.providerInstanceId,
+    )?.lastError ?? null;
+  const latestRun =
+    usageLimitRunPresentedAsLatest(projection.runs, projection.turnItems, sessionError) ??
+    latestUnheldRun(projection.runs);
+  return [
+    ...derivePendingBackgroundWork({
+      latestRun,
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId: projection.thread.activeProviderThreadId,
+      runs: projection.runs,
+      pullRequests: projection.thread.pullRequests,
+    }),
+  ];
+}
+
+/**
+ * Run ordinals the conversation can be reverted to: those whose provider turn belongs to the
+ * active provider thread, plus 0 for the thread start. Empty without a live provider session
+ * on the thread's selected instance.
+ */
+export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | null) {
+  const available = new Set<number>();
+  const providerThread = projection?.providerThreads.find(
+    (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+  );
+  if (
+    !providerThread?.providerSessionId ||
+    providerThread.providerInstanceId !== projection?.thread.modelSelection.instanceId
+  )
+    return available;
+  available.add(0);
+  const attemptsById = new Map(projection.attempts.map((attempt) => [attempt.id, attempt]));
+  const providerTurnsById = new Map<
+    OrchestrationV2ProviderTurn["id"],
+    OrchestrationV2ProviderTurn
+  >();
+  const latestTurnByAttempt = new Map<RunAttemptId, OrchestrationV2ProviderTurn>();
+  for (const turn of projection.providerTurns) {
+    providerTurnsById.set(turn.id, turn);
+    if (turn.runAttemptId === null) continue;
+    const latest = latestTurnByAttempt.get(turn.runAttemptId);
+    if (latest === undefined || turn.ordinal > latest.ordinal) {
+      latestTurnByAttempt.set(turn.runAttemptId, turn);
+    }
+  }
+  for (const run of projection.runs) {
+    if (run.activeAttemptId === null) continue;
+    const attempt = attemptsById.get(run.activeAttemptId);
+    const providerTurn =
+      latestTurnByAttempt.get(run.activeAttemptId) ??
+      (attempt?.providerTurnId == null ? undefined : providerTurnsById.get(attempt.providerTurnId));
+    // A ready file checkpoint alone cannot restore the provider conversation.
+    if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
+  }
+  return available;
+}
+
+/**
+ * Changes when the agent may have changed the workspace, so file views refresh. File tools are
+ * explicit; completed commands are included because a shell command can mutate the workspace
+ * without reporting the paths it touched.
+ */
+export function deriveWorkspaceMutationId(
+  visibleTurnItems: ReadonlyArray<ThreadStructureRow>,
+  latestCheckpointCompletedAt: string | null,
+) {
+  let itemId: string | null = null;
+  for (let index = visibleTurnItems.length - 1; index >= 0; index -= 1) {
+    const item = visibleTurnItems[index]?.item;
+    if (!item) continue;
+    if (item.type !== "command_execution" && item.type !== "file_change") continue;
+    if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
+      continue;
+    }
+    itemId = item.id;
+    break;
+  }
+  return itemId === null && latestCheckpointCompletedAt === null
+    ? null
+    : JSON.stringify([itemId, latestCheckpointCompletedAt]);
 }

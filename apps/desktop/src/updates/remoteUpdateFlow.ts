@@ -22,7 +22,7 @@ export interface RemoteDesktopUpdateAttempts {
   readonly downloads: number;
 }
 
-export const MAX_REMOTE_UPDATE_CHECKS = 2;
+const MAX_REMOTE_UPDATE_CHECKS = 2;
 export const MAX_REMOTE_UPDATE_DOWNLOADS = 3;
 
 function isInstallableDesktopUpdateState(state: DesktopUpdateState): boolean {

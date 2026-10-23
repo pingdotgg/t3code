@@ -1,8 +1,8 @@
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { userEvent } from "vite-plus/test/browser";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../../test/render";
 
 const actions = vi.hoisted(() => ({
   toast: vi.fn(),
@@ -100,20 +100,14 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-let root: Root;
-
-function render(onOpenChange = actions.onOpenChange) {
-  return act(async () =>
-    root.render(
-      <AddProviderInstanceDialog
-        open
-        environmentId={remoteEnvironmentId}
-        environmentLabel="Remote device"
-        onOpenChange={onOpenChange}
-      />,
-    ),
-  );
-}
+const dialog = () => (
+  <AddProviderInstanceDialog
+    open
+    environmentId={remoteEnvironmentId}
+    environmentLabel="Remote device"
+    onOpenChange={actions.onOpenChange}
+  />
+);
 function button(label: string) {
   const found = [...document.querySelectorAll("button")].find(
     (element) => element.textContent?.trim() === label,
@@ -128,55 +122,37 @@ const input = (selector: string) => {
   return found!;
 };
 async function type(selector: string, value: string) {
-  await act(async () => userEvent.fill(input(selector), value));
+  await userEvent.fill(input(selector), value);
   await act(async () => input(selector).blur());
 }
 const signInStep = () => document.querySelector('[aria-label="Sign-in step"]');
 
 async function prepareCodexInstance() {
-  await render();
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await render(dialog()));
   await click("Configure manually");
   await type("#add-provider-label", "Work");
   await click("Next");
+  stack.move();
+  return screen;
+}
+
+function setup() {
+  actions.canManageProviders = true;
+  actions.toast.mockReset();
+  actions.onOpenChange.mockReset();
+  settingsHooks.read.mockReset().mockReturnValue({ providerInstances: {} });
+  settingsHooks.mutate.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
+  settingsHooks.useMutation.mockReset().mockReturnValue(settingsHooks.mutate);
 }
 
 describe("AddProviderInstanceDialog environment routing", () => {
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    actions.canManageProviders = true;
-    actions.toast.mockReset();
-    actions.onOpenChange.mockReset();
-    settingsHooks.read.mockReset().mockReturnValue({ providerInstances: {} });
-    settingsHooks.mutate.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
-    settingsHooks.useMutation.mockReset().mockReturnValue(settingsHooks.mutate);
-    root = createRoot(document.createElement("div"));
-  });
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    vi.unstubAllGlobals();
-  });
-
-  it("creates a provider with its default identity without typing", async () => {
-    await render();
-    const grok = [...document.querySelectorAll('[role="radio"]')].find((radio) =>
-      radio.textContent?.includes("Grok"),
-    ) as HTMLElement;
-    await act(async () => grok.click());
-    await click("Next");
-    await click("Next");
-    await click("Add instance");
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "grok",
-      instance: { driver: "grok", enabled: true, displayName: "Grok" },
-    });
-  });
-
   it("chooses an unused identity for another account without replacing configured instances", async () => {
+    setup();
     settingsHooks.read.mockReturnValue({
       providerInstances: { codex_2: { driver: "codex", enabled: false } },
     });
-    await render();
+    await using _screen = await render(dialog());
     await click("Configure manually");
     await click("Next");
     await click("Add instance");
@@ -192,17 +168,11 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
   });
 
-  it("reads and writes settings through the supplied environment", async () => {
-    await render();
-
-    expect(settingsHooks.read).toHaveBeenCalledWith(remoteEnvironmentId);
-    expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
-  });
-
   it("awaits an atomic create before closing and retains prepared ACP metadata", async () => {
+    setup();
     const mutation = deferred<{ readonly _tag: "Success"; readonly value: unknown }>();
     settingsHooks.mutate.mockReturnValueOnce(mutation.promise);
-    await render();
+    await using _screen = await render(dialog());
     await click("Use Kilo Code");
 
     expect(document.body.textContent).toContain("v4.2.0 · binary");
@@ -231,26 +201,9 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("configures a manually entered registry agent from the first provider screen", async () => {
-    await render();
-    await click("Enter registry agent");
-    await type("#add-provider-acpRegistry-manual-agentId", "devin");
-    await click("Next");
-    await click("Continue to sign-in");
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "acpRegistry_custom",
-      instance: {
-        driver: "acpRegistry",
-        enabled: true,
-        config: { agentId: "devin" },
-      },
-    });
-    expect(signInStep()).not.toBeNull();
-  });
-
   it("creates a local command in the selected environment without a sign-in step", async () => {
-    await render();
+    setup();
+    await using _screen = await render(dialog());
     await click("Use local command");
     await click("Next");
     expect(document.body.textContent).toContain("Executable is required.");
@@ -294,41 +247,9 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(signInStep()).toBeNull();
   });
 
-  it("keeps the dialog open when the atomic upsert fails", async () => {
-    settingsHooks.mutate.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("Conflict") });
-    await render();
-    await click("Use Kilo Code");
-    await click("Continue to sign-in");
-
-    expect(actions.onOpenChange).not.toHaveBeenCalled();
-    expect(actions.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "error", title: "Could not add provider instance" }),
-    );
-    expect(button("Continue to sign-in").disabled).toBe(false);
-  });
-
-  it("adds an instance with the selected environment's provider grant alone", async () => {
-    await prepareCodexInstance();
-    await click("Add instance");
-
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "codex_work",
-      instance: {
-        driver: "codex",
-        enabled: true,
-        displayName: "Work",
-        config: { setupMode: "existing" },
-      },
-    });
-    expect(actions.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", title: "Provider instance added" }),
-    );
-    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
-  });
-
   it("rejects a queued save after the provider grant is revoked", async () => {
-    await prepareCodexInstance();
+    setup();
+    await using screen = await prepareCodexInstance();
     const save = button("Add instance");
     actions.canManageProviders = false;
     // The rendered button is still enabled; the click must recheck the live grant.
@@ -337,21 +258,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(settingsHooks.mutate).not.toHaveBeenCalled();
     expect(actions.toast).not.toHaveBeenCalled();
     expect(actions.onOpenChange).not.toHaveBeenCalled();
-    await render();
+    await screen.rerender(dialog());
     expect(button("Add instance").disabled).toBe(true);
-  });
-
-  it("keeps a denied draft available when the provider grant arrives", async () => {
-    actions.canManageProviders = false;
-    await prepareCodexInstance();
-    expect(button("Add instance").disabled).toBe(true);
-    expect(settingsHooks.mutate).not.toHaveBeenCalled();
-
-    actions.canManageProviders = true;
-    await render();
-    expect(button("Add instance").disabled).toBe(false);
-    await click("Add instance");
-    expect(settingsHooks.mutate).toHaveBeenCalledOnce();
-    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 });

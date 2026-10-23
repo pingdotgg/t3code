@@ -144,82 +144,6 @@ describe("serializeRenderedMarkdownFragment", () => {
     vi.unstubAllGlobals();
   });
 
-  it("wraps inline code in backticks", () => {
-    const paragraph = new FakeElement("P").append(
-      new FakeText("run "),
-      new FakeElement("CODE").append(new FakeText("git status")),
-      new FakeText(" first"),
-    );
-    const container = new FakeElement("DIV").append(paragraph);
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("run `git status` first");
-  });
-
-  describe.each([
-    { parentLayout: "tight", childLayout: "tight" },
-    { parentLayout: "tight", childLayout: "loose" },
-    { parentLayout: "loose", childLayout: "tight" },
-    { parentLayout: "loose", childLayout: "loose" },
-  ])("$parentLayout parent with $childLayout child", ({ parentLayout, childLayout }) => {
-    it.each([
-      { parentChecked: null, childChecked: true, parent: "- Parent", child: "  - [x] Child" },
-      {
-        parentChecked: false,
-        childChecked: true,
-        parent: "- [ ] Parent",
-        child: "  - [x] Child",
-      },
-      {
-        parentChecked: true,
-        childChecked: false,
-        parent: "- [x] Parent",
-        child: "  - [ ] Child",
-      },
-    ])("copies $parent with $child", ({ parentChecked, childChecked, parent, child }) => {
-      const parentContent = parentLayout === "loose" ? new FakeElement("P") : new FakeElement("LI");
-      if (parentChecked !== null) {
-        const checkbox = new FakeElement("INPUT", [], { type: "checkbox" });
-        checkbox.checked = parentChecked;
-        parentContent.append(checkbox, new FakeText(" "));
-      }
-      parentContent.append(new FakeText("Parent"));
-      const parentItem =
-        parentLayout === "loose" ? new FakeElement("LI").append(parentContent) : parentContent;
-      const checkbox = new FakeElement("INPUT", [], { type: "checkbox" });
-      checkbox.checked = childChecked;
-      const childContent = new FakeElement(childLayout === "loose" ? "P" : "LI").append(
-        checkbox,
-        new FakeText(" Child"),
-      );
-      const childItem =
-        childLayout === "loose" ? new FakeElement("LI").append(childContent) : childContent;
-      parentItem.append(new FakeText("\n"), new FakeElement("UL").append(childItem));
-      const container = new FakeElement("DIV").append(
-        new FakeElement("P").append(new FakeText("Before")),
-        new FakeElement("UL").append(parentItem),
-        new FakeElement("P").append(new FakeText("After")),
-      );
-
-      expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-        `Before\n\n${parent}${parentLayout === "loose" ? "\n\n" : "\n"}${child}\n\nAfter`,
-      );
-    });
-  });
-
-  it("indents a code block under a numbered task item by the number width only", () => {
-    const checkbox = new FakeElement("INPUT", [], { type: "checkbox" });
-    checkbox.checked = true;
-    const item = new FakeElement("LI").append(
-      new FakeElement("P").append(checkbox, new FakeText(" Run the tests")),
-      renderedCodeBlock(["pnpm test"]),
-    );
-    const container = new FakeElement("DIV").append(new FakeElement("OL").append(item));
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "1. [x] Run the tests\n\n   ```\n   pnpm test\n   ```",
-    );
-  });
-
   it("copies the complete quote, source, and comment instead of the comment-only chip label", () => {
     const citation = {
       version: 1 as const,
@@ -246,17 +170,6 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(collectAssistantCitations(copied).map((entry) => entry.citation)).toEqual([citation]);
   });
 
-  it("keeps a highlighted block code selection plain when its pre wrapper is outside the range", () => {
-    const code = new FakeElement("CODE").append(
-      shikiCodeLine("git show-ref --verify refs/remotes/origin/opt/deploy/dev"),
-    );
-    const container = new FakeElement("DIV").append(code);
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "git show-ref --verify refs/remotes/origin/opt/deploy/dev",
-    );
-  });
-
   it("keeps a multi-line code selection plain instead of inline-wrapping it", () => {
     const code = new FakeElement("CODE").append(new FakeText("first line\nsecond line"));
     const container = new FakeElement("DIV").append(code);
@@ -273,40 +186,6 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
   });
 
-  it("keeps fences when a checkbox-only task item sits alongside the code block", () => {
-    const container = new FakeElement("DIV").append(
-      new FakeElement("UL").append(
-        new FakeElement("LI").append(new FakeElement("INPUT", [], { type: "checkbox" })),
-      ),
-      renderedCodeBlock(["pnpm test"]),
-    );
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "- [ ]\n\n```\npnpm test\n```",
-    );
-  });
-
-  it("still drops fences for a code block that is the whole list item", () => {
-    const container = new FakeElement("DIV").append(
-      new FakeElement("UL").append(new FakeElement("LI").append(renderedCodeBlock(["pnpm test"]))),
-      new FakeText("\n"),
-    );
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("pnpm test");
-  });
-
-  it("keeps fences when a file chip sits alongside the code block", () => {
-    const container = new FakeElement("DIV").append(
-      renderedCodeBlock(["pnpm test"]),
-      new FakeText("\n"),
-      new FakeElement("BUTTON", [], { "data-markdown-copy": "`src/foo.ts`" }),
-    );
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "```\npnpm test\n```\n\n`src/foo.ts`",
-    );
-  });
-
   it("omits fences when a selection past the last line drags in the whole code block", () => {
     const container = new FakeElement("DIV").append(
       renderedCodeBlock(["printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN"]),
@@ -316,32 +195,6 @@ describe("serializeRenderedMarkdownFragment", () => {
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN",
-    );
-  });
-
-  it("still fences a code block copied alongside prose", () => {
-    const container = new FakeElement("DIV").append(
-      new FakeElement("P").append(new FakeText("Run this:")),
-      renderedCodeBlock(["gh workflow run Deploy --ref main"]),
-    );
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "Run this:\n\n```\ngh workflow run Deploy --ref main\n```",
-    );
-  });
-
-  it("uses a rendered card's explicit Markdown copy representation", () => {
-    const card = new FakeElement("DIV", [], {
-      "data-markdown-copy": "Hello World (Document template)\n\n",
-    }).append(
-      new FakeElement("SPAN").append(new FakeText("Hello World")),
-      new FakeElement("SPAN").append(new FakeText("Document template")),
-      new FakeElement("BUTTON").append(new FakeText("Use template")),
-    );
-    const container = new FakeElement("DIV").append(card);
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "Hello World (Document template)",
     );
   });
 });

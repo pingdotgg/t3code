@@ -181,6 +181,14 @@ export type GitLabPullRequestCliError =
 /** GitLab's own ceiling on `per_page`, so a larger page has to be walked. */
 const MAX_PAGE_SIZE = 100;
 const COMMIT_PAGE_SIZE = 100;
+/**
+ * GitLab 15.7 through 17.10 answer the merge request `/diffs` endpoint with a 500 for any
+ * `per_page` above 30 (fixed in 17.11), so those pages stay at a size every version accepts.
+ * A commit's own diff endpoint never had that bug and keeps the full page.
+ */
+const MERGE_REQUEST_DIFF_PAGE_SIZE = 30;
+const diffPageSize = (commit: string | undefined) =>
+  commit === undefined ? MERGE_REQUEST_DIFF_PAGE_SIZE : MAX_PAGE_SIZE;
 const CONVERSATION_PAGES = 10;
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
@@ -615,7 +623,7 @@ export const make = Effect.gen(function* () {
           ? `merge_requests/${input.number}/diffs`
           : `repository/commits/${input.commit}/diff`
       }?${query([
-        ["per_page", String(MAX_PAGE_SIZE)],
+        ["per_page", String(diffPageSize(input.commit))],
         ["page", String(input.page)],
       ])}`,
       maxOutputBytes: DIFF_MAX_OUTPUT_BYTES,
@@ -673,7 +681,7 @@ export const make = Effect.gen(function* () {
         const patch = decoded.success.patch;
         // Counted before decoding, so a page whose files all failed to decode still moves on
         // rather than pointing the reader back at the page it just read.
-        const morePages = !legacy && decoded.success.rawCount >= MAX_PAGE_SIZE;
+        const morePages = !legacy && decoded.success.rawCount >= diffPageSize(input.commit);
         return Effect.succeed({
           // The slice ends on a newline, so a file GitLab gave a header and no hunks for does
           // not run into the first line of the next slice.

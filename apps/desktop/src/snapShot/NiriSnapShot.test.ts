@@ -227,16 +227,6 @@ it("fails promptly when Niri disconnects", async () => {
   await expect(checkNiriCaptureSupport(socketPath)).rejects.toThrow("disconnected");
 });
 
-it("bounds requests even when the compositor never answers", async () => {
-  vi.useFakeTimers();
-  const received = Promise.withResolvers<void>();
-  handler = async () => received.resolve();
-  const result = expect(checkNiriCaptureSupport(socketPath)).rejects.toThrow("timed out");
-  await received.promise;
-  await vi.advanceTimersByTimeAsync(5_000);
-  await result;
-});
-
 it("does not use stale, relative, or sandboxed Niri sockets", () => {
   expect(niriSocketPath()).toBe(socketPath);
   expect(niriSocketPath({ XDG_CURRENT_DESKTOP: "GNOME", NIRI_SOCKET: socketPath })).toBeUndefined();

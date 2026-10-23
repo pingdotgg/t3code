@@ -5,20 +5,20 @@ import type { EditorView } from "@tiptap/pm/view";
 
 import { isClosingFence, parseOpeningFence, serializeSelection } from "~/composer-rich-text-doc";
 
-export const CODE_BLOCK_INDENT = "  ";
+const CODE_BLOCK_INDENT = "  ";
 
-export function leadingWhitespace(line: string): string {
+function leadingWhitespace(line: string): string {
   return /^[ \t]*/.exec(line)?.[0] ?? "";
 }
 
-export function outdentLine(line: string): string {
+function outdentLine(line: string): string {
   if (line.startsWith(CODE_BLOCK_INDENT)) return line.slice(CODE_BLOCK_INDENT.length);
   if (line.startsWith("\t")) return line.slice(1);
   if (line.startsWith(" ")) return line.slice(1);
   return line;
 }
 
-export function indentLines(lines: ReadonlyArray<string>, direction: "in" | "out"): string[] {
+function indentLines(lines: ReadonlyArray<string>, direction: "in" | "out"): string[] {
   return lines.map((line) => {
     if (direction === "in") return line.length === 0 ? line : `${CODE_BLOCK_INDENT}${line}`;
     return outdentLine(line);

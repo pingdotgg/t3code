@@ -223,26 +223,41 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // `link` publishes the fully written temp file under the final name, or fails with
+  // AlreadyExists, so a concurrent reader never observes a partially written secret.
   const create: ServerSecretStore["Service"]["create"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const file = yield* fileSystem.open(secretPath, {
-          flag: "wx",
-          mode: 0o600,
-        });
-        yield* file.writeAll(value);
-        yield* file.sync;
-        yield* fileSystem.chmod(secretPath, 0o600);
-      }),
-    ).pipe(
+    return crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
-          new SecretStorePersistError({
+          new SecretStoreTemporaryPathError({
             resource: `secret ${name}`,
             cause,
           }),
       ),
+      Effect.flatMap((uuid) => {
+        const tempPath = `${secretPath}.${uuid}.tmp`;
+        return Effect.gen(function* () {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
+              yield* file.writeAll(value);
+              yield* file.sync;
+            }),
+          );
+          yield* fileSystem.chmod(tempPath, 0o600);
+          yield* fileSystem.link(tempPath, secretPath);
+        }).pipe(
+          Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
+          Effect.mapError(
+            (cause) =>
+              new SecretStorePersistError({
+                resource: `secret ${name}`,
+                cause,
+              }),
+          ),
+        );
+      }),
     );
   };
 

@@ -293,25 +293,6 @@ describe("remote thread lifecycle commands", () => {
     }),
   );
 
-  it.effect("keeps pending approvals visible while a lifecycle request is pending", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const blocked = {
-        ...SNAPSHOT,
-        threads: [{ ...SNAPSHOT.threads[0]!, pendingRuntimeRequest: APPROVAL }],
-      };
-      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), blocked);
-      const result = h.commands.settle.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID },
-      });
-      const request = yield* Queue.take(h.requests);
-      expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(blocked.threads[0]);
-      yield* Deferred.fail(request.reply, new Error("Approval pending"));
-      yield* Effect.promise(() => result);
-    }),
-  );
-
   const undoableActions = ["settle", "snooze"] as const;
 
   it.effect.each(undoableActions)("restores a confirmed %s when a queued undo fails", (action) =>

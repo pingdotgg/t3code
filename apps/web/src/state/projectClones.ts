@@ -41,3 +41,18 @@ export function useEnvironmentProjectClones(
 ): ReadonlyArray<ProjectCloneSnapshot> {
   return useAtomValue(environmentProjectClonesAtom(environmentId));
 }
+
+const silencedCloneToasts = new Set<string>();
+
+/**
+ * Keeps a clone's progress out of toasts once the user is looking at its
+ * project, whose composer shows the same progress. Failures still toast
+ * whenever the project is not on screen.
+ */
+export function silenceProjectCloneToasts(ref: ScopedProjectRef) {
+  silencedCloneToasts.add(scopedProjectKey(ref));
+}
+
+export function isProjectCloneToastSilenced(ref: ScopedProjectRef): boolean {
+  return silencedCloneToasts.has(scopedProjectKey(ref));
+}

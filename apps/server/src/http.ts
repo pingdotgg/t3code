@@ -275,7 +275,7 @@ export const layerBrowserApiCors = Layer.unwrap(
   }),
 );
 
-export function isLoopbackHostname(hostname: string): boolean {
+function isLoopbackHostname(hostname: string): boolean {
   const normalizedHostname = hostname
     .trim()
     .toLowerCase()
@@ -283,7 +283,7 @@ export function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTNAMES.has(normalizedHostname);
 }
 
-export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
+function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   const redirectUrl = new URL(devUrl.toString());
   redirectUrl.pathname = requestUrl.pathname;
   redirectUrl.search = requestUrl.search;
@@ -581,6 +581,14 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
 
     const staticDir =
       config.staticDir ?? (config.devUrl ? yield* ServerConfig.resolveStaticDir() : undefined);
+    if (!staticDir && config.devUrl) {
+      // `vp run dev --share --built` prints the pairing URL before its first
+      // web build lands in apps/web/dist. Reload until it does.
+      return HttpServerResponse.text(
+        '<!doctype html><meta http-equiv="refresh" content="2"><p>Waiting for the first web build. This page reloads by itself.</p>',
+        { status: 503, contentType: "text/html", headers: { "Retry-After": "2" } },
+      );
+    }
     if (!staticDir) {
       return HttpServerResponse.text("No static directory configured and no dev URL set.", {
         status: 503,

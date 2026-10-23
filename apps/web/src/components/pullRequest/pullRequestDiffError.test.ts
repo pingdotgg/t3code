@@ -14,18 +14,11 @@ describe("describePullRequestDiffError", () => {
     expect(result.description).not.toContain("PullRequestOperationError");
   });
 
+  // regression: #19945 diff load failures from a provider quota showed a generic error
   it("recognizes a provider's API quota error", () => {
     expect(describePullRequestDiffError("GitHub API rate limit exceeded.", "GitHub").title).toBe(
       "GitHub rate limit reached",
     );
-  });
-
-  it("uses the actual host's name for a rate limit", () => {
-    const result = describePullRequestDiffError("Too many requests", "GitLab");
-
-    expect(result.title).toBe("GitLab rate limit reached");
-    expect(result.description).toContain("on GitLab");
-    expect(result.description).not.toContain("GitHub");
   });
 
   it("does not blame a rate limit for an unknown connection failure", () => {

@@ -52,6 +52,7 @@ import {
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
+import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
@@ -302,6 +303,19 @@ export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ss
   },
 );
 
+const ANALYTICS_DEVICE_ID_KEY = "t3code:analytics-device-id";
+
+// Lives as long as this browser profile's site data. Storage can be blocked, which only drops the id.
+const analyticsDevice = {
+  id: Effect.try(() => {
+    const existing = window.localStorage.getItem(ANALYTICS_DEVICE_ID_KEY);
+    if (existing) return existing;
+    const created = randomUUID();
+    window.localStorage.setItem(ANALYTICS_DEVICE_ID_KEY, created);
+    return created;
+  }).pipe(Effect.option),
+};
+
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
@@ -391,6 +405,7 @@ const layerCapabilities = Layer.effectContext(
     });
 
     return Context.make(ClientCapabilities.CloudSession, cloudSession).pipe(
+      Context.add(ClientCapabilities.AnalyticsDevice, analyticsDevice),
       Context.add(ClientCapabilities.PrimaryEnvironmentAuth, primaryAuth),
       Context.add(ClientCapabilities.RelayDeviceIdentity, identity),
       Context.add(ClientCapabilities.ClientPresentation, presentation),
@@ -476,14 +491,14 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
-export function secondaryBearerExpiresAtEpochMs(
+function secondaryBearerExpiresAtEpochMs(
   issuedAtEpochMs: number,
   expiresInSeconds: number,
 ): number {
   return issuedAtEpochMs + Math.max(0, expiresInSeconds * 1_000);
 }
 
-export function secondaryBearerRefreshAtEpochMs(
+function secondaryBearerRefreshAtEpochMs(
   issuedAtEpochMs: number,
   expiresInSeconds: number,
 ): number {
@@ -512,7 +527,7 @@ export type PrimaryEnvironmentTargetRead =
       readonly cause: unknown;
     };
 
-export function readPrimaryEnvironmentTargetResult(
+function readPrimaryEnvironmentTargetResult(
   readTarget: () => PrimaryEnvironmentTarget | null = readPrimaryEnvironmentTarget,
 ): PrimaryEnvironmentTargetRead {
   try {
@@ -667,7 +682,7 @@ const layerPlatformConnectionSource = Layer.effect(
         }
       }
 
-      const topologyRead = yield* Effect.promise(readDesktopSecondaryBootstrapsResult);
+      const topologyRead = readDesktopSecondaryBootstrapsResult();
       for (const [id, cached] of secondaryRegistrationsToRetainAfterTopologyRead(
         previous,
         topologyRead,
@@ -797,11 +812,11 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
 const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
-    observe: ({ environmentId, method }) =>
+    observe: ({ environmentId, environmentLabel, method }) =>
       Effect.sync(() => {
         nextObservedRpcRequestId += 1;
         const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
-        trackRpcRequestSent(requestId, method, `${method} · ${environmentId}`);
+        trackRpcRequestSent(requestId, method, `${method} · ${environmentLabel}`);
         return Effect.sync(() => {
           acknowledgeRpcRequest(requestId);
         });

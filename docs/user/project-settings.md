@@ -109,6 +109,29 @@ same secret in the repository's webhook settings with content type
 up on desktop or web; mobile keeps an existing signature check but can't turn
 one on.
 
+To run only for some requests, add **Filters**. Each one tests a value named
+like a placeholder, without the braces, such as `headers.x-github-event` equals
+`pull_request` or `body.action` is one of `opened, reopened`. A task runs only
+when every filter matches; other requests are answered normally, logged as
+**Filtered** with the first filter that failed, and start nothing. Values
+compare as text, and a value that is an object or a list only passes
+**exists**. Separate **is one of** values with commas; a value can't contain
+a comma or start or end with a space.
+
+To suppress repeated deliveries, set a **Replay key** template, such as
+`{{headers.delivery-id}}`. The same key is ignored for seven days per task.
+To combine a burst, set a **Coalesce key**, such as `{{body.id}}`, and a window
+of 10–3600 seconds (120 by default). One run uses the latest body, headers,
+and query when the window from the first delivery closes; later requests
+do not extend it. Pending windows survive a server restart. Keys must contain
+request placeholders; if any placeholder is missing, or the render is empty,
+that key's rule is skipped. Clear the templates to turn dedupe off.
+
+Duplicate and coalesced log entries share a limit of 10 per task per minute.
+Additional deliveries are accepted without a log entry, and coalesced deliveries
+always replace the persisted payload. Coalesced updates count toward a separate
+60-per-minute validation limit; exceeding it receives HTTP 429.
+
 On desktop and web, pick **Deliveries** from a task's menu to see recent
 requests and the prompt each one produced.
 

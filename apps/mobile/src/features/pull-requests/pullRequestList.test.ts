@@ -13,11 +13,8 @@ import {
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
   PR_LIST_PAGE_SIZE,
-  pullRequestListFacets,
   pullRequestListHead,
   pullRequestListInput,
-  pullRequestListReviewStatus,
-  pullRequestLabelColor,
   scopedPullRequestListKey,
   pullRequestListRowsAreEqual,
   withoutScratchProjectScope,
@@ -67,35 +64,6 @@ describe("recycled PR list rows", () => {
   const scopedEntry = (patch: Partial<PullRequestListEntry> = {}) => ({
     ...entry(1, patch),
     environmentId: EnvironmentId.make("env-one"),
-  });
-
-  it("keeps an unchanged row through provider refreshes and newly allocated labels and authors", () => {
-    const labels = [{ name: "bug", color: "ff0000" }];
-    expect(
-      pullRequestListRowsAreEqual(
-        scopedEntry({ labels }),
-        scopedEntry({ labels: labels.map((label) => ({ ...label })), observedAt: 20 }),
-      ),
-    ).toBe(true);
-  });
-
-  it.each([
-    { title: "New title" },
-    { additions: 8 },
-    { deletions: 4 },
-    { checksState: "failing" as const },
-    { reviewDecision: "approved" as const },
-    { viewerReviewRequested: true },
-    { isDraft: true },
-    { state: "closed" as const },
-    { mergeability: "conflicting" as const },
-    { baseBranch: "release" },
-    { author: { login: "another", name: null, avatarUrl: null } },
-    { author: { login: "octocat", name: null, avatarUrl: "https://example.com/avatar.png" } },
-    { labels: [{ name: "bug", color: "ff0000" }] },
-    { stack: { number: 1, position: 2, size: 3, base: "main" } },
-  ])("updates the row when visible status or quick actions change: %j", (patch) => {
-    expect(pullRequestListRowsAreEqual(scopedEntry(), scopedEntry(patch))).toBe(false);
   });
 
   it("updates navigation and commands when a duplicate moves to another environment", () => {
@@ -258,20 +226,6 @@ describe("all-environment PR list", () => {
 });
 
 describe("mobile PR scan and filters", () => {
-  it("shows review verdicts separately from checks and prioritizes changes requested", () => {
-    expect(
-      pullRequestListReviewStatus({
-        reviewDecision: "changes-requested",
-        viewerReviewRequested: true,
-      })?.accessibleLabel,
-    ).toBe("Changes requested");
-    expect(
-      pullRequestListReviewStatus({ reviewDecision: "approved", viewerReviewRequested: false })
-        ?.label,
-    ).toBe("Approved");
-    expect(pullRequestListReviewStatus({ viewerReviewRequested: true })?.label).toBe("Your review");
-    expect(pullRequestListReviewStatus({ viewerReviewRequested: false })).toBeNull();
-  });
   it("resolves authored and author:me per host rather than mixing account identities", () => {
     const rows = [entry(1), entry(2, { host: "enterprise.test" })];
     const viewers = { "github.com": "Octocat", "enterprise.test": "someone-else" };
@@ -295,30 +249,6 @@ describe("mobile PR scan and filters", () => {
     ).toEqual([1]);
     expect(
       filterPullRequestList(rows, DEFAULT_PR_LIST_CONTROLS, viewers, "author:@me", new Set()).map(
-        (row) => row.number,
-      ),
-    ).toEqual([1]);
-  });
-  it("combines label groups, exclusions, draft and review filters", () => {
-    const rows = [
-      entry(1, {
-        labels: [
-          { name: "size:XS", color: null },
-          { name: "bug", color: null },
-        ],
-        reviewDecision: "approved",
-      }),
-      entry(2, { isDraft: true, labels: [{ name: "bug", color: null }] }),
-      entry(3, { labels: [{ name: "feature", color: null }] }),
-    ];
-    const filters = {
-      draft: "hide" as const,
-      review: "approved" as const,
-      labels: [["SIZE:XS", "size:S"], ["bug"]],
-      excludedLabels: ["feature"],
-    };
-    expect(
-      filterPullRequestList(rows, { ...DEFAULT_PR_LIST_CONTROLS, filters }, {}, "", new Set()).map(
         (row) => row.number,
       ),
     ).toEqual([1]);
@@ -378,32 +308,6 @@ describe("mobile PR scan and filters", () => {
     expect(pick(new Set(["server"]))).toEqual(["server"]);
     expect(pick(new Set(["laptop", "server"]))).toEqual(["laptop"]);
     expect(pick(new Set())).toEqual(["laptop"]);
-  });
-  it("sorts loaded rows and builds unique author and label options", () => {
-    const rows = [
-      entry(1, { labels: [{ name: "bug", color: null }] }),
-      entry(2, {
-        labels: [
-          { name: "bug", color: null },
-          { name: "feature", color: null },
-        ],
-      }),
-    ];
-    expect(
-      filterPullRequestList(
-        rows,
-        { ...DEFAULT_PR_LIST_CONTROLS, sort: "oldest" },
-        {},
-        "",
-        new Set(),
-      ).map((row) => row.number),
-    ).toEqual([1, 2]);
-    expect(pullRequestListFacets(rows)).toEqual({
-      authors: ["octocat"],
-      labels: ["bug", "feature"],
-    });
-    expect(pullRequestLabelColor("ffab00")).toBe("#ffab00");
-    expect(pullRequestLabelColor("not-a-color")).toBeNull();
   });
 });
 

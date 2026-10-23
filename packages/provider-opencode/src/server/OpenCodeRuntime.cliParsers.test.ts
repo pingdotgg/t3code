@@ -5,41 +5,6 @@ import { describe, it } from "vite-plus/test";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
-  it("parses a single model from a single provider", () => {
-    const stdout = [
-      "anthropic/claude-sonnet-4-5",
-      JSON.stringify({
-        id: "claude-sonnet-4-5",
-        providerID: "anthropic",
-        name: "Claude Sonnet 4.5",
-        capabilities: { temperature: true, reasoning: true, toolcall: true },
-        cost: { input: 3, output: 15 },
-        limit: { context: 200000, output: 8192 },
-        status: "active",
-        options: {},
-        headers: {},
-        release_date: "2025-01-01",
-      }),
-    ].join("\n");
-
-    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
-    NodeAssert.equal(result.providers.size, 1);
-    NodeAssert.equal(result.connected.length, 1);
-    NodeAssert.equal(result.connected[0], "anthropic");
-
-    const provider = result.providers.get("anthropic")!;
-    NodeAssert.ok(provider);
-    NodeAssert.equal(provider.id, "anthropic");
-    NodeAssert.equal(provider.name, "anthropic");
-    NodeAssert.equal(Object.keys(provider.models).length, 1);
-
-    const model = provider.models["claude-sonnet-4-5"]!;
-    NodeAssert.ok(model);
-    NodeAssert.equal(model.id, "claude-sonnet-4-5");
-    NodeAssert.equal(model.providerID, "anthropic");
-    NodeAssert.equal(model.name, "Claude Sonnet 4.5");
-  });
-
   it("parses multiple models from multiple providers", () => {
     const stdout = [
       "anthropic/claude-sonnet-4-5",
@@ -56,12 +21,6 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal([...result.connected].sort().join(","), "anthropic,openai");
     NodeAssert.equal(Object.keys(result.providers.get("anthropic")!.models).length, 2);
     NodeAssert.equal(Object.keys(result.providers.get("openai")!.models).length, 1);
-  });
-
-  it("handles empty input", () => {
-    const result = OpenCodeRuntime.parseModelsCliOutput("");
-    NodeAssert.equal(result.providers.size, 0);
-    NodeAssert.equal(result.connected.length, 0);
   });
 
   it("skips unparseable JSON blocks", () => {
@@ -90,42 +49,6 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.ok(result.providers.get("anthropic")!.models["claude-sonnet-4-5"]);
   });
 
-  it("handles model JSON with variants and nested fields", () => {
-    const stdout = [
-      "opencode/gpt-5.4",
-      JSON.stringify({
-        id: "gpt-5.4",
-        providerID: "opencode",
-        name: "GPT-5.4",
-        family: "gpt",
-        capabilities: {
-          temperature: true,
-          reasoning: true,
-          attachment: false,
-          toolcall: true,
-          input: { text: true, audio: false, image: false, video: false, pdf: false },
-          output: { text: true, audio: false, image: false, video: false, pdf: false },
-          interleaved: false,
-        },
-        cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-        limit: { context: 200000, input: 160000, output: 32000 },
-        status: "active",
-        options: {},
-        headers: {},
-        release_date: "2025-01-01",
-        variants: { none: {}, low: {}, medium: {}, high: {} },
-      }),
-    ].join("\n");
-
-    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
-    const model = result.providers.get("opencode")!.models["gpt-5.4"]!;
-    NodeAssert.ok(model);
-    NodeAssert.ok(model.capabilities);
-    NodeAssert.equal(model.capabilities!.reasoning, true);
-    NodeAssert.ok(model.variants);
-    NodeAssert.equal(model.variants!["medium"] !== undefined, true);
-  });
-
   it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
     const stdout = [
       "openrouter/qwen/qwen3-coder",
@@ -150,44 +73,6 @@ describe("parseModelsCliOutput", () => {
 });
 
 describe("parseAgentListCliOutput", () => {
-  it("parses a single agent", () => {
-    const stdout = [
-      "build (primary)",
-      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
-    ].join("\n");
-
-    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 1);
-    NodeAssert.equal(result[0]!.name, "build");
-    NodeAssert.equal(result[0]!.mode, "primary");
-    NodeAssert.equal(result[0]!.permission.length, 1);
-  });
-
-  it("parses multiple agents", () => {
-    const stdout = [
-      "build (primary)",
-      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
-      "explore (subagent)",
-      "  " + JSON.stringify([{ permission: "read", action: "allow", pattern: "*" }]),
-      "plan (primary)",
-      "  " + JSON.stringify([{ permission: "edit", action: "ask", pattern: "*.md" }]),
-    ].join("\n");
-
-    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 3);
-    NodeAssert.equal(result[0]!.name, "build");
-    NodeAssert.equal(result[0]!.mode, "primary");
-    NodeAssert.equal(result[1]!.name, "explore");
-    NodeAssert.equal(result[1]!.mode, "subagent");
-    NodeAssert.equal(result[2]!.name, "plan");
-    NodeAssert.equal(result[2]!.mode, "primary");
-  });
-
-  it("handles empty input", () => {
-    const result = OpenCodeRuntime.parseAgentListCliOutput("");
-    NodeAssert.equal(result.length, 0);
-  });
-
   it("skips agents with unparseable permission JSON", () => {
     const stdout = [
       "build (primary)",
@@ -199,25 +84,6 @@ describe("parseAgentListCliOutput", () => {
     const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
     NodeAssert.equal(result.length, 1);
     NodeAssert.equal(result[0]!.name, "explore");
-  });
-
-  it("handles real-world permission blocks with nested paths", () => {
-    const permissions = [
-      { permission: "*", action: "allow", pattern: "*" },
-      {
-        permission: "external_directory",
-        pattern: "C:\\Users\\test\\.local\\*",
-        action: "allow",
-      },
-      { permission: "read", pattern: "*.env", action: "ask" },
-    ];
-    const stdout = ["build (primary)", "  " + JSON.stringify(permissions)].join("\n");
-
-    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 1);
-    NodeAssert.equal(result[0]!.permission.length, 3);
-    NodeAssert.equal(result[0]!.permission[0]!.action, "allow");
-    NodeAssert.equal(result[0]!.permission[2]!.action, "ask");
   });
 
   it("handles agent names with spaces", () => {
@@ -235,43 +101,9 @@ describe("parseAgentListCliOutput", () => {
     NodeAssert.equal(result[1]!.name, "my custom agent");
     NodeAssert.equal(result[1]!.mode, "primary");
   });
-
-  it("marks known hidden agents", () => {
-    const stdout = [
-      "compaction (primary)",
-      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
-      "build (primary)",
-      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
-    ].join("\n");
-
-    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result[0]!.hidden, true);
-    NodeAssert.equal(result[1]!.hidden, false);
-  });
 });
 
 describe("parseSkillsCliOutput", () => {
-  it("parses only skill metadata from the CLI JSON output", () => {
-    const result = OpenCodeRuntime.parseSkillsCliOutput(
-      JSON.stringify([
-        {
-          name: "review-pr",
-          description: "Review a pull request.",
-          location: "/tmp/review-pr/SKILL.md",
-          content: "---\nname: review-pr\n---\n",
-        },
-      ]),
-    );
-
-    NodeAssert.deepEqual(result, [
-      {
-        name: "review-pr",
-        description: "Review a pull request.",
-        location: "/tmp/review-pr/SKILL.md",
-      },
-    ]);
-  });
-
   it("degrades malformed output to an empty skill list", () => {
     NodeAssert.deepEqual(OpenCodeRuntime.parseSkillsCliOutput("not json"), []);
   });

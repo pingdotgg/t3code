@@ -6,6 +6,7 @@ import {
   type ServerLifecycleStreamReadyEvent,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
+  shouldRecommendDatabaseCompaction,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -386,7 +387,9 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const persist = Effect.fn("EnvironmentServerConfigState.persist")(function* (
       config: ServerConfig,
     ) {
-      return yield* cache.saveServerConfig(environmentId, withoutEnvironmentThemes(config)).pipe(
+      // A cached stall would read as a fresh freeze on the next launch.
+      const { lastEventLoopStall: _stall, ...cacheable } = withoutEnvironmentThemes(config);
+      return yield* cache.saveServerConfig(environmentId, cacheable).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(
@@ -952,6 +955,34 @@ export function createServerEnvironmentAtoms<R, E>(
         : AsyncResult.success(result.value, result);
     }).pipe(Atom.withLabel(`environment-data:server:welcome:${environmentId}`)),
   );
+  const databaseStorage = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:database-storage",
+    tag: WS_METHODS.serverGetDatabaseStorage,
+    idleTtlMs: 0,
+  });
+  // Keyed by a JSON array of environment ids so one notice can list every machine.
+  const databaseCompactionRecommendations = Atom.family((environmentIdsKey: string) => {
+    const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) => ({
+      environmentId,
+      atom: databaseStorage({ environmentId, input: {} }),
+    }));
+    return Atom.make((get) =>
+      sources
+        .flatMap(({ environmentId, atom }) => {
+          const result = get(atom);
+          return result._tag === "Success" &&
+            result.value !== null &&
+            shouldRecommendDatabaseCompaction(result.value)
+            ? [{ environmentId, status: result.value }]
+            : [];
+        })
+        .sort((left, right) => right.status.reclaimableBytes - left.status.reclaimableBytes),
+    ).pipe(
+      Atom.withLabel(
+        `environment-data:server:database-compaction-recommendations:${environmentIdsKey}`,
+      ),
+    );
+  });
   const welcome = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -970,11 +1001,8 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
-    databaseStorage: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:server:database-storage",
-      tag: WS_METHODS.serverGetDatabaseStorage,
-      idleTtlMs: 0,
-    }),
+    databaseStorage,
+    databaseCompactionRecommendations,
     storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:storage-cleanup-report",
       tag: WS_METHODS.serverGetStorageCleanupReport,

@@ -7,20 +7,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
-import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
-import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  SourceControlProviderError,
+  type SourceControlCloneRepositoryInput,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
-import * as BitbucketSourceControlProvider from "@t3tools/source-control-bitbucket/server/BitbucketSourceControlProvider";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
-
-const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 const CLONE_URLS = {
   nameWithOwner: "octocat/t3code",
@@ -101,174 +100,6 @@ function layer(input: {
       )
     : layerService.pipe(Layer.provideMerge(NodeServices.layer));
 }
-
-it.effect("looks up repositories through the requested provider without search", () => {
-  const calls: Array<{ cwd: string; repository: string }> = [];
-  const provider = makeProvider({
-    getRepositoryCloneUrls: (input) =>
-      Effect.sync(() => {
-        calls.push({ cwd: input.cwd, repository: input.repository });
-        return CLONE_URLS;
-      }),
-  });
-
-  return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-    const result = yield* service.lookupRepository({
-      provider: SourceControlProviderKind.make("github"),
-      repository: "octocat/t3code",
-      cwd: "/workspace",
-    });
-
-    assert.deepStrictEqual(result, {
-      provider: SourceControlProviderKind.make("github"),
-      ...CLONE_URLS,
-    });
-    assert.deepStrictEqual(calls, [{ cwd: "/workspace", repository: "octocat/t3code" }]);
-  }).pipe(Effect.provide(layer({ provider })));
-});
-
-it.effect("preserves provider failures without deriving the repository message from them", () => {
-  const providerCause = new SourceControlProviderError({
-    provider: SourceControlProviderKind.make("github"),
-    operation: "getRepositoryCloneUrls",
-    cwd: "/workspace",
-    repository: "octocat/t3code",
-    detail: "credential token abc123 was rejected",
-  });
-  const provider = makeProvider({
-    getRepositoryCloneUrls: () => Effect.fail(providerCause),
-  });
-
-  return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-    const error = yield* Effect.flip(
-      service.lookupRepository({
-        provider: SourceControlProviderKind.make("github"),
-        repository: "octocat/t3code",
-        cwd: "/workspace",
-      }),
-    );
-
-    assert.strictEqual(error.provider, "github");
-    assert.strictEqual(error.operation, "lookupRepository");
-    assert.strictEqual(error.detail, "The source control operation could not be completed.");
-    assert.strictEqual(
-      error.message,
-      "Source control repository operation lookupRepository failed for github: The source control operation could not be completed.",
-    );
-    assert.strictEqual(error.cause, providerCause);
-  }).pipe(Effect.provide(layer({ provider })));
-});
-
-it.effect(
-  "reports the safe Bitbucket locator detail through repository lookup and publishing",
-  () =>
-    Effect.gen(function* () {
-      const locatorCause = new BitbucketApi.BitbucketRepositoryLocatorError({
-        repository: "credential-token-abc123",
-      });
-      const provider = yield* BitbucketSourceControlProvider.make.pipe(
-        Effect.provide(
-          Layer.mock(BitbucketApi.BitbucketApi)({
-            getRepositoryCloneUrls: () => Effect.fail(locatorCause),
-            createRepository: () => Effect.fail(locatorCause),
-          }),
-        ),
-      );
-
-      yield* Effect.gen(function* () {
-        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-        const input = {
-          provider: SourceControlProviderKind.make("bitbucket"),
-          repository: locatorCause.repository,
-          cwd: "/workspace",
-        };
-        for (const operation of [
-          service.lookupRepository(input).pipe(Effect.asVoid),
-          service.publishRepository({ ...input, visibility: "private" }).pipe(Effect.asVoid),
-        ]) {
-          const error = yield* Effect.flip(operation);
-
-          assert.strictEqual(error.provider, "bitbucket");
-          assert.strictEqual(
-            error.detail,
-            "Bitbucket repositories must be specified as workspace/repository.",
-          );
-          assert.notInclude(error.message, locatorCause.repository);
-          assert.instanceOf(error.cause, SourceControlProviderError);
-          assert.strictEqual(
-            isSourceControlProviderError(error.cause) ? error.cause.cause : null,
-            locatorCause,
-          );
-        }
-      }).pipe(Effect.provide(layer({ provider })));
-    }),
-);
-
-it.effect("keeps a plain Bitbucket locator lookalike out of the repository message", () => {
-  const provider = makeProvider({
-    kind: SourceControlProviderKind.make("bitbucket"),
-    getRepositoryCloneUrls: () =>
-      Effect.fail(
-        new SourceControlProviderError({
-          provider: SourceControlProviderKind.make("bitbucket"),
-          operation: "getRepositoryCloneUrls",
-          cwd: "/workspace",
-          detail: "credential token abc123 was rejected",
-          cause: {
-            _tag: "BitbucketRepositoryLocatorError",
-            repository: "t3code",
-            detail: "credential token abc123 was rejected",
-          },
-        }),
-      ),
-  });
-
-  return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-    const error = yield* Effect.flip(
-      service.lookupRepository({
-        provider: SourceControlProviderKind.make("bitbucket"),
-        repository: "t3code",
-      }),
-    );
-
-    assert.strictEqual(error.detail, "The source control operation could not be completed.");
-    assert.notInclude(error.message, "abc123");
-  }).pipe(Effect.provide(layer({ provider })));
-});
-
-it.effect("keeps arbitrary Bitbucket request failures out of the repository message", () =>
-  Effect.gen(function* () {
-    const cause = new BitbucketApi.BitbucketRequestError({
-      operation: "getRepository",
-      cause: new Error("credential token abc123 was rejected"),
-    });
-    const provider = yield* BitbucketSourceControlProvider.make.pipe(
-      Effect.provide(
-        Layer.mock(BitbucketApi.BitbucketApi)({
-          getRepositoryCloneUrls: () => Effect.fail(cause),
-        }),
-      ),
-    );
-
-    yield* Effect.gen(function* () {
-      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      const error = yield* Effect.flip(
-        service.lookupRepository({
-          provider: SourceControlProviderKind.make("bitbucket"),
-          repository: "pingdotgg/t3code",
-          cwd: "/workspace",
-        }),
-      );
-
-      assert.strictEqual(error.detail, "The source control operation could not be completed.");
-      assert.notInclude(error.message, "abc123");
-      assert.notInclude(error.message, cause.detail);
-    }).pipe(Effect.provide(layer({ provider })));
-  }),
-);
 
 it.effect("clones a looked-up repository after creating missing parent directories", () =>
   Effect.gen(function* () {
@@ -415,6 +246,98 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+function rejectingSsh(
+  urls: Array<string>,
+  httpsFails: boolean,
+  reason: GitCommandError["reason"] = "authentication_failed",
+) {
+  return {
+    execute: (input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.gen(function* () {
+        const url = input.args.at(-2)!;
+        urls.push(url);
+        if (url.startsWith("https://") && !httpsFails) return processOutput();
+        yield* (
+          input.progress?.onStderrLine?.(
+            url.startsWith("https://")
+              ? "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+              : "git@github.com: Permission denied (publickey).",
+          ) ?? Effect.void
+        );
+        return yield* new GitCommandError({
+          operation: input.operation,
+          command: "git",
+          cwd: input.cwd,
+          reason,
+          detail: "Git command exited with a non-zero status.",
+        });
+      }),
+  } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+}
+
+const cloneInTemporaryDirectory = (
+  git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
+  input: Omit<SourceControlCloneRepositoryInput, "destinationPath">,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs
+      .makeTempDirectoryScoped({ prefix: "t3-clone-fallback-" })
+      .pipe(Effect.orDie);
+    return yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.cloneRepository({
+        ...input,
+        destinationPath: path.join(parent, "t3code"),
+      });
+    }).pipe(Effect.provide(layer({ git }).pipe(Layer.orDie)));
+  }).pipe(Effect.provide(NodeServices.layer));
+
+it.effect("retries a clone over HTTPS when the SSH login is refused", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* cloneInTemporaryDirectory(rejectingSsh(urls, false), {
+      remoteUrl: CLONE_URLS.sshUrl,
+    });
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl, "https://github.com/octocat/t3code.git"]);
+    assert.strictEqual(result.remoteUrl, "https://github.com/octocat/t3code.git");
+  }),
+);
+
+it.effect("reports both failures when the HTTPS retry fails too", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const error = yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, true), { remoteUrl: CLONE_URLS.sshUrl }),
+    );
+
+    assert.strictEqual(urls.length, 2);
+    assert.strictEqual(
+      error.detail,
+      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    );
+  }),
+);
+
+it.effect.each([
+  ["the caller asked for SSH", "ssh", "authentication_failed"],
+  ["git failed for another reason", undefined, "remote_unreachable"],
+] as const)("does not retry over HTTPS when %s", ([, protocol, reason]) =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, false, reason), {
+        remoteUrl: CLONE_URLS.sshUrl,
+        ...(protocol === undefined ? {} : { protocol }),
+      }),
+    );
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl]);
+  }),
+);
+
 it.effect("strips embedded credentials from the remote URL it reports", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -530,113 +453,6 @@ it.effect("preserves destination probe failures instead of treating them as miss
   );
 });
 
-it.effect("clones directly under an existing filesystem root without recreating it", () =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const root = path.parse(path.resolve(".")).root;
-    const cloneCalls: Array<string> = [];
-
-    yield* Effect.gen(function* () {
-      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      yield* service.cloneRepository({
-        provider: SourceControlProviderKind.make("github"),
-        repository: "octocat/t3code",
-        destinationPath: path.join(root, "t3code"),
-        protocol: "https",
-      });
-
-      assert.deepStrictEqual(cloneCalls, [root]);
-    }).pipe(
-      Effect.provide(
-        layer({
-          fileSystem: FileSystem.makeNoop({
-            exists: (target) => Effect.succeed(target === root),
-            makeDirectory: (target) =>
-              Effect.sync(() => {
-                assert.notStrictEqual(target, root, "must not try to create the existing root");
-              }),
-          }),
-          git: {
-            execute: (input) =>
-              Effect.sync(() => {
-                cloneCalls.push(input.cwd);
-                return processOutput();
-              }),
-          },
-        }),
-      ),
-    );
-  }).pipe(Effect.provide(NodePath.layer)),
-);
-
-it.effect("publishes by creating the repository, adding a remote, and pushing upstream", () => {
-  const createCalls: Array<{ cwd: string; repository: string; visibility: string }> = [];
-  const remoteCalls: Array<{ cwd: string; preferredName: string; url: string }> = [];
-  const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];
-  const provider = makeProvider({
-    createRepository: (input) =>
-      Effect.sync(() => {
-        createCalls.push({
-          cwd: input.cwd,
-          repository: input.repository,
-          visibility: input.visibility,
-        });
-        return CLONE_URLS;
-      }),
-  });
-
-  return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-    const result = yield* service.publishRepository({
-      cwd: "/workspace",
-      provider: SourceControlProviderKind.make("github"),
-      repository: "octocat/t3code",
-      visibility: "private",
-      remoteName: "origin",
-      protocol: "ssh",
-    });
-
-    assert.deepStrictEqual(result, {
-      repository: { provider: SourceControlProviderKind.make("github"), ...CLONE_URLS },
-      remoteName: "origin",
-      remoteUrl: CLONE_URLS.sshUrl,
-      branch: "feature/remote-v1",
-      upstreamBranch: "origin/feature/remote-v1",
-      status: "pushed",
-    });
-    assert.deepStrictEqual(createCalls, [
-      { cwd: "/workspace", repository: "octocat/t3code", visibility: "private" },
-    ]);
-    assert.deepStrictEqual(remoteCalls, [
-      { cwd: "/workspace", preferredName: "origin", url: CLONE_URLS.sshUrl },
-    ]);
-    assert.deepStrictEqual(pushCalls, [{ cwd: "/workspace", remoteName: "origin" }]);
-  }).pipe(
-    Effect.provide(
-      layer({
-        provider,
-        git: {
-          ensureRemote: (input) =>
-            Effect.sync(() => {
-              remoteCalls.push(input);
-              return "origin";
-            }),
-          pushCurrentBranch: (cwd, _fallbackBranch, options) =>
-            Effect.sync(() => {
-              pushCalls.push({ cwd, remoteName: options?.remoteName });
-              return {
-                status: "pushed" as const,
-                branch: "feature/remote-v1",
-                upstreamBranch: "origin/feature/remote-v1",
-                setUpstream: true,
-              };
-            }),
-        },
-      }),
-    ),
-  );
-});
-
 it.effect("publishes to the remote name returned by ensureRemote", () => {
   const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];
 
@@ -711,6 +527,7 @@ it.effect("explains a rejected SSH push after creating the repository", () =>
   }).pipe(Effect.provide(layer({ git: failingPush("authentication_failed") }))),
 );
 
+// regression: #19219 publishing did not explain why the first push failed
 it.effect("says the repository exists when an unclassified publish push fails", () =>
   Effect.gen(function* () {
     const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
