@@ -2,7 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
   SourceControlDiscoveryResult,
@@ -17,7 +17,11 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
@@ -55,10 +59,12 @@ import {
   PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
+  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
+import { Input } from "../ui/input";
 import { searchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -504,6 +510,62 @@ function EmptySourceControlDiscovery({
   );
 }
 
+function parseRepositoryList(value: string): string[] {
+  const entries = new Map<string, string>();
+  for (const entry of value.split(/[\s,]+/)) {
+    if (entry.length > 0 && !entries.has(entry.toLowerCase()))
+      entries.set(entry.toLowerCase(), entry);
+  }
+  return [...entries.values()];
+}
+
+function HiddenPullRequestRepositoriesRow() {
+  const { targets } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["hiddenPullRequestRepositories"]);
+  const edited = useRef(false);
+  const hidden = settings.hiddenPullRequestRepositories;
+  const current = hidden.join(", ");
+  const scopeKey = targets.map((target) => target.environmentId).join(",");
+
+  return (
+    <SettingsRow
+      {...searchableSetting("pull-request-hidden-repositories")}
+      description="Leave these repositories out of the Pull Requests list unless you filter to their project. Use owner/name, separated by commas."
+      serverScoped
+      settingKeys={["hiddenPullRequestRepositories"]}
+      resetAction={
+        mixed || hidden.length > 0 ? (
+          <SettingResetButton
+            label="hidden repositories"
+            onClick={() => updateSettings({ hiddenPullRequestRepositories: [] })}
+          />
+        ) : null
+      }
+      control={
+        <Input
+          key={`${scopeKey}:${mixed}:${current}`}
+          aria-label="Hidden pull request repositories"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder={mixed ? "Mixed" : "None"}
+          defaultValue={mixed ? "" : current}
+          onChange={() => {
+            edited.current = true;
+          }}
+          onBlur={(event) => {
+            const next = parseRepositoryList(event.target.value);
+            if (edited.current && (mixed || next.join(", ") !== current))
+              updateSettings({ hiddenPullRequestRepositories: next });
+            edited.current = false;
+          }}
+        />
+      }
+    />
+  );
+}
+
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
 
@@ -639,6 +701,10 @@ export function SourceControlSettingsPanel() {
           onScan={handleScan}
         />
       )}
+
+      <SettingsSection title="Pull requests">
+        <HiddenPullRequestRepositoriesRow />
+      </SettingsSection>
 
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>

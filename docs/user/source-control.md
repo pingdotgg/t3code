@@ -170,6 +170,10 @@ Previously loaded lists, review details, guides, and diff pages remain readable 
 without a connection, including after restarting the app. Saved content refreshes when the
 environment reconnects; submitting changes requires a connection.
 
+To keep a busy repository from crowding the list, add it to **Hidden repositories** in
+Settings → Source Control, as `owner/name`. Its pull requests still appear when you filter to
+its project.
+
 Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
 agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
 co-authors stay credited. The setting is off by default and projects can override it. It also

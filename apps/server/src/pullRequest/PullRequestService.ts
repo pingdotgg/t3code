@@ -358,6 +358,26 @@ function listCursorKey(host: string, repository: string): string {
   return `${host} ${repository.toLowerCase()}`;
 }
 
+function normalizeRepositoryReference(reference: string): string {
+  return reference
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "");
+}
+
+export function isPullRequestRepositoryHidden(
+  hidden: ReadonlyArray<string>,
+  project: Pick<SupportedProject, "host" | "repository" | "repositoryKey">,
+): boolean {
+  if (hidden.length === 0) return false;
+  const repository = project.repository.toLowerCase();
+  const references = new Set([repository, `${project.host}/${repository}`]);
+  if (project.repositoryKey !== null) references.add(project.repositoryKey);
+  return hidden.some((entry) => references.has(normalizeRepositoryReference(entry)));
+}
+
 /**
  * A slice that ends on the same instant it began on has to keep the earlier rows excluded as
  * well as its own, or the read after it would hand them over again.
@@ -1091,7 +1111,18 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const involvement = input.involvement ?? "all";
     const continuation = yield* decodeCursors(input.cursors);
-    const { supported: projects, unimplemented, viewerRoots } = yield* listWorkspaceProjects(input);
+    const workspace = yield* listWorkspaceProjects(input);
+    const { unimplemented, viewerRoots } = workspace;
+    const hiddenRepositories =
+      input.projectId === undefined
+        ? yield* serverSettings.getSettings.pipe(
+            Effect.map((settings) => settings.hiddenPullRequestRepositories),
+            Effect.orElseSucceed((): ReadonlyArray<string> => []),
+          )
+        : [];
+    const projects = workspace.supported.filter(
+      (project) => !isPullRequestRepositoryHidden(hiddenRepositories, project),
+    );
     const projectCounts = new Map<string, number>();
     for (const { host } of projects) {
       projectCounts.set(host, (projectCounts.get(host) ?? 0) + 1);
