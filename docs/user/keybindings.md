@@ -75,6 +75,13 @@ In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return
 also sends. To make Return insert a new line instead, change the Return key
 behavior in Settings → Keyboard.
 
+## Android
+
+With a hardware keyboard, the composer works like the iPad one with `Ctrl` in
+place of `Cmd`: Return sends, `Shift+Return` inserts a new line, and
+`Ctrl+Return` also sends. The on-screen keyboard's Return always inserts a new
+line. Change the Return key behavior in Settings → Keyboard.
+
 ## Edit the configuration file
 
 Keybindings live on the environment's machine, in

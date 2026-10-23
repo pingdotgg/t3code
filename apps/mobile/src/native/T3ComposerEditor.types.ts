@@ -76,17 +76,13 @@ export interface ComposerEditorProps {
     readonly width: number;
     readonly height: number;
   }) => void;
-  /**
-   * Hardware-keyboard Return behavior on iOS. No-op on Android, which has no
-   * hardware Return handling.
-   */
+  /** Hardware-keyboard Return behavior. Soft keyboards always insert a newline. */
   readonly enterBehavior?: ComposerEnterBehavior;
   readonly submitTitle?: string;
   readonly alternateSubmitTitle?: string;
   /**
-   * `alternate` is true for the Command-modified chord, which sends using the
-   * opposite of the configured follow-up behavior. Always false on Android,
-   * which has no hardware Return handling.
+   * `alternate` is true for the Command-modified chord (Ctrl on Android),
+   * which sends using the opposite of the configured follow-up behavior.
    */
   readonly onSubmit?: (alternate: boolean) => void;
 }
