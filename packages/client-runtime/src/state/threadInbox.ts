@@ -54,6 +54,35 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   return sortNewestFirst(threads, timestamps);
 }
 
+type InboxSendSortInput = InboxThreadInput &
+  Pick<EnvironmentThreadShell, "latestUserMessageAt" | "latestUserAuthoredMessageAt">;
+
+/**
+ * Newest first by the last message the user sent. Agent activity never moves
+ * a row; creating, un-settling, or (with the Working section) a return does.
+ */
+export function sortInboxThreadsBySend<T extends InboxSendSortInput>(
+  threads: readonly T[],
+  observedReturnAt?: (thread: T) => number | undefined,
+): T[] {
+  const timestamps = new Map(
+    threads.map((thread) => [
+      thread,
+      Math.max(
+        toSortableTimestamp(thread.createdAt) ?? 0,
+        toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
+        toSortableTimestamp(
+          (thread.latestUserAuthoredMessageAt === undefined
+            ? thread.latestUserMessageAt
+            : thread.latestUserAuthoredMessageAt) ?? undefined,
+        ) ?? 0,
+        observedReturnAt?.(thread) ?? 0,
+      ),
+    ]),
+  );
+  return sortNewestFirst(threads, timestamps);
+}
+
 type WorkingSortInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "latestRun" | "latestUserAuthoredMessageAt"

@@ -156,6 +156,17 @@ needs you. Use the pen button on a folder, or right-click it, to start a thread 
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
 cannot drag threads, and the Working section is off. Each device keeps its own choice.
 
+### Sort the inbox by your last message (beta)
+
+Turn on **Settings → Labs → Sort inbox by last message** on web and desktop to order
+the active list by the last message you sent, newest first. Agent activity does not move a
+thread, so rows only change place when you send, create, or un-settle a thread. With the Working
+section also on, a thread that comes back to you moves to the top as well. Each device keeps its
+own choice.
+
+While this is on, you cannot drag or move threads within the active list. Your saved order
+returns when you turn it off.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
