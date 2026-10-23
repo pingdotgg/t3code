@@ -22,6 +22,11 @@ export interface AgentScopeShape {
   }) => Effect.Effect<AgentScopeCommand>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**
+   * Reaps processes left after the owning agent exits, including setsid
+   * descendants outside its process group. Preserves systemd OOM diagnosis.
+   */
+  readonly stop: (unit: string) => Effect.Effect<void>;
+  /**
    * Forgets the thread's scope. The session manager calls it before it opens
    * a provider session, so a scope only answers for the session that launched
    * it, even when the next session runs without one (Cursor, OpenCode).
@@ -32,12 +37,15 @@ export interface AgentScopeShape {
 export interface AgentScopeCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** The systemd scope the command runs in, for `stop`. */
+  readonly unit?: string | undefined;
 }
 
 export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/AgentScope", {
   defaultValue: () => ({
     wrap: ({ command, args }) => Effect.succeed({ command, args }),
     oomKilled: () => Effect.succeed(false),
+    stop: () => Effect.void,
     clear: () => Effect.void,
   }),
 });

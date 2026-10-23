@@ -19,6 +19,7 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { MuseSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -30,11 +31,12 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
-import type { MuseSdkHost } from "./sdk.ts";
+import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -87,8 +89,10 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   let notify: Parameters<MuseSdkHost["connection"]["onNotification"]>[0] = () => {};
   let sequence = 0;
   let sessionId = "";
+  const closing = pendingPromise<void>();
   let closeCount = 0;
   let closeGate: Promise<void> | undefined;
+  let onProcessExit: MuseSdkHostOptions["onProcessExit"];
   let history: MuseItem[] = [];
   const responses = new Map<
     string,
@@ -143,6 +147,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
     exited: exited.promise,
     close: async () => {
       closeCount += 1;
+      closing.resolve();
       await closeGate;
       closed.resolve();
       exited.resolve({ code: 0, signal: null });
@@ -152,6 +157,11 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
     host,
     calls,
     closeCount: () => closeCount,
+    closing: closing.promise,
+    observeProcessExit: (callback: MuseSdkHostOptions["onProcessExit"]) => {
+      onProcessExit = callback;
+    },
+    exitProcess: () => Effect.sync(() => onProcessExit?.({ code: 1, signal: null })),
     holdClose: (gate: Promise<void>) => {
       closeGate = gate;
     },
@@ -204,7 +214,11 @@ const makeHarness = Effect.fnUntraced(function* (
     instanceId,
     settings: museSettings,
     environment: { PATH: "/fake/bin" },
-    createHost: async () => (hostCount++ === 0 ? fake.host : (replacement ?? fake).host),
+    createHost: async (options) => {
+      const selected = hostCount++ === 0 ? fake : (replacement ?? fake);
+      selected.observeProcessExit(options.onProcessExit);
+      return selected.host;
+    },
     ...overrides,
   });
   const runtime = yield* adapter.openSession({
@@ -751,6 +765,57 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect.each(["normal", "inherited pipe"] as const)(
+    "closes its SDK host exactly once on session teardown with %s shutdown",
+    (shutdown) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const pipeClosed = pendingPromise<void>();
+        if (shutdown === "inherited pipe") fake.holdClose(pipeClosed.promise);
+        let hostExited = false;
+        void fake.host.exited.then(() => {
+          hostExited = true;
+        });
+        const stopped: Array<{ unit: string; hostExited: boolean }> = [];
+        const release = makeHarness(fake).pipe(
+          Effect.scoped,
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({ command, args, unit: "t3code-muse-test.scope" }),
+            stop: (unit) =>
+              Effect.sync(() => {
+                stopped.push({ unit, hostExited });
+                pipeClosed.resolve();
+              }),
+          }),
+        );
+        if (shutdown === "inherited pipe") {
+          yield* Effect.gen(function* () {
+            const releasing = yield* release.pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Effect.promise(() => fake.closing);
+            yield* TestClock.adjust("12999 millis");
+            assert.strictEqual(fake.closeCount(), 1);
+            assert.deepStrictEqual(stopped, []);
+            yield* TestClock.adjust("1 millis");
+            assert.deepStrictEqual(
+              [...stopped],
+              [{ unit: "t3code-muse-test.scope", hostExited: false }],
+            );
+            yield* Fiber.join(releasing);
+          }).pipe(Effect.ensuring(Effect.sync(() => pipeClosed.resolve())));
+        } else {
+          yield* release;
+        }
+        assert.strictEqual(fake.closeCount(), 1);
+        assert.deepStrictEqual(stopped, [
+          { unit: "t3code-muse-test.scope", hostExited: shutdown === "normal" },
+        ]);
+        yield* Effect.promise(() => fake.host.exited);
+        assert.isTrue(hostExited);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect(
     "closes a newly opened host when native session registration returns another identity",
     () =>
@@ -766,6 +831,76 @@ describe("MuseAdapterV2", () => {
         assert.strictEqual(fake.closeCount(), 1);
         assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 0);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "settles an active turn and reaps its scope on raw exit before inherited stdio closes",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const pipeClosed = pendingPromise<void>();
+        fake.holdClose(pipeClosed.promise);
+        const stopped = yield* Deferred.make<void>();
+        const units: string[] = [];
+        let hostExited = false;
+        let connectionClosed = false;
+        void fake.host.exited.then(() => {
+          hostExited = true;
+        });
+        void fake.host.connection.closed.then(() => {
+          connectionClosed = true;
+        });
+        yield* Effect.gen(function* () {
+          const harness = yield* makeHarness(fake);
+          const { nativeId } = yield* startConversation(harness, fake);
+          yield* fake.emit("approval/requested", approval(nativeId));
+          yield* harness.takeEvent(
+            "runtime_request.updated",
+            (event) => event.runtimeRequest.status === "pending",
+          );
+          yield* fake.exitProcess();
+          yield* Deferred.await(stopped);
+          assert.deepStrictEqual(units, ["t3code-muse-exit.scope"]);
+          const terminal = yield* harness.takeEvent("turn.terminal");
+          assert.strictEqual(terminal.status, "failed");
+          assert.strictEqual(terminal.threadDisposition, "broken");
+          assert.isFalse(hostExited);
+          assert.isFalse(connectionClosed);
+          assert.isTrue(
+            harness.allEvents.some(
+              (event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "cancelled",
+            ),
+          );
+          pipeClosed.resolve();
+          yield* fake.disconnect();
+          yield* Deferred.await(harness.eventsEnded);
+          const result = yield* harness.runtime
+            .startTurn(yield* turnInput(harness.providerThread, 2))
+            .pipe(Effect.exit);
+          assert.strictEqual(result._tag, "Failure");
+          assert.strictEqual(
+            harness.allEvents.filter((event) => event.type === "turn.terminal").length,
+            1,
+          );
+          assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 1);
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => pipeClosed.resolve())),
+          Effect.scoped,
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({ command, args, unit: "t3code-muse-exit.scope" }),
+            stop: (unit) =>
+              Effect.gen(function* () {
+                units.push(unit);
+                yield* Deferred.succeed(stopped, undefined);
+              }),
+          }),
+        );
+        assert.deepStrictEqual(units, ["t3code-muse-exit.scope"]);
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("settles an active turn once when both the connection and host exit unexpectedly", () =>

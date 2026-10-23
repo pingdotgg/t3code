@@ -323,14 +323,18 @@ const CLAUDE_GROUP_WATCH_SCRIPT = [
  * When the CLI exits it stops the MCP servers it started, but not their children: a plugin's
  * `bun run start` wrapper dies and its `bun server.ts` keeps running, writing to a pipe nobody
  * reads (#3089). Those stay in the CLI's group, so the rest of the group gets SIGKILL once the
- * CLI exits for any reason.
+ * CLI exits for any reason. `onExit` then stops the CLI's agent scope, for daemons a tool
+ * detached from the group with setsid.
  *
  * That cleanup needs this server alive, and the CLI finishes its turn after its pipes close. A
  * server that crashes or is killed would leave the CLI working next to the session it resumes
  * (#23370), so a watcher in the group reads a pipe only this server holds and stops the group at
  * its end-of-file.
  */
-export function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
+export function spawnClaudeProcessGroup(
+  options: ClaudeSpawnOptions,
+  onExit?: () => void,
+): ClaudeSpawnedProcess {
   const child = NodeChildProcess.spawn(
     "/bin/sh",
     ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
@@ -346,6 +350,7 @@ export function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpaw
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
     } catch {}
+    onExit?.();
   });
   // Node's typings make stdin and stdout nullable once stdio has a fourth entry; both are pipes.
   return child as ClaudeSpawnedProcess;
@@ -892,6 +897,7 @@ export const layerQueryRunner: Layer.Layer<
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
+    const runFork = Effect.runForkWith(yield* Effect.context<never>());
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto
@@ -942,10 +948,16 @@ export const layerQueryRunner: Layer.Layer<
                 pathToClaudeCodeExecutable: launch.command,
                 executableArgs: [...launch.args, ...(queryOptions.executableArgs ?? [])],
               };
+        const unit = launch?.unit;
+        const stopScope =
+          unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
         // Windows has no process groups, so there the SDK spawns the CLI itself.
         const spawnClaudeCodeProcess =
           options.spawnClaudeCodeProcess ??
-          (platform === "win32" ? undefined : spawnClaudeProcessGroup);
+          (platform === "win32"
+            ? undefined
+            : (spawnOptions: ClaudeSpawnOptions) =>
+                spawnClaudeProcessGroup(spawnOptions, stopScope));
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>

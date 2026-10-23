@@ -1,4 +1,4 @@
-import { MspError, type SendUserTurnOptions } from "@muse-code/sdk";
+import { MspError, type ProcessExit, type SendUserTurnOptions } from "@muse-code/sdk";
 import {
   MUSE_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -1678,6 +1678,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           threadId: input.threadId,
           env: environment,
         });
+        // Finalizers run in reverse order: reap detached work after closing the host.
+        const scopeUnit = launch.unit;
+        const stopScope =
+          scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+        yield* Scope.addFinalizer(scope, stopScope);
+        const processExited = yield* Deferred.make<ProcessExit>();
+        // Observe raw exit before acquisition: inherited stdout can also block startup cleanup.
+        yield* Deferred.await(processExited).pipe(Effect.andThen(stopScope), Effect.forkIn(scope));
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
@@ -1686,6 +1694,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               cwd,
               environment,
               runtimeMode: input.runtimePolicy.runtimeMode,
+              onProcessExit: (exit) => {
+                Deferred.doneUnsafe(processExited, Effect.succeed(exit));
+              },
             },
             options.createHost,
           ).pipe(
@@ -1704,7 +1715,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 closed = true;
                 hostEpoch++;
               }
-              yield* Effect.tryPromise(() => created.close()).pipe(Effect.ignore);
+              const close = Effect.tryPromise(() => created.close());
+              // SDK shutdown sends SIGKILL after 10s + 2s, but inherited pipes can
+              // keep its close promise pending. Let the scope reap those holders.
+              yield* (
+                scopeUnit === undefined
+                  ? close
+                  : close.pipe(Effect.interruptible, Effect.timeoutOption("13 seconds"))
+              ).pipe(Effect.ignore);
             }),
           { interruptible: true },
         ).pipe(Effect.provideService(Scope.Scope, scope));
@@ -1733,7 +1751,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               epoch,
             });
         });
-        void created.exited.then((exit) => {
+        const reportExit = (exit: ProcessExit) => {
           if (!closed && epoch === hostEpoch) {
             const reason = created
               .stderrTail?.()
@@ -1747,7 +1765,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               epoch,
             });
           }
-        });
+        };
+        void created.exited.then(reportExit);
+        yield* Deferred.await(processExited).pipe(
+          Effect.tap((exit) => Effect.sync(() => reportExit(exit))),
+          Effect.forkIn(scope),
+        );
       });
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {

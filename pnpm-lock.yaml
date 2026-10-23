@@ -350,6 +350,7 @@ patchedDependencies:
   '@expo/ui@58.0.20': 5a26480373850c1a7943919aa21f904151b335a0cb01042109e0746def37923e
   '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
   '@legendapp/list@3.3.5': 011a862a7116ec5b5f4bba17d37bc58c9b5a8f64a6a9f527345f316ce9c96e63
+  '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.5.2': 2ec81ba1e8ce4681095a3473c2bf78e630417740c622720ef624febb467c25fc
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': a4866ecfcd44f318043de839d20110c17e14909004900f002ffe12050376f2ba
@@ -850,7 +851,7 @@ importers:
         version: 0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)
       '@muse-code/sdk':
         specifier: 1.4.6
-        version: 1.4.6(@types/node@24.12.4)
+        version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
@@ -1613,7 +1614,7 @@ importers:
     dependencies:
       '@muse-code/sdk':
         specifier: 1.4.6
-        version: 1.4.6(@types/node@24.12.4)
+        version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -14706,7 +14707,7 @@ snapshots:
       sparse-bitfield: 3.0.3
     optional: true
 
-  '@muse-code/sdk@1.4.6(@types/node@24.12.4)':
+  '@muse-code/sdk@1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)':
     optionalDependencies:
       '@types/node': 24.12.4
 
