@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export interface VcsProcessInput {
@@ -67,6 +68,27 @@ export const GIT_INDEX_LOCKED_DETAIL =
   "Git's index is locked. Wait for other Git operations to finish, then try again.";
 
 export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureCheckpoint";
+
+// Caller operations are diagnostic strings; only known labels may become metric attributes.
+const gitMetricOperations = new Set([
+  CHECKPOINT_CAPTURE_OPERATION,
+  "GitVcsDriver.checkpoints.deleteCheckpointRefs",
+  "GitVcsDriver.checkpoints.diffCheckpoints",
+  "GitVcsDriver.checkpoints.hasHeadCommit",
+  "GitVcsDriver.checkpoints.listAuthoredPaths",
+  "GitVcsDriver.checkpoints.resolveCheckpointCommit",
+  "GitVcsDriver.checkpoints.resolveGitCommonDir",
+  "GitVcsDriver.checkpoints.resolveHeadCommit",
+  "GitVcsDriver.checkpoints.restoreCheckpoint",
+  "GitVcsDriver.detectRepository.commonDir",
+  "GitVcsDriver.detectRepository.root",
+  "GitVcsDriver.filterIgnoredPaths",
+  "GitVcsDriver.initRepository",
+  "GitVcsDriver.isInsideWorkTree",
+  "GitVcsDriver.listRemotes",
+  "GitVcsDriver.listWorkspaceFiles",
+  "GitVcsDriver.resolveGitCommonDir",
+]);
 
 /**
  * Appends `key=value` to the `GIT_CONFIG_*` entries git reads as command-line
@@ -184,8 +206,12 @@ export const make = Effect.gen(function* () {
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
-  const spawn = (input: VcsProcessInput, baseError: VcsProcessErrorContext) =>
-    processRunner
+  const spawn = Effect.fn("VcsProcess.spawn")(function* (
+    input: VcsProcessInput,
+    baseError: VcsProcessErrorContext,
+  ) {
+    let failedExit = false;
+    const execution = processRunner
       .run({
         command: input.command,
         args: input.args,
@@ -204,6 +230,10 @@ export const make = Effect.gen(function* () {
         timeoutBehavior: "error",
       })
       .pipe(
+        Effect.tap((result) => {
+          failedExit = result.code === null || (!input.allowNonZeroExit && result.code !== 0);
+          return Effect.void;
+        }),
         Effect.mapError(
           Match.valueTags({
             ProcessSpawnError: (error) =>
@@ -232,6 +262,22 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
+
+    return yield* input.command === "git"
+      ? execution.pipe(
+          withMetrics({
+            counter: gitCommandsTotal,
+            timer: gitCommandDuration,
+            attributes: {
+              operation: gitMetricOperations.has(input.operation) ? input.operation : "other",
+            },
+            outcomeAttributes: (outcome) => ({
+              outcome: outcome === "success" && failedExit ? "failure" : outcome,
+            }),
+          }),
+        )
+      : execution;
+  });
 
   const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
     const baseError = {
