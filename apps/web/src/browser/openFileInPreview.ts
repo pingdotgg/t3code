@@ -54,16 +54,28 @@ export type OpenPreviewMutation<E = unknown> = (input: {
   readonly input: PreviewOpenInput;
 }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
+/**
+ * False once the caller has left the thread it started in. Work that has not
+ * asked the server for a browser by then ends as an interruption. A browser the
+ * server already opened is still applied to the thread it was opened for, so
+ * its session never lingers unseen.
+ */
+type ScopeCheck = (() => boolean) | undefined;
+
+const leftScope = (isScopeCurrent: ScopeCheck) => isScopeCurrent?.() === false;
+
 export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
   readonly profileId?: PreviewOpenInput["profileId"];
   readonly background?: boolean;
+  readonly isScopeCurrent?: ScopeCheck;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
+  if (leftScope(input.isScopeCurrent)) return AsyncResult.failure(Cause.interrupt());
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
@@ -115,6 +127,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     readonly input: { readonly resource: AssetResource };
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
+  readonly isScopeCurrent?: ScopeCheck;
 }): Promise<
   AtomCommandResult<
     void,
@@ -142,6 +155,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       },
     },
   });
+  if (leftScope(input.isScopeCurrent)) return AsyncResult.failure(Cause.interrupt());
   if (assetResult._tag === "Failure") {
     return AsyncResult.failure(assetResult.cause);
   }
@@ -155,5 +169,6 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     threadRef: input.threadRef,
     url: assetUrl,
     openPreview: input.openPreview,
+    isScopeCurrent: input.isScopeCurrent,
   });
 }

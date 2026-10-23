@@ -172,6 +172,7 @@ import { cn } from "../../lib/cn";
 import {
   deriveCenteredContentHorizontalPadding,
   deriveThreadFeedInitialContentInset,
+  deriveThreadFeedTopGeometry,
   deriveThreadWorkLogSizing,
   type LayoutVariant,
 } from "../../lib/layout";
@@ -343,6 +344,8 @@ export interface ThreadFeedProps {
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly keyboardOffset: number;
   readonly contentTopInset?: number;
+  /** Height of UI floating over the feed's top edge below the header (the status strip). */
+  readonly topOverlayInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly contentMaxWidth?: number;
@@ -2142,6 +2145,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const anchorTopInset = usesNativeAutomaticInsets
     ? (navigationHeaderHeight ?? insets.top + IOS_NAV_BAR_HEIGHT)
     : topContentInset;
+  const feedTop = deriveThreadFeedTopGeometry({
+    usesNativeAutomaticInsets,
+    headerInset: anchorTopInset,
+    topOverlayInset: props.topOverlayInset ?? 0,
+  });
 
   const theme = useUniwindTheme();
   const iconSubtleColor = theme["--color-icon-subtle"];
@@ -2658,7 +2666,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     presentedFeed,
     props.anchorMessageId,
     (entry) => (entry.type === "message" ? entry.id : null),
-    { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
+    { anchorOffset: feedTop.anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
   const terminalAssistantMessageIds = (() => {
@@ -3091,7 +3099,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             scrollEventThrottle={16}
             ListHeaderComponent={
               <>
-                {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {feedTop.spacerHeight > 0 ? (
+                  <View style={{ height: feedTop.spacerHeight }} />
+                ) : null}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
                 ) : null}

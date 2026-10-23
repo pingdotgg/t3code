@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { DiffFileHeaderSkeleton } from "../DiffPanelShell";
+import { DiffFileHeaderSkeleton } from "./DiffLoadingState";
 
 export function DiffFileLoadingBoundary({ load, count }: { load: () => void; count: number }) {
   const ref = useRef<HTMLDivElement>(null);

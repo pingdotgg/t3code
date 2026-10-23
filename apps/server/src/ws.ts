@@ -88,7 +88,7 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  EnvironmentAuthorizationError,
+  type EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -96,6 +96,8 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsCoreRpcGroup,
+  WsPluginRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import {
@@ -120,6 +122,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -219,6 +222,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
@@ -548,12 +552,14 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
+const ServerWsPluginRpcGroup = WsPluginRpcGroup.middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
-type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
+type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsCoreRpcGroup>;
 const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
@@ -563,7 +569,7 @@ const isSplitWsRpc = (rpc: ServerWsRpc): rpc is SplitWsRpc =>
   SPLIT_WS_RPC_PREFIXES.some((prefix) => rpc._tag.startsWith(`${prefix}.`));
 const isOtherWsRpc = (rpc: ServerWsRpc): rpc is Exclude<ServerWsRpc, SplitWsRpc> =>
   !isSplitWsRpc(rpc);
-const serverWsRpcs = Array.from(ServerWsRpcGroup.requests.values());
+const serverWsRpcs = Array.from(ServerWsCoreRpcGroup.requests.values());
 const SplitWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isSplitWsRpc));
 const OtherWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isOtherWsRpc));
 // Replaying each intervening event costs a shell refetch; past this gap a
@@ -1215,6 +1221,24 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+// The plugin RPCs' handlers; see `WsPluginRpcGroup` for why they are a layer of their own.
+const layerWsPluginRpc = ServerWsPluginRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const pluginCatalog = yield* PluginCatalog.PluginCatalog;
+    return ServerWsPluginRpcGroup.of({
+      [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
+      [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
+      [WS_METHODS.pluginsAdd]: (input) => pluginCatalog.add(input),
+      [WS_METHODS.pluginsRefresh]: (input) => pluginCatalog.refresh(input),
+      [WS_METHODS.pluginsConsent]: (input) => pluginCatalog.consent(input),
+      [WS_METHODS.pluginsEnable]: (input) => pluginCatalog.enable(input),
+      [WS_METHODS.pluginsDisable]: (input) => pluginCatalog.disable(input),
+      [WS_METHODS.pluginsRemove]: (input) => pluginCatalog.remove(input),
+      [WS_METHODS.pluginsResume]: (input) => pluginCatalog.resume(input),
+    });
+  }),
+);
+
 export const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1351,6 +1375,7 @@ export const layerWsRpc = (
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const contributionStatus = yield* ContributionStatusStore.ContributionStatusStore;
       const relayClient = yield* RelayClient.RelayClient;
       // A webhook URL starts agent runs, so only sessions that may operate
       // see it; read-only sessions still see the task itself.
@@ -1854,7 +1879,7 @@ export const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsCoreRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3173,6 +3198,8 @@ export const layerWsRpc = (
               Stream.concat(Stream.make(latest), changes),
             ),
           ),
+        [WS_METHODS.subscribeContributionStatus]: (_input) =>
+          ContributionStatusStore.subscriptionStream(contributionStatus),
       });
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
       const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
@@ -3182,7 +3209,7 @@ export const layerWsRpc = (
         yield* OtherWsRpcGroup.toHandlers(otherHandlers),
       );
     }),
-  );
+  ).pipe(Layer.merge(layerWsPluginRpc));
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.

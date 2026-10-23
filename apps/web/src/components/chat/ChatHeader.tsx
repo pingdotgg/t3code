@@ -37,6 +37,7 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
+import { ThreadContributionStatus } from "./ThreadContributionStatus";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -406,6 +407,12 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? (
+        <ThreadContributionStatus
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
+      ) : null}
     </div>
   );
 });

@@ -3,7 +3,6 @@ import {
   AuthPreviewOperateScope,
   type EditorId,
   type EnvironmentId,
-  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
@@ -31,12 +30,13 @@ import {
 } from "@pierre/diffs/edit";
 import type { WorkerPoolManager } from "@pierre/diffs/worker";
 import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
-import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
@@ -64,23 +64,29 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
-import { AttachmentFilePreview } from "./AttachmentFilePreview";
-import { AudioPreview } from "./AudioPreview";
-import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
-import { DelimitedTablePreview } from "./DelimitedTablePreview";
-import FileBrowserPanel from "./FileBrowserPanel";
-import { FileBreadcrumbs } from "./FileBreadcrumbs";
-import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
-import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { AttachmentFilePreview } from "~/components/files/AttachmentFilePreview";
+import { AudioPreview } from "~/components/files/AudioPreview";
+import { BrowserDocumentFrame, isPdfPreviewFile } from "~/components/files/BrowserDocumentFrame";
+import { DelimitedTablePreview } from "~/components/files/DelimitedTablePreview";
+import FileBrowserPanel from "~/components/files/FileBrowserPanel";
+import { FileBreadcrumbs } from "~/components/files/FileBreadcrumbs";
+import { FileMarkdownPreview } from "~/components/files/FileMarkdownPreview";
+import {
+  breadcrumbPathOf,
+  retainedBreadcrumbTrail,
+  trailChildOf,
+} from "~/components/files/filePath";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -89,8 +95,8 @@ import {
   nextFileCommentId,
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
-} from "./fileCommentAnnotations";
-import { installFileEditorDismissal } from "./fileEditorDismissal";
+} from "~/components/files/fileCommentAnnotations";
+import { installFileEditorDismissal } from "~/components/files/fileEditorDismissal";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -98,11 +104,11 @@ import {
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
-} from "./fileSurfaceChrome";
-import SourceFilePreview from "./ReadOnlySourcePreview";
-import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
-import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
-import { projectFileCacheKey } from "./fileContentRevision";
+} from "~/components/files/fileSurfaceChrome";
+import SourceFilePreview from "~/components/files/ReadOnlySourcePreview";
+import { resolveCenteredFileLineScrollTop } from "~/components/files/fileLineReveal";
+import { DiffCommentAnnotation } from "~/components/diffs/DiffCommentAnnotation";
+import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -110,36 +116,33 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
-} from "./filePreviewMode";
-import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+} from "~/components/files/filePreviewMode";
+import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
   getProjectFileContents,
   setProjectFileQueryData,
   useProjectFileQuery,
-} from "./projectFilesQueryState";
+} from "~/components/files/projectFilesQueryState";
 
-interface FilePreviewPanelProps {
-  environmentId: EnvironmentId;
+import { usePanelHost } from "../panelHost";
+import { useScopedComposerInsert, useScopeLifetime } from "./fileScope";
+
+interface FilesSidePanelProps {
   cwd: string;
   projectName: string;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
-  threadRef: ScopedThreadRef;
-  composerDraftTarget: ScopedThreadRef | DraftId;
-  keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInShortcutEnabled: boolean;
   revealLine: number | null;
   revealRequestId: number;
-  onOpenFile: (relativePath: string) => void;
   /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
   /** The deeper path breadcrumbs keep after the browser moved up; see `navigateFolder`. */
   folderTrail: string | undefined;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   selectedFilePending: boolean;
-  workspaceMutationId: string | null;
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -985,26 +988,38 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
-  environmentId,
+// Renders both the Files explorer surface and single file surfaces.
+export default function FilesSidePanel({
   cwd,
   projectName,
   relativePath: requestedPath,
   attachment,
-  threadRef,
-  composerDraftTarget,
-  keybindings,
   availableEditors,
   openInShortcutEnabled,
   revealLine,
   revealRequestId,
-  onOpenFile,
   onNavigateFolder,
   folderTrail,
   onPendingChange,
   selectedFilePending,
-  workspaceMutationId,
-}: FilePreviewPanelProps) {
+}: FilesSidePanelProps) {
+  const { threadRef, composerDraftTarget, workspaceMutationId } = usePanelHost();
+  const environmentId = threadRef.environmentId;
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const onOpenFile = (path: string) => useRightPanelStore.getState().openFile(threadRef, path);
+  // Menu actions settle late; they are dropped once the host moves to another
+  // thread or draft, never applied to the newer one.
+  const isScopeCurrent = useScopeLifetime(
+    `${scopedThreadKey(threadRef)}|${
+      typeof composerDraftTarget === "string"
+        ? composerDraftTarget
+        : scopedThreadKey(composerDraftTarget)
+    }`,
+  );
+  const addToChat = useScopedComposerInsert(isScopeCurrent);
+  // Opening a browser belongs to the thread, not the draft: entering or
+  // leaving queued-message editing keeps the thread on screen.
+  const isThreadVisitCurrent = useScopeLifetime(scopedThreadKey(threadRef));
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
@@ -1189,13 +1204,19 @@ export default function FilePreviewPanel({
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
+        isScopeCurrent: isThreadVisitCurrent,
         filePath: absolutePath,
         workspaceRoot: cwd,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
         openPreview,
       });
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+      // Errors are reported only to the visit that started the open.
+      if (
+        result._tag === "Success" ||
+        isAtomCommandInterrupted(result) ||
+        !isThreadVisitCurrent()
+      ) {
         return;
       }
       const error = squashAtomCommandFailure(result);
@@ -1481,6 +1502,7 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
+              addToChat={addToChat}
               {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}

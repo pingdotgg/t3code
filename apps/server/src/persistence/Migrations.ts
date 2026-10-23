@@ -1,6 +1,7 @@
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import { reconcilePluginPreviewMigrations } from "./reconcilePluginPreviewMigrations.ts";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -71,6 +72,7 @@ import Migration0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
 import Migration0067 from "./Migrations/067_WebhookDedupe.ts";
 import Migration0068 from "./Migrations/068_ShellStopRequestIndex.ts";
+import Migration0069 from "./Migrations/069_PluginInstallations.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -142,6 +144,7 @@ const migrationEntries = [
   [66, "RepairClientSettlementTimestamps", Migration0066],
   [67, "WebhookDedupe", Migration0067],
   [68, "ShellStopRequestIndex", Migration0068],
+  [69, "PluginInstallations", Migration0069],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -207,11 +210,15 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+  const pluginMigrations = includesV2
+    ? yield* reconcilePluginPreviewMigrations(migrationManifest, toMigrationInclusive)
+    : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const executedMigrations = [
     ...previewMigrations,
+    ...pluginMigrations,
     ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
   ];
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
