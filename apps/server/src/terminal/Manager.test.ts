@@ -803,6 +803,31 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    { name: "OSC", sequence: "\u001b]0;unfinished" },
+    { name: "DCS", sequence: "\u001bPunfinished" },
+    { name: "CSI", sequence: "\u001b[5" },
+    { name: "C1 OSC", sequence: "\u009d0;unfinished" },
+    { name: "C1 DCS", sequence: "\u0090unfinished" },
+    { name: "C1 CSI", sequence: "\u009b5" },
+  ])("keeps output after a cancelled $name sequence in history", ({ sequence }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      for (const cancel of ["\u0018", "\u001a"]) {
+        process.emitData(sequence);
+        process.emitData(cancel);
+        process.emitData("next line\n");
+      }
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history).toContain("next line\n");
+      expect(reopened.history.match(/next line/g)).toHaveLength(2);
+    }),
+  );
+
   it.effect(
     "preserves chunk-split ESC sequences with intermediate bytes without leaking final bytes",
     () =>
