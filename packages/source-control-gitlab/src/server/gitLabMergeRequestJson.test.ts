@@ -78,6 +78,21 @@ describe("decodeMergeRequestListJson", () => {
     });
   });
 
+  it("reads the assignees, and none as an empty list", () => {
+    const batch = expectSuccess(
+      decodeMergeRequestListJson(
+        listJson([
+          { assignees: [{ username: "octocat", name: "Mona", avatar_url: null }] },
+          { assignees: null },
+        ]),
+      ),
+    );
+    expect(batch.items.map((item) => item.assignees)).toEqual([
+      [{ login: "octocat", name: "Mona", avatarUrl: null }],
+      [],
+    ]);
+  });
+
   it("treats a merged timestamp as merged whatever the state says", () => {
     const batch = expectSuccess(
       decodeMergeRequestListJson(

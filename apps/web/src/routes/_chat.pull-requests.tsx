@@ -72,6 +72,11 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.author === "string" && raw.author.trim()
       ? { author: raw.author.trim().slice(0, 200) }
       : {}),
+    // An own key for the same reason as `q`: `?assignee=123` parses to a number.
+    assignee:
+      typeof raw.assignee === "string" && raw.assignee.trim()
+        ? raw.assignee.trim().slice(0, 200)
+        : undefined,
     ...pullRequestSearchLabels(raw.labels),
   }),
   component: PullRequestsPage,

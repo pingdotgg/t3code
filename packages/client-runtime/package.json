@@ -442,6 +442,10 @@
     "./model-traits": {
       "types": "./src/modelTraits.ts",
       "default": "./src/modelTraits.ts"
+    },
+    "./pull-request-assignees": {
+      "types": "./src/pullRequestAssignees.ts",
+      "default": "./src/pullRequestAssignees.ts"
     }
   },
   "scripts": {

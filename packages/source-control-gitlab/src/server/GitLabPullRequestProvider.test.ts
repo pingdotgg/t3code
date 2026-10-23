@@ -23,6 +23,7 @@ describe("gitLabViewerPermissions", () => {
       resolve: true,
       verdicts: ["comment", "approve"],
       requestReviewers: true,
+      assignees: true,
       updateMethods: ["rebase"],
     });
   });
@@ -34,6 +35,7 @@ describe("gitLabViewerPermissions", () => {
       resolve: true,
       verdicts: ["comment", "approve"],
       requestReviewers: true,
+      assignees: true,
     });
   });
 });
@@ -63,6 +65,8 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    assigneeIds: [],
+    assigneeUsers: [],
   };
 
   const readWith = (divergence: { readonly divergedCommits?: number }) =>

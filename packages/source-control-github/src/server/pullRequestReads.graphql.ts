@@ -309,6 +309,24 @@ export const PullRequestCoreRepositoryPullRequestLabelsLabelConnection = Schema.
 })
 export interface PullRequestCoreRepositoryPullRequestLabelsLabelConnection extends Schema.Struct.Type<typeof PullRequestCoreRepositoryPullRequestLabelsLabelConnection.fields> {}
 
+/** A user is an individual's account on GitHub that owns repositories and can make new content. */
+export const AssigneesNodesUser = Schema.Struct({
+  /** The username used to login. */
+  login: Schema.String,
+  /** The user's public profile name. */
+  name: Schema.NullOr(Schema.String),
+  /** A URL pointing to the user's public avatar. */
+  avatarUrl: Shared.URI
+})
+export interface AssigneesNodesUser extends Schema.Struct.Type<typeof AssigneesNodesUser.fields> {}
+
+/** A list of users. */
+export const AssigneesUserConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(AssigneesNodesUser)))
+})
+export interface AssigneesUserConnection extends Schema.Struct.Type<typeof AssigneesUserConnection.fields> {}
+
 /** Information about pagination in a connection. */
 export const PullRequestCoreRepositoryPullRequestCommitsNodesCommitStatusCheckRollupContextsPageInfoPageInfo = Schema.Struct({
   /** When paginating forwards, are there more items? */
@@ -423,6 +441,8 @@ export const PullRequestCoreRepositoryPullRequestPullRequest = Schema.Struct({
   reviewRequests: Schema.NullOr(PullRequestCoreRepositoryPullRequestReviewRequestsReviewRequestConnection),
   /** A list of labels associated with the object. */
   labels: Schema.NullOr(PullRequestCoreRepositoryPullRequestLabelsLabelConnection),
+  /** A list of Users assigned to this object. */
+  assignees: AssigneesUserConnection,
   /** A list of commits present in this pull request's head branch not present in the base branch. */
   commits: PullRequestCoreRepositoryPullRequestCommitsPullRequestCommitConnection
 })
@@ -457,7 +477,7 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "requestedReviewers", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}assignees(first:10){nodes{login name avatarUrl}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
     ],
     fragments: [
       { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{workflow{name}}}}}"] }
@@ -1065,25 +1085,14 @@ export declare namespace ViewerPermissions {
   export type Result = typeof ViewerPermissions.result.Type
 }
 
-/** A user is an individual's account on GitHub that owns repositories and can make new content. */
-export const AssignableUsersNodesUser = Schema.Struct({
-  /** The username used to login. */
-  login: Schema.String,
-  /** The user's public profile name. */
-  name: Schema.NullOr(Schema.String),
-  /** A URL pointing to the user's public avatar. */
-  avatarUrl: Shared.URI
-})
-export interface AssignableUsersNodesUser extends Schema.Struct.Type<typeof AssignableUsersNodesUser.fields> {}
-
 /** A list of users. */
-export const UserConnection = Schema.Struct({
+export const AssignableUsersUserConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PullRequestCoreRepositoryPullRequestCommitsNodesCommitStatusCheckRollupContextsPageInfoPageInfo,
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(AssignableUsersNodesUser)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(AssigneesNodesUser)))
 })
-export interface UserConnection extends Schema.Struct.Type<typeof UserConnection.fields> {}
+export interface AssignableUsersUserConnection extends Schema.Struct.Type<typeof AssignableUsersUserConnection.fields> {}
 
 /** Represents an object which can take actions on GitHub. Typically a User or Bot. */
 export const Actor = Schema.Struct({
@@ -1124,7 +1133,7 @@ export interface ReviewerCandidatesRepositoryPullRequestPullRequest extends Sche
 /** A repository contains the content for a project. */
 export const ReviewerCandidatesRepositoryRepository = Schema.Struct({
   /** A list of users that can be assigned to issues in this repository. */
-  assignableUsers: UserConnection,
+  assignableUsers: AssignableUsersUserConnection,
   /** Returns a single pull request from the current repository by number. */
   pullRequest: Schema.NullOr(ReviewerCandidatesRepositoryPullRequestPullRequest)
 })
@@ -1234,6 +1243,52 @@ export const LabelCandidates = GraphQL.query("LabelCandidates", {
 export declare namespace LabelCandidates {
   export type Variables = typeof LabelCandidates.variables.Type
   export type Result = typeof LabelCandidates.result.Type
+}
+
+/** A repository pull request. */
+export const AssigneeCandidatesRepositoryPullRequestPullRequest = Schema.Struct({
+  /** A list of Users assigned to this object. */
+  assignees: AssigneesUserConnection
+})
+export interface AssigneeCandidatesRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof AssigneeCandidatesRepositoryPullRequestPullRequest.fields> {}
+
+/** A repository contains the content for a project. */
+export const AssigneeCandidatesRepositoryRepository = Schema.Struct({
+  /** A list of users that can be assigned to issues in this repository. */
+  assignableUsers: AssignableUsersUserConnection,
+  /** Returns a single pull request from the current repository by number. */
+  pullRequest: Schema.NullOr(AssigneeCandidatesRepositoryPullRequestPullRequest)
+})
+export interface AssigneeCandidatesRepositoryRepository extends Schema.Struct.Type<typeof AssigneeCandidatesRepositoryRepository.fields> {}
+
+/** `query AssigneeCandidates` */
+export const AssigneeCandidates = GraphQL.query("AssigneeCandidates", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "number", body: "Int!" },
+      { name: "query", body: "String" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){assignableUsers(first:100 query:$", "query", "){pageInfo{hasNextPage}nodes{login name avatarUrl}}pullRequest(number:$", "number", "){assignees(first:10){nodes{login name avatarUrl}}}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    number: Shared.Int,
+    query: Schema.optional(Schema.NullOr(Schema.String))
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(AssigneeCandidatesRepositoryRepository)
+  })
+})
+export declare namespace AssigneeCandidates {
+  export type Variables = typeof AssigneeCandidates.variables.Type
+  export type Result = typeof AssigneeCandidates.result.Type
 }
 
 /** A file changed in a pull request. */
@@ -1587,4 +1642,4 @@ export declare namespace PullRequestSourceBranch {
 }
 
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, AssigneeCandidates, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)

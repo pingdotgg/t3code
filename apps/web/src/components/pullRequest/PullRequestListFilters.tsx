@@ -18,7 +18,10 @@ import {
   ListFilterIcon,
   SearchIcon,
   TagIcon,
+  UserRoundCheckIcon,
   UserRoundIcon,
+  UserRoundXIcon,
+  UsersRoundIcon,
 } from "lucide-react";
 import { type ElementType, useState } from "react";
 
@@ -45,6 +48,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   pullRequestLabelColor,
+  type PullRequestAssigneeFacet,
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
 } from "./pullRequestList.logic";
@@ -309,6 +313,101 @@ function PullRequestAuthorFilter({
   );
 }
 
+const ASSIGNEE_ME = "me";
+const ASSIGNEE_NONE = "none";
+
+/**
+ * `me` and `none` are the filter's own values, not logins. Only GitHub and GitLab apply it; rows
+ * from other hosts carry no assignees and are left in the list.
+ */
+function PullRequestAssigneeFilter({
+  value,
+  options,
+  onChange,
+}: {
+  value: string | undefined;
+  options: ReadonlyArray<PullRequestAssigneeFacet>;
+  onChange: (assignee: string | undefined) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const login = value?.toLowerCase() ?? "";
+  const selected = options.find((option) => option.actor.login.toLowerCase() === login);
+  const visible = [
+    ...(selected ? [selected] : []),
+    ...options.filter(
+      (option) =>
+        option !== selected &&
+        (needle.length === 0 ||
+          option.actor.login.toLowerCase().includes(needle) ||
+          option.actor.name?.toLowerCase().includes(needle)),
+    ),
+  ].slice(0, 10);
+  const select = (next: string) => next.toLowerCase() !== login && onChange(next || undefined);
+  const summary =
+    login === ASSIGNEE_ME ? "Me" : login === ASSIGNEE_NONE ? "Unassigned" : (value ?? "Anyone");
+  return (
+    <MenuSub>
+      <MenuSubTrigger>
+        <UsersRoundIcon aria-hidden className="size-3.5" />
+        <span className="flex-1">Assignee</span>
+        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">{summary}</span>
+      </MenuSubTrigger>
+      <MenuSubPopup>
+        <div className="p-1 pb-2">
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon aria-hidden />
+            </InputGroupAddon>
+            <InputGroupInput
+              autoFocus
+              size="compact"
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowDown" && event.key !== "Escape") event.stopPropagation();
+              }}
+              placeholder="Search assignees"
+              aria-label="Search assignees"
+            />
+          </InputGroup>
+        </div>
+        <MenuRadioGroup value={selected?.actor.login ?? login} onValueChange={select}>
+          <MenuRadioItem value="">
+            <span className="flex min-w-0 items-center gap-2">
+              <LayersIcon aria-hidden className="size-3.5" />
+              Anyone
+            </span>
+          </MenuRadioItem>
+          <MenuRadioItem value={ASSIGNEE_ME}>
+            <span className="flex min-w-0 items-center gap-2">
+              <UserRoundCheckIcon aria-hidden className="size-3.5" />
+              Assigned to me
+            </span>
+          </MenuRadioItem>
+          <MenuRadioItem value={ASSIGNEE_NONE}>
+            <span className="flex min-w-0 items-center gap-2">
+              <UserRoundXIcon aria-hidden className="size-3.5" />
+              Unassigned
+            </span>
+          </MenuRadioItem>
+          {visible.map((option) => (
+            <MenuRadioItem key={option.actor.login.toLowerCase()} value={option.actor.login}>
+              <span className="flex min-w-0 items-center gap-2">
+                <PullRequestActorAvatar actor={option.actor} />
+                <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {option.count} loaded
+                </span>
+              </span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuSubPopup>
+    </MenuSub>
+  );
+}
+
 function PullRequestLabelFilter({
   value,
   options,
@@ -385,6 +484,7 @@ export function PullRequestFiltersMenu({
   filters,
   onFilters,
   authorOptions = [],
+  assigneeOptions = [],
   labelOptions = [],
   host,
   hostOptions,
@@ -408,6 +508,7 @@ export function PullRequestFiltersMenu({
   filters: PullRequestListFilters;
   onFilters: (filters: PullRequestListFilters) => void;
   authorOptions?: ReadonlyArray<PullRequestAuthorFacet>;
+  assigneeOptions?: ReadonlyArray<PullRequestAssigneeFacet>;
   labelOptions?: ReadonlyArray<PullRequestLabelFacet>;
   host: string | undefined;
   hostOptions: ReadonlyArray<PullRequestFilterOption<string>>;
@@ -432,6 +533,7 @@ export function PullRequestFiltersMenu({
     filters.review,
     filters.checks,
     filters.author,
+    filters.assignee,
     ...selectedLabels,
   ].filter(Boolean).length;
   const updateFilters = (next: Partial<PullRequestListFilters>) =>
@@ -495,6 +597,11 @@ export function PullRequestFiltersMenu({
           value={filters.author}
           options={authorOptions}
           onChange={(author) => updateFilters({ author })}
+        />
+        <PullRequestAssigneeFilter
+          value={filters.assignee}
+          options={assigneeOptions}
+          onChange={(assignee) => updateFilters({ assignee })}
         />
         <PullRequestLabelFilter
           value={selectedLabels}

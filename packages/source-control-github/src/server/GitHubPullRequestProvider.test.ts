@@ -136,6 +136,7 @@ describe("gitHubViewerPermissions", () => {
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
       labels: true,
+      assignees: true,
     });
   });
 
@@ -155,6 +156,7 @@ describe("gitHubViewerPermissions", () => {
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: false,
       labels: false,
+      assignees: false,
     });
   });
 
@@ -187,6 +189,7 @@ describe("gitHubViewerPermissions", () => {
       verdicts: ["comment"],
       requestReviewers: false,
       labels: false,
+      assignees: false,
     });
   });
 
@@ -207,6 +210,7 @@ describe("gitHubViewerPermissions", () => {
         verdicts: ["comment", "approve", "request-changes"],
         requestReviewers: false,
         labels: false,
+        assignees: false,
       });
       expect(detail.workflowApprovalsRequired).toBeUndefined();
       expect(detail.checks).toContainEqual({

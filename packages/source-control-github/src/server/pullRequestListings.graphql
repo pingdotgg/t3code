@@ -68,6 +68,13 @@ fragment PullRequestRow on PullRequest {
       color
     }
   }
+  assignees(first: 10) {
+    nodes {
+      login
+      avatarUrl
+      name
+    }
+  }
   # GitHub's rollup for the head commit, one enum, rather than the whole check list: measured at a
   # hundred rows, 0.8s -> 3.0s and 15 KB, against 425 KB for the same verdict as a check array.
   commits(last: 1) {

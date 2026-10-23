@@ -77,6 +77,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         baseRef: { compare: { behindBy: 2 } },
         reviewRequests: { nodes: [] },
         labels: { nodes: [] },
+        assignees: { nodes: [] },
         commits: { nodes: [] },
         ...pullRequest,
       },
@@ -224,6 +225,7 @@ const rowDefaults = {
   mergedAt: null,
   reviewRequests: { nodes: [] },
   labels: { nodes: [] },
+  assignees: { nodes: [] },
   commits: { nodes: [] },
 };
 
@@ -1557,6 +1559,41 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       expect(searchOfCall(0)).toBe('is:pr is:open author:"bilal" sort:updated-desc repo:acme/web');
+    }),
+  );
+
+  it.effect("asks GitHub for the assignee, the reader for me, and no:assignee for none", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.query.includes("pullRequests(")
+            ? emptyList()
+            : emptySearch(),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const list = (assignee: string) =>
+        cli.listPullRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+          filters: { assignee },
+        });
+
+      yield* list("me");
+      const second = mockedExecute.mock.calls.length;
+      yield* list("none");
+
+      expect(searchOfCall(0)).toBe(
+        'is:pr is:open assignee:"bilal" sort:updated-desc repo:acme/web',
+      );
+      expect(searchOfCall(second)).toBe(
+        "is:pr is:open no:assignee sort:updated-desc repo:acme/web",
+      );
     }),
   );
 
@@ -3553,6 +3590,65 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(error.retryAt, Date.parse("2099-08-13T14:00:00Z"));
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
+    }),
+  );
+
+  it.effect("assigns and unassigns through the issue's assignees collection", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        assignees: ["octocat"],
+      };
+
+      yield* cli.setAssignees({ ...input, assigned: true });
+      yield* cli.setAssignees({ ...input, assigned: false });
+
+      expect(callAt(0)).toMatchObject({
+        kind: "rest",
+        method: "POST",
+        path: "repos/acme/web/issues/7/assignees",
+        body: { assignees: ["octocat"] },
+      });
+      expect(callAt(1)).toMatchObject({ kind: "rest", method: "DELETE" });
+    }),
+  );
+
+  it.effect("asks GitHub to search everyone assignable when the menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  assignableUsers: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [{ login: "octocat", name: null, avatarUrl: "https://avatars/octocat" }],
+                  },
+                  pullRequest: { assignees: { nodes: [] } },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const list = yield* cli.listAssigneeCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        query: "octo",
+      });
+
+      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7, query: "octo" });
+      expect(list.candidates.map((candidate) => candidate.id)).toEqual(["octocat"]);
     }),
   );
 

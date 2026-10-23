@@ -15,6 +15,7 @@ import {
   HammerIcon,
   ListFilterIcon,
   TagIcon,
+  UserRoundCheckIcon,
   UsersIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -50,6 +51,7 @@ import {
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
+import { PullRequestAssigneePicker } from "./PullRequestAssigneePicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
@@ -732,6 +734,33 @@ export function PullRequestSummaryTab({
               ) : null}
             </span>
           </MetaRow>
+          {(detail.assignees?.length ?? 0) > 0 || detail.capabilities.assignees === true ? (
+            <MetaRow icon={<UserRoundCheckIcon className="size-3.5" />} label="Assignees">
+              <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {(detail.assignees ?? []).length === 0 ? (
+                  <span className="text-muted-foreground">None</span>
+                ) : (
+                  <span className="flex items-center -space-x-1">
+                    {(detail.assignees ?? []).map((actor) => (
+                      <span
+                        key={actor.login.toLowerCase()}
+                        className="relative rounded-full hover:z-10"
+                      >
+                        <PullRequestActorLabel actor={actor} variant="avatar" />
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {detail.capabilities.assignees === true ? (
+                  <PullRequestAssigneePicker
+                    environmentId={environmentId}
+                    reference={reference}
+                    allowed={detail.viewerPermissions.assignees !== false}
+                  />
+                ) : null}
+              </span>
+            </MetaRow>
+          ) : null}
           {detail.labels.length > 0 || detail.capabilities.labels === true ? (
             <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
               <span className="flex min-w-0 flex-wrap items-center gap-1">

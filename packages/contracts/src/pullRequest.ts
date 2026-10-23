@@ -49,6 +49,11 @@ export const PullRequestListFilters = Schema.Struct({
   labels: Schema.optional(Schema.Array(PullRequestQualifierValues).check(Schema.isMaxLength(10))),
   excludedLabels: Schema.optional(PullRequestQualifierValues),
   author: Schema.optional(PullRequestQualifierValue),
+  /**
+   * One login as `assignee:` names it, `me` for the reader, or `none` for no assignee. Only
+   * GitHub and GitLab apply it; rows from a host that reports no assignees are left alone.
+   */
+  assignee: Schema.optional(PullRequestQualifierValue),
 });
 export type PullRequestListFilters = typeof PullRequestListFilters.Type;
 
@@ -228,6 +233,25 @@ export const PullRequestLabelCandidateList = Schema.Struct({
 });
 export type PullRequestLabelCandidateList = typeof PullRequestLabelCandidateList.Type;
 
+/**
+ * Somebody the change request may be assigned to, with whether it already is. `id` is how the
+ * host addresses them when assigning: GitHub takes a login, GitLab a numeric user id.
+ */
+export const PullRequestAssigneeCandidate = Schema.Struct({
+  ...PullRequestActor.fields,
+  id: TrimmedNonEmptyString,
+  isAssigned: Schema.Boolean,
+});
+export type PullRequestAssigneeCandidate = typeof PullRequestAssigneeCandidate.Type;
+
+export const PullRequestAssigneeCandidateList = Schema.Struct({
+  /** Includes the author, whom every host lets a change request be assigned to. */
+  candidates: Schema.Array(PullRequestAssigneeCandidate),
+  /** The host has more assignable people than the read asked for; the list is not all of them. */
+  truncated: Schema.Boolean,
+});
+export type PullRequestAssigneeCandidateList = typeof PullRequestAssigneeCandidateList.Type;
+
 export const PullRequestCommit = Schema.Struct({
   oid: TrimmedNonEmptyString,
   messageHeadline: Schema.String,
@@ -281,6 +305,11 @@ export const PullRequestCapabilities = Schema.Struct({
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * The people who may be assigned can be listed, and one assigned or unassigned. Optional for the
+   * same reason as `labels`.
+   */
+  assignees: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -296,6 +325,8 @@ export const PullRequestViewerPermissions = Schema.Struct({
   requestReviewers: Schema.Boolean,
   updateMethods: Schema.optional(ForwardCompatibleArray(PullRequestUpdateMethod)),
   labels: Schema.optional(Schema.Boolean),
+  /** This viewer may assign somebody, and unassign them. Absent is granted, like `labels`. */
+  assignees: Schema.optional(Schema.Boolean),
   editChangeRequest: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
@@ -342,6 +373,8 @@ export const PullRequestListEntry = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),
   viewerReviewRequested: Schema.Boolean,
   labels: Schema.Array(PullRequestLabel),
+  /** Absent where the host does not report assignees on its listings: every host but GitHub and GitLab. */
+  assignees: Schema.optional(Schema.Array(PullRequestActor)),
   reviewDecision: Schema.optional(PullRequestReviewDecision),
   checksState: Schema.optional(PullRequestChecksState),
 });
@@ -571,6 +604,8 @@ export const PullRequestDetail = Schema.Struct({
   mergedAt: Schema.NullOr(IsoDateTime),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
+  /** Absent where the host does not report assignees: every host but GitHub and GitLab. */
+  assignees: Schema.optional(Schema.Array(PullRequestActor)),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
   mergeCapabilities: PullRequestMergeCapabilities,
@@ -858,6 +893,28 @@ export const PullRequestLabelChangeInput = Schema.Struct({
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
 
+/**
+ * The assignee menu's read. With `query`, the host searches everyone who may be assigned rather
+ * than answering with its first page, which is how a large repository's people are reached.
+ */
+export const PullRequestAssigneeCandidatesInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestAssigneeCandidatesInput = typeof PullRequestAssigneeCandidatesInput.Type;
+
+/** Assigning and unassigning are one operation with `assigned` turned around, like labels. */
+export const PullRequestAssigneeChangeInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  /** As the candidate list named them. GitHub refuses more than ten assignees. */
+  assignees: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(10),
+  ),
+  assigned: Schema.Boolean,
+});
+export type PullRequestAssigneeChangeInput = typeof PullRequestAssigneeChangeInput.Type;
+
 export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",
   "cli-unauthenticated",
@@ -954,6 +1011,32 @@ export function resolvePullRequestAuthorFilter(
   return viewer === null || viewer === undefined || viewer.trim().length === 0 ? trimmed : viewer;
 }
 
+/**
+ * The assignee filter as a login to look for, or null for "no assignee". `me` resolves like the
+ * author filter does.
+ */
+export function resolvePullRequestAssigneeFilter(
+  assignee: string,
+  viewer: string | null | undefined,
+): string | null {
+  return /^none$/i.test(assignee.trim()) ? null : resolvePullRequestAuthorFilter(assignee, viewer);
+}
+
+/**
+ * Whether a row's assignees satisfy the assignee filter. A row whose host reports no assignees
+ * (`undefined`) cannot be judged and is kept.
+ */
+export function matchesPullRequestAssigneeFilter(
+  assignees: ReadonlyArray<{ readonly login: string }> | undefined,
+  assignee: string | undefined,
+  viewer: string | null | undefined,
+): boolean {
+  if (assignee === undefined || assignees === undefined) return true;
+  const login = resolvePullRequestAssigneeFilter(assignee, viewer);
+  if (login === null) return assignees.length === 0;
+  const wanted = login.toLowerCase();
+  return assignees.some((actor) => actor.login.toLowerCase() === wanted);
+}
 export function pullRequestProviderRequirement(
   provider: SourceControlProviderKind,
   reason: PullRequestUnavailableReason,

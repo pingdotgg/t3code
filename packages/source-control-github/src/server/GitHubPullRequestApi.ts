@@ -17,6 +17,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
+  matchesPullRequestAssigneeFilter,
+  resolvePullRequestAssigneeFilter,
   resolvePullRequestAuthorFilter,
   PositiveInt,
   TrimmedNonEmptyString,
@@ -38,6 +40,7 @@ import {
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerKind,
   type PullRequestLabelCandidateList,
+  type PullRequestAssigneeCandidateList,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
   type PullRequestPreview,
@@ -68,6 +71,7 @@ import {
   pullRequestLookup,
   toActorAvatars,
   toLabelCandidates,
+  toAssigneeCandidates,
   toPullRequestActivityPage,
   toPullRequestCheckContextsPage,
   toPullRequestCore,
@@ -654,6 +658,26 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly applied: boolean;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
+    /** The people this pull request may be assigned to, and which of them already are. */
+    readonly listAssigneeCandidates: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<PullRequestAssigneeCandidateList, GitHubPullRequestApiError>;
+
+    readonly setAssignees: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      /** Logins, as the candidate list named them. */
+      readonly assignees: ReadonlyArray<string>;
+      /** False deletes the same collection an assignment posts to. */
+      readonly assigned: boolean;
+    }) => Effect.Effect<void, GitHubPullRequestApiError>;
+
     readonly runPullRequestAction: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -792,12 +816,18 @@ function filterQualifiers(
     ...(filters.author === undefined
       ? []
       : [`author:${qualifierValue(resolvePullRequestAuthorFilter(filters.author, viewer))}`]),
+    ...(filters.assignee === undefined ? [] : [assigneeQualifier(filters.assignee, viewer)]),
     ...(filters.draft === undefined ? [] : [`draft:${filters.draft === "only"}`]),
     ...(filters.review === undefined ? [] : [`review:${REVIEW_QUALIFIERS[filters.review]}`]),
     ...(filters.checks === undefined
       ? []
       : [`status:${filters.checks === "passing" ? "success" : "failure"}`]),
   ];
+}
+
+function assigneeQualifier(assignee: string, viewer: string): string {
+  const login = resolvePullRequestAssigneeFilter(assignee, viewer);
+  return login === null ? "no:assignee" : `assignee:${qualifierValue(login)}`;
 }
 
 function matchesFilters(
@@ -819,7 +849,8 @@ function matchesFilters(
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
     (filters.author === undefined ||
       item.author?.login.toLowerCase() ===
-        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase()) &&
+    matchesPullRequestAssigneeFilter(item.assignees, filters.assignee, viewer)
   );
 }
 
@@ -2359,6 +2390,32 @@ export const make = Effect.gen(function* () {
           }),
         { concurrency: 1, discard: true },
       );
+    },
+
+    listAssigneeCandidates: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const operation = "listAssigneeCandidates";
+      return client
+        .AssigneeCandidates({ owner, name, number: input.number, query: input.query ?? null })
+        .pipe(
+          graphql({ ...input, operation, allowReserve: true }),
+          Effect.map(toAssigneeCandidates),
+          Effect.flatMap(found({ ...input, operation })),
+        );
+    },
+
+    setAssignees: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      // A pull request is an issue to the assignees API, which adds to and removes from the set.
+      return api
+        .rest({
+          host: input.host,
+          operation: "setAssignees",
+          method: input.assigned ? "POST" : "DELETE",
+          path: `repos/${owner}/${name}/issues/${input.number}/assignees`,
+          body: { assignees: input.assignees },
+        })
+        .pipe(Effect.asVoid);
     },
 
     runPullRequestAction: (input) => {

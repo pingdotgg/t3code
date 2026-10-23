@@ -30,6 +30,8 @@ import type {
   PullRequestReviewerKind,
   PullRequestLabelCandidate,
   PullRequestLabelCandidateList,
+  PullRequestAssigneeCandidate,
+  PullRequestAssigneeCandidateList,
   PullRequestState,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
@@ -50,6 +52,7 @@ import {
 } from "./pullRequestListings.graphql.ts";
 import type {
   ActorAvatars,
+  AssigneeCandidates,
   CheckContext,
   LabelCandidates,
   PullRequestActivity,
@@ -372,6 +375,8 @@ export interface GitHubPullRequestListItem {
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly hasTeamReviewRequest: boolean;
   readonly labels: ReadonlyArray<PullRequestLabel>;
+  /** Only rows read through GraphQL carry them; `gh pr view --json` is not asked. */
+  readonly assignees?: ReadonlyArray<PullRequestActor>;
   readonly checksState: PullRequestChecksState | null;
 }
 
@@ -933,6 +938,10 @@ function toRow(
         // way the detail's checks are.
         statusCheckRollup: rollupStates(node.commits),
       }),
+      assignees: nodesOf(node.assignees).flatMap((assignee) => {
+        const actor = toActor(assignee);
+        return actor === null ? [] : [actor];
+      }),
       ...(stack === undefined ? {} : { stack }),
     },
     repository: trimmed(node.repository.nameWithOwner),
@@ -1133,6 +1142,10 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       statusCheckRollup: toCheckContexts(nodesOf(contexts)),
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
+    assignees: nodesOf(pr.assignees).flatMap((assignee) => {
+      const actor = toActor(assignee);
+      return actor === null ? [] : [actor];
+    }),
     viewerAccess: {
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
@@ -1655,6 +1668,30 @@ export function toLabelCandidates(
       ...candidates.values(),
     ],
     truncated: repository.labels?.pageInfo.hasNextPage === true,
+  };
+}
+
+/**
+ * The people this pull request may be assigned to. The current assignees lead, so one who is no
+ * longer assignable, or is past the page, can still be unassigned. Null for a repository GitHub
+ * did not find.
+ */
+export function toAssigneeCandidates(
+  result: AssigneeCandidates.Result,
+): PullRequestAssigneeCandidateList | null {
+  const repository = result.repository;
+  if (repository == null) return null;
+  const candidates = new Map<string, PullRequestAssigneeCandidate>();
+  const add = (node: ActorFields, isAssigned: boolean): void => {
+    const actor = toActor(node);
+    if (actor === null || candidates.has(actor.login.toLowerCase())) return;
+    candidates.set(actor.login.toLowerCase(), { ...actor, id: actor.login, isAssigned });
+  };
+  for (const node of nodesOf(repository.pullRequest?.assignees)) add(node, true);
+  for (const node of nodesOf(repository.assignableUsers)) add(node, false);
+  return {
+    candidates: [...candidates.values()],
+    truncated: repository.assignableUsers?.pageInfo.hasNextPage === true,
   };
 }
 

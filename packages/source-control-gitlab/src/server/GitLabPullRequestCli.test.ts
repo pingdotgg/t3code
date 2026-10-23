@@ -282,6 +282,29 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("filters by assignee, reading me as the viewer and none as unassigned", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("[]")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const list = (assignee: string) =>
+        cli.listMergeRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+          assignee,
+        });
+
+      yield* list("me");
+      yield* list("none");
+
+      expect(argsOfCall(0)[1]).toContain("assignee_username=bilal");
+      expect(argsOfCall(1)[1]).toContain("assignee_id=None");
+    }),
+  );
+
   it.effect.each([
     { action: "merge", autoMerge: "false", mergeMethod: "squash" },
     { action: "enable-auto-merge", autoMerge: "true", mergeMethod: "squash" },
@@ -1160,6 +1183,145 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(revisions.size, 150);
       assert.strictEqual(revisions.get("src/149.ts"), "oid-src/149.ts");
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
+    }),
+  );
+
+  it.effect("marks an assignee GitLab sent without a username as assigned on the users page", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ assignees: [{ id: 5, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listAssigneeCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.id, candidate.isAssigned])).toEqual([
+        ["1", false],
+        ["5", true],
+      ]);
+    }),
+  );
+
+  it.effect("lists the assignees first, even when the users page does not reach them", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ assignees: [{ id: 42, username: "late" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listAssigneeCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(
+        list.candidates.map((candidate) => [candidate.login, candidate.id, candidate.isAssigned]),
+      ).toEqual([
+        ["late", "42", true],
+        [author.username, String(author.id), false],
+        ["octocat", "5", false],
+      ]);
+    }),
+  );
+
+  it.effect("asks GitLab to search the project's people when the menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({}))))
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listAssigneeCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        query: "octo cat",
+      });
+
+      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
+    }),
+  );
+
+  it.effect("does not list an assignee twice when the users page has them too", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ assignees: [reviewer] }))))
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listAssigneeCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.id, candidate.isAssigned])).toEqual([
+        ["5", true],
+        [String(author.id), false],
+      ]);
+    }),
+  );
+
+  it.effect("assigns by adding to the assignee set, and clears it with GitLab's 0", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ assignees: [reviewer] }))))
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      yield* cli.setAssignees({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        assignees: ["9"],
+        assigned: true,
+      });
+      expect(argsOfCall(1)).toContain("PUT");
+      // The newcomer leads: a GitLab that allows one assignee keeps only the first id, so
+      // assigning replaces the assignee there rather than being dropped.
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ assignee_ids: [9, 5] });
+
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ assignees: [reviewer] }))))
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      yield* cli.setAssignees({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        assignees: ["5"],
+        assigned: false,
+      });
+      // An empty list would leave GitLab's assignees as they were.
+      expect(JSON.parse(callAt(3).stdin ?? "")).toEqual({ assignee_ids: [0] });
+    }),
+  );
+
+  it.effect("keeps an assignee it cannot show when writing the set back", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ assignees: [{ id: 3, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setAssignees({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        assignees: ["9"],
+        assigned: true,
+      });
+
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ assignee_ids: [9, 3] });
     }),
   );
 });

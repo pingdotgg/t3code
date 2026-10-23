@@ -218,6 +218,21 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  const assigneeCandidates = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:assignee-candidates",
+      tag: WS_METHODS.pullRequestsAssigneeCandidates,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsAssigneeCandidates, input),
+      staleTimeMs: 60_000,
+    }),
+  );
+  // Asked only when the menu's first page is not everybody, so a query cannot be answered from it.
+  const assigneeSearch = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:assignee-search",
+    tag: WS_METHODS.pullRequestsAssigneeCandidates,
+    execute: (input) => routedRequest(WS_METHODS.pullRequestsAssigneeCandidates, input),
+    staleTimeMs: 60_000,
+  });
   const reviewGuide = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:review-guide",
@@ -580,6 +595,66 @@ export function createPullRequestEnvironmentAtoms<R, E>(
                 ]
               : value.labels.filter((label) => !names.has(label.name)),
           }));
+        }),
+    }),
+    /** Read when the assignee menu opens, and kept for a minute, like the label candidates. */
+    assigneeCandidates,
+    /** The host's search for people past the first page, keyed by what was typed. */
+    assigneeSearch,
+    setAssignees: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-assignees",
+      tag: WS_METHODS.pullRequestsSetAssignees,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsSetAssignees, input),
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+      onSuccess: (target, registry) =>
+        Effect.sync(() => {
+          const { assignees, assigned } = target.input;
+          const candidatesAtom = assigneeCandidates(target);
+          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const ids = new Set(assignees);
+          const selected =
+            candidates?.candidates.filter((candidate) => ids.has(candidate.id)) ?? [];
+          // Both are patched at once and then read again: a GitLab that allows one assignee
+          // replaces the one already there, and somebody found only by the host's search is not
+          // in the candidates to patch.
+          updateCached(
+            registry,
+            candidatesAtom,
+            (value) => ({
+              ...value,
+              candidates: value.candidates.map((candidate) =>
+                ids.has(candidate.id) ? { ...candidate, isAssigned: assigned } : candidate,
+              ),
+            }),
+            true,
+          );
+          const logins = new Set(selected.map((candidate) => candidate.login.toLowerCase()));
+          updateCached(
+            registry,
+            detail(target),
+            (value) => {
+              const current = value.assignees ?? [];
+              return {
+                ...value,
+                assignees: assigned
+                  ? [
+                      ...current,
+                      ...selected
+                        .filter(
+                          (candidate) =>
+                            !current.some(
+                              (actor) =>
+                                actor.login.toLowerCase() === candidate.login.toLowerCase(),
+                            ),
+                        )
+                        .map(({ login, name, avatarUrl }) => ({ login, name, avatarUrl })),
+                    ]
+                  : current.filter((actor) => !logins.has(actor.login.toLowerCase())),
+              };
+            },
+            true,
+          );
         }),
     }),
     setThreadResolution: createEnvironmentRpcCommand(runtime, {

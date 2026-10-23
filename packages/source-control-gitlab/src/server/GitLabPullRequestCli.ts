@@ -19,7 +19,9 @@ import type {
   PullRequestReviewThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
+  PullRequestAssigneeCandidateList,
 } from "@t3tools/contracts";
+import { resolvePullRequestAssigneeFilter } from "@t3tools/contracts";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import {
@@ -222,6 +224,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly viewer: string;
       readonly limit: number;
       readonly query?: string | undefined;
+      /** The list's assignee filter: a username, `me`, or `none`. */
+      readonly assignee?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
 
@@ -291,6 +295,23 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       readonly reviewers: ReadonlyArray<{ readonly id: string }>;
       readonly requested: boolean;
+    }) => Effect.Effect<void, GitLabPullRequestCliError>;
+
+    /** Who this merge request may be assigned to, read the same two ways as the reviewers. */
+    readonly listAssigneeCandidates: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<PullRequestAssigneeCandidateList, GitLabPullRequestCliError>;
+
+    readonly setAssignees: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+      /** Numeric user ids, as the candidate list named them. */
+      readonly assignees: ReadonlyArray<string>;
+      readonly assigned: boolean;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly runMergeRequestAction: (input: {
@@ -427,6 +448,15 @@ function isCommitSha(value: string): boolean {
   return /^[0-9a-f]{7,64}$/i.test(value);
 }
 
+function assigneeParams(input: {
+  readonly assignee?: string | undefined;
+  readonly viewer: string;
+}): ReadonlyArray<readonly [string, string]> {
+  if (input.assignee === undefined) return [];
+  const username = resolvePullRequestAssigneeFilter(input.assignee, input.viewer);
+  return username === null ? [["assignee_id", "None"]] : [["assignee_username", username]];
+}
+
 function searchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {
   const trimmed = search?.trim() ?? "";
   return trimmed.length === 0 ? [] : [["search", trimmed]];
@@ -513,6 +543,7 @@ export const make = Effect.gen(function* () {
     readonly viewer: string;
     readonly limit: number;
     readonly query?: string | undefined;
+    readonly assignee?: string | undefined;
     readonly cursor?: ProviderListCursor | undefined;
     readonly page: number;
     readonly collected: ReadonlyArray<GitLabMergeRequestListItem>;
@@ -534,6 +565,7 @@ export const make = Effect.gen(function* () {
       path: `projects/${projectPath(input.repository)}/merge_requests?${query([
         ["state", stateParam(input.state)],
         ...involvementParams(input),
+        ...assigneeParams(input),
         ...searchParams(input.query),
         ["order_by", "updated_at"],
         ["sort", "desc"],
@@ -880,11 +912,13 @@ export const make = Effect.gen(function* () {
   const projectUsers = (input: {
     readonly cwd: string;
     readonly repository: string;
+    readonly search?: string | undefined;
   }): Effect.Effect<GitLabProjectUsers, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
+        ...searchParams(input.search),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -1274,6 +1308,61 @@ export const make = Effect.gen(function* () {
             path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}`,
             method: "PUT",
             stdin: JSON.stringify({ reviewer_ids: [...ids] }),
+          });
+        }),
+        Effect.asVoid,
+      ),
+
+    listAssigneeCandidates: (input) =>
+      Effect.all([mergeRequestDetail(input), projectUsers({ ...input, search: input.query })], {
+        concurrency: 2,
+      }).pipe(
+        Effect.map(([mergeRequest, users]) => {
+          const assigned = mergeRequest.assigneeUsers.map(({ id, ...actor }) => ({
+            ...actor,
+            id: String(id),
+            isAssigned: true,
+          }));
+          const listed = new Set(assigned.map((user) => user.id));
+          // Every assignee id, not just the ones shown above: an assignee GitLab sent without a
+          // username can still turn up on the users page, and must read as assigned there or
+          // choosing them would assign again instead of unassigning.
+          const assignedIds = new Set(mergeRequest.assigneeIds.map(String));
+          return {
+            // The assignees lead, and come from the merge request rather than the users page:
+            // that page stops at a hundred, and somebody missing from it could not be unassigned.
+            candidates: [
+              ...assigned,
+              ...users.candidates.flatMap(({ kind: _kind, isRequested: _isRequested, ...user }) =>
+                listed.has(user.id) ? [] : [{ ...user, isAssigned: assignedIds.has(user.id) }],
+              ),
+            ],
+            truncated: users.rawCount >= MAX_PAGE_SIZE,
+          };
+        }),
+      ),
+
+    setAssignees: (input) =>
+      mergeRequestDetail(input).pipe(
+        Effect.flatMap((mergeRequest) => {
+          // Like `reviewer_ids`, `assignee_ids` replaces the whole set.
+          const current = mergeRequest.assigneeIds;
+          const chosen = input.assignees.flatMap((assignee) => {
+            const id = Number(assignee);
+            return Number.isSafeInteger(id) && id > 0 ? [id] : [];
+          });
+          // Newcomers go first: where the instance allows a single assignee (GitLab Free), it
+          // keeps the first id and drops the rest, so assigning somebody replaces the assignee
+          // instead of being silently thrown away.
+          const ids = input.assigned
+            ? [...new Set([...chosen, ...current])]
+            : current.filter((id) => !chosen.includes(id));
+          return api({
+            cwd: input.cwd,
+            path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}`,
+            method: "PUT",
+            // An empty list leaves the assignees untouched; `0` is how GitLab clears them.
+            stdin: JSON.stringify({ assignee_ids: ids.length === 0 ? [0] : ids }),
           });
         }),
         Effect.asVoid,

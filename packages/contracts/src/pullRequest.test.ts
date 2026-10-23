@@ -2,7 +2,12 @@ import { SourceControlProviderKind } from "./sourceControl.ts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PullRequestDetail, PullRequestListResult, pullRequestHostOf } from "./pullRequest.ts";
+import {
+  matchesPullRequestAssigneeFilter,
+  PullRequestDetail,
+  PullRequestListResult,
+  pullRequestHostOf,
+} from "./pullRequest.ts";
 
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 
@@ -142,5 +147,25 @@ describe("PullRequestCapabilities", () => {
       requestReviewers: true,
     });
     expect(decoded.title).toBe(detail.title);
+  });
+});
+
+describe("narrowing a row by its assignees", () => {
+  const octocat = [{ login: "Octocat" }];
+
+  it("matches a login, or me as the signed-in reader, case-insensitively", () => {
+    expect(matchesPullRequestAssigneeFilter(octocat, "octocat", "bilal")).toBe(true);
+    expect(matchesPullRequestAssigneeFilter(octocat, "me", "octocat")).toBe(true);
+    expect(matchesPullRequestAssigneeFilter(octocat, "me", "bilal")).toBe(false);
+  });
+
+  it("reads none as no assignee at all", () => {
+    expect(matchesPullRequestAssigneeFilter([], "none", "bilal")).toBe(true);
+    expect(matchesPullRequestAssigneeFilter(octocat, "None", "bilal")).toBe(false);
+  });
+
+  it("keeps a row whose host reports no assignees", () => {
+    expect(matchesPullRequestAssigneeFilter(undefined, "none", "bilal")).toBe(true);
+    expect(matchesPullRequestAssigneeFilter(undefined, "octocat", "bilal")).toBe(true);
   });
 });

@@ -35,6 +35,11 @@ describe("reading qualifiers out of a typed query", () => {
     });
   });
 
+  it("reads an assignee rather than a label named after one", () => {
+    expect(parsePullRequestQuery("assignee:me fix").filters).toEqual({ assignee: "me" });
+    expect(parsePullRequestQuery("-assignee:me").filters).toEqual({});
+  });
+
   it("leaves an unknown value and a stray colon as text, and reads an unknown key as a label", () => {
     const parsed = parsePullRequestQuery("milestone:v2 draft:maybe status: parser");
     expect(parsed.filters).toEqual({ labels: [["milestone:v2"]] });

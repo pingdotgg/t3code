@@ -44,6 +44,7 @@ export function parsePullRequestQuery(raw: string): {
   const labels: string[][] = [];
   const excludedLabels: string[] = [];
   let author: string | undefined;
+  let assignee: string | undefined;
   let draft: PullRequestListFilters["draft"];
   let review: PullRequestListFilters["review"];
   let checks: PullRequestListFilters["checks"];
@@ -62,6 +63,10 @@ export function parsePullRequestQuery(raw: string): {
       case "author":
         if (negated) break;
         author = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
+        continue;
+      case "assignee":
+        if (negated) break;
+        assignee = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
         continue;
       case "draft":
         if (negated || (value.toLowerCase() !== "true" && value.toLowerCase() !== "false")) break;
@@ -105,6 +110,7 @@ export function parsePullRequestQuery(raw: string): {
         ? {}
         : { excludedLabels: excludedLabels.slice(0, MAX_QUALIFIER_VALUES) }),
       ...(author === undefined ? {} : { author }),
+      ...(assignee === undefined ? {} : { assignee }),
       ...(draft === undefined ? {} : { draft }),
       ...(review === undefined ? {} : { review }),
       ...(checks === undefined ? {} : { checks }),

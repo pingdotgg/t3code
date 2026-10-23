@@ -47,6 +47,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   stacks: true,
   stackActions: true,
   labels: true,
+  assignees: true,
 };
 
 /**
@@ -87,6 +88,8 @@ export function gitHubViewerPermissions(
     requestReviewers: access.canWrite,
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
     labels: access.canTriage,
+    // Assigning, like labelling, takes triage.
+    assignees: access.canTriage,
   };
 }
 
@@ -558,6 +561,21 @@ export const make = Effect.gen(function* () {
           applied: input.applied,
         })
         .pipe(Effect.mapError(fail("setLabels"))),
+
+    listAssigneeCandidates: (input) =>
+      cli.listAssigneeCandidates(input).pipe(Effect.mapError(fail("listAssigneeCandidates"))),
+
+    setAssignees: (input) =>
+      cli
+        .setAssignees({
+          cwd: input.cwd,
+          repository: input.repository,
+          host: input.host,
+          number: input.number,
+          assignees: input.assignees,
+          assigned: input.assigned,
+        })
+        .pipe(Effect.mapError(fail("setAssignees"))),
 
     runAction: (input) =>
       cli

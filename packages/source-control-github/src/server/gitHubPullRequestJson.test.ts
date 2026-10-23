@@ -12,6 +12,7 @@ import {
   decodePullRequestStacksJson,
   LenientPullRequestList,
   reviewThreadConversation,
+  toAssigneeCandidates,
   toLabelCandidates,
   toPullRequestActivityPage,
   toPullRequestCore,
@@ -25,6 +26,7 @@ import {
 } from "./gitHubPullRequestJson.ts";
 import { PullRequestWatchFingerprint } from "./pullRequestBatches.graphql.ts";
 import {
+  AssigneeCandidates,
   LabelCandidates,
   PullRequestActivity,
   PullRequestCore,
@@ -75,6 +77,7 @@ const row = (fields: Record<string, unknown>) => ({
   repository: { nameWithOwner: "pingdotgg/t3code" },
   reviewRequests: { nodes: [] },
   labels: { nodes: [] },
+  assignees: { nodes: [] },
   commits: { nodes: [] },
   ...fields,
 });
@@ -221,6 +224,7 @@ const decodeReviewThreadCommentsJson = (raw: string) =>
   through(ReviewThreadComments.result, toReviewThreadCommentsPage)(withReviewDefaults(raw));
 const decodeViewerPermissionsJson = through(ViewerPermissions.result, toViewerPermissions);
 const decodeLabelCandidatesJson = through(LabelCandidates.result, toLabelCandidates);
+const decodeAssigneeCandidatesJson = through(AssigneeCandidates.result, toAssigneeCandidates);
 const decodeReviewerCandidatesJson = through(ReviewerCandidates.result, toReviewerCandidates);
 const decodePullRequestFilesViewedJson = through(
   PullRequestFilesViewed.result,
@@ -391,6 +395,7 @@ describe("pull request detail decoding", () => {
             baseRef: null,
             reviewRequests: { nodes: [] },
             labels: { nodes: [] },
+            assignees: { nodes: [] },
             commits: {
               nodes: [
                 {
@@ -1041,6 +1046,42 @@ describe("viewer permission decoding", () => {
       didAuthor: false,
       canDeleteBranch: false,
     });
+  });
+});
+
+describe("assignee candidate decoding", () => {
+  it("leads with the current assignees, even one who is no longer assignable", () => {
+    const list = expectSuccess(
+      decodeAssigneeCandidatesJson(
+        JSON.stringify({
+          data: {
+            repository: {
+              assignableUsers: {
+                pageInfo: { hasNextPage: true },
+                nodes: [
+                  { login: "octocat", name: "Mona", avatarUrl: "https://a/1" },
+                  { login: "Hubot", name: null, avatarUrl: "https://a/2" },
+                ],
+              },
+              pullRequest: {
+                assignees: {
+                  nodes: [
+                    { login: "hubot", name: null, avatarUrl: "https://a/2" },
+                    { login: "former", name: "Gone", avatarUrl: "https://a/3" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+    expect(list.candidates.map((entry) => [entry.id, entry.isAssigned])).toEqual([
+      ["hubot", true],
+      ["former", true],
+      ["octocat", false],
+    ]);
+    expect(list.truncated).toBe(true);
   });
 });
 

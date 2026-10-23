@@ -25,6 +25,7 @@ import {
   PullRequestUnavailableError,
   pullRequestHostOf,
   pullRequestProviderRequirement,
+  matchesPullRequestAssigneeFilter,
   resolvePullRequestAuthorFilter,
   type OrchestrationProjectShell,
   type ProjectId,
@@ -63,6 +64,9 @@ import {
   type PullRequestReviewerRequestInput,
   type PullRequestLabelCandidateList,
   type PullRequestLabelChangeInput,
+  type PullRequestAssigneeCandidateList,
+  type PullRequestAssigneeCandidatesInput,
+  type PullRequestAssigneeChangeInput,
   type PullRequestSetFilesViewedInput,
   type PullRequestState,
   type PullRequestSubmitReviewInput,
@@ -268,6 +272,12 @@ export class PullRequestService extends Context.Service<
     readonly setLabels: (
       input: PullRequestLabelChangeInput,
     ) => Effect.Effect<void, PullRequestError>;
+    readonly assigneeCandidates: (
+      input: PullRequestAssigneeCandidatesInput,
+    ) => Effect.Effect<PullRequestAssigneeCandidateList, PullRequestError>;
+    readonly setAssignees: (
+      input: PullRequestAssigneeChangeInput,
+    ) => Effect.Effect<void, PullRequestError>;
     readonly invalidate: (
       input: PullRequestInvalidateInput,
       options?: { readonly notifyReaders?: boolean },
@@ -305,6 +315,8 @@ const ACTION_ACCESS_REFUSALS: Record<PullRequestAction, string> = {
 
 const REVIEWER_REQUEST_REFUSAL = "You need write access on this repository to ask for a review.";
 const LABEL_CHANGE_REFUSAL = "You need triage access on this repository to change its labels.";
+const ASSIGNEE_CHANGE_REFUSAL =
+  "You need triage access on this repository to change who it is assigned to.";
 
 export interface SupportedProject {
   readonly cursorKey: string;
@@ -569,6 +581,14 @@ function withRateLimitBackoff(
       ? {}
       : { listLabelCandidates: interactive("listLabelCandidates", api.listLabelCandidates) }),
     ...(api.setLabels === undefined ? {} : { setLabels: interactive("setLabels", api.setLabels) }),
+    ...(api.listAssigneeCandidates === undefined
+      ? {}
+      : {
+          listAssigneeCandidates: interactive("listAssigneeCandidates", api.listAssigneeCandidates),
+        }),
+    ...(api.setAssignees === undefined
+      ? {}
+      : { setAssignees: interactive("setAssignees", api.setAssignees) }),
     replyToThread: interactive("replyToThread", api.replyToThread),
     setReaction: interactive("setReaction", api.setReaction),
     setThreadResolution: interactive("setThreadResolution", api.setThreadResolution),
@@ -1034,7 +1054,8 @@ export const make = Effect.gen(function* () {
       (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
       (filters.author === undefined ||
         item.author?.login.toLowerCase() ===
-          resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+          resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase()) &&
+      matchesPullRequestAssigneeFilter(item.assignees, filters.assignee, viewer)
     );
   };
 
@@ -1073,6 +1094,7 @@ export const make = Effect.gen(function* () {
         input.item.author?.login.toLowerCase() !== viewer &&
         input.item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer),
       labels: input.item.labels,
+      ...(input.item.assignees === undefined ? {} : { assignees: input.item.assignees }),
       ...(input.item.reviewDecision === undefined || input.item.reviewDecision === null
         ? {}
         : { reviewDecision: input.item.reviewDecision }),
@@ -1596,6 +1618,9 @@ export const make = Effect.gen(function* () {
             mergedAt: changeRequest.mergedAt,
             closedAt: changeRequest.closedAt,
             reviewers: changeRequest.reviewers,
+            ...(changeRequest.assignees === undefined
+              ? {}
+              : { assignees: changeRequest.assignees }),
             labels: changeRequest.labels,
             checks: changeRequest.checks,
             mergeCapabilities: changeRequest.mergeCapabilities,
@@ -2353,6 +2378,77 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** Guarded like the labels: the list is wanted only by somebody about to change it. */
+  const assigneeCandidates: PullRequestService["Service"]["assigneeCandidates"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap(
+        (project): Effect.Effect<PullRequestAssigneeCandidateList, PullRequestError> => {
+          const list = project.api.listAssigneeCandidates;
+          if (project.api.capabilities.assignees !== true || list === undefined) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "assigneeCandidates",
+                detail: "This host cannot change who a change request is assigned to.",
+              }),
+            );
+          }
+          return viewerPermissionsOf(project, input, "assigneeCandidates").pipe(
+            Effect.flatMap(
+              (viewer): Effect.Effect<PullRequestAssigneeCandidateList, PullRequestError> =>
+                viewer.assignees === false
+                  ? Effect.fail(
+                      new PullRequestOperationError({
+                        operation: "assigneeCandidates",
+                        detail: ASSIGNEE_CHANGE_REFUSAL,
+                      }),
+                    )
+                  : list({
+                      cwd: project.project.workspaceRoot,
+                      repository: project.repository,
+                      host: project.host,
+                      number: input.number,
+                      query: input.query,
+                    }).pipe(Effect.mapError(toPullRequestError("assigneeCandidates"))),
+            ),
+          );
+        },
+      ),
+    );
+
+  const setAssignees: PullRequestService["Service"]["setAssignees"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
+        const change = project.api.setAssignees;
+        if (project.api.capabilities.assignees !== true || change === undefined) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "setAssignees",
+              detail: "This host cannot change who a change request is assigned to.",
+            }),
+          );
+        }
+        return viewerPermissionsOf(project, input, "setAssignees").pipe(
+          Effect.flatMap((viewer): Effect.Effect<void, PullRequestError> =>
+            viewer.assignees === false
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "setAssignees",
+                    detail: ASSIGNEE_CHANGE_REFUSAL,
+                  }),
+                )
+              : change({
+                  cwd: project.project.workspaceRoot,
+                  repository: project.repository,
+                  host: project.host,
+                  number: input.number,
+                  assignees: input.assignees,
+                  assigned: input.assigned,
+                }).pipe(Effect.mapError(toPullRequestError("setAssignees"))),
+          ),
+        );
+      }),
+    );
+
   /**
    * The line counts for rows already on the page, which the listing left out because on GitHub
    * they cost more than everything else on the row put together.
@@ -2623,7 +2719,7 @@ export const make = Effect.gen(function* () {
       string | ReadonlyArray<string> | ReadonlyArray<ReadonlyArray<string>> | null
     >,
   ): PullRequestListFilters => {
-    const [draft, review, checks, author, labels, excludedLabels] = slots;
+    const [draft, review, checks, author, labels, excludedLabels, assignee] = slots;
     return {
       ...(typeof draft === "string" ? { draft: draft as "only" | "hide" } : {}),
       ...(typeof review === "string" ? { review: review as PullRequestListFilters["review"] } : {}),
@@ -2631,6 +2727,7 @@ export const make = Effect.gen(function* () {
       ...(typeof author === "string" ? { author } : {}),
       ...(Array.isArray(labels) ? { labels: labels as ReadonlyArray<ReadonlyArray<string>> } : {}),
       ...(Array.isArray(excludedLabels) ? { excludedLabels } : {}),
+      ...(typeof assignee === "string" ? { assignee } : {}),
     };
   };
 
@@ -2758,6 +2855,7 @@ export const make = Effect.gen(function* () {
             input.filters.author ?? null,
             input.filters.labels ?? null,
             input.filters.excludedLabels ?? null,
+            input.filters.assignee ?? null,
           ],
       input.projectId ?? null,
       input.projectIds === undefined ? null : [...input.projectIds].sort(),
@@ -3436,6 +3534,8 @@ export const make = Effect.gen(function* () {
     requestReviewers: invalidatedByMutation(requestReviewers),
     labelCandidates,
     setLabels: invalidatedByMutation(setLabels),
+    assigneeCandidates,
+    setAssignees: invalidatedByMutation(setAssignees),
     invalidate,
   });
 });

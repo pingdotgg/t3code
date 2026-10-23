@@ -6,6 +6,7 @@ import {
   PullRequestListProjectError,
   PullRequestListResult,
   pullRequestHostOf,
+  matchesPullRequestAssigneeFilter,
   resolvePullRequestAuthorFilter,
 } from "@t3tools/contracts";
 import type {
@@ -54,6 +55,11 @@ export interface PullRequestAuthorFacet {
   readonly mergedCount: number;
 }
 
+export interface PullRequestAssigneeFacet {
+  readonly actor: PullRequestActor;
+  readonly count: number;
+}
+
 export interface PullRequestLabelFacet extends PullRequestLabel {
   readonly count: number;
 }
@@ -86,6 +92,7 @@ export function collectPullRequestListFacets(
   state: PullRequestListState,
 ) {
   const authors = new Map<string, PullRequestAuthorFacet>();
+  const assignees = new Map<string, PullRequestAssigneeFacet>();
   const labels = new Map<string, PullRequestLabelFacet>();
   const uniqueEntries = new Map(entries.map((entry) => [pullRequestEntryKey(entry), entry]));
   for (const entry of uniqueEntries.values()) {
@@ -102,6 +109,12 @@ export function collectPullRequestListFacets(
       }
     }
     if (!inState) continue;
+    for (const actor of entry.assignees ?? []) {
+      const key = normalize(actor.login);
+      if (key === null) continue;
+      const held = assignees.get(key);
+      assignees.set(key, { actor: held?.actor ?? actor, count: (held?.count ?? 0) + 1 });
+    }
     for (const label of entry.labels) {
       const key = normalize(label.name);
       if (key === null) continue;
@@ -123,6 +136,10 @@ export function collectPullRequestListFacets(
           right.count - left.count ||
           left.actor.login.localeCompare(right.actor.login),
       ),
+    assignees: [...assignees.values()].toSorted(
+      (left, right) =>
+        right.count - left.count || left.actor.login.localeCompare(right.actor.login),
+    ),
     labels: [...labels.values()].toSorted(
       (left, right) => right.count - left.count || left.name.localeCompare(right.name),
     ),
@@ -196,7 +213,8 @@ export function matchesPullRequestFilters(
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
     (filters.author === undefined ||
       entry.author?.login.toLowerCase() ===
-        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase()) &&
+    matchesPullRequestAssigneeFilter(entry.assignees, filters.assignee, viewer)
   );
 }
 

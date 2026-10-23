@@ -145,6 +145,13 @@ query PullRequestCore(
           color
         }
       }
+      assignees(first: 10) {
+        nodes {
+          login
+          name
+          avatarUrl
+        }
+      }
       commits(last: 1) {
         nodes {
           commit {
@@ -449,6 +456,32 @@ query LabelCandidates($owner: String!, $name: String!, $number: Int!) {
       labels(first: 100) {
         nodes {
           name
+        }
+      }
+    }
+  }
+}
+
+# Who a pull request may be assigned to. A null `$query` answers with the first page of everyone
+# assignable; the current assignees ride along so one past that page can still be unassigned.
+query AssigneeCandidates($owner: String!, $name: String!, $number: Int!, $query: String) {
+  repository(owner: $owner, name: $name) {
+    assignableUsers(first: 100, query: $query) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        login
+        name
+        avatarUrl
+      }
+    }
+    pullRequest(number: $number) {
+      assignees(first: 10) {
+        nodes {
+          login
+          name
+          avatarUrl
         }
       }
     }
