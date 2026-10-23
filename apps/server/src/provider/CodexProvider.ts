@@ -122,6 +122,14 @@ function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["accoun
   return codexPlanLabel(account.planType);
 }
 
+/**
+ * Only ChatGPT plans have rate limits. API keys, Bedrock, and a custom
+ * `model_provider` (no account, no OpenAI auth required) never report usage.
+ */
+function codexUsageUnsupported(response: CodexSchema.V2GetAccountResponse): boolean {
+  return response.account ? response.account.type !== "chatgpt" : !response.requiresOpenaiAuth;
+}
+
 export function codexPlanLabel(planType: string | null | undefined): string | undefined {
   switch (planType) {
     case "free":
@@ -565,7 +573,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
-      input.skipNativeUsage
+      input.skipNativeUsage || codexUsageUnsupported(accountResponse)
         ? Effect.succeed(undefined)
         : withCodexDiscoveryDeadline(
             client.request("account/rateLimits/read", null),
@@ -789,21 +797,20 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
-  const usageLimits =
-    snapshot.account.account?.type === "apiKey"
-      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
-      : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
-        ? makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
-          })
-        : codexRateLimitsToLimits({
-            snapshot: snapshot.rateLimits.snapshot,
-            rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
-            resetCredits: snapshot.rateLimits.resetCredits,
-            checkedAt,
-          });
+  const usageLimits = codexUsageUnsupported(snapshot.account)
+    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+    : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
+      ? makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
+        })
+      : codexRateLimitsToLimits({
+          snapshot: snapshot.rateLimits.snapshot,
+          rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
+          resetCredits: snapshot.rateLimits.resetCredits,
+          checkedAt,
+        });
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,

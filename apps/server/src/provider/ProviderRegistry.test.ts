@@ -420,6 +420,21 @@ it.layer(
         assert.strictEqual(status.auth.status, "unknown");
       }),
     );
+
+    it.effect("reports usage as unsupported for a custom model provider without an account", () =>
+      Effect.gen(function* () {
+        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(
+            makeCodexProbeSnapshot({
+              account: { account: null, requiresOpenaiAuth: false },
+            }),
+          ),
+        );
+
+        assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+        assert.strictEqual(status.usageLimits?.unavailable?.message, undefined);
+      }),
+    );
   });
 
   describe("ProviderRegistry.layer", () => {
