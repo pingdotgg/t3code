@@ -1,3 +1,4 @@
+import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import {
   AuthOrchestrationOperateScope,
   EnvironmentId,
@@ -24,6 +25,12 @@ const state = vi.hoisted(() => ({
   openExternal: vi.fn(),
   copy: vi.fn(),
   linkedPullRequest: null as ThreadLinkedPullRequest | null,
+  fileAccess: { canReadFiles: true, isPending: false, error: null as string | null },
+}));
+
+vi.mock(import("../state/filesystem"), async (original) => ({
+  ...(await original()),
+  useFilesystemReadAccess: () => state.fileAccess,
 }));
 
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
@@ -135,6 +142,7 @@ function setup() {
   state.allowed = true;
   state.listeners.clear();
   state.linkedPullRequest = null;
+  state.fileAccess = { canReadFiles: true, isPending: false, error: null };
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateMetadata.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -280,3 +288,14 @@ it.each(["link-to-thread", "unlink-from-thread"])(
     );
   },
 );
+
+it("explains missing file access for a host video instead of offering a retry", async () => {
+  using _setup = setup();
+  state.fileAccess = { canReadFiles: false, isPending: false, error: null };
+  await using screen = await renderMarkdown("![Demo](/tmp/demo.mp4)");
+  await expect.element(screen.getByText(/Video unavailable · Demo/)).toBeVisible();
+  await expect
+    .element(screen.getByText(MISSING_FILE_ACCESS_MESSAGE, { exact: false }))
+    .toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Retry video" })).not.toBeInTheDocument();
+});

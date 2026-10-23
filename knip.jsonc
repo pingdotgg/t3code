@@ -32,7 +32,9 @@
       ],
       "ignoreDependencies": ["esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.
-      "ignore": ["npm-launcher/**"],
+      // The media evidence harness is imported by the dev app's browser, where its
+      // `/src/...` specifiers resolve against apps/web.
+      "ignore": ["npm-launcher/**", "media-permission-evidence-harness.js"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
