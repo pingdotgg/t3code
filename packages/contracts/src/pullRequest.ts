@@ -387,7 +387,8 @@ export type PullRequestListProjectError = typeof PullRequestListProjectError.Typ
 export const PullRequestListResult = Schema.Struct({
   /**
    * A host that could not be read is absent rather than present-and-undefined, because an
-   * open-keyed record cannot carry an optional value through the JSON codec.
+   * open-keyed record cannot carry an optional value through the JSON codec. Repository-scoped
+   * logins also use `host owner/repo` keys, with the repository lowercased.
    */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   providers: Schema.Array(PullRequestProviderSummary),

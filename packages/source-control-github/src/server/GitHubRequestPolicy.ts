@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 
@@ -28,6 +29,9 @@ export const PinnedGitHubCredential = Context.Reference<{
   readonly host: string;
   readonly token: Redacted.Redacted<string>;
   readonly credentialFingerprint: string;
+  /** Operation scope is independent of the selected credential cache. */
+  readonly repository?: string;
+  readonly credentialRepository?: string;
 } | null>("@t3tools/source-control-github/server/GitHubRequestPolicy/PinnedGitHubCredential", {
   defaultValue: () => null,
 });
@@ -200,6 +204,7 @@ export type GitHubAnswer<A> = {
 
 export interface GitHubRequest {
   readonly host: string;
+  readonly repository?: string | undefined;
   readonly operation: string;
   /** The quota the request spends: `core` for REST, `graphql` for GraphQL. */
   readonly resource: string;
@@ -227,8 +232,14 @@ export class GitHubRequestPolicy extends Context.Service<
     /** The credential a request to `host` would carry right now. */
     readonly credential: (
       host: string,
+      repository?: string,
     ) => Effect.Effect<
-      { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
+      {
+        readonly token: Redacted.Redacted<string>;
+        readonly fingerprint: string;
+        readonly repository?: string;
+        readonly credentialRepository?: string;
+      },
       GitHubApiError
     >;
   }
@@ -241,23 +252,54 @@ export const make = Effect.gen(function* () {
   const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const slots = yield* Semaphore.make(CONCURRENCY);
 
+  const useGitCredentials =
+    (yield* HostProcess.Environment).T3CODE_GITHUB_USE_GIT_CREDENTIALS === "1";
   const credential: GitHubRequestPolicy["Service"]["credential"] = Effect.fn(
-    "GitHubRest.credential",
-  )(function* (host) {
+    "GitHubRequestPolicy.credential",
+  )(function* (host, repository) {
     const normalized = normalizeHost(host);
+    const requestedRepository =
+      useGitCredentials && normalized === "github.com" && repository !== undefined
+        ? GitHubCredentials.normalizeCredentialRepository(repository)
+        : undefined;
     const pinned = yield* PinnedGitHubCredential;
     if (pinned !== null) {
+      yield* credentials.checkEnabled?.(normalized) ?? Effect.void;
+      if (requestedRepository === null) {
+        return yield* new GitHubCredentials.GitHubGitCredentialError({
+          host: normalized,
+          reason: "repository",
+        });
+      }
       // A pinned page only ever talks to the host it verified.
-      if (pinned.host !== normalized) {
+      if (
+        pinned.host !== normalized ||
+        (pinned.repository !== undefined &&
+          GitHubCredentials.normalizeCredentialRepository(repository ?? "") !== pinned.repository)
+      ) {
         return yield* new GitHubApiAuthenticationError({
           host: normalized,
           operation: "credential",
         });
       }
-      return { token: pinned.token, fingerprint: pinned.credentialFingerprint };
+      const operationRepository = requestedRepository ?? pinned.repository;
+      return {
+        token: pinned.token,
+        fingerprint: pinned.credentialFingerprint,
+        ...(operationRepository === undefined ? {} : { repository: operationRepository }),
+        ...(pinned.credentialRepository === undefined
+          ? {}
+          : { credentialRepository: pinned.credentialRepository }),
+      };
     }
-    const held = yield* credentials.get(normalized);
-    return { token: held.token, fingerprint: held.fingerprint };
+    const held = yield* credentials.get(normalized, repository);
+    const operationRepository = requestedRepository ?? held.repository;
+    return {
+      token: held.token,
+      fingerprint: held.fingerprint,
+      ...(operationRepository === undefined ? {} : { repository: operationRepository }),
+      ...(held.repository === undefined ? {} : { credentialRepository: held.repository }),
+    };
   });
 
   // The REST/GraphQL transport span owns request and quota metadata.
@@ -271,7 +313,10 @@ export const make = Effect.gen(function* () {
       "github.host": host,
       "github.operation": input.operation,
     });
-    const { token, fingerprint } = yield* credential(host);
+    const { token, fingerprint, repository, credentialRepository } = yield* credential(
+      host,
+      input.repository,
+    );
     const scope = yield* SourceControlRateLimit.CredentialScope;
     // A refusal pauses the whole host, whichever quota it spent: the key PullRequestService
     // records its own backoff under.
@@ -284,6 +329,9 @@ export const make = Effect.gen(function* () {
         ...(answer.status === undefined ? {} : { "http.response.status_code": answer.status }),
         ...rateLimitAttributes(answer.headers),
       });
+      if (repository !== undefined && answer.status === 403 && answer._tag !== "RateLimited") {
+        yield* credentials.invalidate(host, credentialRepository);
+      }
       switch (answer._tag) {
         case "Ok":
           yield* limits.recordSuccess({ ...key, lease });
@@ -302,7 +350,7 @@ export const make = Effect.gen(function* () {
         }
         case "Unauthorized":
           // The source may hold a newer token than the one that was refused.
-          yield* credentials.invalidate(host);
+          yield* credentials.invalidate(host, credentialRepository);
           return yield* new GitHubApiAuthenticationError(context);
         case "NotFound":
           return yield* new GitHubApiNotFoundError(context);

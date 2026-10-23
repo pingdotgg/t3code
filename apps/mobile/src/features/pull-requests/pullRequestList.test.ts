@@ -208,6 +208,103 @@ describe("all-environment PR list", () => {
       [1, mbp],
     ]);
   });
+
+  it("keeps repository viewers through head pages and filters each environment before deduplication", () => {
+    const rows = [
+      entry(1, {
+        repository: "OwnerA/Repo",
+        author: { login: "Alice", name: null, avatarUrl: null },
+      }),
+      entry(2, {
+        repository: "OwnerB/Repo",
+        author: { login: "Bob", name: null, avatarUrl: null },
+      }),
+    ];
+    const merged = mergeEnvironmentPullRequestPages([
+      {
+        environmentId: cups,
+        pages: pullRequestListHead(null, {
+          ...page(rows),
+          viewers: {
+            "github.com": "Alice",
+            "github.com ownera/repo": "Other",
+            "github.com ownerb/repo": "Other",
+          },
+        }),
+      },
+      {
+        environmentId: mbp,
+        pages: pullRequestListHead(null, {
+          ...page(rows),
+          viewers: {
+            "github.com": "Other",
+            "github.com ownera/repo": "Alice",
+            "github.com ownerb/repo": "Bob",
+          },
+        }),
+      },
+    ]);
+    expect(merged.viewers[`${mbp} github.com ownerb/repo`]).toBe("Bob");
+    for (const [controls, query] of [
+      [{ ...DEFAULT_PR_LIST_CONTROLS, involvement: "authored" as const }, ""],
+      [{ ...DEFAULT_PR_LIST_CONTROLS, filters: { author: "me" } }, ""],
+      [DEFAULT_PR_LIST_CONTROLS, "author:@me"],
+    ] as const) {
+      expect(
+        filterPullRequestList(
+          merged.entries,
+          controls,
+          merged.viewers,
+          query,
+          merged.localSearchHosts,
+        ).map((row) => [row.environmentId, row.number]),
+      ).toEqual([
+        [mbp, 2],
+        [mbp, 1],
+      ]);
+    }
+  });
+
+  it("keeps local full-text searches keyed by host with repository viewers", () => {
+    const rows = [
+      entry(1, { title: "Needle", repository: "OwnerA/Repo" }),
+      entry(2, { title: "Other", repository: "OwnerB/Repo" }),
+    ];
+    const merged = mergeEnvironmentPullRequestPages([
+      {
+        environmentId: cups,
+        pages: pullRequestListHead(null, {
+          ...page(rows),
+          viewers: {
+            "github.com": "Other",
+            "github.com ownera/repo": "octocat",
+            "github.com ownerb/repo": "octocat",
+          },
+          providers: [
+            {
+              host: "github.com",
+              kind: SourceControlProviderKind.make("github"),
+              searchesOnHost: false,
+              projectCount: 2,
+              configured: true,
+              detail: null,
+            },
+          ],
+        }),
+      },
+    ]);
+    expect([...merged.localSearchHosts]).toEqual([`${cups} github.com`]);
+    expect(
+      filterPullRequestList(
+        merged.entries,
+        { ...DEFAULT_PR_LIST_CONTROLS, involvement: "authored" },
+        merged.viewers,
+        "needle",
+        merged.localSearchHosts,
+      ).map((row) => row.number),
+    ).toEqual([1]);
+  });
+
   it("scopes a project to its owning environment even if another has the same project id", () => {
     const merged = mergeEnvironmentPullRequestPages([
       { environmentId: cups, pages: pullRequestListHead(null, page([entry(1)])) },
@@ -253,6 +350,32 @@ describe("mobile PR scan and filters", () => {
       ),
     ).toEqual([1]);
   });
+
+  it("prefers repository viewers for unscoped entries and retains the host fallback", () => {
+    const rows = [
+      entry(1, { repository: "OwnerA/Repo" }),
+      entry(2, {
+        repository: "OwnerB/Repo",
+        author: { login: "Bob", name: null, avatarUrl: null },
+      }),
+      entry(3, { repository: "legacy/repo" }),
+    ];
+    const viewers = {
+      "github.com": "octocat",
+      "github.com ownera/repo": "octocat",
+      "github.com ownerb/repo": "Bob",
+    };
+    expect(
+      filterPullRequestList(
+        rows,
+        { ...DEFAULT_PR_LIST_CONTROLS, involvement: "authored" },
+        viewers,
+        "",
+        new Set(),
+      ).map((row) => row.number),
+    ).toEqual([3, 2, 1]);
+  });
+
   it("reads a typed draft qualifier as a filter and searches only the text left over", () => {
     expect(pullRequestListInput(DEFAULT_PR_LIST_CONTROLS, "draft:false fix")).toEqual({
       state: "open",

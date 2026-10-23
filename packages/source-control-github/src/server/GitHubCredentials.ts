@@ -19,19 +19,47 @@ import type { ServerSettings } from "@t3tools/contracts";
 
 import * as GitHubClient from "../client/definition.ts";
 
+/** How long a token is reused before `gh` is asked again, so a `gh auth switch` applies soon. */
 const TOKEN_TTL = Duration.minutes(5);
+/** No credential is retried sooner, so a fresh `gh auth login` takes effect on the next read. */
 const MISSING_TTL = Duration.seconds(10);
 
-export const GitHubCredentialSource = Schema.Literals(["settings", "env", "gh"]);
+export const GitHubCredentialSource = Schema.Literals(["settings", "env", "gh", "git"]);
 export type GitHubCredentialSource = typeof GitHubCredentialSource.Type;
 
 export interface GitHubCredential {
   readonly host: string;
   readonly token: Redacted.Redacted<string>;
   readonly source: GitHubCredentialSource;
+  /** A digest of host and token: safe for cache keys and rate-limit scopes, never the token. */
   readonly fingerprint: string;
+  /** Git helpers select a credential for this repository, never for the host generally. */
+  readonly repository?: string;
 }
 
+export class GitHubGitCredentialError extends Schema.TaggedError<GitHubGitCredentialError>()(
+  "GitHubGitCredentialError",
+  { host: Schema.String, reason: Schema.Literals(["repository", "process", "response"]) },
+) {
+  override get message(): string {
+    return "Git could not safely resolve a repository credential. Check the server's global Git credential helpers.";
+  }
+}
+
+const Repository = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9_.-]{1,100}$/i),
+);
+const isRepository = Schema.is(Repository);
+/** Canonical HTTPS credential path; never let a selector add credential protocol fields. */
+export function normalizeCredentialRepository(repository: string): string | null {
+  const normalized = repository.replace(/\.git$/i, "").toLowerCase();
+  return isRepository(normalized) &&
+    !normalized.split("/").some((part) => part === "." || part === ".." || part.startsWith("-"))
+    ? normalized
+    : null;
+}
+
+/** Nothing in the environment, and no `gh` on PATH to ask. */
 export class GitHubCliMissingError extends Schema.TaggedError<GitHubCliMissingError>()(
   "GitHubCliMissingError",
   { host: Schema.String },
@@ -41,6 +69,7 @@ export class GitHubCliMissingError extends Schema.TaggedError<GitHubCliMissingEr
   }
 }
 
+/** `gh` is installed but holds no login for the host, or not the account chosen in Settings. */
 export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedInError>()(
   "GitHubNotSignedInError",
   { host: Schema.String, account: Schema.optional(Schema.String) },
@@ -52,6 +81,7 @@ export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedIn
   }
 }
 
+/** The user turned the host off in Settings. */
 export class GitHubHostDisabledError extends Schema.TaggedError<GitHubHostDisabledError>()(
   "GitHubHostDisabledError",
   { host: Schema.String },
@@ -61,6 +91,7 @@ export class GitHubHostDisabledError extends Schema.TaggedError<GitHubHostDisabl
   }
 }
 
+/** `gh auth token` timed out or failed for a reason other than having no login. */
 export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedError>()(
   "GitHubCliFailedError",
   { host: Schema.String, cause: Schema.Defect() },
@@ -70,19 +101,28 @@ export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedErro
   }
 }
 
+/** There is no token for the host. */
 export type GitHubCredentialUnavailableError =
   | GitHubCliMissingError
   | GitHubNotSignedInError
   | GitHubHostDisabledError
-  | GitHubCliFailedError;
+  | GitHubCliFailedError
+  | GitHubGitCredentialError;
 
+/**
+ * Where GitHub tokens come from. Callers ask per host and never see how the token was found,
+ * so another source (an in-app OAuth login) slots in here without touching any of them.
+ */
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
   {
     readonly get: (
       host: string,
+      repository?: string,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
-    readonly invalidate: (host: string) => Effect.Effect<void>;
+    /** Drops the held token after GitHub refused it, so the next read asks its source again. */
+    readonly invalidate: (host: string, repository?: string) => Effect.Effect<void>;
+    readonly checkEnabled?: (host: string) => Effect.Effect<void, GitHubHostDisabledError>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
 
@@ -123,10 +163,105 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
+  const fromGit = Effect.fnUntraced(function* (repository: string) {
+    const host = "github.com";
+    const normalized = repository.toLowerCase();
+    const invalid = () => new GitHubGitCredentialError({ host, reason: "response" });
+    const output = yield* process
+      .run({
+        operation: "GitHubCredentials.git",
+        command: "git",
+        args: ["-c", "credential.interactive=false", "credential", "fill"],
+        // Ignore any repository around the server working directory, including inherited Git
+        // selectors. Helpers come only from the server's system/global configuration.
+        cwd: workingDirectory,
+        stdin: `protocol=https\nhost=github.com\npath=${repository}.git\n\n`,
+        env: {
+          GIT_DIR: "",
+          GIT_WORK_TREE: "",
+          GIT_COMMON_DIR: "",
+          GIT_CONFIG: "",
+          GIT_CONFIG_COUNT: "0",
+          GIT_CONFIG_PARAMETERS: "",
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_ASKPASS: "",
+          SSH_ASKPASS: "",
+          GCM_INTERACTIVE: "never",
+          GIT_TRACE: "0",
+          GIT_TRACE_SETUP: "0",
+          GIT_TRACE_CURL: "0",
+          GIT_CURL_VERBOSE: "0",
+          GIT_TRACE2: "0",
+          GIT_TRACE2_EVENT: "0",
+          GIT_TRACE2_PERF: "0",
+        },
+        allowNonZeroExit: true,
+        timeoutMs: 10_000,
+        maxOutputBytes: 16_384,
+        outputMode: "error",
+      })
+      .pipe(
+        // Neither helper stderr nor lower-level errors may retain credential material.
+        Effect.mapError(() => new GitHubGitCredentialError({ host, reason: "process" })),
+      );
+    if (
+      output.stdoutTruncated ||
+      output.stderrTruncated ||
+      output.stdoutInvalidUtf8 ||
+      output.stderrInvalidUtf8
+    )
+      return yield* invalid();
+    if (output.exitCode !== 0) {
+      // With prompts disabled, Git's specific missing-credential exit is a normal miss. Any
+      // helper error before it makes this an operational failure, rather than a fallback.
+      const missing = output.stderr.match(
+        /^(?:fatal: could not read (?:Username|Password) for '[^'\r\n]*': terminal prompts disabled|fatal: unable to get password from user)(?:\r?\n)?$/,
+      );
+      if (output.stdout === "" && missing?.[0] === output.stderr) return null;
+      return yield* new GitHubGitCredentialError({ host, reason: "process" });
+    }
+    if (output.stderr !== "")
+      return yield* new GitHubGitCredentialError({ host, reason: "process" });
+    if (output.stdout === "") return null;
+    if (!output.stdout.endsWith("\n") || /[\0\r]/.test(output.stdout)) return yield* invalid();
+    const fields = new Map<string, string>();
+    let ended = false;
+    for (const line of output.stdout.split("\n").slice(0, -1)) {
+      if (line === "") {
+        ended = true;
+        continue;
+      }
+      const equals = line.indexOf("=");
+      if (ended || equals <= 0) return yield* invalid();
+      const key = line.slice(0, equals);
+      if (fields.has(key)) return yield* invalid();
+      fields.set(key, line.slice(equals + 1));
+    }
+    // `useHttpPath=false` owner-specific helpers legitimately erase path after selection.
+    const path = fields.get("path");
+    if (
+      fields.get("protocol") !== "https" ||
+      fields.get("host") !== host ||
+      (path !== undefined && normalizeCredentialRepository(path) !== normalized)
+    )
+      return yield* invalid();
+    const token = fields.get("password");
+    if (!token) return null;
+    if (!/^[\x21-\x7e]+$/.test(token)) return yield* invalid();
+    return {
+      host,
+      repository: normalized,
+      source: "git",
+      token: Redacted.make(token),
+      fingerprint: yield* fingerprintOf(host, token),
+    } satisfies GitHubCredential;
+  });
 
+  /** `host:sha256(token)`, safe for cache keys and rate-limit scopes. */
   const fingerprintOf = (host: string, token: string) =>
     crypto.digest("SHA-256", new TextEncoder().encode(token)).pipe(
       Effect.map((digest) => `${host}:${Hex.encode(digest)}`),
+      // Hashing a string in memory has no platform failure worth a typed error.
       Effect.orDie,
     );
 
@@ -171,24 +306,30 @@ export const make = Effect.gen(function* () {
       settings.sourceControlHosts[GitHubClient.definition.kind],
     );
 
+  /** The Settings choice for a host; unreadable settings fall back to gh's own choice. */
   const hostChoice = (host: string) =>
     sourceControlHost.settings.get.pipe(
       Effect.map((settings) => readSettings(settings).hosts[host]),
       Effect.orElseSucceed(() => undefined),
     );
 
+  /** A token saved in Settings for the host, read fresh so a saved or removed one applies at once. */
   const savedToken = (host: string) =>
     sourceControlHost.settings.get.pipe(
       Effect.map((settings) => readSettings(settings).tokens[host]?.trim() || null),
       Effect.orElseSucceed(() => null),
     );
 
+  /** Cache key: the host plus its pinned account, so a changed pin misses the cache. */
   const cacheKey = (host: string, account: string | undefined) =>
     account === undefined ? host : `${host}\u0000${account}`;
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
     const [host = key, choice] = key.split("\u0000");
+    // An environment token wins over a pinned account, exactly as it does in gh.
     const fromEnv = environmentToken(host, environment);
+    // A pinned login gh no longer holds (logged out, expired) falls back to the active one,
+    // which is what discovery reports as the account in use.
     const token =
       fromEnv ??
       (yield* fromGh(host, choice).pipe(
@@ -207,6 +348,7 @@ export const make = Effect.gen(function* () {
 
   const cache = yield* Cache.makeWith(lookup, {
     capacity: 32,
+    // A transient gh failure (a timeout, a locked keyring) is asked again on the next read.
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? TOKEN_TTL
@@ -217,13 +359,41 @@ export const make = Effect.gen(function* () {
           : MISSING_TTL,
   });
 
+  const gitCache = yield* Cache.makeWith(fromGit, {
+    capacity: 128,
+    timeToLive: (exit) =>
+      Exit.isFailure(exit) ? Duration.zero : exit.value === null ? MISSING_TTL : TOKEN_TTL,
+  });
+
   return GitHubCredentials.of({
-    get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
+    checkEnabled: (rawHost) => {
+      const host = normalizeHost(rawHost);
+      return hostChoice(host).pipe(
+        Effect.flatMap((choice) =>
+          choice?.enabled === false
+            ? Effect.fail(new GitHubHostDisabledError({ host }))
+            : Effect.void,
+        ),
+      );
+    },
+    get: Effect.fn("GitHubCredentials.get")(function* (rawHost, repository) {
       const host = normalizeHost(rawHost);
       const choice = yield* hostChoice(host);
       if (choice?.enabled === false) {
         return yield* new GitHubHostDisabledError({ host });
       }
+      if (
+        environment.T3CODE_GITHUB_USE_GIT_CREDENTIALS === "1" &&
+        host === "github.com" &&
+        repository !== undefined
+      ) {
+        if (normalizeCredentialRepository(repository) === null)
+          return yield* new GitHubGitCredentialError({ host, reason: "repository" });
+        const credential = yield* Cache.get(gitCache, repository.replace(/\.git$/i, ""));
+        if (credential !== null) return credential;
+      }
+      // A token saved in Settings is the most deliberate choice, so it comes before the
+      // environment and gh. It is read from the secret store each time, so it needs no cache.
       const saved = yield* savedToken(host);
       if (saved !== null) {
         return {
@@ -235,8 +405,25 @@ export const make = Effect.gen(function* () {
       }
       return yield* Cache.get(cache, cacheKey(host, choice?.account));
     }),
-    invalidate: (rawHost) => {
+    invalidate: (rawHost, repository) => {
       const host = normalizeHost(rawHost);
+      const normalized =
+        repository === undefined ? null : normalizeCredentialRepository(repository);
+      if (
+        host === "github.com" &&
+        normalized !== null &&
+        environment.T3CODE_GITHUB_USE_GIT_CREDENTIALS === "1"
+      )
+        return Effect.gen(function* () {
+          const keys = Array.from(yield* Cache.keys(gitCache));
+          // Accept canonical helper provenance and selectors carrying a clone .git suffix.
+          const literal = repository?.toLowerCase();
+          yield* Effect.forEach(
+            keys.filter((key) => key.toLowerCase() === literal || key.toLowerCase() === normalized),
+            (key) => Cache.invalidate(gitCache, key),
+            { discard: true },
+          );
+        });
       return hostChoice(host).pipe(
         Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
       );

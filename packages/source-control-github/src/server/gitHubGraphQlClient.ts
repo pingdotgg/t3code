@@ -22,6 +22,7 @@ export class GitHubGraphQlTarget extends Context.Service<
   GitHubGraphQlTarget,
   {
     readonly host: string;
+    readonly repository?: string | undefined;
     readonly operation: string;
     /** Overrides `SourceControlRateLimit.Interactive` for this one call. */
     readonly allowReserve?: boolean | undefined;
@@ -74,6 +75,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
           return yield* policy.request(
             {
               host,
+              repository: target.repository,
               operation: target.operation,
               resource: "graphql",
               allowReserve: target.allowReserve ?? (yield* SourceControlRateLimit.Interactive),
@@ -222,6 +224,10 @@ export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
   JSON.stringify([
     Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null)
       ?.credentialFingerprint ?? null,
+    Context.getUnsafe(context, GitHubGraphQlTarget).repository ??
+      Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null)
+        ?.repository ??
+      null,
     Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
   ]);
 

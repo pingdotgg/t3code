@@ -93,6 +93,7 @@ export const makeChecksRevalidator = Effect.gen(function* () {
             const response = yield* api
               .rest({
                 host: input.host,
+                repository: input.repository,
                 operation: "revalidateChecks",
                 path: endpoint,
                 ...(previous?.etag ? { ifNoneMatch: previous.etag } : {}),

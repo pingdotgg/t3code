@@ -133,7 +133,14 @@ export function pullRequestEntryViewer(
   entry: ScopedEntry,
   viewers: PullRequestViewers,
 ): string | null {
-  return normalize(viewers[pullRequestViewerKey(entry)] ?? viewers[entry.host]);
+  const key = pullRequestViewerKey(entry);
+  const repository = entry.repository.toLowerCase();
+  return normalize(
+    viewers[`${key} ${repository}`] ??
+      viewers[key] ??
+      viewers[`${entry.host} ${repository}`] ??
+      viewers[entry.host],
+  );
 }
 
 function isAuthoredByViewer(entry: ScopedEntry, viewers: PullRequestViewers): boolean {

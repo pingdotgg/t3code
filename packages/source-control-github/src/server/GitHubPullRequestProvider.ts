@@ -253,7 +253,11 @@ export const make = Effect.gen(function* () {
 
     getViewer: (input) =>
       cli
-        .getViewerLogin({ cwd: input.cwd, host: input.host ?? "github.com" })
+        .getViewerLogin({
+          cwd: input.cwd,
+          host: input.host ?? "github.com",
+          ...(input.repository === undefined ? {} : { repository: input.repository }),
+        })
         .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>

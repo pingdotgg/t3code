@@ -34,6 +34,19 @@ over that choice; a host turned off stays off either way.
 For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. T3 Code treats a
 custom server name as GitHub once it has a credential for that host.
 
+If you use different GitHub tokens for different organizations, set
+`T3CODE_GITHUB_USE_GIT_CREDENTIALS=1` in the **server's** environment and restart it. For
+repository operations on github.com, T3 Code then asks the server's trusted global Git HTTPS
+credential helpers for that repository's credential before using the token above. Configure
+Git's URL/path-specific helpers on that machine so `git credential fill` selects the intended
+token for `https://github.com/OWNER/REPOSITORY.git`; T3 Code honors their existing path settings.
+There is no additional token to enter in T3 Code. If Git has no credential, the normal token
+precedence still applies; helper failures are reported and a refused token is never retried
+with a different one. Host-only account discovery and GitHub Enterprise keep the normal
+credential, and a host turned off in Settings stays off.
+With only repository credentials configured, account discovery shows that access will be resolved
+when you enter a repository; host-wide operations still need a default credential.
+
 ### Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or

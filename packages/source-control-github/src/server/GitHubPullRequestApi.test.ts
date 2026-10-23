@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -9,6 +10,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Redacted from "effect/Redacted";
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
 
@@ -719,6 +722,586 @@ it.effect(
         accountId: "123",
         viewer: "same-account",
       });
+    }),
+);
+
+it.effect.each([401, 403])(
+  "isolates same-login stack PATs and 304 bodies, preserving invalidation provenance on %i",
+  (status) =>
+    Effect.gen(function* () {
+      const host = "github.com";
+      const repositoryA = "Owner-A/Repo";
+      const repositoryB = "Owner-B/Repo";
+      const fallbackRepository = "Owner-C/Repo";
+      const tokens = new Map([
+        [repositoryA, "pat-a"],
+        [repositoryB, "pat-b"],
+      ]);
+      const requests: Array<{ url: string; token: string; etag: string | undefined }> = [];
+      const invalidations: Array<[string, string | undefined]> = [];
+      const denied = new Set<string>();
+      const credentials = Layer.succeed(GitHubCredentials.GitHubCredentials, {
+        get: (hostname, repository) =>
+          Effect.sync(() => {
+            const token = tokens.get(repository ?? "") ?? "host-token";
+            return {
+              host: hostname,
+              token: Redacted.make(token),
+              fingerprint: "pat:" + token,
+              source: token === "host-token" ? ("gh" as const) : ("git" as const),
+              ...(token === "host-token" ? {} : { repository: repository! }),
+            };
+          }),
+        invalidate: (hostname, repository) =>
+          Effect.sync(() => {
+            invalidations.push([hostname, repository]);
+          }),
+      });
+      const http = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            const token = request.headers.authorization!.slice("Bearer ".length);
+            const etag = request.headers["if-none-match"];
+            requests.push({ url: request.url, token, etag });
+            const validator = 'W/"' + token + '"';
+            const number = token === "pat-a" ? 1 : token === "pat-b" ? 2 : 3;
+            const responseStatus = denied.has(token) ? status : etag === validator ? 304 : 200;
+            const body = request.url.endsWith("/user")
+              ? { id: 123, login: "same-account" }
+              : [
+                  {
+                    number,
+                    url: "https://api.github.com/repos/" + repositoryA + "/stacks/" + number,
+                    base: { ref: "main" },
+                    pull_requests: [
+                      { number: 7, head: { ref: "feat/" + token }, state: "open", merged_at: null },
+                    ],
+                  },
+                ];
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(responseStatus === 304 ? null : encodeJson(body), {
+                status: responseStatus,
+                headers: { "content-type": "application/json", etag: validator },
+              }),
+            );
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.make.pipe(
+        Effect.provide(
+          GitHubRest.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(credentials, http)),
+            Layer.provideMerge(GitHubQuota.layer),
+            Layer.provideMerge(SourceControlRateLimit.layer),
+            Layer.merge(TestSourceControlHost.layer()),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Effect.provideService(HostProcess.Environment, { T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1" }),
+      );
+      const input = { cwd: "/repo", host, number: 7 };
+      const identityA = yield* cli.withVerifiedCredential(
+        { ...input, repository: repositoryA },
+        Effect.succeed,
+      );
+      const identityB = yield* cli.withVerifiedCredential(
+        { ...input, repository: repositoryB },
+        Effect.succeed,
+      );
+      expect(identityA.accountId).toBe(identityB.accountId);
+      expect(identityA.credentialFingerprint).not.toBe(identityB.credentialFingerprint);
+      const firstA = yield* cli.getPullRequestStack({ ...input, repository: repositoryA });
+      const firstB = yield* cli.getPullRequestStack({ ...input, repository: repositoryB });
+      expect(firstA?.number).toBe(1);
+      expect(firstB?.number).toBe(2);
+      expect(yield* cli.getPullRequestStack({ ...input, repository: repositoryA })).toEqual(firstA);
+      expect(yield* cli.getPullRequestStack({ ...input, repository: repositoryB })).toEqual(firstB);
+      expect(requests.slice(2).map(({ token, etag }) => [token, etag])).toEqual([
+        ["pat-a", undefined],
+        ["pat-b", undefined],
+        ["pat-a", 'W/"pat-a"'],
+        ["pat-b", 'W/"pat-b"'],
+      ]);
+      // A replacement PAT for the same login and exact path must not reuse the previous body.
+      tokens.set(repositoryA, "pat-a2");
+      expect((yield* cli.getPullRequestStack({ ...input, repository: repositoryA }))?.number).toBe(
+        3,
+      );
+      expect(requests.at(-1)).toMatchObject({ token: "pat-a2", etag: undefined });
+      denied.add("pat-a2");
+      const beforeDenial = requests.length;
+      const refused = yield* Effect.flip(
+        cli.getPullRequestStack({ ...input, repository: repositoryA }),
+      );
+      expect(refused._tag).toBe(
+        status === 401 ? "GitHubApiAuthenticationError" : "GitHubApiResponseError",
+      );
+      expect(requests).toHaveLength(beforeDenial + 1);
+      expect(invalidations).toEqual([[host, repositoryA]]);
+      expect(yield* cli.getPullRequestStack({ ...input, repository: repositoryB })).toEqual(firstB);
+      expect(requests.at(-1)).toMatchObject({ token: "pat-b", etag: 'W/"pat-b"' });
+      // A scoped operation may use the host fallback; invalidation still belongs to that source.
+      denied.add("host-token");
+      const fallback = yield* Effect.flip(
+        cli.getPullRequestStack({ ...input, repository: fallbackRepository }),
+      );
+      expect(fallback._tag).toBe(
+        status === 401 ? "GitHubApiAuthenticationError" : "GitHubApiResponseError",
+      );
+      expect(invalidations).toEqual([
+        [host, repositoryA],
+        [host, undefined],
+      ]);
+      expect(requests.at(-1)).toMatchObject({ token: "host-token", etag: undefined });
+    }),
+);
+
+it.effect("isolates same-login repository PAT fallback and retains the pin through rotation", () =>
+  Effect.gen(function* () {
+    const host = "github.com";
+    const repositoryA = "Owner-A/Repo";
+    const repositoryB = "Owner-B/Repo";
+    const tokens = new Map([
+      [repositoryA, "pat-a"],
+      [repositoryB, "pat-b"],
+    ]);
+    const requests: Array<[string, string]> = [];
+    const selections: string[] = [];
+    const invalidations: Array<[string, string | undefined]> = [];
+    const credentials = Layer.succeed(GitHubCredentials.GitHubCredentials, {
+      get: (hostname, repository) =>
+        Effect.sync(() => {
+          assert.ok(repository !== undefined && tokens.has(repository));
+          selections.push(repository);
+          const token = tokens.get(repository)!;
+          return {
+            host: hostname,
+            token: Redacted.make(token),
+            fingerprint: `pat:${token}`,
+            source: "git" as const,
+            repository,
+          };
+        }),
+      invalidate: (hostname, repository) =>
+        Effect.sync(() => {
+          invalidations.push([hostname, repository]);
+          if (repository === repositoryA) tokens.set(repositoryA, "pat-a2");
+        }),
+    });
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.gen(function* () {
+          const token = request.headers.authorization!.slice("Bearer ".length);
+          const path = new URL(request.url).pathname;
+          requests.push([path, token]);
+          const repository = token === "pat-b" ? repositoryB : repositoryA;
+          expect(yield* SourceControlRateLimit.CredentialScope).toBe(`pat:${token}`);
+          expect(yield* GitHubRequestPolicy.PinnedGitHubCredential).toMatchObject({
+            host,
+            repository: repository.toLowerCase(),
+            credentialRepository: repository,
+            credentialFingerprint: `pat:${token}`,
+          });
+          const body =
+            path === "/user"
+              ? { message: "Resource not accessible by integration" }
+              : path === "/graphql"
+                ? { data: { viewer: { databaseId: 123, login: "same-account" } } }
+                : [];
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(encodeJson(body), {
+              status: path === "/user" ? 403 : 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubRest.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(credentials, http)),
+          Layer.provideMerge(GitHubQuota.layer),
+          Layer.provideMerge(SourceControlRateLimit.layer),
+          Layer.merge(TestSourceControlHost.layer()),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+      Effect.provideService(HostProcess.Environment, { T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1" }),
+    );
+    const input = { cwd: "/repo", host };
+    const first = yield* cli.withVerifiedCredential(
+      { ...input, repository: repositoryA },
+      (identity) =>
+        Effect.gen(function* () {
+          expect(yield* cli.getViewerLogin({ ...input, repository: repositoryA })).toBe(
+            identity.viewer,
+          );
+          expect(
+            yield* cli.getPullRequestStack({ ...input, repository: repositoryA, number: 7 }),
+          ).toBeNull();
+          return identity;
+        }),
+    );
+    const second = yield* cli.withVerifiedCredential(
+      { ...input, repository: repositoryB },
+      Effect.succeed,
+    );
+    expect(second).toMatchObject({ accountId: first.accountId, viewer: first.viewer });
+    expect(second.credentialFingerprint).not.toBe(first.credentialFingerprint);
+    expect(
+      yield* cli.withVerifiedCredential({ ...input, repository: repositoryB }, Effect.succeed),
+    ).toEqual(second);
+    const rotated = yield* cli.withVerifiedCredential(
+      { ...input, repository: repositoryA },
+      Effect.succeed,
+    );
+    expect(rotated).toMatchObject({ accountId: first.accountId, viewer: first.viewer });
+    expect(rotated.credentialFingerprint).not.toBe(first.credentialFingerprint);
+    expect(requests).toEqual([
+      ["/user", "pat-a"],
+      ["/graphql", "pat-a"],
+      [`/repos/${repositoryA}/stacks`, "pat-a"],
+      ["/user", "pat-b"],
+      ["/graphql", "pat-b"],
+      ["/user", "pat-a2"],
+      ["/graphql", "pat-a2"],
+    ]);
+    expect(selections).toEqual([repositoryA, repositoryB, repositoryB, repositoryA]);
+    expect(invalidations).toEqual([
+      [host, repositoryA],
+      [host, repositoryB],
+      [host, repositoryA],
+    ]);
+  }),
+);
+
+it.effect("pins paginated file stats to one repository credential until the next operation", () =>
+  Effect.gen(function* () {
+    const input = { cwd: "/repo", host: "github.com", repository: "Owner/Repo", number: 7 };
+    let activeToken = "original-pat";
+    const selections: Array<[string, string | undefined]> = [];
+    const requests: Array<{
+      authorization: string | undefined;
+      after: string | null;
+      scope: string;
+      repository: string | undefined;
+      credentialRepository: string | undefined;
+      fingerprint: string | undefined;
+    }> = [];
+    const credentials = Layer.succeed(GitHubCredentials.GitHubCredentials, {
+      get: (host, repository) =>
+        Effect.sync(() => {
+          selections.push([host, repository]);
+          expect(repository).toBe(input.repository);
+          return {
+            host,
+            token: Redacted.make(activeToken),
+            fingerprint: `pat:${activeToken}`,
+            source: "git" as const,
+            repository: input.repository,
+          };
+        }),
+      invalidate: () => Effect.die("A successful file-stat read must not replace its credential"),
+    });
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.gen(function* () {
+          expect(request.url).toBe("https://api.github.com/graphql");
+          assert.ok(request.body._tag === "Uint8Array");
+          const sent = JSON.parse(new TextDecoder().decode(request.body.body)) as {
+            operationName: string;
+            variables: { owner: string; name: string; number: number; after?: string | null };
+          };
+          expect(sent.operationName).toBe("PullRequestFileStats");
+          expect(sent.variables).toMatchObject({ owner: "Owner", name: "Repo", number: 7 });
+          const after = sent.variables.after ?? null;
+          const pin = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+          requests.push({
+            authorization: request.headers.authorization,
+            after,
+            scope: yield* SourceControlRateLimit.CredentialScope,
+            repository: pin?.repository,
+            credentialRepository: pin?.credentialRepository,
+            fingerprint: pin?.credentialFingerprint,
+          });
+          if (after === null) activeToken = "rotated-pat";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      files: {
+                        nodes: [
+                          {
+                            path: after === null ? "src/a.ts" : "src/b.ts",
+                            additions: 2,
+                            deletions: 1,
+                          },
+                        ],
+                        pageInfo: {
+                          hasNextPage: after === null,
+                          endCursor: after === null ? "next" : null,
+                        },
+                      },
+                    },
+                  },
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubRest.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(credentials, http)),
+          Layer.provideMerge(GitHubQuota.layer),
+          Layer.provideMerge(SourceControlRateLimit.layer),
+          Layer.merge(TestSourceControlHost.layer()),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+      Effect.provideService(HostProcess.Environment, { T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1" }),
+    );
+    const expected = {
+      files: [
+        { path: "src/a.ts", additions: 2, deletions: 1 },
+        { path: "src/b.ts", additions: 2, deletions: 1 },
+      ],
+      truncated: false,
+    };
+    expect(yield* cli.getPullRequestFileStats(input)).toEqual(expected);
+    expect(selections).toEqual([[input.host, input.repository]]);
+    expect(yield* cli.getPullRequestFileStats(input)).toEqual(expected);
+    expect(selections).toEqual([
+      [input.host, input.repository],
+      [input.host, input.repository],
+    ]);
+    expect(requests).toEqual(
+      ["original-pat", "rotated-pat"].flatMap((token) =>
+        [null, "next"].map((after) => ({
+          authorization: `Bearer ${token}`,
+          after,
+          scope: `pat:${token}`,
+          repository: "owner/repo",
+          credentialRepository: input.repository,
+          fingerprint: `pat:${token}`,
+        })),
+      ),
+    );
+  }),
+);
+
+it.effect.each([false, true, undefined])(
+  "honors allowPaused %s when a repository pause starts before GraphQL identity fallback",
+  (allowPaused) =>
+    Effect.gen(function* () {
+      const input = { cwd: "/repo", host: "github.com", repository: "Owner/Repo" };
+      const fingerprint = "pat:repo";
+      const limits = yield* SourceControlRateLimit.make;
+      const key = { provider: SourceControlProviderKind.make("github"), host: input.host };
+      const requests: string[] = [];
+      const credentials = Layer.succeed(GitHubCredentials.GitHubCredentials, {
+        get: (host, repository) =>
+          Effect.succeed({
+            host,
+            token: Redacted.make("repository-token"),
+            source: "git" as const,
+            fingerprint,
+            ...(repository === undefined ? {} : { repository }),
+          }),
+        invalidate: () => Effect.void,
+      });
+      const http = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.gen(function* () {
+            const path = new URL(request.url).pathname;
+            requests.push(path);
+            expect(request.headers.authorization).toBe("Bearer repository-token");
+            expect(yield* SourceControlRateLimit.CredentialScope).toBe(fingerprint);
+            if (path === "/user") {
+              const lease = yield* limits.check(key, { allowPaused: true }).pipe(Effect.orDie);
+              yield* limits.recordRateLimit({
+                ...key,
+                lease,
+                retryAt: (yield* Clock.currentTimeMillis) + 60 * 60_000,
+              });
+            }
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                encodeJson(
+                  path === "/user"
+                    ? { message: "Resource not accessible by integration" }
+                    : { data: { viewer: { databaseId: 123, login: "same-account" } } },
+                ),
+                {
+                  status: path === "/user" ? 403 : 200,
+                  headers: { "content-type": "application/json" },
+                },
+              ),
+            );
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.make.pipe(
+        Effect.provide(
+          GitHubRest.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(credentials, http)),
+            Layer.provideMerge(GitHubQuota.layer),
+            Layer.provideMerge(
+              Layer.succeed(SourceControlRateLimit.SourceControlRateLimit, limits),
+            ),
+            Layer.merge(TestSourceControlHost.layer()),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Effect.provideService(HostProcess.Environment, { T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1" }),
+      );
+      const result = yield* cli
+        .withVerifiedCredential(
+          { ...input, ...(allowPaused === undefined ? {} : { allowPaused }) },
+          Effect.succeed,
+        )
+        .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true), Effect.result);
+      if (allowPaused === false) {
+        assert.ok(Result.isFailure(result));
+        expect(result.failure._tag).toBe("SourceControlRateLimitPausedError");
+        expect(requests).toEqual(["/user"]);
+        yield* cli.withVerifiedCredential({ ...input, allowPaused: true }, Effect.succeed);
+      } else {
+        assert.ok(Result.isSuccess(result));
+        expect(result.success.viewer).toBe("same-account");
+        expect(requests).toEqual(["/user", "/graphql"]);
+      }
+      const beforeCachedRead = requests.length;
+      expect(
+        yield* cli.withVerifiedCredential({ ...input, allowPaused: false }, Effect.succeed),
+      ).toMatchObject({
+        accountId: "123",
+        viewer: "same-account",
+        credentialFingerprint: fingerprint,
+      });
+      expect(requests).toHaveLength(beforeCachedRead);
+      const paused = yield* limits
+        .check(key)
+        .pipe(
+          Effect.provideService(SourceControlRateLimit.CredentialScope, fingerprint),
+          Effect.flip,
+        );
+      expect(paused._tag).toBe("SourceControlRateLimitPausedError");
+    }),
+);
+
+it.effect.each([
+  { expired: false, allowPaused: false },
+  { expired: true, allowPaused: false },
+  { expired: false, allowPaused: true },
+  { expired: true, allowPaused: true },
+  { expired: false, allowPaused: undefined },
+  { expired: true, allowPaused: undefined },
+])(
+  "honors credential pauses for identity lookups: expired $expired, allowPaused $allowPaused",
+  ({ expired, allowPaused }) =>
+    Effect.gen(function* () {
+      const limits = yield* SourceControlRateLimit.make;
+      const requests: string[] = [];
+      const credentials = Layer.succeed(GitHubCredentials.GitHubCredentials, {
+        get: (host, repository) =>
+          Effect.succeed({
+            host,
+            token: Redacted.make(`test-${repository}`),
+            source: "git" as const,
+            fingerprint: `pat:${repository}`,
+          }),
+        invalidate: () => Effect.void,
+      });
+      const http = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            requests.push(request.headers.authorization!);
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response('{"id":123,"login":"same-account"}', {
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.make.pipe(
+        Effect.provide(
+          GitHubRest.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(credentials, http)),
+            Layer.provideMerge(GitHubQuota.layer),
+            Layer.provideMerge(
+              Layer.succeed(SourceControlRateLimit.SourceControlRateLimit, limits),
+            ),
+            Layer.merge(TestSourceControlHost.layer()),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      );
+      const input = { cwd: "/repo", host: "github.com", repository: "owner-a/repo" };
+      if (expired) {
+        yield* cli.withVerifiedCredential(input, Effect.succeed);
+        yield* TestClock.adjust("10 minutes");
+      }
+      requests.length = 0;
+      const key = { provider: SourceControlProviderKind.make("github"), host: input.host };
+      const now = yield* Clock.currentTimeMillis;
+      yield* Effect.gen(function* () {
+        const lease = yield* limits.check(key);
+        yield* limits.recordRateLimit({ ...key, lease, retryAt: now + 60 * 60_000 });
+      }).pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "pat:owner-a/repo"));
+
+      const result = yield* cli
+        .withVerifiedCredential(
+          { ...input, ...(allowPaused === undefined ? {} : { allowPaused }) },
+          Effect.succeed,
+        )
+        .pipe(Effect.result);
+      if (allowPaused === false) {
+        assert.ok(Result.isFailure(result));
+        expect(result.failure._tag).toBe("SourceControlRateLimitPausedError");
+        expect(requests).toEqual([]);
+        const other = yield* cli.withVerifiedCredential(
+          { ...input, repository: "owner-b/repo", allowPaused: false },
+          Effect.succeed,
+        );
+        expect(other.credentialFingerprint).toBe("pat:owner-b/repo");
+        expect(requests).toEqual(["Bearer test-owner-b/repo"]);
+      } else {
+        assert.ok(Result.isSuccess(result));
+        expect(result.success.viewer).toBe("same-account");
+        expect(requests).toEqual(["Bearer test-owner-a/repo"]);
+        requests.length = 0;
+        const cached = yield* cli.withVerifiedCredential(
+          { ...input, allowPaused: false },
+          Effect.succeed,
+        );
+        expect(cached).toEqual(result.success);
+        expect(requests).toEqual([]);
+        const paused = yield* limits
+          .check(key)
+          .pipe(
+            Effect.provideService(SourceControlRateLimit.CredentialScope, "pat:owner-a/repo"),
+            Effect.flip,
+          );
+        expect(paused._tag).toBe("SourceControlRateLimitPausedError");
+      }
     }),
 );
 

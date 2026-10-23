@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   gitHubApiHostForRemote,
+  resolveGitHubRepository,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -87,5 +88,52 @@ describe("gitHubApiHostForRemote", () => {
       "github.example.com",
     );
     assert.strictEqual(gitHubApiHostForRemote("git@gitlab.com:a/b.git"), null);
+  });
+});
+
+describe("repository credential selector spelling", () => {
+  it.each([
+    "https://github.com/OwnerA/Repo.git",
+    "ssh://git@github.com/OwnerA/Repo.git",
+    "git@github.com:OwnerA/Repo.git",
+    "git@github-work:OwnerA/Repo.git",
+    "https://github.com/OwnerA/Repo.git/",
+    "ssh://git@github.com/OwnerA/Repo.git/",
+    "git@github.com:OwnerA/Repo.git/",
+    "git@github-work:OwnerA/Repo.git/",
+  ])("preserves %s only when requested", (remote) => {
+    const input = {
+      remotes: `origin\t${remote} (fetch)`,
+      resolved: "",
+      hostHint: undefined,
+      defaultHost: "github.com",
+    };
+    assert.deepStrictEqual(resolveGitHubRepository(input).locator, {
+      host: "github.com",
+      owner: "ownera",
+      name: "repo",
+    });
+    assert.deepStrictEqual(
+      resolveGitHubRepository({ ...input, preserveRepositoryCase: true }).locator,
+      { host: "github.com", owner: "OwnerA", name: "Repo" },
+    );
+  });
+
+  it("preserves an explicit gh-resolved selector independently of its checkout", () => {
+    const input = {
+      remotes: "origin\tgit@github.com:Other/Repo.git (fetch)",
+      resolved: "remote.origin.gh-resolved OwnerA/Repo",
+      hostHint: undefined,
+      defaultHost: "github.com",
+    };
+    assert.deepStrictEqual(resolveGitHubRepository(input).locator, {
+      host: "github.com",
+      owner: "ownera",
+      name: "repo",
+    });
+    assert.deepStrictEqual(
+      resolveGitHubRepository({ ...input, preserveRepositoryCase: true }).locator,
+      { host: "github.com", owner: "OwnerA", name: "Repo" },
+    );
   });
 });

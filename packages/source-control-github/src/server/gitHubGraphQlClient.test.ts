@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,17 +17,25 @@ import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts"
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
-function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Response) {
+function harness(
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  tokenForRepository?: (repository: string | undefined) => string,
+) {
+  const selections: Array<string | undefined> = [];
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let invalidations = 0;
   const services = Layer.mergeAll(
     Layer.succeed(GitHubCredentials.GitHubCredentials, {
-      get: (host) =>
-        Effect.succeed({
-          host,
-          token: Redacted.make("secret"),
-          source: "gh" as const,
-          fingerprint: `${host}:secret`,
+      get: (host, repository) =>
+        Effect.sync(() => {
+          selections.push(repository);
+          const token = tokenForRepository?.(repository) ?? "secret";
+          return {
+            host,
+            token: Redacted.make(token),
+            source: "gh" as const,
+            fingerprint: `${host}:${token}`,
+          };
         }),
       invalidate: () =>
         Effect.sync(() => {
@@ -44,7 +53,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     SourceControlRateLimit.layer,
   );
   const layer = GitHubRest.layer.pipe(Layer.provideMerge(services));
-  return { layer, requests, invalidations: () => invalidations };
+  return { layer, requests, selections, invalidations: () => invalidations };
 }
 
 const json = (body: unknown, init?: ResponseInit) =>
@@ -54,7 +63,7 @@ const json = (body: unknown, init?: ResponseInit) =>
   });
 
 /** One stats lookup on `host`, through the client and middleware the pull request reads use. */
-const readStats = (host: string, number = 7) =>
+const readStats = (host: string, number = 7, repository?: string) =>
   Effect.gen(function* () {
     const client = yield* GraphQLClient.make(
       PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
@@ -67,6 +76,7 @@ const readStats = (host: string, number = 7) =>
     ).pipe(
       Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
         host,
+        repository,
         operation: "stats",
       }),
     );
@@ -75,6 +85,33 @@ const readStats = (host: string, number = 7) =>
 const stats = { additions: 3, deletions: 1 };
 
 describe("GitHubGraphQlAuth", () => {
+  it("separates unpinned target repositories even with the same rate-limit scope", () => {
+    const context = (repository: string) =>
+      Context.make(GitHubGraphQlClient.GitHubGraphQlTarget, {
+        host: "github.com",
+        repository,
+        operation: "stats",
+      });
+    expect(GitHubGraphQlClient.batchKey(context("OwnerA/Repo"))).not.toBe(
+      GitHubGraphQlClient.batchKey(context("OwnerB/Repo")),
+    );
+  });
+  it.effect("passes the explicit repository through the generated GraphQL request policy", () => {
+    const { layer, requests, selections } = harness(
+      () => json({ data: { _0_repository: { pullRequest: stats } } }),
+      (repository) => (repository === "acme/web" ? "repo-token" : "host-token"),
+    );
+    return readStats("github.com", 7, "acme/web").pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(selections).toEqual(["acme/web"]);
+          expect(requests[0]?.headers.authorization).toBe("Bearer repo-token");
+        }),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect(
     "sends each host's lookups to its own endpoint with its token, never in one batch",
     () => {

@@ -43,6 +43,7 @@ import {
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
@@ -423,7 +424,12 @@ export class GitHubPullRequestApi extends Context.Service<
   GitHubPullRequestApi,
   {
     readonly withVerifiedCredential: <A, E, R>(
-      input: { readonly cwd: string; readonly host: string },
+      input: {
+        readonly cwd: string;
+        readonly host: string;
+        readonly repository?: string;
+        readonly allowPaused?: boolean;
+      },
       use: (identity: {
         readonly accountId: string;
         readonly viewer: string;
@@ -433,6 +439,7 @@ export class GitHubPullRequestApi extends Context.Service<
     readonly getRoutingIdentity: (input: {
       readonly cwd: string;
       readonly host: string;
+      readonly repository?: string;
     }) => Effect.Effect<
       { readonly accountId: string; readonly viewer: string },
       GitHubPullRequestApiError
@@ -440,6 +447,7 @@ export class GitHubPullRequestApi extends Context.Service<
     readonly getViewerLogin: (input: {
       readonly cwd: string;
       readonly host: string;
+      readonly repository?: string;
     }) => Effect.Effect<string, GitHubPullRequestApiError>;
 
     readonly listPullRequests: (input: {
@@ -908,6 +916,7 @@ const PullRequestGraphQLGroup = GraphQLGroup.merge(
 interface RestReadInput<A> {
   readonly cwd: string;
   readonly host: string;
+  readonly repository?: string | undefined;
   readonly operation: string;
   readonly path: string;
   readonly decode: (raw: string) => Result.Result<A, unknown>;
@@ -921,6 +930,28 @@ export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const revalidateChecks = yield* makeChecksRevalidator;
+  const useGitCredentials =
+    (yield* HostProcess.Environment).T3CODE_GITHUB_USE_GIT_CREDENTIALS === "1";
+  const withRepositoryCredential = Effect.fn("GitHubPullRequestApi.withRepositoryCredential")(
+    function* <A, E, R>(
+      input: { readonly host: string; readonly repository: string },
+      read: Effect.Effect<A, E, R>,
+    ) {
+      if (!useGitCredentials) return yield* read;
+      const credential = yield* api.credential(input.host, input.repository);
+      return yield* read.pipe(
+        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+          host: input.host.toLowerCase(),
+          token: credential.token,
+          credentialFingerprint: credential.fingerprint,
+          ...(credential.repository === undefined ? {} : { repository: credential.repository }),
+          ...(credential.credentialRepository === undefined
+            ? {}
+            : { credentialRepository: credential.credentialRepository }),
+        }),
+      );
+    },
+  );
   const client = yield* GraphQLClient.make(PullRequestGraphQLGroup).pipe(
     Effect.provide(GitHubGraphQlClient.layer),
   );
@@ -939,11 +970,30 @@ export const make = Effect.gen(function* () {
   const decodeRoutingIdentity = Schema.decodeUnknownEffect(Schema.fromJsonString(RoutingIdentity));
   const decodeViewerIdentity = Schema.decodeUnknownEffect(RoutingIdentity);
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
-    function* (input: { readonly cwd: string; readonly host: string }) {
+    function* (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository?: string;
+      readonly allowPaused?: boolean;
+    }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
       const host = input.host.toLowerCase();
-      const { token, fingerprint: key } = yield* api.credential(host);
-      const credential = { host, token, credentialFingerprint: key };
+      // A missing or signed-out credential keeps its own error, so the page can say which.
+      const {
+        token,
+        fingerprint: key,
+        repository,
+        credentialRepository,
+      } = yield* api.credential(host, input.repository);
+      const credential = {
+        host,
+        token,
+        credentialFingerprint: key,
+        ...(repository === undefined ? {} : { repository }),
+        ...(credentialRepository === undefined ? {} : { credentialRepository }),
+      };
+      // A cold page may ask several times. Wait per credential and check again after the
+      // first verification; cancellation releases the next waiter without losing its request.
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           const lock = identityLocks.get(key) ?? { gate: Semaphore.makeUnsafe(1), users: 0 };
@@ -960,7 +1010,13 @@ export const make = Effect.gen(function* () {
                 return { ...credential, ...cached.value };
               // Pin verification so an auth switch cannot poison its cache entry.
               const identity = yield* api
-                .rest({ host, operation: "getRoutingIdentity", path: "user", allowReserve: true })
+                .rest({
+                  host,
+                  ...(input.repository === undefined ? {} : { repository: input.repository }),
+                  operation: "getRoutingIdentity",
+                  path: "user",
+                  allowReserve: input.allowPaused !== false,
+                })
                 .pipe(
                   Effect.flatMap((response) =>
                     decodeRoutingIdentity(response.body).pipe(Effect.mapError(unavailable)),
@@ -972,8 +1028,9 @@ export const make = Effect.gen(function* () {
                         const { viewer } = yield* client.RoutingIdentityViewer({}).pipe(
                           GitHubGraphQlClient.call({
                             host,
+                            repository: input.repository,
                             operation: "getRoutingIdentity",
-                            allowReserve: true,
+                            allowReserve: input.allowPaused !== false,
                           }),
                           Effect.catchTags({
                             GraphQLClientError: () => Effect.fail(unavailable()),
@@ -1008,15 +1065,26 @@ export const make = Effect.gen(function* () {
     use,
   ) =>
     captureVerifiedCredential(input).pipe(
-      Effect.flatMap(({ host, token, accountId, viewer, credentialFingerprint }) =>
-        use({ accountId, viewer, credentialFingerprint }).pipe(
-          Effect.provideService(SourceControlRateLimit.CredentialScope, credentialFingerprint),
-          Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
-            host,
-            token,
-            credentialFingerprint,
-          }),
-        ),
+      Effect.flatMap(
+        ({
+          host,
+          token,
+          accountId,
+          viewer,
+          credentialFingerprint,
+          repository,
+          credentialRepository,
+        }) =>
+          use({ accountId, viewer, credentialFingerprint }).pipe(
+            Effect.provideService(SourceControlRateLimit.CredentialScope, credentialFingerprint),
+            Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+              host,
+              token,
+              credentialFingerprint,
+              ...(repository === undefined ? {} : { repository }),
+              ...(credentialRepository === undefined ? {} : { credentialRepository }),
+            }),
+          ),
       ),
     );
   const getRoutingIdentity: GitHubPullRequestApi["Service"]["getRoutingIdentity"] = (input) =>
@@ -1036,6 +1104,7 @@ export const make = Effect.gen(function* () {
     (input: {
       readonly cwd: string;
       readonly host: string;
+      readonly repository?: string | undefined;
       readonly operation: string;
       readonly allowReserve?: boolean | undefined;
     }) =>
@@ -1052,6 +1121,7 @@ export const make = Effect.gen(function* () {
       effect.pipe(
         GitHubGraphQlClient.call({
           host: input.host,
+          repository: input.repository,
           operation: input.operation,
           ...(input.allowReserve === true ? { allowReserve: true } : {}),
         }),
@@ -1125,22 +1195,25 @@ export const make = Effect.gen(function* () {
    */
   const nodeIds = new Map<string, string>();
 
-  const pullRequestNodeId = (input: {
+  const pullRequestNodeId = Effect.fn("GitHubPullRequestApi.pullRequestNodeId")(function* (input: {
     readonly cwd: string;
     readonly repository: string;
     readonly host: string;
     readonly number: number;
     readonly operation: string;
-  }): Effect.Effect<string, GitHubPullRequestApiError> => {
+  }): Effect.fn.Return<string, GitHubPullRequestApiError> {
     const { owner, name } = parseRepositorySelector(input.repository);
-    const key = `${input.host} ${owner}/${name} ${input.number}`;
+    const fingerprint = useGitCredentials
+      ? ((yield* GitHubRequestPolicy.PinnedGitHubCredential)?.credentialFingerprint ?? "")
+      : "";
+    const key = `${fingerprint} ${input.host} ${owner}/${name} ${input.number}`;
     const held = nodeIds.get(key);
     if (held !== undefined) {
       nodeIds.delete(key);
       nodeIds.set(key, held);
-      return Effect.succeed(held);
+      return held;
     }
-    return client.PullRequestNodeId({ owner, name, number: input.number }).pipe(
+    return yield* client.PullRequestNodeId({ owner, name, number: input.number }).pipe(
       graphql({ ...input, allowReserve: true }),
       Effect.map(toPullRequestNodeId),
       Effect.flatMap(found(input)),
@@ -1154,7 +1227,7 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
-  };
+  });
 
   /**
    * A subject id is trusted to be whatever node it names, and that node can hang off any pull
@@ -1191,7 +1264,12 @@ export const make = Effect.gen(function* () {
   /** A REST read whose JSON answer is decoded the same way. */
   const restRead = <A>(input: RestReadInput<A>): Effect.Effect<A, GitHubPullRequestApiError> =>
     api
-      .rest({ host: input.host, operation: input.operation, path: input.path })
+      .rest({
+        host: input.host,
+        repository: input.repository,
+        operation: input.operation,
+        path: input.path,
+      })
       .pipe(
         Effect.flatMap((response) =>
           decodeWith(input.cwd, input.operation, input.decode, response.body),
@@ -1212,12 +1290,16 @@ export const make = Effect.gen(function* () {
     input: RestReadInput<A>,
   ) {
     const host = GitHubRequestPolicy.normalizeHost(input.host);
-    const { token, fingerprint } = yield* api.credential(host);
+    const { token, fingerprint, repository, credentialRepository } = yield* api.credential(
+      host,
+      input.repository,
+    );
     const key = `${fingerprint}\0${host}\0${input.path}`;
     const previous = yield* Cache.get(validators, key);
     const response = yield* api
       .rest({
         host,
+        repository: input.repository,
         operation: input.operation,
         path: input.path,
         ...(Option.isSome(previous) ? { ifNoneMatch: previous.value.etag } : {}),
@@ -1227,6 +1309,8 @@ export const make = Effect.gen(function* () {
           host,
           token,
           credentialFingerprint: fingerprint,
+          ...(repository === undefined ? {} : { repository }),
+          ...(credentialRepository === undefined ? {} : { credentialRepository }),
         }),
       );
     if (response.status === 304 && Option.isSome(previous)) {
@@ -1254,6 +1338,7 @@ export const make = Effect.gen(function* () {
     return api
       .rest({
         host: input.host,
+        repository: input.repository,
         operation: "getPullRequestDiff",
         path:
           input.commit === undefined
@@ -1306,6 +1391,7 @@ export const make = Effect.gen(function* () {
       const { owner, name } = parseRepositorySelector(input.repository);
       const refsResponse = yield* api.rest({
         host: input.host,
+        repository: input.repository,
         operation: "getPullRequestDiffFileContents",
         path:
           input.commit === undefined
@@ -1342,6 +1428,7 @@ export const make = Effect.gen(function* () {
         api
           .rest({
             host: input.host,
+            repository: input.repository,
             operation: "getPullRequestDiffFileContents",
             accept: "application/vnd.github.raw+json",
             path: `repos/${owner}/${name}/contents/${filePath
@@ -1545,6 +1632,7 @@ export const make = Effect.gen(function* () {
         const read: GitHubWorkflowRunPage = yield* restRead({
           cwd: input.cwd,
           host: input.host,
+          repository: input.repository,
           operation: "listWorkflowRunsRequiringApproval",
           path: `repos/${owner}/${name}/actions/runs?head_sha=${encodeURIComponent(input.headSha)}&branch=${encodeURIComponent(input.headBranch)}&event=pull_request&status=action_required&per_page=100&page=${page}`,
           decode: decodeWorkflowRunsJson,
@@ -1642,7 +1730,12 @@ export const make = Effect.gen(function* () {
    * refused credential) passes through as itself.
    */
   const batchedRead = <A, E, R>(
-    input: { readonly cwd: string; readonly host: string; readonly operation: string },
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository?: string | undefined;
+      readonly operation: string;
+    },
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
@@ -1654,6 +1747,7 @@ export const make = Effect.gen(function* () {
     effect.pipe(
       Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
         host: input.host,
+        repository: input.repository,
         operation: input.operation,
       }),
       Effect.mapError((error) =>
@@ -1746,7 +1840,7 @@ export const make = Effect.gen(function* () {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(FILES_VIEWED_PER_REQUEST));
 
-  return GitHubPullRequestApi.of({
+  const service = GitHubPullRequestApi.of({
     withVerifiedCredential,
     revalidateChecks,
     getRoutingIdentity,
@@ -1765,7 +1859,12 @@ export const make = Effect.gen(function* () {
           }),
         );
       }
-      const target = { cwd: input.cwd, host: input.host, operation: "listPullRequests" };
+      const target = {
+        cwd: input.cwd,
+        host: input.host,
+        repository: input.repository,
+        operation: "listPullRequests",
+      };
       const toPage = (
         page: ReturnType<typeof toPullRequestRows>,
       ): GitHubPullRequestListPage & { readonly pageInfo: GraphQLClient.PageInfo } => ({
@@ -1913,6 +2012,7 @@ export const make = Effect.gen(function* () {
           ).pipe(
             Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
               host: input.host,
+              repository: input.repository,
               operation: "listPullRequestStackMemberships",
             }),
             Effect.map((items) => ({ ...batch, items })),
@@ -1922,6 +2022,33 @@ export const make = Effect.gen(function* () {
     },
 
     searchPullRequests: (input) => {
+      // Scoped pins are deliberately repository-local, including when two helpers return the
+      // same token. A search may never silently borrow the first repository's credential.
+      if (
+        useGitCredentials &&
+        input.host.toLowerCase() === "github.com" &&
+        input.repositories.length > 1
+      ) {
+        return Effect.forEach(
+          input.repositories,
+          (repository) =>
+            service.searchPullRequests({
+              ...input,
+              repositories: [repository],
+            }),
+          { concurrency: 4 },
+        ).pipe(
+          Effect.map((pages) => {
+            const items = pages
+              .flatMap((page) => page.items)
+              .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+            return {
+              items: items.slice(0, input.limit),
+              truncated: items.length > input.limit || pages.some((page) => page.truncated),
+            };
+          }),
+        );
+      }
       const query = searchQuery(input);
       if (query === null) {
         return Effect.fail(
@@ -1940,7 +2067,17 @@ export const make = Effect.gen(function* () {
           stats: false,
         })
         .pipe(
-          graphql({ ...input, operation: "searchPullRequests" }),
+          (effect) =>
+            withRepositoryCredential(
+              { host: input.host, repository: input.repositories[0]! },
+              effect.pipe(
+                graphql({
+                  ...input,
+                  repository: input.repositories[0]!,
+                  operation: "searchPullRequests",
+                }),
+              ),
+            ),
           Effect.map(({ search }) => {
             const page = toPullRequestRows(search);
             // A search row names its repository; one that does not cannot be placed on a page.
@@ -1985,10 +2122,30 @@ export const make = Effect.gen(function* () {
         );
         return stats.flat();
       },
-      (effect, input) =>
-        effect.pipe((effect) =>
-          batchedRead({ ...input, operation: "listPullRequestStats" }, effect),
-        ),
+      (effect, input) => {
+        if (useGitCredentials && input.host.toLowerCase() === "github.com") {
+          const repositories = [...new Set(input.changeRequests.map((ref) => ref.repository))];
+          if (repositories.length > 1)
+            return Effect.forEach(
+              repositories,
+              (repository) =>
+                service.listPullRequestStats({
+                  ...input,
+                  changeRequests: input.changeRequests.filter(
+                    (ref) => ref.repository === repository,
+                  ),
+                }),
+              { concurrency: 4 },
+            ).pipe(Effect.map((pages) => pages.flat()));
+        }
+
+        const repository = input.changeRequests[0]?.repository;
+        if (repository === undefined) return Effect.succeed([]);
+        return withRepositoryCredential(
+          { host: input.host, repository },
+          batchedRead({ ...input, repository, operation: "listPullRequestStats" }, effect),
+        );
+      },
     ),
 
     getPullRequestSummary,
@@ -2014,6 +2171,7 @@ export const make = Effect.gen(function* () {
       return revalidatedRestRead({
         cwd: input.cwd,
         host: input.host,
+        repository: input.repository,
         operation: "getPullRequestStack",
         path: `repos/${owner}/${name}/stacks?pull_request=${input.number}`,
         decode: decodePullRequestStacksJson,
@@ -2024,6 +2182,7 @@ export const make = Effect.gen(function* () {
           return restRead({
             cwd: input.cwd,
             host: input.host,
+            repository: input.repository,
             operation: "getPullRequestStack",
             path: `repos/${owner}/${name}/stacks/${stack.number}`,
             decode: (raw) => decodePullRequestStacksJson(`[${raw}]`),
@@ -2112,6 +2271,7 @@ export const make = Effect.gen(function* () {
       return api
         .rest({
           host: input.host,
+          repository: input.repository,
           operation: "getPullRequestDiff",
           path: `repos/${owner}/${name}/pulls/${input.number}`,
           accept: "application/vnd.github.diff",
@@ -2314,6 +2474,7 @@ export const make = Effect.gen(function* () {
       return api
         .rest({
           host: input.host,
+          repository: input.repository,
           operation: "setReviewerRequest",
           method: input.requested ? "POST" : "DELETE",
           path: `repos/${owner}/${name}/pulls/${input.number}/requested_reviewers`,
@@ -2341,6 +2502,7 @@ export const make = Effect.gen(function* () {
         return api
           .rest({
             host: input.host,
+            repository: input.repository,
             operation: "setLabels",
             method: "POST",
             path: issue,
@@ -2353,6 +2515,7 @@ export const make = Effect.gen(function* () {
         (label) =>
           api.rest({
             host: input.host,
+            repository: input.repository,
             operation: "setLabels",
             method: "DELETE",
             path: `${issue}/${encodeURIComponent(label)}`,
@@ -2524,6 +2687,7 @@ export const make = Effect.gen(function* () {
                           ? api
                               .rest({
                                 host: input.host,
+                                repository: input.repository,
                                 operation: "approveWorkflowRun",
                                 method: "POST",
                                 path: `repos/${owner}/${name}/actions/runs/${run.id}/approve`,
@@ -2635,6 +2799,7 @@ export const make = Effect.gen(function* () {
       return api
         .rest({
           host: input.host,
+          repository: input.repository,
           operation: "submitReview",
           method: "POST",
           path: `repos/${owner}/${name}/pulls/${input.number}/reviews`,
@@ -2812,6 +2977,63 @@ export const make = Effect.gen(function* () {
           ).pipe(graphql({ ...input, operation: "updateComment" }));
         }),
       ),
+  });
+  // Capture once at each repository operation boundary. A later refusal invalidates the
+  // source cache for the next operation; it cannot switch credentials midway through this one.
+  return GitHubPullRequestApi.of({
+    ...service,
+    listPullRequests: (input) => withRepositoryCredential(input, service.listPullRequests(input)),
+    getPullRequestSummary: (input) =>
+      withRepositoryCredential(input, service.getPullRequestSummary(input)),
+    getPullRequestWatchFingerprint: (input) =>
+      withRepositoryCredential(input, service.getPullRequestWatchFingerprint(input)),
+    getPullRequestDetail: (input) =>
+      withRepositoryCredential(input, service.getPullRequestDetail(input)),
+    getPullRequestPreview: (input) =>
+      withRepositoryCredential(input, service.getPullRequestPreview(input)),
+    listWorkflowRunsRequiringApproval: (input) =>
+      withRepositoryCredential(input, service.listWorkflowRunsRequiringApproval(input)),
+    getPullRequestStack: (input) =>
+      withRepositoryCredential(input, service.getPullRequestStack(input)),
+    getPullRequestActivity: (input) =>
+      withRepositoryCredential(input, service.getPullRequestActivity(input)),
+    getPullRequestDiff: (input) =>
+      withRepositoryCredential(input, service.getPullRequestDiff(input)),
+    getPullRequestDiffFileContents: (input) =>
+      withRepositoryCredential(input, service.getPullRequestDiffFileContents(input)),
+    getPullRequestFilesViewed: (input) =>
+      withRepositoryCredential(input, service.getPullRequestFilesViewed(input)),
+    getPullRequestFileStats: (input) =>
+      withRepositoryCredential(input, service.getPullRequestFileStats(input)),
+    setPullRequestFilesViewed: (input) =>
+      withRepositoryCredential(input, service.setPullRequestFilesViewed(input)),
+    listReviewThreadComments: (input) =>
+      withRepositoryCredential(input, service.listReviewThreadComments(input)),
+    listActorAvatars: (input) => withRepositoryCredential(input, service.listActorAvatars(input)),
+    getReviewThreadComments: (input) =>
+      withRepositoryCredential(input, service.getReviewThreadComments(input)),
+    getViewerAccess: (input) => withRepositoryCredential(input, service.getViewerAccess(input)),
+    listReviewerCandidates: (input) =>
+      withRepositoryCredential(input, service.listReviewerCandidates(input)),
+    setReviewerRequest: (input) =>
+      withRepositoryCredential(input, service.setReviewerRequest(input)),
+    listLabelCandidates: (input) =>
+      withRepositoryCredential(input, service.listLabelCandidates(input)),
+    setLabels: (input) => withRepositoryCredential(input, service.setLabels(input)),
+    runPullRequestAction: (input) =>
+      withRepositoryCredential(input, service.runPullRequestAction(input)),
+    commentOnPullRequest: (input) =>
+      withRepositoryCredential(input, service.commentOnPullRequest(input)),
+    submitReview: (input) => withRepositoryCredential(input, service.submitReview(input)),
+    replyToReviewThread: (input) =>
+      withRepositoryCredential(input, service.replyToReviewThread(input)),
+    setReviewThreadResolution: (input) =>
+      withRepositoryCredential(input, service.setReviewThreadResolution(input)),
+    setReaction: (input) => withRepositoryCredential(input, service.setReaction(input)),
+    updatePullRequest: (input) => withRepositoryCredential(input, service.updatePullRequest(input)),
+    updateComment: (input) => withRepositoryCredential(input, service.updateComment(input)),
+    revalidateChecks: (input, read) =>
+      withRepositoryCredential(input, service.revalidateChecks(input, read)),
   });
 });
 
