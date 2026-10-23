@@ -20,14 +20,17 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -62,6 +65,7 @@ const decodeUserInputQuestions = Schema.decodeUnknownSync(
 
 const decodeJsonLine = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
 const PI_INSTANCE_ID = ProviderInstanceId.make("pi");
 const THREAD_ID = ThreadId.make("thread-pi-test");
@@ -219,6 +223,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     });
 
   const respondTo = (record: PiRpcRecord): PiRpcRecord | null => {
+    if (record["type"] === "prompt" && isStreaming === null) return null;
     if (typeof record["id"] !== "string" && !(record["type"] === "prompt" && isStreaming !== null))
       return null;
     const base = {
@@ -2777,6 +2782,480 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("settles ordinary text consumed by a handled input extension", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "ping");
+      const prompt = yield* fake.takeRequest("prompt");
+      const requestsBeforeAck = fake.allRequests().length;
+      assert.isString(prompt["id"]);
+
+      yield* fake.emit({
+        type: "response",
+        id: prompt["id"],
+        command: "prompt",
+        success: true,
+        data: { disposition: "handled" },
+      });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      assert.isTrue(
+        fake
+          .allRequests()
+          .slice(requestsBeforeAck)
+          .some((request) => request.type === "get_state"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("settles a handled prompt when a handled steer invalidates its idle probe", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "ping");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running.type !== "provider_turn.updated") return;
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.isString(prompt["id"]);
+
+      fake.deferNextState();
+      yield* fake.emit({
+        type: "response",
+        id: prompt["id"],
+        command: "prompt",
+        success: true,
+        data: { disposition: "handled" },
+      });
+      yield* fake.takeRequest("get_state");
+      const steering = yield* runtime
+        .steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: {
+            messageId: "message:thread-pi-test:handled-steer-probe" as never,
+            text: "pong",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      const steerPrompt = yield* fake.takeRequest("prompt");
+      assert.isString(steerPrompt["id"]);
+
+      yield* fake.resolveDeferredState({
+        isStreaming: false,
+        isCompacting: false,
+        pendingMessageCount: 0,
+      });
+      yield* fake.emit({
+        type: "response",
+        id: steerPrompt["id"],
+        command: "prompt",
+        success: true,
+        data: { disposition: "handled" },
+      });
+      assert.equal((yield* Fiber.join(steering))._tag, "Success");
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("holds compaction settlement until a timed-out steer is acknowledged", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      const startPrompt = yield* fake.takeRequest("prompt");
+      const startRequestId = startPrompt["id"];
+      assert.isString(startRequestId);
+      yield* fake.emit({
+        type: "response",
+        id: startRequestId,
+        command: "prompt",
+        success: true,
+        data: { disposition: "started" },
+      });
+      yield* fake.emit({ type: "agent_start" });
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running.type !== "provider_turn.updated") return;
+
+      const steering = yield* runtime
+        .steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: {
+            messageId: "message:thread-pi-test:compaction-waiting-steer" as never,
+            text: "Continue",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      const steerPrompt = yield* fake.takeRequest("prompt");
+      const steerRequestId = steerPrompt["id"];
+      assert.isString(steerRequestId);
+
+      yield* fake.emit({ type: "agent_settled" });
+      yield* fake.emit({ type: "compaction_start", reason: "overflow" });
+      yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "compaction" &&
+          event.turnItem.status === "running",
+      );
+      fake.deferNextState();
+      yield* fake.emit({
+        type: "compaction_end",
+        reason: "overflow",
+        result: { summary: "smaller", tokensBefore: 10_000, estimatedTokensAfter: 2_000 },
+        aborted: false,
+        willRetry: false,
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "compaction" &&
+          event.turnItem.status === "completed",
+      );
+      yield* fake.takeRequest("get_state");
+      yield* fake.resolveDeferredState({
+        isStreaming: false,
+        isCompacting: false,
+        pendingMessageCount: 0,
+      });
+
+      // This event follows the idle snapshot through the fake Pi protocol and
+      // proves the pump kept the turn open while the earlier prompt was owed.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "compaction-steer-barrier",
+        method: "notify",
+        message: "The turn is still open",
+      });
+      const beforeAcknowledgement = yield* Effect.raceFirst(
+        takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "system_notice" &&
+            event.turnItem.message === "The turn is still open",
+        ).pipe(Effect.as("turn-open" as const)),
+        Fiber.join(steering).pipe(Effect.as("steer-finished" as const)),
+      );
+      assert.equal(beforeAcknowledgement, "turn-open");
+      assert.equal(runtime.providerSession.status, "running");
+
+      yield* TestClock.adjust(Duration.seconds(3));
+      assert.isDefined(
+        steering.pollUnsafe(),
+        "The acknowledgement wait must release after 3 seconds",
+      );
+      assert.equal((yield* Fiber.join(steering))._tag, "Success");
+      assert.equal(runtime.providerSession.status, "running");
+
+      yield* fake.emit({
+        type: "response",
+        id: steerRequestId,
+        command: "prompt",
+        success: true,
+        data: { disposition: "queued" },
+      });
+      assert.equal((yield* Fiber.join(steering))._tag, "Success");
+      // Resolving the last pending ack schedules a new state probe, rather
+      // than relying on the snapshot taken while the ack was still pending.
+      yield* fake.takeRequest("get_state");
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      assert.equal(fake.allRequests().filter((request) => request.type === "prompt").length, 2);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("unblocks dialog answers and Stop after a steering acknowledgement timeout", () => {
+    const lateSteerWarnings: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make<unknown, void>(({ logLevel, message }) => {
+      const parts = Array.isArray(message) ? message : [message];
+      if (logLevel === "Warn" && parts[0] === "Pi rejected a steer message.") {
+        lateSteerWarnings.push(parts);
+      }
+    });
+
+    return Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      const startPrompt = yield* fake.takeRequest("prompt");
+      const startRequestId = startPrompt["id"];
+      assert.isString(startRequestId);
+      yield* fake.emit({
+        type: "response",
+        id: startRequestId,
+        command: "prompt",
+        success: true,
+        data: { disposition: "started" },
+      });
+      yield* fake.emit({ type: "agent_start" });
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running.type !== "provider_turn.updated") return;
+
+      const steering = yield* runtime
+        .steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: {
+            messageId: "message:thread-pi-test:timed-out-steer" as never,
+            text: "Continue",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      const steerPrompt = yield* fake.takeRequest("prompt");
+      const steerRequestId = steerPrompt["id"];
+      assert.isString(steerRequestId);
+
+      yield* TestClock.adjust(Duration.seconds(3));
+      assert.isDefined(
+        steering.pollUnsafe(),
+        "The acknowledgement wait must release after 3 seconds",
+      );
+      assert.equal((yield* Fiber.join(steering))._tag, "Success");
+
+      // A late rejection is logged but cannot turn a successfully delivered
+      // effect into a retry after its bounded wait has completed.
+      yield* fake.emit({
+        type: "response",
+        id: steerRequestId,
+        command: "prompt",
+        success: false,
+        error: "The input handler rejected this message",
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "timed-out-steer-dialog",
+        method: "confirm",
+        title: "Continue?",
+      });
+      const dialog = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      assert.isTrue(dialog.type === "runtime_request.updated");
+      if (dialog.type !== "runtime_request.updated") return;
+      assert.isNotEmpty(lateSteerWarnings);
+
+      yield* runtime.respondToRuntimeRequest({
+        requestId: dialog.runtimeRequest.id,
+        decision: "accept",
+      });
+      const uiResponse = yield* fake.takeRequest("extension_ui_response");
+      assert.equal(uiResponse["id"], "timed-out-steer-dialog");
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: running.providerTurn.id,
+      });
+      yield* fake.takeRequest("abort");
+      assert.equal(fake.allRequests().filter((request) => request["type"] === "prompt").length, 2);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(layerTest, Logger.layer([logger]))));
+  });
+
+  it.effect("reports a rejected steer by its request id without failing the active turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      const turnStartPrompt = yield* fake.takeRequest("prompt");
+      const turnStartRequestId = turnStartPrompt["id"];
+      assert.isString(turnStartRequestId);
+      yield* fake.emit({ type: "agent_start" });
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      assert.equal(running.type, "provider_turn.updated");
+      const providerTurnId =
+        running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
+      assert.isDefined(providerTurnId);
+
+      const startSteering = (messageId: string) =>
+        runtime
+          .steerTurn({
+            threadId: THREAD_ID,
+            runId: RunId.make("run:thread-pi-test:1"),
+            providerThread,
+            providerTurnId: providerTurnId!,
+            message: {
+              messageId: messageId as never,
+              text: "Continue",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          })
+          .pipe(Effect.result, Effect.forkScoped);
+      const steering = yield* startSteering("message:thread-pi-test:rejected-steer");
+      const steerPrompt = yield* fake.takeRequest("prompt");
+      const steerRequestId = steerPrompt["id"];
+      assert.isString(steerRequestId);
+      const overlappingSteering = yield* startSteering("message:thread-pi-test:overlapping-steer");
+      const overlappingPrompt = yield* fake.takeRequest("prompt");
+      const overlappingRequestId = overlappingPrompt["id"];
+      assert.isString(overlappingRequestId);
+
+      // Reject a steer before the older turn-start acknowledgement arrives.
+      yield* fake.emit({ type: "agent_settled" });
+      const rejection = "The message could not be queued";
+      yield* fake.emit({
+        type: "response",
+        id: steerRequestId,
+        command: "prompt",
+        success: false,
+        error: rejection,
+      });
+      const steerResult = yield* Fiber.join(steering);
+      assert.equal(steerResult._tag, "Failure");
+      if (steerResult._tag !== "Failure") return;
+      assert.equal(steerResult.failure._tag, "ProviderAdapterSteerRunError");
+      if (steerResult.failure._tag !== "ProviderAdapterSteerRunError") return;
+      const protocolFailure = steerResult.failure.cause;
+      assert.isTrue(isProviderAdapterProtocolError(protocolFailure));
+      if (!isProviderAdapterProtocolError(protocolFailure)) return;
+      assert.instanceOf(protocolFailure.cause, Error);
+      assert.equal((protocolFailure.cause as Error).message, rejection);
+      assert.notInclude(protocolFailure.detail, rejection);
+      yield* fake.emit({
+        type: "response",
+        id: turnStartRequestId,
+        command: "prompt",
+        success: true,
+        data: { disposition: "started" },
+      });
+      yield* fake.emit({
+        type: "response",
+        id: overlappingRequestId,
+        command: "prompt",
+        success: true,
+        data: { disposition: "queued" },
+      });
+      assert.equal((yield* Fiber.join(overlappingSteering))._tag, "Success");
+      yield* fake.takeRequest("get_state");
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      yield* startTurn(runtime, providerThread, "default", [], "Next turn", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "response",
+        id: steerRequestId,
+        command: "prompt",
+        success: false,
+        error: "late rejection from the previous turn",
+      });
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const nextTerminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(nextTerminal.type === "turn.terminal" && nextTerminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("aborts native work before stopping a handled prompt", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "Summarize the repo");
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.isString(prompt["id"]);
+
+      fake.deferNextState();
+      yield* fake.emit({
+        type: "response",
+        id: prompt["id"],
+        command: "prompt",
+        success: true,
+        data: { disposition: "handled" },
+      });
+      yield* fake.takeRequest("get_state");
+      yield* fake.emit({ type: "agent_start" });
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running.type !== "provider_turn.updated") return;
+      const barrierId = "stop-probe";
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: barrierId,
+        method: "notify",
+        message: barrierId,
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "system_notice" &&
+          event.turnItem.message === barrierId,
+      );
+      yield* fake.resolveDeferredState({
+        isStreaming: true,
+        isCompacting: false,
+        pendingMessageCount: 0,
+      });
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: running.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      assert.isTrue(fake.allRequests().some((request) => request["type"] === "abort"));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("leaves /compacted as an ordinary prompt", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -3902,20 +4381,33 @@ describe("PiAdapterV2", () => {
       fake.deferNextState();
       yield* fake.emit({ type: "agent_settled" });
       yield* fake.takeRequest("get_state");
-      yield* runtime.steerTurn({
-        threadId: THREAD_ID,
-        runId: RunId.make("run:thread-pi-test:1"),
-        providerThread,
-        providerTurnId: providerTurnId!,
-        message: {
-          messageId: "message:thread-pi-test:late-steer" as never,
-          text: "Continue after settlement",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
+      const steering = yield* runtime
+        .steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: providerTurnId!,
+          message: {
+            messageId: "message:thread-pi-test:late-steer" as never,
+            text: "Continue after settlement",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      const steerPrompt = yield* fake.takeRequest("prompt");
+      const steerRequestId = steerPrompt["id"];
+      assert.isTrue(typeof steerRequestId === "string");
+      if (typeof steerRequestId !== "string") return;
+      yield* fake.emit({
+        type: "response",
+        id: steerRequestId,
+        command: "prompt",
+        success: true,
+        data: { disposition: "queued" },
       });
-      yield* fake.takeRequest("prompt");
+      assert.equal((yield* Fiber.join(steering))._tag, "Success");
       yield* fake.resolveDeferredState({
         isStreaming: false,
         isCompacting: false,

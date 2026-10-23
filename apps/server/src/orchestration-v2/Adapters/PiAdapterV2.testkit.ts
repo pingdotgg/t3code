@@ -112,7 +112,7 @@ function replayValueMatches(expected: unknown, actual: unknown): boolean {
   return Object.is(expected, actual);
 }
 
-const ADAPTER_REQUEST_ID = /^t3-\d+$/u;
+const ADAPTER_REQUEST_ID = /^t3-(?:\d+|prompt-\d+)$/u;
 
 function adapterRequestId(frame: unknown): string | undefined {
   const id = isRecord(frame) ? frame.id : undefined;
@@ -126,7 +126,10 @@ function adapterRequestId(frame: unknown): string | undefined {
  */
 function withRequestId(expected: unknown, actual: unknown): unknown {
   const actualId = adapterRequestId(actual);
-  return isRecord(expected) && adapterRequestId(expected) !== undefined && actualId !== undefined
+  return isRecord(expected) &&
+    actualId !== undefined &&
+    (adapterRequestId(expected) !== undefined ||
+      (expected.type === "prompt" && expected.id === undefined))
     ? { ...expected, id: actualId }
     : expected;
 }
