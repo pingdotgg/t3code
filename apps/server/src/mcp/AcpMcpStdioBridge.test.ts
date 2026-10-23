@@ -2,10 +2,11 @@
 import * as NodeStream from "node:stream";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
-import { runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
+import { mcpToolSession, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
 
 function makeHarness(responder: (request: Request) => Promise<Response> | Response) {
   const input = new NodeStream.PassThrough();
@@ -27,6 +28,13 @@ function makeHarness(responder: (request: Request) => Promise<Response> | Respon
     },
   });
   return { input, written, requests, bridge };
+}
+
+function pendingFetch(started: Deferred.Deferred<AbortSignal | undefined>) {
+  return (_url: string, init?: RequestInit): Promise<Response> => {
+    Deferred.doneUnsafe(started, Effect.succeed(init?.signal ?? undefined));
+    return new Promise(() => {});
+  };
 }
 
 describe("AcpMcpStdioBridge", () => {
@@ -280,6 +288,45 @@ describe("AcpMcpStdioBridge", () => {
 
       expect(methods).toEqual(["tools/call", "notifications/cancelled"]);
       expect(JSON.parse(written[0]!)).toMatchObject({ id: 7, result: {} });
+    }),
+  );
+
+  it.effect("aborts the pending fetch when a tool call is interrupted", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<AbortSignal | undefined>();
+      const fiber = yield* mcpToolSession({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        clientName: "t3-code-acp-cli",
+        fetchImplementation: pendingFetch(started),
+      }).pipe(
+        Effect.flatMap((session) => session.call("orchestrator_capabilities", {})),
+        Effect.scoped,
+        Effect.forkChild,
+      );
+
+      const signal = yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      expect(signal?.aborted).toBe(true);
+    }),
+  );
+
+  it.effect("aborts the pending fetch when the stdio bridge is interrupted", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<AbortSignal | undefined>();
+      const input = new NodeStream.PassThrough();
+      const fiber = yield* runAcpMcpStdioBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        input,
+        output: { write: () => undefined },
+        fetchImplementation: pendingFetch(started),
+      }).pipe(Effect.forkChild);
+
+      input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
+      const signal = yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      expect(signal?.aborted).toBe(true);
     }),
   );
 });
