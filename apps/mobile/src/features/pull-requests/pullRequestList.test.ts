@@ -13,6 +13,8 @@ import {
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
   PR_LIST_PAGE_SIZE,
+  pullRequestFilterChoices,
+  pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
   scopedPullRequestListKey,
@@ -344,5 +346,44 @@ describe("withoutScratchProjectScope", () => {
       projectEnvironmentId: "env-b",
     };
     expect(withoutScratchProjectScope(elsewhere, projects)).toBe(elsewhere);
+  });
+});
+
+describe("pullRequestLabelColors", () => {
+  it("keeps the first usable color each label name carries", () => {
+    expect(
+      pullRequestLabelColors([
+        { name: "Bug", color: null },
+        { name: "bug", color: "d73a4a" },
+        { name: "BUG", color: "#000000" },
+        { name: "docs", color: "not-a-color" },
+        { name: "size:S", color: "#69C35F" },
+      ]),
+    ).toEqual({ bug: "#d73a4a", "size:s": "#69C35F" });
+  });
+});
+
+describe("pullRequestFilterChoices", () => {
+  it("keeps the picked value in view and adds host answers no loaded row carries, once", () => {
+    expect(
+      pullRequestFilterChoices({
+        selected: ["size:XL"],
+        suggestions: ["bug", "size:XL", "docs"],
+        hosted: ["Bug", "backend"],
+        query: "b",
+      }),
+    ).toEqual(["size:XL", "bug", "backend"]);
+  });
+
+  it("leaves room for the host's answers when loaded matches alone would fill the list", () => {
+    const loaded = Array.from({ length: 120 }, (_, index) => `label-${index}`);
+    const rows = pullRequestFilterChoices({
+      selected: [],
+      suggestions: loaded,
+      hosted: ["label-from-host"],
+      query: "label",
+    });
+    expect(rows).toHaveLength(100);
+    expect(rows[50]).toBe("label-from-host");
   });
 });

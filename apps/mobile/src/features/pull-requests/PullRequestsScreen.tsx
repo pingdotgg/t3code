@@ -200,8 +200,14 @@ export function PullRequestsScreen(
           ...facets.labels,
         ]),
       ].sort(),
+      labelColors: {
+        ...facets.labelColors,
+        ...(previous.environmentId === environmentId ? previous.labelColors : {}),
+      },
     }));
   }
+  const labelColors =
+    knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
   const projects = allProjects.filter(
     (project) =>
       !project.isScratch && (environmentId === null || project.environmentId === environmentId),
@@ -318,7 +324,18 @@ export function PullRequestsScreen(
               labels={
                 knownFacets.environmentId === environmentId ? knownFacets.labels : facets.labels
               }
+              labelColors={labelColors}
               projects={projects}
+              onSearch={(kind) =>
+                navigation.navigate("PullRequestFilterSearch", {
+                  kind,
+                  environmentId,
+                  environmentIds: targets.map((target) => String(target.environmentId)),
+                  suggestions:
+                    knownFacets.environmentId === environmentId ? knownFacets[kind] : facets[kind],
+                  labelColors,
+                })
+              }
             />
             {result.data?.errors.length ? (
               <PullRequestListErrors

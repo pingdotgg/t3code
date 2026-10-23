@@ -51,6 +51,10 @@ import {
   type PullRequestListProjectError,
   type PullRequestListResult,
   type PullRequestListStatsInput,
+  type PullRequestFilterOptions,
+  type PullRequestFilterOptionsInput,
+  type PullRequestActor,
+  type PullRequestLabel,
   type PullRequestListStatsResult,
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
@@ -88,6 +92,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   type ProviderChangeRequest,
+  type ProviderFilterOptionPage,
   type ProviderListCursor,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
@@ -175,6 +180,9 @@ export class PullRequestService extends Context.Service<
     readonly listStats: (
       input: PullRequestListStatsInput,
     ) => Effect.Effect<PullRequestListStatsResult, PullRequestError>;
+    readonly filterOptions: (
+      input: PullRequestFilterOptionsInput,
+    ) => Effect.Effect<PullRequestFilterOptions, PullRequestError>;
     readonly routing: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestRoutingResult, PullRequestError>;
@@ -574,6 +582,17 @@ function withRateLimitBackoff(
       ? {}
       : { listLabelCandidates: interactive("listLabelCandidates", api.listLabelCandidates) }),
     ...(api.setLabels === undefined ? {} : { setLabels: interactive("setLabels", api.setLabels) }),
+    ...(api.listRepositoryLabels === undefined
+      ? {}
+      : { listRepositoryLabels: interactive("listRepositoryLabels", api.listRepositoryLabels) }),
+    ...(api.searchRepositoryAuthors === undefined
+      ? {}
+      : {
+          searchRepositoryAuthors: interactive(
+            "searchRepositoryAuthors",
+            api.searchRepositoryAuthors,
+          ),
+        }),
     replyToThread: interactive("replyToThread", api.replyToThread),
     setReaction: interactive("setReaction", api.setReaction),
     setThreadResolution: interactive("setThreadResolution", api.setThreadResolution),
@@ -581,6 +600,52 @@ function withRateLimitBackoff(
   // Optional provider methods must be forwarded too; returning the interface alone permits omissions.
   return wrapped satisfies PullRequestProviderApi &
     Record<Exclude<keyof PullRequestProviderApi, keyof typeof wrapped>, never>;
+}
+
+const FILTER_OPTIONS_LIMIT = 100;
+
+/**
+ * Exact matches first, then names that begin with the query, then the rest, so a short query
+ * still puts the obvious answer at the top of a long list.
+ */
+function rankFilterOptions<A>(
+  pages: ReadonlyArray<ProviderFilterOptionPage<A>>,
+  input: {
+    readonly query: string | undefined;
+    readonly keyOf: (item: A) => string;
+    readonly textsOf: (item: A) => ReadonlyArray<string | null>;
+  },
+): { readonly items: ReadonlyArray<A>; readonly truncated: boolean } {
+  const query = input.query?.trim().toLowerCase() ?? "";
+  const unique = new Map<string, A>();
+  for (const page of pages) {
+    for (const item of page.items) {
+      const key = input.keyOf(item).toLowerCase();
+      if (!unique.has(key)) unique.set(key, item);
+    }
+  }
+  const rank = (item: A) => {
+    const texts = input.textsOf(item).flatMap((text) => (text ? [text.toLowerCase()] : []));
+    if (query.length === 0) return 0;
+    if (texts.includes(query)) return 0;
+    if (texts.some((text) => text.startsWith(query))) return 1;
+    if (texts.some((text) => text.includes(query))) return 2;
+    return null;
+  };
+  const ranked = [...unique.values()]
+    .flatMap((item) => {
+      const score = rank(item);
+      return score === null ? [] : [{ item, score, key: input.keyOf(item) }];
+    })
+    .toSorted(
+      (left, right) =>
+        left.score - right.score ||
+        left.key.localeCompare(right.key, undefined, { sensitivity: "base" }),
+    );
+  return {
+    items: ranked.slice(0, FILTER_OPTIONS_LIMIT).map(({ item }) => item),
+    truncated: ranked.length > FILTER_OPTIONS_LIMIT || pages.some((page) => page.truncated),
+  };
 }
 
 // Capture before the provider read so a slow response keeps its original freshness through caches.
@@ -2326,6 +2391,61 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const filterOptions: PullRequestService["Service"]["filterOptions"] = Effect.fn(
+    "PullRequestService.filterOptions",
+  )(function* (input) {
+    const { supported } = yield* listWorkspaceProjects(input);
+    // Worktrees of one checkout are separate projects over the same repository.
+    const repositories = [
+      ...new Map(supported.map((project) => [project.cursorKey, project])).values(),
+    ];
+    const refOf = (project: SupportedProject) => ({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      query: input.query,
+    });
+    // One repository the host cannot read leaves the others' options standing, as a listing does.
+    const gather = <A>(
+      read: (
+        project: SupportedProject,
+      ) => Effect.Effect<ProviderFilterOptionPage<A>, PullRequestProviderError> | undefined,
+    ) =>
+      Effect.forEach(
+        repositories,
+        (project): Effect.Effect<ReadonlyArray<ProviderFilterOptionPage<A>>> => {
+          const page = read(project);
+          return page === undefined
+            ? Effect.succeed([])
+            : page.pipe(
+                Effect.map((answered) => [answered]),
+                Effect.orElseSucceed(() => []),
+              );
+        },
+        { concurrency: REPOSITORY_CONCURRENCY },
+      ).pipe(Effect.map((pages) => pages.flat()));
+    if (input.kind === "labels") {
+      const pages = yield* gather<PullRequestLabel>((project) =>
+        project.api.listRepositoryLabels?.(refOf(project)),
+      );
+      const { items, truncated } = rankFilterOptions(pages, {
+        query: input.query,
+        keyOf: (label) => label.name,
+        textsOf: (label) => [label.name],
+      });
+      return { labels: items, authors: [], truncated };
+    }
+    const pages = yield* gather<PullRequestActor>((project) =>
+      project.api.searchRepositoryAuthors?.(refOf(project)),
+    );
+    const { items, truncated } = rankFilterOptions(pages, {
+      query: input.query,
+      keyOf: (author) => author.login,
+      textsOf: (author) => [author.login, author.name],
+    });
+    return { labels: [], authors: items, truncated };
+  });
+
   const labelCandidates: PullRequestService["Service"]["labelCandidates"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<PullRequestLabelCandidateList, PullRequestError> => {
@@ -3432,6 +3552,7 @@ export const make = Effect.gen(function* () {
     routingIdentity,
     withRoutingCredential,
     list,
+    filterOptions,
     listStats: (input) =>
       Effect.forEach(input.refs, (ref) => canonicalRef(ref).pipe(Effect.option)).pipe(
         Effect.flatMap((refs) => listStats({ ...input, refs: refs.flatMap(Option.toArray) })),

@@ -554,6 +554,40 @@ it.effect("lists nothing for an author Forgejo has no account for", () =>
   ),
 );
 
+it.effect("says an author search was cut short by a server that pages below its limit", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const search = provider.searchRepositoryAuthors;
+    if (search === undefined) return yield* Effect.die("author search missing");
+    const found = yield* search({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      query: "dev",
+    });
+    assert.strictEqual(found.items.length, 30);
+    assert.isTrue(found.truncated);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: () =>
+          encodeJsonEffect({
+            ok: true,
+            data: Array.from({ length: 30 }, (_, index) => ({ login: `dev-${index}` })),
+          }).pipe(
+            Effect.orDie,
+            Effect.map((stdout) =>
+              processOutput(stdout, {
+                stderr:
+                  'HTTP/1.1 200\nlink: <https://forgejo.test/api/v1/users/search?page=2>; rel="next"\n',
+              }),
+            ),
+          ),
+      }),
+    ),
+  ),
+);
+
 it.effect("gives Forgejo identities the browser URL of the login that serves them", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;

@@ -232,6 +232,16 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
+    listRepositoryLabels: (input) =>
+      cli
+        .listProjectLabels({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .pipe(Effect.mapError(fail("listRepositoryLabels"))),
+
+    searchRepositoryAuthors: (input) =>
+      cli
+        .listProjectUsers({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
     setReviewerRequest: (input) =>
       cli
         .setReviewerRequest({

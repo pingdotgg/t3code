@@ -322,6 +322,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
+    filterOptions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:filter-options",
+      tag: WS_METHODS.pullRequestsFilterOptions,
+      staleTimeMs: 5 * 60_000,
+    }),
     detail,
     preview,
     checks: normalizePullRequestQuery(

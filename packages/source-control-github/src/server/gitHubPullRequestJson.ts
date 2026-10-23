@@ -60,6 +60,8 @@ import type {
   PullRequestHeads,
   PullRequestPreview as PullRequestPreviewQuery,
   PullRequestSubject,
+  RepositoryAuthors,
+  RepositoryLabels,
   ReviewerCandidates,
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
@@ -1655,6 +1657,36 @@ export function toLabelCandidates(
       ...candidates.values(),
     ],
     truncated: repository.labels?.pageInfo.hasNextPage === true,
+  };
+}
+
+export function toRepositoryLabels(
+  result: RepositoryLabels.Result,
+): { readonly items: ReadonlyArray<PullRequestLabel>; readonly truncated: boolean } | null {
+  const repository = result.repository;
+  if (repository == null) return null;
+  return {
+    items: nodesOf(repository.labels).flatMap((node) => {
+      const name = trimmed(node.name);
+      return name === null ? [] : [{ name, color: trimmed(node.color) }];
+    }),
+    truncated: repository.labels?.pageInfo.hasNextPage === true,
+  };
+}
+
+export function toRepositoryAuthors(
+  result: RepositoryAuthors.Result,
+): { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean } | null {
+  const repository = result.repository;
+  if (repository == null) return null;
+  return {
+    items: nodesOf(repository.mentionableUsers).flatMap((node) => {
+      const login = trimmed(node.login);
+      return login === null
+        ? []
+        : [{ login, name: trimmed(node.name), avatarUrl: trimmed(node.avatarUrl) }];
+    }),
+    truncated: repository.mentionableUsers.pageInfo.hasNextPage,
   };
 }
 

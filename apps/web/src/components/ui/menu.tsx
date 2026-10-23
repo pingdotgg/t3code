@@ -1,9 +1,11 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
+import { Input, type InputProps } from "./input";
+import { Spinner } from "./spinner";
 
 const Menu = MenuPrimitive.Root;
 
@@ -64,6 +66,44 @@ function MenuPopup({
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
+  );
+}
+
+/** A menu's filter field, drawn like `ComboboxSearchInput` so every searchable popup matches. */
+function MenuSearchInput({
+  busy = false,
+  onKeyDown,
+  ...props
+}: Omit<InputProps, "className" | "size" | "unstyled" | "nativeInput"> & { busy?: boolean }) {
+  return (
+    <div className="min-w-0 shrink-0 px-2 pt-1.5 pb-1">
+      <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
+        {busy ? (
+          <Spinner
+            aria-hidden="true"
+            size="md"
+            tone="muted"
+            className="pointer-events-none absolute top-1.5 left-0"
+          />
+        ) : (
+          <SearchIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
+          />
+        )}
+        <Input
+          {...props}
+          className="rounded-none bg-transparent text-sm [&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+          size="sm"
+          unstyled
+          onKeyDown={(event) => {
+            // Menu typeahead would otherwise take the letters; arrows still reach the items.
+            if (event.key !== "ArrowDown" && event.key !== "Escape") event.stopPropagation();
+            onKeyDown?.(event);
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -327,6 +367,7 @@ export {
   MenuTrigger as DropdownMenuTrigger,
   MenuPopup,
   MenuPopup as DropdownMenuContent,
+  MenuSearchInput,
   MenuGroup,
   MenuGroup as DropdownMenuGroup,
   MenuItem,

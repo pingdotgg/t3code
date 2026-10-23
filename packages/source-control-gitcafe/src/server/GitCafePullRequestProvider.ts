@@ -1073,6 +1073,30 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
+    listRepositoryLabels: Effect.fn("GitCafePullRequestProvider.listRepositoryLabels")(
+      function* (input) {
+        const operation = "listRepositoryLabels";
+        const base = yield* repositoryPath(operation, input);
+        const labels = yield* readPages(operation, input, `${base}/labels`, Json.GitCafeLabels);
+        return {
+          items: labels.items.map((label) => ({ name: label.name, color: label.color })),
+          truncated: labels.next !== null,
+        };
+      },
+    ),
+    searchRepositoryAuthors: Effect.fn("GitCafePullRequestProvider.searchRepositoryAuthors")(
+      function* (input) {
+        const operation = "searchRepositoryAuthors";
+        const query = input.query?.trim() ?? "";
+        // User search needs two characters; before that the repository's own people stand in.
+        const path =
+          query.length < 2
+            ? `${yield* repositoryPath(operation, input)}/collaborators?${new URLSearchParams({ limit: "50" })}`
+            : `/users?${new URLSearchParams({ q: query, limit: "50" })}`;
+        const people = yield* read(operation, input, { path }, Json.GitCafePeople);
+        return { items: Json.toPeople(people, input.host), truncated: people.next !== null };
+      },
+    ),
     setLabels: Effect.fn("GitCafePullRequestProvider.setLabels")(function* (input) {
       const base = yield* repositoryPath("setLabels", input);
       const labels = yield* readPages("setLabels", input, `${base}/labels`, Json.GitCafeLabels);

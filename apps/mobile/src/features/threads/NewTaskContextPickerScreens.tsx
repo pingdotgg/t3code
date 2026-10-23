@@ -3,7 +3,7 @@ import { Button } from "../../components/ui/Button";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { NavigationRow } from "../../components/ui/NavigationRow";
+import { SelectionRow } from "../../components/ui/SelectionRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
@@ -136,90 +136,6 @@ function EnvironmentPickerRow(props: {
   );
 }
 
-function SelectionRow(props: {
-  readonly icon?: "arrow.triangle.branch" | ReactNode;
-  readonly onPress: () => void;
-  readonly disabled?: boolean;
-  readonly selected: boolean;
-  readonly isLast?: boolean;
-  readonly subtitle?: string;
-  readonly title: string;
-}) {
-  if (Platform.OS === "android") {
-    return (
-      <NavigationRow
-        className="bg-grouped-card"
-        title={props.title}
-        subtitle={props.subtitle}
-        leading={
-          props.icon === "arrow.triangle.branch" ? (
-            <SymbolView
-              name="arrow.triangle.branch"
-              size={24}
-              tintColorClassName="accent-icon-muted"
-            />
-          ) : (
-            props.icon
-          )
-        }
-        trailing={
-          props.selected ? (
-            <SymbolView name="checkmark" size={20} tintColorClassName="accent-focus" />
-          ) : null
-        }
-        accessibilityRole="radio"
-        accessibilityState={{ checked: props.selected }}
-        disabled={props.disabled}
-        onPress={props.onPress}
-      />
-    );
-  }
-  return (
-    <Pressable
-      accessibilityLabel={[props.title, props.subtitle].filter(Boolean).join(", ")}
-      accessibilityRole="radio"
-      accessibilityState={{ checked: props.selected }}
-      className={cn(
-        "min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3 active:bg-subtle",
-        !props.isLast && "border-b border-border-subtle",
-      )}
-      disabled={props.disabled}
-      onPress={props.onPress}
-      style={{ opacity: props.disabled ? 0.45 : 1 }}
-    >
-      {props.icon === "arrow.triangle.branch" ? (
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={17}
-          tintColorClassName="accent-icon-muted"
-          type="monochrome"
-        />
-      ) : (
-        (props.icon ?? null)
-      )}
-      <View className="min-w-0 flex-1 gap-0.5">
-        <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
-          {props.title}
-        </Text>
-        {props.subtitle ? (
-          <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {props.subtitle}
-          </Text>
-        ) : null}
-      </View>
-      {props.selected ? (
-        <SymbolView
-          name="checkmark"
-          size={16}
-          tintColorClassName="accent-icon"
-          type="monochrome"
-          weight="semibold"
-        />
-      ) : null}
-    </Pressable>
-  );
-}
-
 function ToggleRow(props: {
   readonly title: string;
   readonly value: boolean;
@@ -240,43 +156,6 @@ function ToggleRow(props: {
         accessibilityLabel={props.title}
         onValueChange={props.onValueChange}
         value={props.value}
-      />
-    </View>
-  );
-}
-
-function BranchSelectionRow(props: {
-  readonly badge: string | null;
-  readonly branch: VcsRef;
-  readonly disabled: boolean;
-  readonly isFirst: boolean;
-  readonly isLast: boolean;
-  readonly onSelect: (branch: VcsRef) => void;
-  readonly selected: boolean;
-}) {
-  const onPress = () => props.onSelect(props.branch);
-
-  return (
-    <View
-      className={cn(
-        props.isFirst &&
-          (Platform.OS === "android"
-            ? "overflow-hidden rounded-t-[28px]"
-            : "overflow-hidden rounded-t-2xl"),
-        props.isLast &&
-          (Platform.OS === "android"
-            ? "overflow-hidden rounded-b-[28px]"
-            : "overflow-hidden rounded-b-2xl"),
-      )}
-    >
-      <SelectionRow
-        icon="arrow.triangle.branch"
-        disabled={props.disabled}
-        isLast={props.isLast}
-        onPress={onPress}
-        selected={props.selected}
-        subtitle={props.badge ? props.badge.toUpperCase() : undefined}
-        title={props.branch.name}
       />
     </View>
   );
@@ -508,14 +387,15 @@ export function BranchPickerScreen(props: {
   };
 
   const renderBranch = ({ item, index }: { readonly item: VcsRef; readonly index: number }) => (
-    <BranchSelectionRow
-      badge={branchBadgeLabel({ branch: item, project: props.project })}
-      branch={item}
+    <SelectionRow
+      icon="arrow.triangle.branch"
       disabled={props.selectionDisabled ?? false}
       isFirst={index === 0}
       isLast={index === props.branches.length - 1}
-      onSelect={props.onSelect}
+      onPress={() => props.onSelect(item)}
       selected={selectedBranchName === item.name}
+      subtitle={branchBadgeLabel({ branch: item, project: props.project })?.toUpperCase()}
+      title={item.name}
     />
   );
 

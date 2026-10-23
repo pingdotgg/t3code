@@ -6,9 +6,11 @@ import * as Schema from "effect/Schema";
 import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/contracts";
 import type {
   PullRequestAction,
+  PullRequestActor,
   PullRequestComment,
   PullRequestCommit,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListFilters,
   PullRequestListState,
   PullRequestMergeCapabilities,
@@ -37,6 +39,7 @@ import {
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeProjectMergeCapabilitiesJson,
+  decodeProjectLabelsJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
   decodeViewerJson,
@@ -286,6 +289,24 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitLabPullRequestCliError>;
+
+    readonly listProjectLabels: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly search?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestLabel>; readonly truncated: boolean },
+      GitLabPullRequestCliError
+    >;
+
+    readonly listProjectUsers: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly search?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean },
+      GitLabPullRequestCliError
+    >;
 
     readonly setReviewerRequest: (input: {
       readonly cwd: string;
@@ -919,11 +940,13 @@ export const make = Effect.gen(function* () {
   const projectUsers = (input: {
     readonly cwd: string;
     readonly repository: string;
+    readonly search?: string | undefined;
   }): Effect.Effect<GitLabProjectUsers, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
+        ...searchParams(input.search),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -1275,6 +1298,40 @@ export const make = Effect.gen(function* () {
                 }),
               );
         }),
+      ),
+
+    listProjectLabels: (input) =>
+      api({
+        cwd: input.cwd,
+        path: `projects/${projectPath(input.repository)}/labels?${query([
+          ["per_page", String(MAX_PAGE_SIZE)],
+          ...searchParams(input.search),
+        ])}`,
+      }).pipe(
+        Effect.flatMap((result) => {
+          const decoded = decodeProjectLabelsJson(result.stdout.trim());
+          return Result.isSuccess(decoded)
+            ? Effect.succeed({
+                items: decoded.success.labels,
+                truncated: decoded.success.rawCount >= MAX_PAGE_SIZE,
+              })
+            : Effect.fail(
+                new GitLabMergeRequestReadError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "listProjectLabels",
+                  cause: decoded.failure,
+                }),
+              );
+        }),
+      ),
+
+    listProjectUsers: (input) =>
+      projectUsers(input).pipe(
+        Effect.map(({ candidates, rawCount }) => ({
+          items: candidates.map(({ login, name, avatarUrl }) => ({ login, name, avatarUrl })),
+          truncated: rawCount >= MAX_PAGE_SIZE,
+        })),
       ),
 
     listReviewerCandidates: (input) =>

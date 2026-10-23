@@ -833,6 +833,103 @@ it.effect("keeps healthy repositories when one of them cannot be read", () =>
   }),
 );
 
+it.effect("offers each label once across repositories, despite one that cannot be read", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+        project({
+          id: "p5",
+          title: "t3code worktree",
+          workspaceRoot: "/e",
+          repository: "pingdotgg/t3code",
+        }),
+        project({
+          id: "p2",
+          title: "uploadthing",
+          workspaceRoot: "/b",
+          repository: "pingdotgg/ut",
+        }),
+        project({ id: "p3", title: "broken", workspaceRoot: "/c", repository: "pingdotgg/broken" }),
+        project({
+          id: "p4",
+          title: "elsewhere",
+          workspaceRoot: "/d",
+          repository: "group/app",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listRepositoryLabels: (input) => {
+            reads.push(input.repository);
+            return input.repository === "pingdotgg/broken"
+              ? Effect.fail(requestFailed)
+              : Effect.succeed({
+                  items:
+                    input.repository === "pingdotgg/t3code"
+                      ? [
+                          { name: "size:XL", color: "d93f0b" },
+                          { name: "bug", color: "d73a4a" },
+                        ]
+                      : [{ name: "Bug", color: "ee0701" }],
+                  truncated: false,
+                });
+          },
+        }),
+        // A host with no repository labels is left out rather than failing the answer.
+        fakeProvider(SourceControlProviderKind.make("gitlab")),
+      ],
+    });
+
+    const result = yield* service.filterOptions({ kind: "labels" });
+
+    assert.deepStrictEqual(
+      result.labels.map((label) => label.name),
+      ["bug", "size:XL"],
+    );
+    assert.strictEqual(reads.filter((repository) => repository === "pingdotgg/t3code").length, 1);
+    assert.strictEqual(result.truncated, false);
+  }),
+);
+
+it.effect("puts the author a query names exactly ahead of those it only begins", () =>
+  Effect.gen(function* () {
+    const queries: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          searchRepositoryAuthors: (input) => {
+            queries.push(input.query);
+            return Effect.succeed({
+              items: [
+                { login: "theo-browne", name: null, avatarUrl: null },
+                { login: "octocat", name: "Theo", avatarUrl: null },
+                { login: "julius", name: "Julius", avatarUrl: null },
+                { login: "t3dotgg", name: "theo", avatarUrl: null },
+              ],
+              truncated: true,
+            });
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.filterOptions({ kind: "authors", query: "theo" });
+
+    assert.deepStrictEqual(queries, ["theo"]);
+    assert.deepStrictEqual(
+      result.authors.map((author) => author.login),
+      ["octocat", "t3dotgg", "theo-browne"],
+    );
+    assert.strictEqual(result.truncated, true);
+  }),
+);
+
 it.effect("tries another workspace on the same host for the viewer", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

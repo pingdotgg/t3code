@@ -455,6 +455,37 @@ query LabelCandidates($owner: String!, $name: String!, $number: Int!) {
   }
 }
 
+query RepositoryLabels($owner: String!, $name: String!, $query: String) {
+  repository(owner: $owner, name: $name) {
+    labels(first: 100, query: $query, orderBy: { field: NAME, direction: ASC }) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        name
+        color
+      }
+    }
+  }
+}
+
+# Mentionable rather than assignable users: a pull request from a fork is opened by someone with
+# no access to the repository, and a listing is still narrowed by them.
+query RepositoryAuthors($owner: String!, $name: String!, $query: String) {
+  repository(owner: $owner, name: $name) {
+    mentionableUsers(first: 50, query: $query) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        login
+        name
+        avatarUrl
+      }
+    }
+  }
+}
+
 # Which files of a pull request the signed-in account has cleared. GraphQL only, since the REST
 # files endpoint the patch is read from carries no viewed state, so this is a second read rather
 # than a wider version of the first.
