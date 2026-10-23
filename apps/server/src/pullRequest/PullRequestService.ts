@@ -150,9 +150,23 @@ const LIST_CACHE_CAPACITY = 64;
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
 const DIFF_CACHE_CAPACITY = 128;
-const MAX_CACHED_DIFF_PATCH_BYTES = 512 * 1024;
+// Each holder stays within this UTF-16 patch budget as well as its entry-count bound.
+const DIFF_CACHE_PATCH_BUDGET_BYTES = 32 * 1024 * 1024;
 const canCacheDiff = (value: PullRequestDiffResult) =>
-  value.patch.length * 2 <= MAX_CACHED_DIFF_PATCH_BYTES;
+  value.patch.length * 2 <= DIFF_CACHE_PATCH_BUDGET_BYTES;
+const diffCacheEvictions = (entries: Iterable<readonly [string, PullRequestDiffResult]>) => {
+  let bytes = 0;
+  const evictions: string[] = [];
+  for (const [key, value] of Array.from(entries).toReversed()) {
+    const size = value.patch.length * 2;
+    if (bytes + size > DIFF_CACHE_PATCH_BUDGET_BYTES) {
+      evictions.push(key);
+    } else {
+      bytes += size;
+    }
+  }
+  return evictions;
+};
 const FILES_VIEWED_CACHE_CAPACITY = 128;
 const VIEWER_CACHE_CAPACITY = 32;
 
@@ -2449,6 +2463,11 @@ export const make = Effect.gen(function* () {
           if (oldest !== undefined) held.delete(oldest);
         }
         held.set(key, { at, value });
+        for (const evicted of diffCacheEvictions(
+          Array.from(held, ([key, snapshot]) => [key, snapshot.value] as const),
+        )) {
+          held.delete(evicted);
+        }
         armDiffSweep();
       });
     const serve = <E>(key: string, read: Effect.Effect<PullRequestDiffResult, E>) => {
@@ -3093,17 +3112,15 @@ export const make = Effect.gen(function* () {
         : null,
     ]);
     const read = Cache.get(diffCache, key).pipe(
-      Effect.tap((value) =>
-        canCacheDiff(value)
-          ? Effect.void
-          : Cache.getSuccess(diffCache, key).pipe(
-              Effect.flatMap((current) =>
-                Option.isSome(current) && current.value === value
-                  ? Cache.invalidate(diffCache, key)
-                  : Effect.void,
-              ),
-              Effect.uninterruptible,
+      Effect.tap(() =>
+        Cache.entries(diffCache).pipe(
+          Effect.flatMap((entries) =>
+            Effect.forEach(diffCacheEvictions(entries), (evicted) =>
+              Cache.invalidate(diffCache, evicted),
             ),
+          ),
+          Effect.uninterruptible,
+        ),
       ),
       Effect.ensuring(Effect.sync(armDiffSweep)),
     );

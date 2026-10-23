@@ -53,6 +53,7 @@ import type {
   CheckContext,
   LabelCandidates,
   PullRequestActivity,
+  PullRequestCommitStats,
   PullRequestCheckContexts,
   PullRequestCore,
   PullRequestFilesViewed,
@@ -1205,6 +1206,7 @@ export function toPullRequestHeads(result: PullRequestHeads.Result): {
 }
 
 export interface GitHubPullRequestActivityPage {
+  readonly nonMergeCommitIds: ReadonlyArray<string>;
   readonly author?: PullRequestActor | null;
   readonly commits?: ReadonlyArray<PullRequestCommit>;
   readonly remarks: ReadonlyArray<PullRequestComment>;
@@ -1219,6 +1221,9 @@ export function toPullRequestActivityPage(
   const pr = result.repository?.pullRequest;
   if (pr == null) return null;
   return {
+    nonMergeCommitIds: nodesOf(pr.commits).flatMap(({ commit }) =>
+      commit.parents.totalCount > 1 ? [] : [commit.id],
+    ),
     ...(pr.author === undefined ? {} : { author: toActor(pr.author) }),
     ...(pr.commits === undefined
       ? {}
@@ -1237,6 +1242,24 @@ export function toPullRequestActivityPage(
     nextCommentsCursor: nextCursorOf(pr.comments?.pageInfo),
     nextReviewsCursor: nextCursorOf(pr.reviews?.pageInfo),
   };
+}
+
+export function toPullRequestCommitStats(result: PullRequestCommitStats.Result) {
+  return new Map(
+    (result.nodes ?? []).flatMap((commit) =>
+      commit?.__typename === "Commit"
+        ? [
+            [
+              commit.oid,
+              {
+                additions: Math.max(0, commit.additions),
+                deletions: Math.max(0, commit.deletions),
+              },
+            ] as const,
+          ]
+        : [],
+    ),
+  );
 }
 
 /** A check context as the rollup reports it; opaque outside this module. */
@@ -1286,10 +1309,6 @@ export interface GitHubReviewThreadComments {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
   readonly botLogins: ReadonlySet<string>;
-  readonly commitStats: ReadonlyMap<
-    string,
-    { readonly additions: number; readonly deletions: number }
-  >;
   /**
    * Empty wherever the read never happened (an install too old for the field, a degraded page),
    * which the caller reads as "keep the `gh pr view` list" rather than as "this pull request has
@@ -1314,10 +1333,6 @@ export interface GitHubReviewThreadPage {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
   readonly botLogins: ReadonlySet<string>;
-  readonly commitStats: ReadonlyMap<
-    string,
-    { readonly additions: number; readonly deletions: number }
-  >;
   readonly commits: ReadonlyArray<PullRequestCommit>;
   readonly viewer: { readonly canUpdate: boolean; readonly didAuthor: boolean };
   readonly dismissalsByReviewId: ReadonlyMap<string, string>;
@@ -1442,20 +1457,10 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     const actor = toActor(raw) ?? toRequestedTeam(raw);
     if (actor !== null && !reviewers.has(actor.login)) reviewers.set(actor.login, actor);
   }
-  const commitStats = new Map<string, { readonly additions: number; readonly deletions: number }>();
   const commits: PullRequestCommit[] = [];
   for (const { commit } of nodesOf(pullRequest.commits)) {
     const oid = trimmed(commit.oid);
     if (oid === null) continue;
-    // GitHub measures a merge commit against its first parent, so merging the base into the head
-    // reports every upstream change as if it belonged to the pull request. There is no useful
-    // per-commit stat to show for that integration commit without another comparison request.
-    if (commit.parents.totalCount <= 1) {
-      commitStats.set(oid, {
-        additions: Math.max(0, commit.additions),
-        deletions: Math.max(0, commit.deletions),
-      });
-    }
     const committedDate = trimmed(commit.committedDate);
     if (committedDate === null) continue;
     commits.push({
@@ -1484,7 +1489,6 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     reviewers: [...reviewers.values()],
     avatarsByLogin,
     botLogins,
-    commitStats,
     commits,
     viewer: toPullRequestViewerFields(pullRequest),
     dismissalsByReviewId: toDismissalEntries(pullRequest.reviewDismissals),

@@ -641,7 +641,6 @@ describe("getChangeRequest commits", () => {
     reviewers: [],
     avatarsByLogin: new Map<string, string>(),
     botLogins: new Set<string>(),
-    commitStats: new Map<string, { readonly additions: number; readonly deletions: number }>(),
     viewer: { canUpdate: true, didAuthor: false },
   };
 
@@ -653,6 +652,14 @@ describe("getChangeRequest commits", () => {
           author: baseDetail.author,
           comments: baseDetail.comments,
           commits: [
+            {
+              oid: "graphql-newest",
+              messageHeadline: "Activity metadata",
+              committedDate: "2026-07-06T00:00:00Z",
+              additions: 18,
+              deletions: 7,
+              authors: [],
+            },
             {
               oid: "view-oldest",
               messageHeadline: "gh pr view's oldest commit",
@@ -675,6 +682,11 @@ describe("getChangeRequest commits", () => {
       });
 
       expect(detail.commits.map((commit) => commit.oid)).toEqual(["graphql-newest"]);
+      expect(detail.commits[0]).toMatchObject({
+        messageHeadline: "the newest commit gh pr view drops",
+        additions: 18,
+        deletions: 7,
+      });
     }).pipe(
       Effect.provide(
         layerWith([
@@ -699,7 +711,7 @@ describe("getChangeRequest commits", () => {
         number: 7,
       });
 
-      expect(detail.commits.map((commit) => commit.oid)).toEqual(["view-oldest"]);
+      expect(detail.commits.map((commit) => commit.oid)).toEqual(["graphql-newest", "view-oldest"]);
     }).pipe(Effect.provide(layerWith([]))),
   );
 });
@@ -728,7 +740,6 @@ describe("getChangeRequestActivity dismissed reviews", () => {
     reviewers: [],
     avatarsByLogin: new Map(),
     botLogins: new Set(["macroscopeapp"]),
-    commitStats: new Map(),
     commits: [],
     viewer: { canUpdate: true, didAuthor: false },
   };

@@ -125,9 +125,7 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
   );
 }
 
-export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
-  const resolvedTheme = useRenderedAppearance();
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
+export function useDiffWorkerPool(diffThemeName: DiffThemeName) {
   const [workerPoolSize] = useState(resolveDiffWorkerPoolSize);
   // A new subscribe identity makes React release and reacquire the shared pool on every render.
   const subscribe = useStableCallback((onStoreChange: () => void) => {
@@ -144,11 +142,17 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
       }, DIFF_WORKER_IDLE_TTL_MS);
     };
   });
-  const workerPool = useSyncExternalStore(
+  return useSyncExternalStore(
     subscribe,
     () => sharedWorkerPool?.pool,
     () => undefined,
   );
+}
+
+export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
+  const resolvedTheme = useRenderedAppearance();
+  const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const workerPool = useDiffWorkerPool(diffThemeName);
 
   return (
     <WorkerPoolContext value={workerPool}>

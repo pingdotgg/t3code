@@ -405,10 +405,6 @@ export const make = Effect.gen(function* () {
               reviewers: [],
               avatarsByLogin: new Map<string, string>(),
               botLogins: new Set<string>(),
-              commitStats: new Map<
-                string,
-                { readonly additions: number; readonly deletions: number }
-              >(),
               commits: [],
               viewer: { canUpdate: true, didAuthor: false },
             })),
@@ -417,74 +413,82 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
-          author: withAvatar(
-            pullRequest.author,
-            reviewThreads.avatarsByLogin,
-            input.host,
-            reviewThreads.botLogins,
-          ),
-          reviewers: reviewThreads.reviewers,
-          reactions: reviewThreads.reactions,
-          commits: (reviewThreads.commits.length > 0
-            ? reviewThreads.commits
-            : pullRequest.commits
-          ).map((commit) => ({
-            ...commit,
-            ...reviewThreads.commitStats.get(commit.oid),
-            authors: commit.authors?.map(
-              (author) =>
-                withAvatar(
-                  author,
+        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => {
+          const commitStats = new Map(
+            pullRequest.commits.map(({ oid, additions, deletions }) => [
+              oid,
+              additions === undefined ? {} : { additions, deletions },
+            ]),
+          );
+          return {
+            author: withAvatar(
+              pullRequest.author,
+              reviewThreads.avatarsByLogin,
+              input.host,
+              reviewThreads.botLogins,
+            ),
+            reviewers: reviewThreads.reviewers,
+            reactions: reviewThreads.reactions,
+            commits: (reviewThreads.commits.length > 0
+              ? reviewThreads.commits
+              : pullRequest.commits
+            ).map((commit) => ({
+              ...commit,
+              ...commitStats.get(commit.oid),
+              authors: commit.authors?.map(
+                (author) =>
+                  withAvatar(
+                    author,
+                    reviewThreads.avatarsByLogin,
+                    input.host,
+                    reviewThreads.botLogins,
+                  ) ?? author,
+              ),
+            })),
+            comments: [...pullRequest.comments, ...reviewThreads.comments]
+              .map((comment) => ({
+                ...comment,
+                // GitHub keeps the dismissal reason on the timeline event, not on the review,
+                // so a dismissed review with nothing visible of its own reads its words from
+                // there. "Visible" and not "empty": bot reviews often carry only an HTML
+                // marker comment, which markdown renders as nothing.
+                body:
+                  comment.kind === "review" &&
+                  comment.reviewState?.toUpperCase() === "DISMISSED" &&
+                  rendersEmpty(comment.body)
+                    ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
+                    : comment.body,
+                author: withAvatar(
+                  comment.author,
                   reviewThreads.avatarsByLogin,
                   input.host,
                   reviewThreads.botLogins,
-                ) ?? author,
-            ),
-          })),
-          comments: [...pullRequest.comments, ...reviewThreads.comments]
-            .map((comment) => ({
-              ...comment,
-              // GitHub keeps the dismissal reason on the timeline event, not on the review,
-              // so a dismissed review with nothing visible of its own reads its words from
-              // there. "Visible" and not "empty": bot reviews often carry only an HTML
-              // marker comment, which markdown renders as nothing.
-              body:
-                comment.kind === "review" &&
-                comment.reviewState?.toUpperCase() === "DISMISSED" &&
-                rendersEmpty(comment.body)
-                  ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
-                  : comment.body,
-              author: withAvatar(
-                comment.author,
-                reviewThreads.avatarsByLogin,
-                input.host,
-                reviewThreads.botLogins,
-              ),
-              // A comment out of `gh pr view --json` carries none of its own: that read
-              // reports no reaction at all, so they arrive from the GraphQL page by node id.
-              reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
-              editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
-            }))
-            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-          // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
-          // are always whole and only the thread walk can stop short of the host.
-          commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-          commentsTruncated: reviewThreads.truncated,
-          reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
-          reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
-              ...comment,
-              author: withAvatar(
-                comment.author,
-                reviewThreads.avatarsByLogin,
-                input.host,
-                reviewThreads.botLogins,
-              ),
+                ),
+                // A comment out of `gh pr view --json` carries none of its own: that read
+                // reports no reaction at all, so they arrive from the GraphQL page by node id.
+                reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+                editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
+              }))
+              .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+            // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
+            // are always whole and only the thread walk can stop short of the host.
+            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+            commentsTruncated: reviewThreads.truncated,
+            reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
+            reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                author: withAvatar(
+                  comment.author,
+                  reviewThreads.avatarsByLogin,
+                  input.host,
+                  reviewThreads.botLogins,
+                ),
+              })),
             })),
-          })),
-        })),
+          };
+        }),
       ),
 
     getReviewThreadComments: (input) =>
