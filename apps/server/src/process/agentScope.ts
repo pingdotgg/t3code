@@ -85,6 +85,12 @@ function parseCgroupCounter(text: string, key: string): number | undefined {
 // A stop sends SIGTERM, then SIGKILL after this long. systemd's 90 s default
 // would outlast the wait for a previous server's agents below.
 const STOP_TIMEOUT_OPTION = "--property=TimeoutStopSec=10s";
+// Nested agent scopes inherit only the controllers enabled on their parent
+// slices. Without Delegate, rootless containers (kind + Podman, Docker rootless)
+// fail cgroup setup when tools like make deploy run inside an agent session.
+// Pass controllers via Delegate= (systemd-run rejects DelegateControllers=).
+// Systemd enables those controllers on ancestor slices when the scope starts.
+const DELEGATE_OPTION = "--property=Delegate=cpu cpuset io memory pids";
 const STOPPING_POLL_INTERVAL = "100 millis";
 const STOPPING_POLL_ATTEMPTS = 20;
 const CLEAR_FAILED_INTERVAL = "1 second";
@@ -167,9 +173,25 @@ export const make = Effect.gen(function* () {
           "--",
           "true",
         ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
-      // Scopes take OOMPolicy from systemd 253; older managers still get scopes.
-      const supportsOomPolicy = yield* probe([STOP_TIMEOUT_OPTION, "--property=OOMPolicy=stop"]);
-      if (!supportsOomPolicy && !(yield* probe([STOP_TIMEOUT_OPTION]))) {
+      // Stop the whole scope when the kernel kills one of its processes, and
+      // record the result as oom-kill. Scopes take OOMPolicy from systemd 253;
+      // older user managers still get scopes, without the OOM label.
+      // Prefer Delegate-enabled options so nested cgroups can enable cpu/cpuset/io.
+      // Fall back when the local systemd rejects those properties.
+      const stopOptions = [STOP_TIMEOUT_OPTION];
+      const stopWithDelegate = [...stopOptions, DELEGATE_OPTION];
+      const oomOptions = [...stopOptions, "--property=OOMPolicy=stop"];
+      const oomWithDelegate = [...oomOptions, DELEGATE_OPTION];
+      const scopeOptions = (yield* probe(oomWithDelegate))
+        ? oomWithDelegate
+        : (yield* probe(oomOptions))
+          ? oomOptions
+          : (yield* probe(stopWithDelegate))
+            ? stopWithDelegate
+            : (yield* probe(stopOptions))
+              ? stopOptions
+              : undefined;
+      if (scopeOptions === undefined) {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
@@ -190,13 +212,15 @@ export const make = Effect.gen(function* () {
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
-        oomPolicy: supportsOomPolicy,
+        oomPolicy: scopeOptions.includes("--property=OOMPolicy=stop"),
+        delegate: scopeOptions.includes(DELEGATE_OPTION),
       });
       return {
         systemdRun,
         systemctl,
         runtimeDir,
-        supportsOomPolicy,
+        supportsOomPolicy: scopeOptions.includes("--property=OOMPolicy=stop"),
+        supportsDelegate: scopeOptions.includes(DELEGATE_OPTION),
       };
     }),
   );
@@ -335,6 +359,7 @@ export const make = Effect.gen(function* () {
         // unload the unit even when it fails.
         options: [
           STOP_TIMEOUT_OPTION,
+          ...(scope.supportsDelegate ? [DELEGATE_OPTION] : []),
           ...(scope.supportsOomPolicy
             ? [`--property=OOMPolicy=${continuing ? "continue" : "stop"}`]
             : []),
