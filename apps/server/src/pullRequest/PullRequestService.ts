@@ -123,6 +123,7 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
 const REPOSITORY_CONCURRENCY = 12;
 const REPOSITORY_SEARCH_CHUNK = 100;
+const FILTERED_LIST_READS = 5;
 
 /**
  * Every read leaves the process — a CLI per repository, against hosts whose limits are low
@@ -341,7 +342,7 @@ interface ListCursor extends ProviderListCursor {
 }
 
 const LIST_CURSOR_PATTERN =
-  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))\|(\d{1,9})\|(\d{1,9}(?:,\d{1,9})*)?$/;
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))\|(\d{1,9})\|(\d{1,9}(?:,\d{1,9})*)?(?:\|([\w.:~+-]{1,128}))?$/;
 
 function parseListCursor(raw: string): ListCursor | null {
   const match = LIST_CURSOR_PATTERN.exec(raw);
@@ -351,6 +352,7 @@ function parseListCursor(raw: string): ListCursor | null {
     updatedBefore: match[1]!,
     delivered: Number(match[2]),
     seenAt: seenAt === undefined ? [] : seenAt.split(",").map(Number),
+    ...(match[4] === undefined ? {} : { resumeAfter: match[4] }),
   };
 }
 
@@ -368,6 +370,7 @@ function nextListCursor(
   delivered: ReadonlyArray<ProviderChangeRequest>,
   /** A provider may consume malformed offset-paged rows that never appear in `delivered`. */
   cursorAdvance = delivered.length,
+  resumeAfter?: string,
 ): string | null {
   if (fetched.length === 0) return null;
   // Taken from what the host answered rather than from what survived de-duplication: a slice can
@@ -375,7 +378,7 @@ function nextListCursor(
   // repository's boring afternoon — and reading "nothing new" as "nothing left" would end the
   // walk on the instant it was stuck on, with everything older unreachable for good.
   const oldest = fetched.reduce((left, right) => (right.updatedAt < left.updatedAt ? right : left));
-  return listCursorAt(previous, oldest.updatedAt, fetched, cursorAdvance);
+  return listCursorAt(previous, oldest.updatedAt, fetched, cursorAdvance, resumeAfter);
 }
 
 function listCursorAt(
@@ -383,12 +386,14 @@ function listCursorAt(
   boundary: string,
   fetched: ReadonlyArray<ProviderChangeRequest>,
   deliveredCount: number,
+  resumeAfter?: string,
 ): string {
   const seenAt = new Set([
     ...(previous?.updatedBefore === boundary ? previous.seenAt : []),
     ...fetched.filter((item) => item.updatedAt === boundary).map((item) => item.number),
   ]);
-  return `${boundary}|${(previous?.delivered ?? 0) + deliveredCount}|${[...seenAt].join(",")}`;
+  const cursor = `${boundary}|${(previous?.delivered ?? 0) + deliveredCount}|${[...seenAt].join(",")}`;
+  return resumeAfter === undefined ? cursor : `${cursor}|${resumeAfter}`;
 }
 
 function isProviderUnusable(error: PullRequestProviderError): boolean {
@@ -1165,11 +1170,13 @@ export const make = Effect.gen(function* () {
     const cursorOf = (project: SupportedProject): ListCursor | undefined =>
       continuation?.get(project.cursorKey);
 
-    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
+    const readSlice = (
+      project: SupportedProject,
+      cursor: ListCursor | undefined,
+    ): Effect.Effect<RepositoryBatch> => {
       {
         const viewer = viewers[project.host]!;
         const key = project.cursorKey;
-        const cursor = cursorOf(project);
         return project.api
           .listChangeRequests({
             cwd: project.project.workspaceRoot,
@@ -1188,6 +1195,7 @@ export const make = Effect.gen(function* () {
                     updatedBefore: cursor.updatedBefore,
                     delivered: cursor.delivered,
                     seenAt: cursor.seenAt,
+                    resumeAfter: cursor.resumeAfter,
                   },
                 }),
           })
@@ -1214,7 +1222,13 @@ export const make = Effect.gen(function* () {
                 truncated: page.truncated,
                 nextCursor:
                   page.continues && page.truncated
-                    ? nextListCursor(cursor, page.items, items, page.cursorAdvance)
+                    ? nextListCursor(
+                        cursor,
+                        page.items,
+                        items,
+                        page.cursorAdvance,
+                        page.resumeAfter,
+                      )
                     : null,
               };
             }),
@@ -1233,6 +1247,32 @@ export const make = Effect.gen(function* () {
             })),
           );
       }
+    };
+
+    // Filters a host cannot apply thin out the slices it hands over, so a repository keeps
+    // reading until it has a page's worth or runs out. The reads are bounded: a filter that
+    // matches nothing would otherwise walk the repository's whole history in one request.
+    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
+      const fill = (batch: RepositoryBatch, reads: number): Effect.Effect<RepositoryBatch> => {
+        const cursor = batch.nextCursor === null ? null : parseListCursor(batch.nextCursor);
+        if (
+          input.filters === undefined ||
+          cursor === null ||
+          batch.entries.length >= limit ||
+          reads >= FILTERED_LIST_READS
+        ) {
+          return Effect.succeed(batch);
+        }
+        return readSlice(project, cursor).pipe(
+          Effect.flatMap((next) =>
+            // A slice that failed keeps the cursor before it, so the reader can try again.
+            next.errors.length > 0
+              ? Effect.succeed(batch)
+              : fill({ ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
+          ),
+        );
+      };
+      return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
     };
 
     const readTogether = (

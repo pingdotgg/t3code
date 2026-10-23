@@ -448,20 +448,87 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect("leaves an author GitCafe has no profile for to be narrowed by login", () => {
-    const server = fakeGitCafe({ "GET /repos/owner/repo/pulls": { items: [pull], next: null } });
+  it.effect("finds a GitHub-synced author's actor on their pull requests to narrow by it", () => {
+    const synced = {
+      ...pull,
+      number: 8,
+      author: { kind: "github", actorId: "act_synced", login: "Synced", avatarUrl: null },
+    };
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls": (request: SentRequest) =>
+        request.query.get("authors") === '["act_synced"]'
+          ? { items: [synced], next: null }
+          : request.query.get("after") === null
+            ? { items: [pull], next: "o1" }
+            : { items: [synced], next: null },
+    });
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
-      const page = yield* provider.listChangeRequests({
-        ...target,
-        state: "open",
-        involvement: "all",
-        viewer: "alice",
-        limit: 10,
-        filters: { author: "synced-only" },
-      });
-      assert.strictEqual(page.items.length, 1);
-      assert.isNull(server.sent.at(-1)!.query.get("authors"));
+      const list = (author: string) =>
+        provider.listChangeRequests({
+          ...target,
+          state: "open",
+          involvement: "all",
+          viewer: "alice",
+          limit: 10,
+          filters: { author },
+        });
+      const page = yield* list("synced");
+      assert.deepStrictEqual(
+        page.items.map((item) => item.number),
+        [8],
+      );
+      assert.strictEqual(server.sent.at(-1)!.query.get("authors"), '["act_synced"]');
+      // Once seen, the actor is narrowed by straight away.
+      const sentBefore = server.sent.length;
+      yield* list("synced");
+      assert.deepStrictEqual(
+        server.sent.slice(sentBefore).map((request) => request.query.get("authors")),
+        [null, '["act_synced"]'],
+      );
+      // An author on none of the pages it reads gets nothing rather than unnarrowed rows a
+      // continuation would count against a different listing.
+      const missing = yield* list("nobody");
+      assert.deepStrictEqual(missing, { items: [], truncated: false, continues: false });
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("carries a listing on after the last row delivered when rows above it close", () => {
+    const created = (number: number) => `2026-09-12T12:00:0${9 - number}Z`;
+    let pulls = [1, 2, 3, 4, 5].map((number) => ({ ...pull, number, createdAt: created(number) }));
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls": (request: SentRequest) => {
+        const offset = Number(request.query.get("after")?.slice(1) ?? 0);
+        const end = offset + Number(request.query.get("limit"));
+        return { items: pulls.slice(offset, end), next: end < pulls.length ? `o${end}` : null };
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const list = (cursor?: { readonly resumeAfter?: string }) =>
+        provider.listChangeRequests({
+          ...target,
+          state: "open",
+          involvement: "all",
+          viewer: "alice",
+          limit: 2,
+          ...(cursor === undefined
+            ? {}
+            : { cursor: { updatedBefore: timestamp, delivered: 2, ...cursor } }),
+        });
+      const first = yield* list();
+      assert.deepStrictEqual(
+        first.items.map((item) => item.number),
+        [1, 2],
+      );
+      pulls = pulls.filter((candidate) => candidate.number !== 1);
+      const next = yield* list({ resumeAfter: first.resumeAfter! });
+      assert.deepStrictEqual(
+        next.items.map((item) => item.number),
+        [3, 4],
+      );
+      assert.isTrue(next.truncated);
+      assert.isTrue(next.continues);
     }).pipe(Effect.provide(server.layer));
   });
 

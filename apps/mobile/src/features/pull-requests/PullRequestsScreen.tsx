@@ -348,6 +348,15 @@ export function PullRequestsScreen(
                 onPress={() => void result.loadMore(true)}
               />
             </View>
+          ) : result.hasMore ? (
+            // A filtered page can be too short to scroll, which leaves nothing to reach the end of.
+            <View className="items-center py-4">
+              <Button
+                label="Load more"
+                accessibilityLabel="Load more pull requests"
+                onPress={() => void result.loadMore()}
+              />
+            </View>
           ) : undefined
         }
         ListEmptyComponent={

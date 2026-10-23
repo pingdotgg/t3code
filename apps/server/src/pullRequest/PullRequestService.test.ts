@@ -3047,6 +3047,91 @@ it.effect("refuses a way of updating a branch that the host or the viewer does n
   }),
 );
 
+it.effect("keeps reading a host's thinned-out slices until a filtered page is full", () =>
+  Effect.gen(function* () {
+    const reads: Array<number> = [];
+    const rows = Array.from({ length: 40 }, (_, index) => ({
+      ...changeRequest(index + 1, `2026-07-${String(40 - index).padStart(2, "0")}T00:00:00Z`),
+      labels: index % 2 === 0 ? [{ name: "bug", color: null }] : [],
+    }));
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: SourceControlProviderKind.make("gitlab"),
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("gitlab"), {
+          listChangeRequests: (input) => {
+            const delivered = input.cursor?.delivered ?? 0;
+            reads.push(delivered);
+            return Effect.succeed({
+              items: rows.slice(delivered, delivered + input.limit),
+              truncated: delivered + input.limit < rows.length,
+              continues: true,
+            });
+          },
+        }),
+      ],
+    });
+
+    const bugs = yield* service.list({ state: "open", limit: 4, filters: { labels: [["bug"]] } });
+    assert.deepStrictEqual(
+      bugs.entries.map((entry) => entry.number),
+      [1, 3, 5, 7],
+    );
+    assert.deepStrictEqual(reads, [0, 4]);
+
+    reads.length = 0;
+    const none = yield* service.list({
+      state: "open",
+      limit: 4,
+      filters: { labels: [["missing"]] },
+    });
+    assert.deepStrictEqual(none.entries, []);
+    assert.strictEqual(reads.length, 5);
+    assert.match(Object.values(none.nextCursors)[0] ?? "", /\|20\|/);
+  }),
+);
+
+it.effect("hands a host's own resume position back on the next read", () =>
+  Effect.gen(function* () {
+    const resumed: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: SourceControlProviderKind.make("gitlab"),
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("gitlab"), {
+          listChangeRequests: (input) => {
+            resumed.push(input.cursor?.resumeAfter);
+            return Effect.succeed({
+              items: [changeRequest(resumed.length, "2026-07-02T00:00:00Z")],
+              truncated: true,
+              continues: true,
+              resumeAfter: `2026-07-01T00:00:00.000Z~${resumed.length}`,
+            });
+          },
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open", limit: 1 });
+    yield* service.list({ state: "open", limit: 1, cursors: first.nextCursors });
+    assert.deepStrictEqual(resumed, [undefined, "2026-07-01T00:00:00.000Z~1"]);
+  }),
+);
+
 it.effect("judges the review filter only on a host that summarises its reviews", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

@@ -144,6 +144,12 @@ export interface ProviderChangeRequestPage {
    * may need to count malformed raw rows it consumed too.
    */
   readonly cursorAdvance?: number;
+  /**
+   * Where a host that can only page from the top carries on: an opaque position past the last
+   * row delivered, handed back as the cursor's `resumeAfter`. Unlike a count of rows it survives
+   * rows above it closing between reads.
+   */
+  readonly resumeAfter?: string;
   readonly continues: boolean;
 }
 
@@ -160,6 +166,7 @@ export interface ProviderListCursor {
    * applying their limit so a full page of tied updates does not repeat the same prefix.
    */
   readonly seenAt?: ReadonlyArray<number> | undefined;
+  readonly resumeAfter?: string | undefined;
 }
 
 export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {
