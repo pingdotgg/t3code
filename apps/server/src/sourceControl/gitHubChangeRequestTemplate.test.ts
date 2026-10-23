@@ -12,6 +12,21 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
+const SINGLE_TEMPLATE_PATHS = [
+  ".github/pull_request_template.txt",
+  ".github/PULL_REQUEST_TEMPLATE.txt",
+  ".github/PULL_REQUEST_TEMPLATE.TXT",
+  ".github/PuLl_ReQuEsT_TeMpLaTe.TxT",
+  "pull_request_template.txt",
+  "PULL_REQUEST_TEMPLATE.txt",
+  "PULL_REQUEST_TEMPLATE.TXT",
+  "PuLl_ReQuEsT_TeMpLaTe.TxT",
+  "docs/pull_request_template.txt",
+  "docs/PULL_REQUEST_TEMPLATE.txt",
+  "docs/PULL_REQUEST_TEMPLATE.TXT",
+  "docs/PuLl_ReQuEsT_TeMpLaTe.TxT",
+] as const;
+
 const TEMPLATE_DIRECTORIES = [
   ".github/PULL_REQUEST_TEMPLATE",
   "PULL_REQUEST_TEMPLATE",
@@ -74,6 +89,108 @@ const detectTemplate = (cwd: string, treeish = "HEAD") =>
     return yield* GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
   });
 
+it.effect.each(SINGLE_TEMPLATE_PATHS)("recognizes $0", (relativePath) =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, relativePath, `template from ${relativePath}`);
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd);
+      assert.strictEqual(Option.getOrUndefined(template), `template from ${relativePath}`);
+    }),
+  ),
+);
+
+it.effect.each([".github/PuLl_ReQuEsT_TeMpLaTe.MD", "docs/PULL_REQUEST_TEMPLATE.Md"])(
+  "recognizes Markdown case variant $0",
+  (relativePath) =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        yield* writeTemplate(cwd, relativePath, "Markdown template");
+        yield* commitTemplates(cwd);
+
+        assert.strictEqual(Option.getOrUndefined(yield* detectTemplate(cwd)), "Markdown template");
+      }),
+    ),
+);
+
+it.effect("finds case variants from a repository subdirectory", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      yield* writeTemplate(cwd, ".github/Pull_Request_Template.TXT", "base template");
+      yield* writeTemplate(cwd, "nested/README.md", "project");
+      yield* commitTemplates(cwd);
+
+      assert.strictEqual(
+        Option.getOrUndefined(yield* detectTemplate(path.join(cwd, "nested"))),
+        "base template",
+      );
+    }),
+  ),
+);
+
+it.effect.each([
+  ".github/pull_request_template.md",
+  ".github/PuLl_ReQuEsT_TeMpLaTe.TxT",
+  "pull_request_template.md",
+  "docs/pull_request_template.md",
+])("preserves $0 when unrelated direct documents exhaust discovery", (relativePath) =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, relativePath, "GitHub template");
+      for (let index = 0; index < 600; index += 1) {
+        yield* writeTemplate(cwd, `docs/${index}-${"a".repeat(180)}.md`, "guide");
+      }
+      yield* commitTemplates(cwd);
+
+      assert.strictEqual(Option.getOrUndefined(yield* detectTemplate(cwd)), "GitHub template");
+    }),
+  ),
+);
+
+it.effect("does not let unrelated nested documents exhaust the template listing", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, "docs/Pull_Request_Template.TXT", "docs template");
+      for (let index = 0; index < 600; index += 1) {
+        yield* writeTemplate(cwd, `docs/guides/${index}-${"a".repeat(180)}.md`, "guide");
+      }
+      yield* commitTemplates(cwd);
+
+      assert.strictEqual(Option.getOrUndefined(yield* detectTemplate(cwd)), "docs template");
+    }),
+  ),
+);
+
+it.effect.each([".github", "docs"])(
+  "finds a mixed-case template in a crowded $0 directory",
+  (location) =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        yield* writeTemplate(cwd, `${location}/PULL_REQUEST_TEMPLATE.TXT`, "text template");
+        for (let index = 0; index < 600; index += 1) {
+          yield* writeTemplate(cwd, `${location}/${index}-${"a".repeat(180)}.md`, "guide");
+        }
+        yield* commitTemplates(cwd);
+
+        assert.strictEqual(Option.getOrUndefined(yield* detectTemplate(cwd)), "text template");
+      }),
+    ),
+);
+
+it.effect("prefers an existing exact filename over an additional case variant", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".github/PULL_REQUEST_TEMPLATE.MD", "case variant");
+      yield* writeTemplate(cwd, ".github/PULL_REQUEST_TEMPLATE.md", "existing spelling");
+      yield* commitTemplates(cwd);
+
+      assert.strictEqual(Option.getOrUndefined(yield* detectTemplate(cwd)), "existing spelling");
+    }),
+  ),
+);
+
 it.effect("reads templates from the requested base tree", () =>
   runWithTempDirectory((cwd) =>
     Effect.gen(function* () {
@@ -107,10 +224,14 @@ it.effect("uses the first non-empty template in the configured path order", () =
   ),
 );
 
-it.effect.each(TEMPLATE_DIRECTORIES)("recognizes the $0 directory", (relativeDirectory) =>
+it.effect.each(
+  TEMPLATE_DIRECTORIES.flatMap((directory) =>
+    ["MD", "TXT"].map((extension) => `${directory}/template.${extension}`),
+  ),
+)("recognizes directory template $0", (relativePath) =>
   runWithTempDirectory((cwd) =>
     Effect.gen(function* () {
-      yield* writeTemplate(cwd, `${relativeDirectory}/template.MD`, "directory template");
+      yield* writeTemplate(cwd, relativePath, "directory template");
       yield* commitTemplates(cwd);
 
       const template = yield* detectTemplate(cwd);
@@ -142,6 +263,19 @@ it.effect.skipIf(!symlinksSupported)(
         assert.strictEqual(Option.getOrUndefined(template), "valid");
       }),
     ),
+);
+
+it.effect("does not guess between Markdown and text directory templates", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".github/PULL_REQUEST_TEMPLATE/a.md", "first");
+      yield* writeTemplate(cwd, ".github/PULL_REQUEST_TEMPLATE/b.txt", "second");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd);
+      assert.isTrue(Option.isNone(template));
+    }),
+  ),
 );
 
 it.effect("does not guess between multiple directory templates", () =>

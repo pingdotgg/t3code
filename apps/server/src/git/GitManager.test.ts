@@ -3286,6 +3286,80 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("creates PR with a text template when one does not already exist", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".github", "PuLl_ReQuEsT_TeMpLaTe.TXT"),
+        "## What changed?\n\n## Verification",
+      );
+      yield* runGit(repoDir, ["add", ".github/PuLl_ReQuEsT_TeMpLaTe.TXT"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add pull request template"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature-create-pr"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature-create-pr"]);
+      yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
+      let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
+      let generatedChangeRequestTemplate: string | undefined;
+
+      const { manager, ghCalls } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "custom" as const,
+            customInstructions: "Lead with user impact.",
+          },
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedPolicy = input.policy;
+            generatedChangeRequestTemplate = input.changeRequestTemplate;
+            return Effect.succeed({
+              title: "Add stacked git actions",
+              body: "## What changed?\nAdded stacked git actions.",
+            });
+          },
+        },
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            JSON.stringify([
+              {
+                number: 88,
+                title: "Add stacked git actions",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+                baseRefName: "main",
+                headRefName: "feature-create-pr",
+              },
+            ]),
+          ],
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.branch.status).toBe("skipped_not_requested");
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.number).toBe(88);
+      expect(generatedPolicy).toMatchObject({
+        changeRequestInstructions: "Lead with user impact.",
+      });
+      expect(generatedChangeRequestTemplate).toBe("## What changed?\n\n## Verification");
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+      expect(
+        ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
+      ).toBe(true);
+      expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
   it.effect("create_pr sends bounded checks to the model and omits rolled-back runs", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
