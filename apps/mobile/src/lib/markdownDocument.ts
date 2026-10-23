@@ -233,6 +233,42 @@ export function markdownWithTableBreaks(markdown: string): string {
   return markdown;
 }
 
+const MERMAID_FENCE = /^ {0,3}(?:`{3,}|~{3,})[ \t]*mermaid\b/m;
+const CLOSING_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+
+/**
+ * Swaps each closed top-level ```mermaid fence for a standalone image whose URL keys the
+ * rendered diagram, so the native document reserves a media slot the app draws into.
+ * Media slots only exist at the document root, and an unclosed fence is still streaming, so
+ * those stay code blocks, as does any diagram `render` rejects.
+ */
+export function markdownWithMermaidDiagrams<Diagram>(
+  markdown: string,
+  render: (source: string) => Diagram | null,
+): { readonly markdown: string; readonly diagrams: ReadonlyMap<string, Diagram> } {
+  const diagrams = new Map<string, Diagram>();
+  if (!MERMAID_FENCE.test(markdown)) return { markdown, diagrams };
+  const edits: Array<{ start: number; end: number; content: string }> = [];
+  for (const node of parser.parse(markdown).children) {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (node.type !== "code" || node.lang !== "mermaid" || start === undefined || !end) continue;
+    const lines = markdown.slice(start, end).split(/\r\n|\r|\n/);
+    const opening = /^ *(`{3,}|~{3,})/.exec(lines[0]!)?.[1];
+    const closing = lines.length > 1 ? CLOSING_FENCE.exec(lines.at(-1)!)?.[1] : undefined;
+    if (!opening || !closing?.startsWith(opening)) continue;
+    const diagram = node.value.trim() ? render(node.value) : null;
+    if (diagram === null) continue;
+    const url = `t3-mermaid:${diagrams.size}`;
+    diagrams.set(url, diagram);
+    // The blank lines keep the image out of a neighbouring paragraph.
+    edits.push({ start, end, content: `\n![Mermaid diagram](${url})\n` });
+  }
+  for (const edit of edits.reverse())
+    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
+  return { markdown, diagrams };
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownWithHtml(markdown));
 }
