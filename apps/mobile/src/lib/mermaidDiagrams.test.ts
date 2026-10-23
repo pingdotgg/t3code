@@ -73,6 +73,33 @@ describe("pele SVG for react-native-svg", () => {
     expect(svg).toContain('stroke="#888888"');
   });
 
+  it("leaves label text that looks like CSS untouched", () => {
+    const svg = nativeMermaidSvg(
+      render(
+        'flowchart TD\n A["var(--brand) > x"] --> B{"OK? var(--pele-fg"}\n B --> C["color-mix(in srgb, var(--a) 50%, var(--b))"]',
+      ).svg,
+      palette,
+    );
+    expect(svg).toContain(">var(--brand) &gt; x</text>");
+    expect(svg).toContain(">OK? var(--pele-fg</text>");
+    expect(svg).toContain(">color-mix(in srgb, var(--a)</tspan>");
+    expect(svg).toContain(">50%, var(--b))</tspan>");
+    expect(svg.replace(/<(text|tspan)[^>]*>[^<]*<\/\1>/g, "")).not.toMatch(/var\(|color-mix/);
+  });
+
+  it("resolves every attribute, including font weights, across diagram types", () => {
+    for (const source of [
+      "classDiagram\n A <|-- B",
+      "gantt\n title T\n section S\n x :a1, 2024-01-01, 3d",
+      "timeline\n title T\n 2020: a",
+    ]) {
+      const markup = nativeMermaidSvg(render(source).svg, palette)
+        .match(/<[^>]*>/g)!
+        .join("");
+      expect(markup).not.toMatch(/var\(|color-mix|--_/);
+    }
+  });
+
   it("keeps Pele's fallback for colors the theme does not set", () => {
     const svg = nativeMermaidSvg(render('pie\n "Dogs" : 3\n "Cats" : 1').svg, palette);
     expect(svg).toContain('fill="#4c78a8"');

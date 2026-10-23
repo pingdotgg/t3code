@@ -12,6 +12,12 @@ export interface MermaidPalette {
 // Only a nested flowchart cluster's title stroke uses color-mix; its first color is close enough.
 const COLOR_MIX = /color-mix\(in srgb,\s*(var\(--[\w-]+\))\s+[\d.]+%,\s*var\(--[\w-]+\)\)/g;
 
+// Pele escapes `<`, `>`, and `&` in label text and attribute values, so `<...>` is always markup.
+const MARKUP_TAG = /<[^>]*>/g;
+// Labels are text nodes, so substituting only inside attribute values leaves a label that
+// happens to read `var(--x)` or `color-mix(...)` untouched.
+const ATTRIBUTE = /(\s[\w:-]+=")([^"]*)"/g;
+
 function resolveCssVariables(text: string, variables: ReadonlyMap<string, string>, depth = 0) {
   let resolved = "";
   let index = 0;
@@ -63,5 +69,11 @@ export function nativeMermaidSvg(svg: string, palette: MermaidPalette): string {
   }
   const fontSize = /(?:^|;)\s*font:\s*([\d.]+)px/.exec(style)?.[1] ?? "16";
   const nativeRoot = `${root.replace(/\sstyle="[^"]*"/, "")} font-size="${fontSize}" color="var(--_fg)"`;
-  return resolveCssVariables((nativeRoot + svg.slice(rootEnd)).replace(COLOR_MIX, "$1"), variables);
+  return (nativeRoot + svg.slice(rootEnd)).replace(MARKUP_TAG, (tag) =>
+    tag.replace(
+      ATTRIBUTE,
+      (_, open: string, value: string) =>
+        `${open}${resolveCssVariables(value.replace(COLOR_MIX, "$1"), variables)}"`,
+    ),
+  );
 }
