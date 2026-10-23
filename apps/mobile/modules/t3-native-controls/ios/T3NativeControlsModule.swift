@@ -32,6 +32,14 @@ public final class T3NativeControlsModule: Module {
       Prop("appearance") { (view: T3SegmentedControlView, value: String) in view.appearance = value }
     }
 
+    View(T3SidebarTabBarView.self) {
+      ViewName("SidebarTabBar")
+      Events("onSelectionChange")
+      Prop("selectedIndex") { (view: T3SidebarTabBarView, value: Int) in view.selectedIndex = value }
+      Prop("selectedColor") { (view: T3SidebarTabBarView, value: UIColor) in view.selectedColor = value }
+      Prop("appearance") { (view: T3SidebarTabBarView, value: String) in view.appearance = value }
+    }
+
     View(T3LayoutMetricsView.self) {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")

@@ -33,7 +33,7 @@ catalog:
   "@clerk/clerk-js": 6.40.0
   "@clerk/electron": 0.1.3
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 4.13.0
+  "@clerk/expo": 4.14.0
   "@clerk/react": 6.18.0
   "@clerk/shared": 4.41.0
   # Must match the version alchemy depends on: the relay overrides its
@@ -98,8 +98,8 @@ minimumReleaseAgeExclude:
   - "@clerk/backend@3.25.0"
   - "@clerk/clerk-js@6.40.0"
   - "@clerk/electron@0.1.3"
-  - "@clerk/expo-native-components@0.2.0"
-  - "@clerk/expo@4.13.0"
+  - "@clerk/expo-native-components@0.4.0"
+  - "@clerk/expo@4.14.0"
   - "@clerk/react@6.18.0"
   - "@clerk/shared@4.41.0"
   - "@distilled.cloud/aws@1.0.0-rc.13"
@@ -221,8 +221,33 @@ minimumReleaseAgeExclude:
   - pele@1.8.0
 
 overrides:
-  # Keep on the patched version. A fresh resolution would take a newer release and
-  # fail on the unused patch. Move this with patches/expo-modules-core@*.patch.
+  # Pin every patched package, including transitive dependencies, so lockfile-free
+  # release installs cannot drift past the patch. Update these with patchedDependencies.
+  react-native-image-viewing: 0.2.2
+  mdast-util-math: 3.0.0
+  micromark-extension-llm-math: 3.1.0
+  alchemy: 2.0.0-beta.80
+  expo-audio: 58.0.9
+  expo-network: 58.0.3
+  "@clerk/expo-native-components": 0.4.0
+  expo-sharing: 58.0.19
+  expo-widgets: 58.0.20
+  "@ff-labs/fff-node": 0.11.0
+  "@legendapp/list": 3.3.5
+  "@pierre/diffs": 1.5.2
+  "@react-native-ai/apple": 0.12.0
+  "@react-native-menu/menu": 2.0.0
+  "@react-navigation/native-stack": 7.21.0
+  dbus-next: 0.10.2
+  node-pty: 1.2.0-beta.15
+  react-native-gesture-handler: 3.3.0
+  react-native-reanimated: 4.7.1
+  react-native-keyboard-controller: 1.22.7
+  react-native-pdf-jsi: 5.0.0
+  react-native-webview: 14.0.1
+  "@expo/ui": 58.0.20
+  "@expo/fingerprint": 0.21.5
+  app-builder-lib: 26.16.1
   expo-modules-core: 58.0.22
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
@@ -331,7 +356,7 @@ patchedDependencies:
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
   expo-network@58.0.3: patches/expo-network@58.0.3.patch
-  "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch
+  "@clerk/expo-native-components@0.4.0": patches/@clerk__expo-native-components@0.4.0.patch
   "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
   "@expo/metro-config@58.0.14": patches/@expo__metro-config@58.0.14.patch
   expo-sharing@58.0.19: patches/expo-sharing@58.0.19.patch

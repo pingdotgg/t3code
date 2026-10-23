@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
+  globalIdleCompaction,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -51,7 +52,9 @@ import {
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -514,6 +517,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
     ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+    ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
+      ? ["Thread title instructions"]
+      : []),
     ...getChangedBrowserSettingLabels(settings),
     ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
       ? ["Agent browser access"]
@@ -623,6 +629,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -785,7 +792,8 @@ export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { scope, environment, connectedEnvironments, target } = useSettingsScope();
+  const { scope, environment, connectedEnvironments, target, targets } = useSettingsScope();
+  const idleCompaction = scopedIdleCompaction(targets.length > 0 ? targets : [{ settings }]);
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
@@ -996,40 +1004,46 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           serverScoped
-          settingKeys={["compactIdleThreads"]}
+          settingKeys={["idleCompaction", "compactIdleThreads"]}
+          mixed={idleCompaction.mixed}
           {...searchableSetting("compact-idle-threads")}
           description="When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this."
           resetAction={
-            settings.compactIdleThreads !== DEFAULT_UNIFIED_SETTINGS.compactIdleThreads ? (
+            globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (
               <SettingResetButton
                 label="compact idle threads"
                 onClick={() =>
-                  updateSettings({
-                    compactIdleThreads: DEFAULT_UNIFIED_SETTINGS.compactIdleThreads,
-                  })
+                  updateSettings({ idleCompaction: globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) })
                 }
               />
             ) : null
           }
           control={
             <Select
-              value={settings.compactIdleThreads}
+              value={idleCompaction.mixed ? null : globalIdleCompaction(settings)}
               onValueChange={(value) => {
                 const mode = IDLE_COMPACTION_MODES.find((candidate) => candidate.value === value);
-                if (mode) updateSettings({ compactIdleThreads: mode.value });
+                if (mode) updateSettings({ idleCompaction: mode.value });
               }}
             >
               <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Compact idle threads">
                 <SelectValue>
-                  {
-                    IDLE_COMPACTION_MODES.find((mode) => mode.value === settings.compactIdleThreads)
-                      ?.label
+                  {(value: string | null) =>
+                    value === null
+                      ? "Mixed"
+                      : IDLE_COMPACTION_MODES.find((mode) => mode.value === value)?.label
                   }
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {IDLE_COMPACTION_MODES.map((mode) => (
-                  <SelectItem hideIndicator key={mode.value} value={mode.value}>
+                  <SelectItem
+                    hideIndicator
+                    key={mode.value}
+                    value={mode.value}
+                    // A server from before modes has only the on/off switch, so it cannot store "Never".
+                    disabled={mode.value === "off" && !idleCompaction.neverAvailable}
+                  >
                     {mode.label}
                   </SelectItem>
                 ))}
@@ -1896,6 +1910,7 @@ export function GeneralSettingsPanel() {
             )
           }
         />
+        <ThreadTitleInstructionsSettings />
       </SettingsSection>
 
       <SettingsSection id="about" title="About">

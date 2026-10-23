@@ -73,7 +73,7 @@ const mergeStrategyOpen = (status: typeof Status.Type, strategy: string) =>
 const Id = TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/u));
 const isId = Schema.is(Id);
 const isApiError = Schema.is(GitCafeApi.GitCafeApiError);
-const Principal = Schema.Struct({ handle: TrimmedNonEmptyString });
+const Principal = Schema.Struct({ actorId: TrimmedNonEmptyString, handle: TrimmedNonEmptyString });
 const Written = Schema.Struct({ id: Id });
 const Versioned = Schema.Struct({ version: NonNegativeInt });
 const CommentDetail = Schema.Struct({ id: Id, version: NonNegativeInt });
@@ -85,6 +85,7 @@ const Status = Schema.Struct({
     fastForward: Schema.NullOr(Schema.Boolean),
     strategies: Schema.Array(Schema.String),
     permitted: Schema.optional(Schema.Boolean),
+    reasons: Schema.optional(Schema.Array(Schema.String)),
     blockers: Schema.optional(
       Schema.Array(
         Schema.Struct({ blockedStrategies: Schema.optional(Schema.Array(Schema.String)) }),
@@ -97,14 +98,11 @@ const Status = Schema.Struct({
     total: NonNegativeInt,
   }),
 });
+/** A merge GitCafe accepted runs on afterwards: on GitHub for a synced pull request, or natively. */
+const MERGE_IN_FLIGHT = new Set(["provider-merge-pending", "native-operation-pending"]);
 const Listed = Schema.Struct({
   items: Schema.Array(Schema.Struct({ id: TrimmedNonEmptyString })),
   next: Schema.NullOr(Schema.String),
-});
-const FilterOptions = Schema.Struct({
-  actors: Schema.Array(
-    Schema.Struct({ actorId: TrimmedNonEmptyString, handle: TrimmedNonEmptyString }),
-  ),
 });
 const encodeActorIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const BranchCommit = Schema.Struct({ oid: TrimmedNonEmptyString });
@@ -136,6 +134,12 @@ const StackOutcome = Schema.Struct({ id: Schema.String, state: Schema.String });
 const FAILED_STACK_STATES = new Set(["failed", "stopped", "cancelled", "reconciliation_required"]);
 
 type PullRef = ProviderRepositoryRef & { readonly number: number };
+
+/** GitHub's merge counts as soon as GitCafe records it, ahead of the sync that reports it. */
+const settledMerge = (pull: Json.GitCafePullDetail) =>
+  pull.state === "open" && pull.providerMerge != null
+    ? { state: "merged" as const, mergedAt: pull.providerMerge.mergedAt }
+    : {};
 type Paged<A> = { readonly items: ReadonlyArray<A>; readonly next: string | null };
 
 function stackHeadsCurrent(
@@ -542,14 +546,15 @@ export const make = Effect.gen(function* () {
         const involved = input.involvement === "authored" || input.involvement === "reviewing";
         let actorId: string | undefined;
         if (involved) {
-          // A host narrows as far as it can: when the actor list can't be read, the listing comes
-          // back unnarrowed and the page's own involvement filter does the rest. A refused token
-          // or a rate limit still fails, since the service acts on those for the whole host.
-          const options = yield* read(
+          // The viewer is the token's principal, whose actor also matches the pull requests GitHub
+          // sync authored for its linked profile. When it can't be read, the listing comes back
+          // unnarrowed and the page's own involvement filter does the rest. A refused token or a
+          // rate limit still fails, since the service acts on those for the whole host.
+          const principal = yield* read(
             "listChangeRequests",
             input,
-            { path: `${base}/filter-options` },
-            FilterOptions,
+            { path: "/auth/principal" },
+            Principal,
           ).pipe(
             Effect.map(Option.some),
             Effect.catchTags({
@@ -559,11 +564,10 @@ export const make = Effect.gen(function* () {
                   : Effect.succeed(Option.none()),
             }),
           );
-          if (Option.isSome(options)) {
-            actorId = options.value.actors.find(
-              (actor) => actor.handle.toLowerCase() === input.viewer.toLowerCase(),
-            )?.actorId;
-            if (actorId === undefined) return { items: [], truncated: false, continues: false };
+          if (Option.isSome(principal)) {
+            if (principal.value.handle.toLowerCase() !== input.viewer.toLowerCase())
+              return { items: [], truncated: false, continues: false };
+            actorId = principal.value.actorId;
           }
         }
         const limit = Math.max(1, input.limit);
@@ -624,6 +628,7 @@ export const make = Effect.gen(function* () {
           ...(changes === null ? {} : changes),
           closedAt: pull.closedAt,
           mergedAt: pull.mergedAt,
+          ...settledMerge(pull),
         };
       },
     ),
@@ -658,8 +663,10 @@ export const make = Effect.gen(function* () {
       );
       const listed = { ...pull, reviewers: reviewers.items, labels: labels.items };
       const permissions = Json.toViewerPermissions(pull);
+      const merging = status.merge.reasons?.some((reason) => MERGE_IN_FLIGHT.has(reason)) ?? false;
       return {
         ...Json.toChangeRequest(listed, input),
+        autoMergeEnabled: merging,
         headSha: pull.headOid,
         body: pull.description ?? "",
         ...(pull.sourceRepo === null
@@ -670,6 +677,7 @@ export const make = Effect.gen(function* () {
         changedFiles: changes?.changedFiles ?? 0,
         closedAt: pull.closedAt,
         mergedAt: pull.mergedAt,
+        ...settledMerge(pull),
         reviewers: Json.toReviewers(listed, input.host),
         checks: checks === null ? [] : Json.toChecks(checks),
         ...(status.checks.total === 0
@@ -700,7 +708,7 @@ export const make = Effect.gen(function* () {
           rebase: mergeStrategyOpen(status, "rebase"),
         },
         viewerPermissions:
-          status.merge.permitted === false
+          status.merge.permitted === false || merging
             ? { ...permissions, actions: permissions.actions.filter((a) => a !== "merge") }
             : permissions,
       };
@@ -720,7 +728,15 @@ export const make = Effect.gen(function* () {
             readPages(operation, input, `${path}/reviews`, Json.GitCafeReviews),
             pull.headOid === null
               ? Effect.succeed({ items: [], next: null })
-              : readPages(operation, input, `${path}/commits`, Json.GitCafeCommits),
+              : // A closed pull request whose branch is gone keeps its head, but git.cafe answers
+                // 404 for commits it no longer has; the conversation still stands without them.
+                readPages(operation, input, `${path}/commits`, Json.GitCafeCommits).pipe(
+                  Effect.catch((error) =>
+                    error.reason === "not-found"
+                      ? Effect.succeed({ items: [], next: null })
+                      : Effect.fail(error),
+                  ),
+                ),
             readPages(operation, input, `${path}/reactions/`, Json.GitCafeReactions).pipe(
               Effect.orElseSucceed(() => undefined),
             ),

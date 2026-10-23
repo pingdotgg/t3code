@@ -1,4 +1,5 @@
 import * as Arr from "effect/Array";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -357,6 +358,7 @@ export const make = Effect.gen(function* () {
 
   const getByThreadId: ProviderSessionRuntimeRepository["Service"]["getByThreadId"] = (input) =>
     getRuntimeRowByThreadId(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.getByThreadId:query",
@@ -384,6 +386,7 @@ export const make = Effect.gen(function* () {
 
   const list: ProviderSessionRuntimeRepository["Service"]["list"] = (options) =>
     listRuntimeRows({ excludeStopped: options?.excludeStopped === true }).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.list:query",

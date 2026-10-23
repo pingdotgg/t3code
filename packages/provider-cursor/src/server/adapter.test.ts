@@ -256,7 +256,23 @@ describe("CursorAdapterV2", () => {
           "Cursor Agent SDK run.wait failed: Too many requests (resource_exhausted, HTTP 429)",
       },
     },
-  ])("fails the turn with $reason", ({ wait, failure }) =>
+    {
+      reason: "a transport dump sent after earlier commentary",
+      updates: [
+        { type: "text-delta", text: "Checking the build first." },
+        { type: "step-completed", stepId: 1, stepDurationMs: 1 },
+        { type: "text-delta", text: "Error: RetriableError: WritableIterable is closed" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "finished" as const,
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "transport_error", message: "Provider turn failed." },
+    },
+  ])("fails the turn with $reason", ({ updates = [], wait, failure }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
@@ -280,12 +296,17 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-failure",
               listMessages: Effect.succeed([]),
               close: Effect.void,
-              send: () =>
-                Effect.succeed({
-                  agentId: "native-cursor-failure",
-                  runId: "native-cursor-run",
-                  wait,
-                  cancel: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  for (const update of updates) {
+                    yield* input.onDelta!(update).pipe(Effect.orDie);
+                  }
+                  return {
+                    agentId: "native-cursor-failure",
+                    runId: "native-cursor-run",
+                    wait,
+                    cancel: Effect.void,
+                  };
                 }),
             }),
         }),

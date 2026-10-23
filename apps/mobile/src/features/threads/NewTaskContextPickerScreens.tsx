@@ -7,7 +7,11 @@ import { NavigationRow } from "../../components/ui/NavigationRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  resolveEnvironmentMachineKind,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -27,7 +31,6 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -38,6 +41,100 @@ import {
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
+
+import { useEnvironmentPresentation } from "../../state/presentation";
+import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
+import {
+  ConnectionDiagnosisDetails,
+  useConnectionDiagnosis,
+} from "../connection/ConnectionDiagnosisDetails";
+import { environmentStatusText } from "../connection/environmentStatusText";
+
+function EnvironmentPickerRow(props: {
+  environmentId: EnvironmentId;
+  title: string;
+  selected: boolean;
+  disabled: boolean;
+  isLast: boolean;
+  onPress: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { presentation } = useEnvironmentPresentation(props.environmentId);
+  const { diagnosis, state } = useConnectionDiagnosis(props.environmentId, presentation);
+  const { onReconnectEnvironment } = useRemoteConnections();
+  const connection = presentation?.connection;
+  const status =
+    diagnosis?.headline ??
+    (connection ? environmentStatusText({ ...connection, error: null }) : "Offline");
+  return (
+    <View className={cn("bg-grouped-card", !props.isLast && "border-b border-border-subtle")}>
+      <View className="flex-row items-center">
+        <Pressable
+          accessibilityRole="radio"
+          accessibilityLabel={`${props.title}, ${status}`}
+          accessibilityState={{ checked: props.selected }}
+          disabled={props.disabled}
+          onPress={props.onPress}
+          className="min-h-16 flex-1 flex-row items-center gap-3 px-4 py-3 active:bg-subtle"
+        >
+          <EnvironmentMachineSymbol
+            kind={resolveEnvironmentMachineKind(presentation?.serverConfig ?? null)}
+            size={20}
+            tintColorClassName="accent-icon-muted"
+          />
+          <View className="min-w-0 flex-1 gap-1">
+            <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
+              {props.title}
+            </Text>
+            <View className="flex-row items-center gap-1.5">
+              <ConnectionStatusDot state={connection?.phase ?? "offline"} pulse={false} size={6} />
+              <Text className="shrink text-xs text-foreground-muted" numberOfLines={2}>
+                {status}
+              </Text>
+            </View>
+          </View>
+          {props.selected ? (
+            <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
+          ) : null}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${expanded ? "Hide" : "Show"} connection details for ${props.title}`}
+          accessibilityState={{ expanded }}
+          onPress={() => setExpanded(!expanded)}
+          className="min-h-11 min-w-11 items-center justify-center active:opacity-65"
+        >
+          <SymbolView
+            name={expanded ? "chevron.up" : "chevron.down"}
+            size={13}
+            tintColorClassName="accent-icon-muted"
+          />
+        </Pressable>
+      </View>
+      {expanded ? (
+        <View className="gap-3 px-4 pb-4">
+          {diagnosis ? (
+            <ConnectionDiagnosisDetails hostLabel={props.title} diagnosis={diagnosis} />
+          ) : (
+            <Text className="text-sm text-foreground-muted">{status}</Text>
+          )}
+          {state.retryAt ? (
+            <Text className="text-sm text-foreground-muted">
+              Next reconnect at {new Date(state.retryAt).toLocaleTimeString()}
+            </Text>
+          ) : null}
+          {connection?.phase !== "connected" ? (
+            <Button
+              label="Reconnect now"
+              onPress={() => onReconnectEnvironment(props.environmentId)}
+            />
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 function SelectionRow(props: {
   readonly icon?: "arrow.triangle.branch" | ReactNode;
@@ -203,7 +300,6 @@ export function NewTaskEnvironmentPickerRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const serverConfigs = useServerConfigs();
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <NativeStackScreenOptions
@@ -231,17 +327,9 @@ export function NewTaskEnvironmentPickerRouteScreen() {
         >
           <PickerSurface>
             {flow.environments.map((environment, index) => (
-              <SelectionRow
+              <EnvironmentPickerRow
                 key={String(environment.environmentId)}
-                icon={
-                  <EnvironmentMachineSymbol
-                    kind={resolveEnvironmentMachineKind(
-                      serverConfigs.get(environment.environmentId) ?? null,
-                    )}
-                    size={Platform.OS === "android" ? 24 : 17}
-                    tintColorClassName="accent-icon-muted"
-                  />
-                }
+                environmentId={environment.environmentId}
                 isLast={index === flow.environments.length - 1}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {

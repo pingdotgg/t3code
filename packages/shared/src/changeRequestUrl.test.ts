@@ -19,6 +19,20 @@ describe("parseChangeRequestUrl", () => {
     });
   });
 
+  it("reads a GitCafe pull request at its canonical /pull/ path and the older /pulls/ path", () => {
+    for (const path of ["pull", "pulls"]) {
+      expect(
+        parseChangeRequestUrl(`https://git.cafe/PingDotGG/T3Code/${path}/23897`),
+        path,
+      ).toEqual({ host: "git.cafe", repository: "pingdotgg/t3code", number: 23897 });
+    }
+    expect(parseChangeRequestUrl("https://staging.git.cafe/team/repo/pull/7/files")).toEqual({
+      host: "staging.git.cafe",
+      repository: "team/repo",
+      number: 7,
+    });
+  });
+
   it("reads Forgejo URLs even when the hostname contains github", () => {
     expect(parseChangeRequestUrl("https://github.internal/team/repo/pulls/7")).toEqual({
       host: "github.internal",
@@ -106,6 +120,9 @@ describe("parseChangeRequestUrl", () => {
   it("claims nothing it cannot be sure of", () => {
     for (const link of [
       "https://github.com/t3tools/t3code/issues/123",
+      "https://git.cafe/pingdotgg/t3code/issues/23897",
+      "https://git.cafe/pingdotgg/t3code/pull/abc",
+      "https://git.cafe/pingdotgg/t3code",
       "https://github.com/t3tools/t3code/commit/0a1b2c3",
       "https://github.com/t3tools/t3code",
       "https://github.com/t3tools/t3code/pull/abc",

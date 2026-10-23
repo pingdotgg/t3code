@@ -221,6 +221,65 @@ describe("readTranscriptRecords resume", () => {
     assert.strictEqual(second.tailRecords.length, 0);
   });
 
+  it.each([
+    { mode: "buffered", streamingThresholdBytes: Infinity },
+    { mode: "streaming", streamingThresholdBytes: 0 },
+  ])(
+    "resumes an initial Codex carried-total tail without rebilling it ($mode)",
+    async (options) => {
+      const path = NodePath.join(dir, "continuation.jsonl");
+      const usage = (input: number, output: number) => ({
+        input_tokens: input,
+        output_tokens: output,
+      });
+      const event = (last: unknown, cumulative: unknown) =>
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-08-01T10:00:05Z",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: last, total_token_usage: cumulative },
+          },
+        });
+      const firstLine = event(usage(100, 20), usage(500, 60));
+      await NodeFSP.writeFile(
+        path,
+        codexMetaLine() + codexModelLine("gpt-6-astra") + codexTierLine("ultrafast") + firstLine,
+      );
+      const first = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      assert.isNotNull(first);
+      assert.strictEqual(first.records.length, 0);
+      assert.deepStrictEqual(
+        first.tailRecords.map((r) => [r.totals.outputTokens, r.speed]),
+        [[20, "ultrafast"]],
+      );
+      assert.strictEqual(first.malformedRecords, 0);
+
+      await NodeFSP.appendFile(path, `\n${firstLine}\n${event(usage(10, 2), usage(510, 62))}\n`);
+      const resumed = await readTranscriptRecords(
+        path,
+        TEST_FORMATS.codex,
+        JSON.parse(JSON.stringify(first.position)),
+        options,
+      );
+      const full = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      assert.isNotNull(resumed);
+      assert.isNotNull(full);
+      assert.isTrue(resumed.resumed);
+      assert.deepStrictEqual(resumed.records, full.records);
+      assert.deepStrictEqual(
+        resumed.records.map((r) => [r.totals.outputTokens, r.speed]),
+        [
+          [20, "ultrafast"],
+          [2, "ultrafast"],
+        ],
+      );
+      assert.deepStrictEqual(resumed.tailRecords, []);
+      assert.strictEqual(resumed.malformedRecords, 0);
+      assert.deepStrictEqual(resumed.position, full.position);
+    },
+  );
+
   it("re-parses from the start when the guard bytes no longer match", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5));

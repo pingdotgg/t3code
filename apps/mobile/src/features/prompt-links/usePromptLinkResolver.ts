@@ -131,9 +131,11 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     }
     const modelUnavailable = writeDraft(draftKey, project.environmentId, request);
     navigation.dispatch(
-      StackActions.push("NewTaskDraft", {
-        draftId: draftKey,
-        title: request.pullRequest ? `PR #${request.pullRequest.number}` : project.title,
+      StackActions.push("Thread", {
+        draft: {
+          draftId: draftKey,
+          title: request.pullRequest ? `PR #${request.pullRequest.number}` : project.title,
+        },
       }),
     );
     if (request.prompt || pullRequestUnavailable !== null || modelUnavailable) {

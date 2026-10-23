@@ -3322,7 +3322,11 @@ function piQuestion(
               value: "",
             },
           ];
-  const question = recordString(event, "message") ?? recordString(event, "placeholder") ?? title;
+  // Extensions may send a blank placeholder, which is not a valid question.
+  const question =
+    [recordString(event, "message"), recordString(event, "placeholder")].find(
+      (text) => text !== undefined && text.trim().length > 0,
+    ) ?? title;
   return {
     id: questionId,
     header: title,

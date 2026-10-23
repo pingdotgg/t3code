@@ -1,3 +1,4 @@
+import { uuidv4 } from "../../lib/uuid";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { use } from "react";
@@ -27,7 +28,7 @@ import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { useAtomValueWhileVisible, useHomeRouteVisible } from "./home-route-visibility";
-import { useHomeThreadSelection } from "./home-thread-navigation";
+import { useHomeThreadRouteSelection, useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
@@ -40,7 +41,7 @@ export function HomeRouteScreen() {
   const columnMetrics = useNativeColumnLayoutMetrics();
   const deviceType = useDeviceType();
   const headerWidth = nativePrimaryColumn ? (columnMetrics?.width ?? windowWidth) : windowWidth;
-  const { layout, panes, primarySidebarSearchQuery, setPrimarySidebarSearchQuery } =
+  const { layout, panes, primarySidebarSearchQuery, setPrimarySidebarSearchQuery, startNewTask } =
     useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   // Streaming turns rewrite thread shells many times a second. While a Thread
@@ -65,11 +66,12 @@ export function HomeRouteScreen() {
     else setLocalSearchQuery(query);
   };
   const handleSelectThread = useHomeThreadSelection();
+  const selectThreadRoute = useHomeThreadRouteSelection();
   const handleNewThreadOnBranch = useCallback(
     (thread: EnvironmentThreadShell) => {
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
+      selectThreadRoute({
+        draft: {
+          requestId: uuidv4(),
           environmentId: String(thread.environmentId),
           projectId: String(thread.projectId),
           branch: thread.branch,
@@ -77,7 +79,7 @@ export function HomeRouteScreen() {
         },
       });
     },
-    [navigation],
+    [selectThreadRoute],
   );
 
   useEffect(() => {
@@ -177,7 +179,7 @@ export function HomeRouteScreen() {
             <Toolbar.Button
               accessibilityLabel="New task"
               icon="square.and.pencil"
-              onPress={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+              onPress={startNewTask}
             />
           </Toolbar>
         ) : null}
@@ -193,9 +195,7 @@ export function HomeRouteScreen() {
               : undefined
           }
           onStartNewTask={
-            Platform.OS === "android" && panes.primarySidebarVisible
-              ? undefined
-              : () => navigation.navigate("NewTaskSheet", { screen: "NewTask" })
+            Platform.OS === "android" && panes.primarySidebarVisible ? undefined : startNewTask
           }
         />
       </>
@@ -205,7 +205,7 @@ export function HomeRouteScreen() {
   return (
     <AndroidHomeFabLayout
       disabled={workspace !== null && Platform.OS !== "android"}
-      onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+      onStartNewTask={startNewTask}
     >
       <>
         {/* Restore the header after leaving split view; screen options are
@@ -248,7 +248,7 @@ export function HomeRouteScreen() {
             })
           }
           onSearchQueryChange={setSearchQuery}
-          onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          onStartNewTask={startNewTask}
         />
 
         <HomeScreen
@@ -286,16 +286,16 @@ export function HomeRouteScreen() {
           onDeletePendingTask={confirmDeletePendingTask}
           onNewThreadOnBranch={handleNewThreadOnBranch}
           onNewThreadInProject={(project) => {
-            navigation.navigate("NewTaskSheet", {
-              screen: "NewTaskDraft",
-              params: {
+            selectThreadRoute({
+              draft: {
+                requestId: uuidv4(),
                 environmentId: String(project.environmentId),
                 projectId: String(project.id),
                 title: project.title,
               },
             });
           }}
-          onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          onStartNewTask={startNewTask}
           pendingTasks={pendingTasks}
           projectGroupingMode={listOptions.projectGroupingMode}
           projects={projects}

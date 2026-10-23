@@ -1068,7 +1068,7 @@ function TerminalSessionViewport({
         if (cancelled) return;
         const message =
           error instanceof Error ? error.message : "Unable to initialize libghostty-vt";
-        mount.textContent = `${message} — close and reopen the terminal to retry.`;
+        mount.textContent = `${message}. Close and reopen the terminal to retry.`;
       });
 
     return () => {

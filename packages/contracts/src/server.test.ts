@@ -5,6 +5,7 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
+  ServerObservability,
   ServerProvider,
   ServerProviders,
 } from "./server.ts";
@@ -68,6 +69,43 @@ describe("server config forward compatibility", () => {
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
+  });
+});
+
+describe("ServerObservability", () => {
+  const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
+
+  it("reads where each running endpoint came from", () => {
+    const parsed = decodeServerObservability({
+      logsDirectoryPath: "/tmp/t3/logs",
+      localTracingEnabled: true,
+      otlpTracesUrl: "https://collector.example.com/v1/traces",
+      otlpTracesSource: "environment",
+      otlpTracesVariable: "OTEL_EXPORTER_OTLP_ENDPOINT",
+      otlpTracesEnabled: true,
+      otlpMetricsUrl: "https://collector.example.com/v1/metrics",
+      otlpMetricsSource: "settings",
+      otlpMetricsEnabled: true,
+      otlpLogsEnabled: false,
+    });
+
+    expect(parsed.otlpTracesSource).toBe("environment");
+    expect(parsed.otlpTracesVariable).toBe("OTEL_EXPORTER_OTLP_ENDPOINT");
+    expect(parsed.otlpMetricsSource).toBe("settings");
+    expect(parsed.otlpLogsSource).toBeUndefined();
+  });
+
+  it("rejects an unknown endpoint source", () => {
+    expect(() =>
+      decodeServerObservability({
+        logsDirectoryPath: "/tmp/t3/logs",
+        localTracingEnabled: true,
+        otlpTracesUrl: "https://collector.example.com/v1/traces",
+        otlpTracesSource: "cli",
+        otlpTracesEnabled: true,
+        otlpMetricsEnabled: false,
+      }),
+    ).toThrow();
   });
 });
 

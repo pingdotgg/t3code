@@ -797,7 +797,7 @@ function UsageOverview({
                     )}
                   >
                     {awaitingData
-                      ? "—"
+                      ? "-"
                       : metric === "cost"
                         ? formatUsd(totals?.costUsd ?? 0)
                         : formatTokens(totals?.totalTokens ?? 0)}

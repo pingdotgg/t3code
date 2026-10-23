@@ -163,6 +163,7 @@ describe("replayAndBufferLiveEvents", () => {
           const highWaterStarted = yield* Deferred.make<void>();
           const highWater = yield* Deferred.make<number>();
           const first = { sequence: 1, text: "first", threadId: "selected" };
+          const unrelatedReplay = { sequence: 0, text: "unrelated replay", threadId: "other" };
           const overlap = { sequence: 2, text: "overlap", threadId: "selected" };
           const last = { sequence: 10, text: "last", threadId: "selected" };
           const reader = yield* replayAndBufferLiveEvents(
@@ -171,7 +172,7 @@ describe("replayAndBufferLiveEvents", () => {
               latestSequence: Deferred.succeed(highWaterStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(highWater)),
               ),
-              replay: () => Stream.make(first, overlap),
+              replay: () => Stream.make(unrelatedReplay, first, overlap),
               filter: (event) => event.threadId === "selected",
             },
             { maxItems: 4 },

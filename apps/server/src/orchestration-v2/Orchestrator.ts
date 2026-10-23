@@ -3400,6 +3400,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       passedChecks: existing.endedWatch.passedChecks,
                       conflicting: existing.endedWatch.conflicting,
                     }),
+                    ...(existing.endedWatch?.owedChecks !== undefined && {
+                      owedChecks: existing.endedWatch.owedChecks,
+                    }),
+                    ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
+                      checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
+                    }),
                     remarksThrough: startedAt,
                     remarkIds: [],
                     wakes: 0,
@@ -7667,6 +7673,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: runtimeRequest.responseCapability.reason,
         });
       }
+      if (
+        command.feedback !== undefined &&
+        (runtimeRequest.responseCapability.type !== "live" ||
+          !runtimeRequest.responseCapability.supportsFeedback ||
+          runtimeRequest.kind === "user_input" ||
+          command.decision !== "decline" ||
+          !command.feedback.trim())
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Feedback requires a live approval that supports it and a decline decision.",
+        });
+      }
       const providerSessionId =
         runtimeRequest.responseCapability.type === "live"
           ? runtimeRequest.responseCapability.providerSessionId
@@ -7696,10 +7716,73 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "resolved" as const,
         resolvedAt: now,
         ...(command.decision === undefined ? {} : { decision: command.decision }),
+        ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
         ...(answers === undefined ? {} : { answers }),
       };
       const emitEvent = emit(events, command);
       const requestNode = context.node;
+      if (command.feedback !== undefined) {
+        const messageId = MessageId.make(`approval-feedback:${command.requestId}`);
+        // Record the reply for every client without dispatching a prompt to the parent agent.
+        yield* emitEvent({
+          type: "message.updated",
+          threadId: command.threadId,
+          ...(requestNode?.runId == null ? {} : { runId: requestNode.runId }),
+          nodeId: runtimeRequest.nodeId,
+          occurredAt: now,
+          payload: {
+            id: messageId,
+            threadId: command.threadId,
+            runId: requestNode?.runId ?? null,
+            nodeId: runtimeRequest.nodeId,
+            role: "user",
+            text: command.feedback,
+            attachments: [],
+            streaming: false,
+            createdBy: "user",
+            creationSource: "server",
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          ...(requestNode?.runId == null ? {} : { runId: requestNode.runId }),
+          nodeId: runtimeRequest.nodeId,
+          occurredAt: now,
+          payload: {
+            id: idAllocator.derive.userTurnItem({ messageId }),
+            threadId: command.threadId,
+            runId: requestNode?.runId ?? null,
+            nodeId: runtimeRequest.nodeId,
+            providerThreadId:
+              context.item?.providerThreadId ?? requestNode?.providerThreadId ?? null,
+            providerTurnId: runtimeRequest.providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: yield* projectionStore
+              .getNextTurnItemOrdinal(command.threadId)
+              .pipe(
+                Effect.mapError(
+                  (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+                ),
+              ),
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            messageId,
+            inputIntent: "steer",
+            text: command.feedback,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "server",
+          },
+        });
+      }
       const resolvedNodeStatus =
         command.decision === "decline" || command.decision === "cancel"
           ? ("cancelled" as const)
@@ -7866,6 +7949,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionId,
             requestId: command.requestId,
             ...(command.decision === undefined ? {} : { decision: command.decision }),
+            ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
             ...(answers === undefined ? {} : { answers }),
           },
         } satisfies PendingOrchestrationEffectV2,

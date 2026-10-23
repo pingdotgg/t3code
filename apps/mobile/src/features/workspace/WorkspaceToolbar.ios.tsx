@@ -1,3 +1,4 @@
+import { useActiveNewTask } from "../../state/active-new-task";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef, type ReactNode } from "react";
@@ -59,6 +60,7 @@ export function WorkspaceToolbar(props: {
   readonly sidebar?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
+  const activeNewTask = useActiveNewTask();
   const navigation = useNavigation();
   const deviceType = useDeviceType();
   const sidebarTabs = useSidebarWorkspaceTabs();
@@ -68,7 +70,8 @@ export function WorkspaceToolbar(props: {
   const nativeToolbarCompose =
     Platform.OS === "ios" &&
     deviceType === "duo-folded" &&
-    workspace.state.selectedTab === "threads";
+    workspace.state.selectedTab === "threads" &&
+    activeNewTask === null;
   // The Duo searches from a field at the bottom of the list in every pose. UIKit has no such
   // placement once the vertical bar holds the toolbar, and re-placing its search controller on
   // each fold replaces the search field.

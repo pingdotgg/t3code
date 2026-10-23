@@ -1,6 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -139,6 +140,125 @@ it.effect.each([
   ),
 );
 
+const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.ForgejoCliError>) => {
+  const writes: Array<ForgejoCli.ForgejoApiInput> = [];
+  const provider = ForgejoPullRequestProvider.make.pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          if (input.method !== undefined && input.method !== "GET") writes.push(input);
+          return (input.path === "repos/reviewer/project" ? repository : Effect.succeed("")).pipe(
+            Effect.map((stdout) => ({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            })),
+          );
+        },
+      }),
+    ),
+  );
+  return { provider, writes };
+};
+const forgejoMergeInput = {
+  cwd: "/forgejo",
+  repository: "reviewer/project",
+  host: "forge.example:3000",
+  number: 1,
+  action: "merge",
+  mergeMethod: "squash",
+} as const;
+
+it.effect("follows the Forgejo repository's delete-branch-after-merge setting", () =>
+  Effect.gen(function* () {
+    for (const [setting, deleteBranch] of [
+      [{ default_delete_branch_after_merge: true }, true],
+      [{ default_delete_branch_after_merge: false }, false],
+      [{}, false],
+    ] as const) {
+      const { provider, writes } = forgejoMergeProvider(
+        Effect.succeed(JSON.stringify({ full_name: "reviewer/project", ...setting })),
+      );
+      yield* (yield* provider).runAction(forgejoMergeInput);
+      assert.deepStrictEqual(
+        writes.map((write) => [write.path, write.body]),
+        [
+          [
+            "repos/reviewer/project/pulls/1/merge",
+            { Do: "squash", delete_branch_after_merge: deleteBranch },
+          ],
+        ],
+        `repository setting ${JSON.stringify(setting)}`,
+      );
+    }
+  }),
+);
+
+it.effect("does not merge on Forgejo when the repository settings cannot be read", () =>
+  Effect.gen(function* () {
+    const { provider, writes } = forgejoMergeProvider(
+      Effect.fail(
+        new ForgejoCli.ForgejoCliError({
+          command: "tea",
+          cwd: "/forgejo",
+          detail: "Forgejo is unavailable.",
+        }),
+      ),
+    );
+    const exit = yield* Effect.exit((yield* provider).runAction(forgejoMergeInput));
+    assert.deepStrictEqual(
+      writes.map((write) => write.path),
+      [],
+      "merged without knowing whether to delete the source branch",
+    );
+    assert.isTrue(Exit.isFailure(exit));
+  }),
+);
+
+it.effect.each([
+  [true, false],
+  [false, true],
+] as const)(
+  "reports a Forgejo merge whose branch deletion was refused by whether it merged (merged: %s)",
+  ([merged, fails]) => {
+    const refused = new ForgejoCli.ForgejoCliError({
+      command: "fj",
+      cwd: "/repo",
+      detail: "branch is protected",
+      httpStatus: 403,
+      reason: "forbidden",
+    });
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoPullRequestProvider.make;
+      const exit = yield* Effect.exit(
+        provider.runAction({ ...requiredChecksInput, action: "merge", mergeMethod: "merge" }),
+      );
+      assert.strictEqual(exit._tag === "Failure", fails);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const respond = (response: unknown) =>
+              encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+            switch (input.path) {
+              case "repos/acme/web":
+                return respond({ full_name: "acme/web", default_delete_branch_after_merge: true });
+              case "repos/acme/web/pulls/7/merge":
+                return Effect.fail(refused);
+              case "repos/acme/web/pulls/7":
+                return respond({ ...requiredChecksPullRequest, merged });
+              default:
+                return Effect.die(`Unexpected Forgejo request: ${input.path}`);
+            }
+          },
+        }),
+      ),
+    );
+  },
+);
+
 // regression: #18775 a failed branch-protection read surfaces; only 403/404 are treated as no policy
 it.effect.each([
   ["rate limit", { reason: "rate-limit", httpStatus: 429 }, "rate-limited"],
@@ -157,6 +277,72 @@ it.effect.each([
     }
   }).pipe(Effect.provide(requiredChecksLayer(Effect.fail(cause))));
 });
+
+it.effect("reads Forgejo jobs that did not run as finished checks", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const read = provider.getChangeRequestChecks;
+    if (read === undefined) return yield* Effect.die("checks read missing");
+    const result = yield* read({
+      cwd: "/repo",
+      repository: "acme/web",
+      host: "forgejo.test",
+      number: 1,
+    });
+    assert.deepStrictEqual(
+      result.checks.map((check) => [check.name, check.status]),
+      [
+        ["deploy", "skipped"],
+        ["audit", "neutral"],
+        ["docs", "pending"],
+      ],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          if (input.path.endsWith("branches/main")) {
+            return encodeJsonEffect({}).pipe(Effect.orDie, Effect.map(processOutput));
+          }
+          const status = (context: string, state: string) => ({
+            context,
+            status: state,
+            description: null,
+            target_url: null,
+            updated_at: "2026-10-11T00:00:00Z",
+          });
+          const body = input.path.endsWith("branches/main")
+            ? {}
+            : input.path.endsWith("pulls/1")
+              ? {
+                  number: 1,
+                  title: "Checks",
+                  body: "",
+                  html_url: "https://forgejo.test/acme/web/pulls/1",
+                  user: null,
+                  state: "open",
+                  merged: false,
+                  head: { ref: "feature", sha: "head", repo: null },
+                  base: { ref: "main", sha: "base", repo: null },
+                  created_at: "2026-10-11T00:00:00Z",
+                  updated_at: "2026-10-11T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                }
+              : input.path.endsWith("page=1")
+                ? [
+                    status("deploy", "skipped"),
+                    status("audit", "warning"),
+                    status("docs", "future-state"),
+                  ]
+                : [];
+          return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  ),
+);
 
 it.effect("opens Forgejo Actions check links on the pull request's server", () =>
   Effect.gen(function* () {

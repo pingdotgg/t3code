@@ -33,6 +33,7 @@ import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
+  pinnedRuntimePaths,
   PinnedRuntimePreflightBlockedError,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
@@ -173,6 +174,34 @@ export const withRunningThreadContinuation = Effect.fn(
   });
 });
 
+/**
+ * A server starting from the runtime its launcher settled on means runtimes left by earlier
+ * updates can go. The boot service says so through its IPC context. The SSH launcher and the
+ * install script's `t3` start this home's pinned runtime directly, without one.
+ */
+export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on_start")(
+  function* (input: { readonly baseDir: string; readonly managed: boolean }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const platform = yield* HostProcess.Platform;
+    const executablePath = yield* HostProcess.ExecutablePath;
+    const { entryPath } = pinnedRuntimePaths(path, input.baseDir, packageJson.version, platform);
+    // The executable path is resolved, so it names the real path of a symlinked T3 home.
+    const realEntryPath = yield* fs.realPath(entryPath).pipe(Effect.orElseSucceed(() => entryPath));
+    if (!input.managed && executablePath !== entryPath && executablePath !== realEntryPath) {
+      return [];
+    }
+    const removed = yield* prunePinnedRuntimes({
+      baseDir: input.baseDir,
+      keep: [packageJson.version],
+    });
+    if (removed.length > 0) {
+      yield* Effect.logInfo("Removed unused t3 runtimes.", { versions: removed });
+    }
+    return removed;
+  },
+);
+
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
@@ -188,18 +217,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   );
   const inFlight = yield* Ref.make(false);
 
-  // A managed server starting means its launcher has settled on a version, so runtimes left by
-  // earlier updates can go.
-  if (launcher.managed) {
-    yield* prunePinnedRuntimes({ baseDir: serverConfig.baseDir, keep: [packageJson.version] }).pipe(
-      Effect.tap((removed) =>
-        removed.length === 0
-          ? Effect.void
-          : Effect.logInfo("Removed unused t3 runtimes.", { versions: removed }),
-      ),
-      Effect.forkScoped,
-    );
-  }
+  yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
+    Effect.forkScoped,
+  );
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;

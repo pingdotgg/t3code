@@ -45,6 +45,9 @@ export function useDeviceType() {
  */
 export function useDuoBottomBarInset() {
   const deviceType = useDeviceType();
-  const inset = use(NativeColumnLayoutMetricsContext)?.bottomBarInset;
-  return isDuoDevice(deviceType) ? inset : undefined;
+  const metrics = use(NativeColumnLayoutMetricsContext);
+  // Sheets have no rail to align with and can report zero for the bar region.
+  // Their controls must keep using the sheet's bottom safe area.
+  const inset = metrics?.bottomBarInset;
+  return isDuoDevice(deviceType) && inset !== undefined && inset > 0 ? inset : undefined;
 }

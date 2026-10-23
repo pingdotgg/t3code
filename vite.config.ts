@@ -368,6 +368,17 @@ export default defineConfig({
         rules: { "t3code/no-outset-state-indicators": "error" },
       },
       {
+        files: ["apps/*/src/**", "packages/*/src/**"],
+        excludeFiles: [
+          "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+          "**/testkit/**",
+          "**/_generated/**",
+          // Real user quotes stay verbatim.
+          "apps/marketing/src/lib/tweets.ts",
+        ],
+        rules: { "t3code/no-em-dash-copy": "error" },
+      },
+      {
         files: ["apps/web/src/**"],
         rules: { "shadcn/no-raw-colors": "error" },
       },

@@ -92,11 +92,12 @@ export const mcpToolSession = (
     message: unknown,
   ): Effect.fn.Return<ReadonlyArray<unknown>, AcpMcpBridgeError> {
     const response = yield* Effect.tryPromise({
-      try: () =>
+      try: (signal) =>
         fetchImplementation(options.endpoint, {
           method: "POST",
           headers: { "content-type": "application/json", ...headers() },
           body: JSON.stringify(message),
+          signal,
         }),
       catch: bridgeError,
     });
@@ -212,7 +213,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
     )(
       function* (line: string, envelope: JsonRpcEnvelope) {
         const response = yield* Effect.tryPromise({
-          try: () =>
+          try: (signal) =>
             fetchImplementation(options.endpoint, {
               method: "POST",
               headers: {
@@ -223,6 +224,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
                 ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
               },
               body: line,
+              signal,
             }),
           catch: bridgeError,
         });
