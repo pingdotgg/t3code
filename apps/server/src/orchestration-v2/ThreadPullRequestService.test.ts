@@ -4,6 +4,7 @@ import {
   SourceControlProviderKind,
   ThreadId,
   type OrchestrationProjectShell,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
@@ -15,8 +16,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -77,6 +81,105 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       deletedAt: null,
     };
   };
+
+  it.effect("does not sweep branch pull requests while no client is connected", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Reproduces #23702: an idle server with one active branch thread kept
+        // calling GitHub for that branch every minute with no client connected.
+        const thread = { ...threadShell("idle-branch-thread"), branch: "feature/idle" };
+        const project: OrchestrationProjectShell = {
+          id: thread.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const activation = yield* Deferred.make<void>();
+        const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const turnLookup = yield* Deferred.make<void>();
+        const lookups: Array<{ readonly refresh: boolean }> = [];
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.fromQueue(domainEvents),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                schemaVersion: 2,
+                snapshotSequence: 1,
+                threads: [thread],
+                archivedThreads: [],
+              }),
+            getThreadEventSequence: () => Effect.succeed(1),
+            getThreadShell: () => Effect.succeed(thread),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeed(Option.some(project)),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: (_input, options) =>
+              Effect.gen(function* () {
+                const refresh = options?.refresh ?? false;
+                lookups.push({ refresh });
+                if (refresh) yield* Deferred.succeed(turnLookup, undefined);
+                return null;
+              }),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: "github" as const,
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          // No client holds an activity lease.
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            hasDemand: () => Effect.succeed(false),
+            shouldRunScopeWork: () => Effect.succeed(false),
+            shouldRunOpportunisticWork: Effect.succeed(false),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => new Uint8Array(size).fill(1),
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+          FileSystem.layerNoop({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+
+          // A finished turn still discovers the pull request for its branch.
+          yield* Queue.offer(domainEvents, {
+            type: "checkpoint.captured",
+            threadId: thread.id,
+          } as OrchestrationV2DomainEvent);
+          yield* Deferred.await(turnLookup);
+          yield* service.drain;
+          const lookupsBeforeIdle = lookups.length;
+
+          yield* TestClock.adjust("10 minutes");
+          yield* service.drain;
+
+          expect(lookups.slice(lookupsBeforeIdle)).toEqual([]);
+        }).pipe(Effect.provide(dependencies));
+      }),
+    ),
+  );
 
   it.effect.each([
     { state: "closed", sameBranch: false },
@@ -163,6 +266,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                   name: "project",
                 }),
             }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
             Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
             Layer.succeed(
               Crypto.Crypto,
