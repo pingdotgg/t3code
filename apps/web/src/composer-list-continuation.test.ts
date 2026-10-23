@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { listContinuationForEnter, nextOrderedMarkerText } from "./composer-list-continuation";
+import {
+  listContinuationForEnter,
+  listIndentForTab,
+  nextOrderedMarkerText,
+} from "./composer-list-continuation";
 
 function applyEdit(value: string, edit: { start: number; end: number; replacement: string }) {
   return value.slice(0, edit.start) + edit.replacement + value.slice(edit.end);
@@ -29,6 +33,42 @@ describe("composer list continuation", () => {
     expect(applyEdit("- ", listContinuationForEnter("- ", 2)!)).toBe("");
     expect(applyEdit("1)\t", listContinuationForEnter("1)\t", 3)!)).toBe("");
     expect(applyEdit("- [ ] ", listContinuationForEnter("- [ ] ", 6)!)).toBe("");
+  });
+
+  // regression: #17124 Tab must nest a numbered item under its parent's content column
+  it.each([
+    ["1. parent\n2. child", "1. parent\n   1. child"],
+    ["1.\tparent\n2. child", "1.\tparent\n    1. child"],
+    [
+      "2. parent\n   1. sibling\n      1. grandchild\n3. child",
+      "2. parent\n   1. sibling\n      1. grandchild\n   2. child",
+    ],
+    ['1. @"file\n   9. name"\n2. child', '1. @"file\n   9. name"\n   1. child'],
+  ])("nests the numbered item in %j and keeps its text caret", (value, expected) => {
+    const cursor = value.lastIndexOf("child") + 2;
+    const edit = listIndentForTab(value, cursor, cursor)!;
+    expect(applyEdit(value, edit)).toBe(expected);
+    expect(edit.cursorAfter).toBe(expected.lastIndexOf("child") + 2);
+  });
+
+  // regression: #17124 an empty nested item lifts one level before leaving the list
+  it("lifts an empty numbered item one level at a time before leaving the list", () => {
+    let value = "1. parent\n   1. child\n      1. ";
+    for (const expected of [
+      "1. parent\n   1. child\n   2. ",
+      "1. parent\n   1. child\n2. ",
+      "1. parent\n   1. child\n",
+    ]) {
+      value = applyEdit(value, listContinuationForEnter(value, value.length)!);
+      expect(value).toBe(expected);
+    }
+  });
+
+  it("does not lift an empty item to a marker inside a multiline chip", () => {
+    const value = '1. @"file\n   9. name"\n      1. ';
+    expect(applyEdit(value, listContinuationForEnter(value, value.length)!)).toBe(
+      '1. @"file\n   9. name"\n2. ',
+    );
   });
 
   it("refuses to split a supplementary currency skill chip", () => {
