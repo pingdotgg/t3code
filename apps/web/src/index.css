@@ -1980,16 +1980,13 @@ code {
 }
 
 :is(.chat-markdown, .composer-tiptap) blockquote {
-  border-inline-start: 2px solid var(--contrast-border);
+  border-inline-start: 2px solid color-mix(in srgb, currentcolor 35%, transparent);
   padding-inline-start: 0.8rem;
-  color: var(--contrast-muted-foreground);
+  color: inherit;
 }
 
-/* A quote in the composer is text the user is still writing; muting it reads
-   as disabled in an input, so the border alone carries the quote. */
 .composer-tiptap blockquote {
   margin: 0.65rem 0;
-  color: var(--foreground);
 }
 
 /* Preflight already draws the 1px rule, as it does in chat; only the block
