@@ -545,6 +545,11 @@ export class RunExecutionIngestError extends Schema.TaggedError<RunExecutionInge
   }
 }
 
+// A provider that stays alive but stops answering control requests would
+// otherwise hold an effect worker forever. Healthy starts finish within ~33s;
+// this bounds each control call, not the agent turn that follows acceptance.
+export const PROVIDER_CONTROL_TIMEOUT = Duration.minutes(2);
+
 export const RunExecutionServiceV2Error = Schema.Union([
   RunExecutionStartError,
   RunExecutionIngestError,
@@ -573,6 +578,12 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  /**
+   * Runs when the start call outlives its deadline. The provider may have
+   * accepted the turn without answering, so its native work must be stopped
+   * before the run reads as failed and the conversation is reused.
+   */
+  readonly containUnansweredStart?: Effect.Effect<void>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -1621,7 +1632,10 @@ export const layer: Layer.Layer<
               }),
             ))
           : input.session.startTurn(turnInput);
-        yield* Effect.andThen(shouldStart, startTurn).pipe(
+        yield* Effect.andThen(
+          shouldStart,
+          Effect.timeout(startTurn, PROVIDER_CONTROL_TIMEOUT),
+        ).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.
           Effect.tap(() =>
@@ -1636,6 +1650,11 @@ export const layer: Layer.Layer<
               cause,
             }).pipe(
               Effect.andThen(Fiber.interrupt(providerEventFiber)),
+              Effect.andThen(
+                Cause.isTimeoutError(Cause.squash(cause))
+                  ? (input.containUnansweredStart ?? Effect.void)
+                  : Effect.void,
+              ),
               Effect.andThen(Ref.get(latestProviderThread)),
               Effect.flatMap((providerThread) =>
                 Ref.get(latestTurnItemOrdinal).pipe(

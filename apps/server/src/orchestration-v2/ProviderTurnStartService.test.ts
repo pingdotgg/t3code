@@ -771,8 +771,28 @@ function makeLocalCommandHarness(input: {
         willRetry: true,
       });
     }).pipe(Effect.provide(layer)),
+    failBeforeStart: (error: Error) =>
+      Effect.gen(function* () {
+        yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+          threadId,
+          runId,
+          failBeforeStart: error,
+        });
+      }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect("fails a starting run whose restart could not stop the previous turn", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue" });
+
+    yield* harness.failBeforeStart(new Error("The provider did not answer the interrupt."));
+
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+  }),
+);
 
 effectIt.effect("recovers an abandoned failed turn before continuing its native conversation", () =>
   Effect.gen(function* () {

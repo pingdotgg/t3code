@@ -8,6 +8,7 @@ import {
   RunAttemptId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -19,6 +20,7 @@ import * as Schema from "effect/Schema";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { PROVIDER_CONTROL_TIMEOUT } from "./RunExecutionService.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -216,11 +218,13 @@ export const layer: Layer.Layer<
           // A settled turn reaches its adapter too: only the adapter knows
           // whether it still runs work for the thread, and each one either
           // stops it or reports there is nothing left to stop.
-          yield* session.value.interruptTurn({
-            providerThread: loaded.providerThread,
-            providerTurnId: loaded.providerTurn.id,
-            requestRuntimeRestart: true,
-          });
+          yield* session.value
+            .interruptTurn({
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+              requestRuntimeRestart: true,
+            })
+            .pipe(Effect.timeout(PROVIDER_CONTROL_TIMEOUT));
           // The wait is real time: ingestion runs on other fibers and never
           // advances a test clock, so a test clock would hold Stop forever.
           yield* Effect.gen(function* () {
@@ -274,10 +278,12 @@ export const layer: Layer.Layer<
             return;
           }
 
-          yield* loaded.session.value.interruptTurn({
-            providerThread: loaded.providerThread,
-            providerTurnId: loaded.providerTurn.id,
-          });
+          yield* loaded.session.value
+            .interruptTurn({
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+            })
+            .pipe(Effect.timeout(PROVIDER_CONTROL_TIMEOUT));
 
           for (let remaining = 1_000; remaining > 0; remaining -= 1) {
             const { providerTurn, attempt } = yield* projections.getProviderControlContext(
@@ -377,6 +383,7 @@ export const layer: Layer.Layer<
               },
             })
             .pipe(
+              Effect.timeout(PROVIDER_CONTROL_TIMEOUT),
               Effect.catch((cause) =>
                 Effect.gen(function* () {
                   const current = yield* projections.getProviderControlContext(
@@ -387,7 +394,10 @@ export const layer: Layer.Layer<
                     threadId: input.threadId,
                     operation: "steer",
                     providerTurnId: input.providerTurnId,
-                    turnCompleted: current.providerTurn?.status === "completed",
+                    // A timed-out steer may have been accepted, so it must not be
+                    // resent as a follow-up even if the turn has since completed.
+                    turnCompleted:
+                      !Cause.isTimeoutError(cause) && current.providerTurn?.status === "completed",
                     cause,
                   });
                 }),
