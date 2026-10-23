@@ -51,6 +51,7 @@ export function evaluatePullRequestWatch(
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
+  let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
@@ -65,8 +66,28 @@ export function evaluatePullRequestWatch(
     // A required job created and finished between two passes is never seen pending. Without
     // required checks, any check counts, and advisory bots keep adding passed ones: no wake.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    // Other checks still pending when required ones passed are owed one wake when all settle.
+    // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
+    const owed =
+      passedNow && passed
+        ? detail.checks
+            .filter((check) => check.required !== true && owedChecks.includes(check.name))
+            .map((check) => check.name)
+        : [];
+    const settled =
+      failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
+    owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      owedChecks =
+        required.length > 0
+          ? detail.checks
+              .filter((check) => check.required !== true && check.status === "pending")
+              .map((check) => check.name)
+          : [];
+    } else if (settled && owed.length > 0) {
+      changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
+      owedChecks = [];
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
@@ -127,6 +148,7 @@ export function evaluatePullRequestWatch(
       failedChecks,
       passed,
       passedChecks,
+      owedChecks,
       remarksThrough,
       remarkIds,
       conflicting,
