@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-10-01T12:00:00.000Z",
+  "counts": [0, 1, 2, 75, 129, 130, 600],
+  "projectId": "minimap-proof-project",
+  "projectTitle": "Minimap proof",
+  "userText": "Minimap message {number}: synthetic navigation density fixture.",
+  "shortAssistant": "Short synthetic answer.",
+  "longAssistantHeading": "### Synthetic response\n\n",
+  "longAssistantParagraph": "A deterministic **Markdown** response with `code` and enough text to test the three-line preview clamp. ",
+  "longAssistantRepeats": 12,
+  "workInput": "printf synthetic",
+  "workOutput": "Synthetic completed work"
+}
