@@ -541,7 +541,8 @@ function startAnnotation(sendEnabled: boolean): void {
   const host = document.createElement("div");
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
   host.setAttribute("dir", "ltr");
-  host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
+  host.popover = "manual";
+  host.style.cssText = `all:initial;display:block;position:fixed;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;background:transparent;overflow:visible;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
   const themeStyle = document.createElement("style");
@@ -555,7 +556,7 @@ function startAnnotation(sendEnabled: boolean): void {
   root.style.cssText = "pointer-events:none";
   const cursorStyle = document.createElement("style");
   cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
-  cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
+  cursorStyle.textContent = `[${OVERLAY_ATTRIBUTE}]::backdrop { opacity:0 !important; } html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
   document.documentElement.appendChild(cursorStyle);
   shadowRoot.appendChild(root);
 
@@ -1354,6 +1355,7 @@ function startAnnotation(sendEnabled: boolean): void {
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
+    modalObserver.disconnect();
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
     host.remove();
@@ -1456,6 +1458,20 @@ function startAnnotation(sendEnabled: boolean): void {
     submitAnnotation(submission);
   });
 
+  // Dialog backdrop-dismiss handlers must not receive annotation control clicks.
+  for (const type of [
+    "pointerdown",
+    "pointerup",
+    "mousedown",
+    "mouseup",
+    "click",
+    "dblclick",
+    "auxclick",
+    "contextmenu",
+  ]) {
+    root.addEventListener(type, (event) => event.stopPropagation());
+  }
+
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
   window.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
@@ -1467,7 +1483,35 @@ function startAnnotation(sendEnabled: boolean): void {
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
-  document.documentElement.appendChild(host);
+  const syncOverlay = (): void => {
+    // A modal makes the rest of the document inert. Keep the top-layer overlay
+    // inside it so the editor stays interactive, including when dialogs change.
+    // Focus still identifies the modal when its backdrop ignores pointer events.
+    const modal =
+      document.activeElement?.closest("dialog:modal") ??
+      document.elementFromPoint(0, 0)?.closest("dialog:modal");
+    const parent = modal ?? document.documentElement;
+    if (host.parentElement === parent && host.matches(":popover-open")) return;
+    parent.appendChild(host);
+    host.showPopover();
+  };
+  const modalObserver = new MutationObserver((records) => {
+    if (
+      // Removing and reinserting a dialog in one task also hides its popovers.
+      !host.matches(":popover-open") ||
+      records.some(
+        (record) => record.type === "attributes" && record.target instanceof HTMLDialogElement,
+      )
+    )
+      syncOverlay();
+  });
+  syncOverlay();
+  modalObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["open"],
+    childList: true,
+    subtree: true,
+  });
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
