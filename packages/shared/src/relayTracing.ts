@@ -17,9 +17,10 @@ export interface RelayClientTracingConfig {
 export interface RelayClientTracingResource {
   readonly serviceName: string;
   readonly serviceVersion?: string;
-  readonly runtime: string;
   readonly client: string;
   readonly component?: string;
+  /** Semantic convention attributes the caller's runtime can report, such as `process.runtime.*`. */
+  readonly attributes?: Readonly<Record<string, unknown>>;
 }
 
 export class RelayClientTracer extends Context.Reference(
@@ -171,8 +172,8 @@ export function layer(
       serviceName: resource.serviceName,
       serviceVersion: resource.serviceVersion,
       attributes: {
+        ...resource.attributes,
         "service.namespace": "t3code",
-        "service.runtime": resource.runtime,
         "service.component": resource.component ?? "relay-client",
         "t3.client.surface": resource.client,
       },

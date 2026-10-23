@@ -312,4 +312,36 @@ describe("DesktopObservability", () => {
       ),
     );
   });
+
+  it.effect("exports the process resource under the semantic convention keys", () => {
+    const requests: Array<ExportedRequest> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-observability-test-",
+      });
+      const layerEnvironment = layerEnvironmentFor(baseDir);
+      yield* writeObservabilitySettings(layerEnvironment, {
+        otlpLogsUrl: "https://settings.example.com/v1/logs",
+      });
+
+      yield* Effect.scoped(
+        Effect.logInfo("desktop resource under test").pipe(
+          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(layerEnvironment))),
+        ),
+      );
+
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(
+        body,
+        '"key":"deployment.environment.name","value":{"stringValue":"development"}',
+      );
+      assert.include(body, '"key":"process.runtime.name","value":{"stringValue":"nodejs"}');
+      assert.notInclude(body, "service.runtime");
+      assert.notInclude(body, "service.mode");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, layerCollector(requests), layerEmptyEnv)),
+    );
+  });
 });

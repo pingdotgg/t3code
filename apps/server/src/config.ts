@@ -10,7 +10,11 @@ import * as Schema from "effect/Schema";
 
 import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
-import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
+import {
+  DEFAULT_SIGNAL_EXPORT,
+  nodeProcessResourceAttributes,
+  type SignalExport,
+} from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import packageJson from "../package.json" with { type: "json" };
 
@@ -103,16 +107,19 @@ export class ServerConfig extends Context.Service<
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
 export const otlpResource = (
-  config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
+  config: Pick<ServerConfig["Service"], "mode" | "devUrl" | "otelEnvironment">,
   hostName: string,
 ) => ({
   serviceName: "t3code-server",
   serviceVersion: packageJson.version,
   attributes: {
     "service.namespace": "t3code",
-    "service.runtime": "t3-server",
     "service.mode": config.mode,
     "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
+    ...nodeProcessResourceAttributes({
+      operatorAttributes: config.otelEnvironment.resourceAttributes,
+      isDevelopment: config.devUrl !== undefined,
+    }),
   },
 });
 

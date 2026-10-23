@@ -14,15 +14,44 @@ import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
+interface NavigatorUserAgentData {
+  readonly platform: string;
+  readonly mobile: boolean;
+  readonly brands: ReadonlyArray<{ readonly brand: string; readonly version: string }>;
+}
+
+/**
+ * The same `browser.*` and `user_agent.original` attributes the OpenTelemetry
+ * browser resource detector reports, plus the `process.runtime.*` values the
+ * semantic conventions give a web browser. `userAgentData` exists only in
+ * Chromium, which includes the desktop app.
+ */
+const browserResourceAttributes = (): Record<string, unknown> => {
+  if (typeof navigator === "undefined") return {};
+  const userAgentData = (navigator as Navigator & { userAgentData?: NavigatorUserAgentData })
+    .userAgentData;
+  return {
+    "user_agent.original": navigator.userAgent,
+    "process.runtime.name": "browser",
+    "process.runtime.version": navigator.userAgent,
+    "browser.language": navigator.language,
+    ...(userAgentData && {
+      "browser.platform": userAgentData.platform,
+      "browser.mobile": userAgentData.mobile,
+      "browser.brands": userAgentData.brands.map(({ brand, version }) => `${brand} ${version}`),
+    }),
+  };
+};
+
 const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
+  serviceVersion: APP_VERSION,
   attributes: {
     "service.namespace": "t3code",
-    "service.runtime": "t3-web",
     "service.mode": isElectron ? "electron" : "browser",
-    "service.version": APP_VERSION,
+    ...browserResourceAttributes(),
   },
-} as const;
+};
 
 const layerDelegateRuntime = Layer.mergeAll(
   PrimaryEnvironmentHttpLayer.layer,

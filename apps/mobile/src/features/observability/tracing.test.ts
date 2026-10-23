@@ -59,3 +59,37 @@ it.effect("does not let OTLP serialization failures alter application effects", 
     ),
   );
 });
+
+it.effect("exports the mobile client under the semantic convention resource keys", () => {
+  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+  const layerTracing = Tracing.layerFromConfig(
+    {
+      tracesUrl: "https://api.axiom.test/v1/traces",
+      tracesDataset: "mobile-traces",
+      tracesToken: "public-ingest-token",
+    },
+    {
+      appVariant: "test",
+      serviceVersion: "1.2.3",
+    },
+  ).pipe(Layer.provide(layerRemoteHttpClient(fetchFn)));
+  const layerTracedApplication = Layer.effectDiscard(
+    Effect.void.pipe(Effect.withSpan("mobile.test.span"), withRelayClientTracing),
+  ).pipe(Layer.provide(layerTracing));
+
+  return Layer.build(layerTracedApplication).pipe(
+    Effect.scoped,
+    Effect.andThen(
+      Effect.sync(() => {
+        const body = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
+        expect(body).toContain(
+          '"key":"process.runtime.name","value":{"stringValue":"react-native"}',
+        );
+        expect(body).toContain(
+          '"key":"deployment.environment.name","value":{"stringValue":"test"}',
+        );
+        expect(body).not.toContain("service.runtime");
+      }),
+    ),
+  );
+});

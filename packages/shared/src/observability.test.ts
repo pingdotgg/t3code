@@ -24,7 +24,35 @@ import {
   type TraceRecord,
   OtlpHeadersFromString,
   truncateTraceAttributes,
+  nodeProcessResourceAttributes,
 } from "./observability.ts";
+
+describe("nodeProcessResourceAttributes", () => {
+  it("defaults the environment tier from the build and names the Node runtime", () => {
+    const development = nodeProcessResourceAttributes({
+      operatorAttributes: {},
+      isDevelopment: true,
+    });
+    const production = nodeProcessResourceAttributes({
+      operatorAttributes: {},
+      isDevelopment: false,
+    });
+
+    expect(development["deployment.environment.name"]).toBe("development");
+    expect(production["deployment.environment.name"]).toBe("production");
+    expect(development["process.runtime.name"]).toBe("nodejs");
+    expect(development["process.runtime.version"]).toBe(process.versions.node);
+  });
+
+  it("keeps a tier the operator set in OTEL_RESOURCE_ATTRIBUTES", () => {
+    const attributes = nodeProcessResourceAttributes({
+      operatorAttributes: { "deployment.environment.name": "staging" },
+      isDevelopment: true,
+    });
+
+    expect(attributes["deployment.environment.name"]).toBe("staging");
+  });
+});
 
 describe("errorTag", () => {
   it("reports structural tags without retaining arbitrary values", () => {

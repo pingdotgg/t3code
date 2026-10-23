@@ -26,6 +26,34 @@ export interface SignalExport {
   readonly exportIntervalMs: number;
 }
 
+/**
+ * `process.runtime.*` resource attributes for a Node process, matching the
+ * OpenTelemetry Node process detector. Electron embeds Node, so an Electron
+ * process reports Node and names Electron in the description.
+ */
+export const nodeProcessRuntimeAttributes = (): Record<string, string> => ({
+  "process.runtime.name": "nodejs",
+  "process.runtime.version": process.versions.node,
+  "process.runtime.description": process.versions.electron
+    ? `Electron ${process.versions.electron}`
+    : "Node.js",
+});
+
+/**
+ * Resource attributes a Node process reports besides its service identity.
+ * Effect lets explicit attributes beat `OTEL_RESOURCE_ATTRIBUTES`, so a value
+ * an operator set there is carried over by hand to keep winning.
+ */
+export const nodeProcessResourceAttributes = (input: {
+  readonly operatorAttributes: Readonly<Record<string, unknown>>;
+  readonly isDevelopment: boolean;
+}): Record<string, unknown> => ({
+  "deployment.environment.name":
+    input.operatorAttributes["deployment.environment.name"] ??
+    (input.isDevelopment ? "development" : "production"),
+  ...nodeProcessRuntimeAttributes(),
+});
+
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,
