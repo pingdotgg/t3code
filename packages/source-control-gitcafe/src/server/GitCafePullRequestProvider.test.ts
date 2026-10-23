@@ -418,6 +418,53 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("narrows a listing on GitCafe by label ids, draft state and the author's actor", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/labels": { items: labels, next: null },
+      "GET /users/bob": { actorId: "act_bob", handle: "bob" },
+      "GET /repos/owner/repo/pulls": { items: [pull], next: null },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      yield* provider.listChangeRequests({
+        ...target,
+        state: "open",
+        involvement: "all",
+        viewer: "alice",
+        limit: 10,
+        filters: {
+          draft: "hide",
+          labels: [["missing"], ["Bug", "docs"]],
+          excludedLabels: ["docs", "missing"],
+          author: "bob",
+        },
+      });
+      const listing = server.sent.at(-1)!;
+      assert.strictEqual(listing.path, "/repos/owner/repo/pulls");
+      assert.strictEqual(listing.query.get("labels"), '["label_bug","label_docs"]');
+      assert.strictEqual(listing.query.get("labelNots"), '["label_docs"]');
+      assert.strictEqual(listing.query.get("stateNots"), '["draft"]');
+      assert.strictEqual(listing.query.get("authors"), '["act_bob"]');
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("leaves an author GitCafe has no profile for to be narrowed by login", () => {
+    const server = fakeGitCafe({ "GET /repos/owner/repo/pulls": { items: [pull], next: null } });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const page = yield* provider.listChangeRequests({
+        ...target,
+        state: "open",
+        involvement: "all",
+        viewer: "alice",
+        limit: 10,
+        filters: { author: "synced-only" },
+      });
+      assert.strictEqual(page.items.length, 1);
+      assert.isNull(server.sent.at(-1)!.query.get("authors"));
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect("lists nothing for a viewer the token does not belong to", () => {
     const server = fakeGitCafe({
       "GET /auth/principal": { actorId: "act_two", handle: "bob" },

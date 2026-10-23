@@ -146,6 +146,34 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("asks GitLab for the labels, author and draft state it can filter on", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listMergeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        filters: {
+          labels: [["bug"], ["size:S", "size:XS"], ["a,b"], ["None"]],
+          excludedLabels: ["wontfix", "stale", "any"],
+          author: "@me",
+          draft: "only",
+        },
+      });
+
+      const params = new URLSearchParams((argsOfCall(0)[1] ?? "").split("?")[1]);
+      expect(params.get("labels")).toBe("bug");
+      expect(params.get("not[labels]")).toBe("wontfix,stale");
+      expect(params.get("author_username")).toBe("bilal");
+      expect(params.get("wip")).toBe("yes");
+    }),
+  );
+
   it.effect("carries on from the number of rows already delivered", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));

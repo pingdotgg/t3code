@@ -490,6 +490,70 @@ it.effect.each([
   },
 );
 
+it.effect("asks Forgejo for one required label by id and the author by login", () => {
+  const paths: Array<string> = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      state: "open",
+      involvement: "all",
+      viewer: "maria",
+      limit: 10,
+      filters: { labels: [["size:S", "size:M"], ["Bug"]], author: "@me" },
+    });
+    const listing = paths.find((path) => path.startsWith("repos/maria/project/pulls?"));
+    const params = new URLSearchParams(listing?.split("?")[1]);
+    assert.deepStrictEqual(params.getAll("labels"), ["7"]);
+    assert.strictEqual(params.get("poster"), "maria");
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          const response = input.path.startsWith("repos/maria/project/labels")
+            ? [{ id: 7, name: "bug" }]
+            : [];
+          return encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("lists nothing for an author Forgejo has no account for", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const page = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      state: "open",
+      involvement: "all",
+      viewer: "maria",
+      limit: 10,
+      filters: { author: "nobody" },
+    });
+    assert.deepStrictEqual(page, { items: [], truncated: false, continues: false });
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) =>
+          Effect.fail(
+            new ForgejoCli.ForgejoCliError({
+              command: "fj",
+              cwd: input.cwd,
+              httpStatus: 400,
+              detail: "Forgejo API request failed (HTTP 400): Poster not found",
+            }),
+          ),
+      }),
+    ),
+  ),
+);
+
 it.effect("gives Forgejo identities the browser URL of the login that serves them", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;

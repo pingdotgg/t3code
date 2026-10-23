@@ -5,8 +5,10 @@ import * as Schema from "effect/Schema";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
   NonNegativeInt,
+  resolvePullRequestAuthorFilter,
   TrimmedNonEmptyString,
   type PullRequestCapabilities,
+  type PullRequestListFilters,
   type PullRequestStackHead,
 } from "@t3tools/contracts";
 import {
@@ -74,6 +76,7 @@ const Id = TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/u));
 const isId = Schema.is(Id);
 const isApiError = Schema.is(GitCafeApi.GitCafeApiError);
 const Principal = Schema.Struct({ actorId: TrimmedNonEmptyString, handle: TrimmedNonEmptyString });
+const User = Schema.Struct({ actorId: TrimmedNonEmptyString });
 const Written = Schema.Struct({ id: Id });
 const Versioned = Schema.Struct({ version: NonNegativeInt });
 const CommentDetail = Schema.Struct({ id: Id, version: NonNegativeInt });
@@ -104,7 +107,7 @@ const Listed = Schema.Struct({
   items: Schema.Array(Schema.Struct({ id: TrimmedNonEmptyString })),
   next: Schema.NullOr(Schema.String),
 });
-const encodeActorIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const BranchCommit = Schema.Struct({ oid: TrimmedNonEmptyString });
 const Snapshot = {
   version: NonNegativeInt,
@@ -257,6 +260,68 @@ export const make = Effect.gen(function* () {
       if (next === null || next === previous || batch.items.length === 0) break;
     }
     return { items, next };
+  });
+
+  /**
+   * GitCafe filters by ids, so label names and the author's handle are looked up first. A name it
+   * cannot resolve is left out, and the service narrows the rows by name instead.
+   */
+  const listFilterParams = Effect.fn("GitCafePullRequestProvider.listFilterParams")(function* (
+    input: ProviderRepositoryRef & {
+      readonly filters?: PullRequestListFilters | undefined;
+      readonly authorNarrowed: boolean;
+      readonly viewer: string;
+    },
+    base: string,
+  ) {
+    const filters = input.filters;
+    const params: Array<readonly [string, string]> = [];
+    if (filters === undefined) return params;
+    if (filters.draft !== undefined)
+      params.push([filters.draft === "only" ? "states" : "stateNots", encodeIds(["draft"])]);
+    const groups = filters.labels ?? [];
+    const excluded = filters.excludedLabels ?? [];
+    if (groups.length > 0 || excluded.length > 0) {
+      const labels = yield* readPages(
+        "listChangeRequests",
+        input,
+        `${base}/labels`,
+        Json.GitCafeLabels,
+      );
+      const ids = new Map(labels.items.map((label) => [label.name.toLowerCase(), label.id]));
+      const idsOf = (names: ReadonlyArray<string>) =>
+        names.flatMap((name) => {
+          const id = ids.get(name.trim().toLowerCase());
+          return id === undefined ? [] : [id];
+        });
+      // Several ids in `labels` match a pull request holding any one of them, which is exactly
+      // one group; the remaining groups are the service's to narrow.
+      const group = groups.find((names) => idsOf(names).length === names.length);
+      if (group !== undefined) params.push(["labels", encodeIds(idsOf(group))]);
+      const excludedIds = idsOf(excluded);
+      if (excludedIds.length > 0) params.push(["labelNots", encodeIds(excludedIds)]);
+    }
+    if (filters.author !== undefined && !input.authorNarrowed) {
+      const handle = resolvePullRequestAuthorFilter(filters.author, input.viewer);
+      // A GitHub-synced author with no GitCafe profile has no handle here; their rows are
+      // narrowed by login instead. A profile matches what GitHub sync authored for it too.
+      const user = yield* read(
+        "listChangeRequests",
+        input,
+        { path: `/users/${encodeURIComponent(handle)}` },
+        User,
+      ).pipe(
+        Effect.map(Option.some),
+        Effect.catchTags({
+          PullRequestProviderError: (error) =>
+            error.reason === "unauthenticated" || error.reason === "rate-limited"
+              ? Effect.fail(error)
+              : Effect.succeed(Option.none()),
+        }),
+      );
+      if (Option.isSome(user)) params.push(["authors", encodeIds([user.value.actorId])]);
+    }
+    return params;
   });
 
   const readComments = (operation: string, input: PullRef) =>
@@ -570,6 +635,10 @@ export const make = Effect.gen(function* () {
             actorId = principal.value.actorId;
           }
         }
+        const filterParams = yield* listFilterParams(
+          { ...input, authorNarrowed: actorId !== undefined && input.involvement === "authored" },
+          base,
+        );
         const limit = Math.max(1, input.limit);
         const items: Array<Json.GitCafePull> = [];
         let next: string | null = null;
@@ -580,10 +649,11 @@ export const make = Effect.gen(function* () {
           });
           if (input.state !== "all") query.set("state", input.state);
           if (input.query?.trim()) query.set("q", input.query.trim());
+          for (const [key, value] of filterParams) query.set(key, value);
           if (actorId !== undefined)
             query.set(
               input.involvement === "reviewing" ? "reviewers" : "authors",
-              encodeActorIds([actorId]),
+              encodeIds([actorId]),
             );
           if (next !== null) query.set("after", next);
           const page: typeof Json.GitCafePulls.Type = yield* read(
