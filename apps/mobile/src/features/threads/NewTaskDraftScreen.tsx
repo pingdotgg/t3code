@@ -1104,20 +1104,22 @@ export function NewTaskDraftScreen(props: {
           />
         )}
         label={workspaceLabel}
-        maxWidth={flow.workspaceMode === "local" ? 220 : 148}
+        maxWidth="100%"
         onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
         showChevron={false}
       />
 
-      <ComposerInlineControl
-        accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
-        chevronDirection="right"
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
-        icon="arrow.triangle.branch"
-        label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
-        maxWidth={190}
-        onPress={() => openContextPicker("NewTaskBranch")}
-      />
+      <View className="min-w-0 shrink">
+        <ComposerInlineControl
+          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+          chevronDirection="right"
+          disabled={isComposerInteractionLocked || !flow.isGitRepo}
+          icon="arrow.triangle.branch"
+          label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+          maxWidth="100%"
+          onPress={() => openContextPicker("NewTaskBranch")}
+        />
+      </View>
     </View>
   );
 
@@ -1173,7 +1175,7 @@ export function NewTaskDraftScreen(props: {
         draftMode={{
           content: heroViewport,
           controls: (
-            <View className="px-3 pb-1">
+            <View className="pb-1">
               {projectClone && projectClone.phase !== "done" && selectedProject ? (
                 <View className="px-1 pb-2">
                   <ProjectCloneBanner
