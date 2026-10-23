@@ -301,6 +301,9 @@ it.effect("reads Forgejo jobs that did not run as finished checks", () =>
     Effect.provide(
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
+          if (input.path.endsWith("branches/main")) {
+            return encodeJsonEffect({}).pipe(Effect.orDie, Effect.map(processOutput));
+          }
           const status = (context: string, state: string) => ({
             context,
             status: state,
