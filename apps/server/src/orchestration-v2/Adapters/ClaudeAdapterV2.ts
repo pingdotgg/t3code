@@ -313,6 +313,11 @@ const WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS = 500;
 // A steer waits at most this long, from its request, for its foreground
 // subagents to move to the background before it is sent.
 const BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
+// Matches the stderr tail the SDK keeps for a CLI it spawns itself.
+const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
+// Claude Code's refusal of bypassPermissions as root, which it explains only on stderr (#15882).
+const CLAUDE_ROOT_REFUSAL =
+  "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
 const CLAUDE_GROUP_WATCH_SCRIPT = [
   "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
@@ -330,7 +335,10 @@ const CLAUDE_GROUP_WATCH_SCRIPT = [
  * (#23370), so a watcher in the group reads a pipe only this server holds and stops the group at
  * its end-of-file.
  */
-export function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
+export function spawnClaudeProcessGroup(
+  options: ClaudeSpawnOptions,
+  onStderr: (text: string) => void = () => {},
+): ClaudeSpawnedProcess {
   const child = NodeChildProcess.spawn(
     "/bin/sh",
     ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
@@ -338,10 +346,12 @@ export function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpaw
       cwd: options.cwd,
       env: options.env,
       signal: options.signal,
-      stdio: ["pipe", "pipe", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
       detached: true,
     },
   );
+  // Always drained, so a chatty CLI never blocks on a full stderr pipe.
+  child.stderr?.setEncoding("utf8").on("data", onStderr);
   child.once("exit", () => {
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
@@ -529,6 +539,17 @@ export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAge
 ) {
   override get message(): string {
     return "Claude Agent SDK query failed.";
+  }
+}
+
+export class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRootRefusalError>()(
+  "ClaudeCodeRootRefusalError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Claude Code exited before it started: ${CLAUDE_ROOT_REFUSAL}`;
   }
 }
 
@@ -942,10 +963,22 @@ export const layerQueryRunner: Layer.Layer<
                 pathToClaudeCodeExecutable: launch.command,
                 executableArgs: [...launch.args, ...(queryOptions.executableArgs ?? [])],
               };
+        // Only a CLI that fails before its first message explains itself on
+        // stderr. The known root refusal becomes a curated failure; any other
+        // stderr can hold private text, so it stays out of turn failures.
+        let stderrTail = "";
+        let answered = false;
+        const appendStderr = (text: string) => {
+          if (answered) return;
+          stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
+        };
         // Windows has no process groups, so there the SDK spawns the CLI itself.
         const spawnClaudeCodeProcess =
           options.spawnClaudeCodeProcess ??
-          (platform === "win32" ? undefined : spawnClaudeProcessGroup);
+          (platform === "win32"
+            ? undefined
+            : (spawnOptions: ClaudeSpawnOptions) =>
+                spawnClaudeProcessGroup(spawnOptions, appendStderr));
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>
@@ -1009,9 +1042,18 @@ export const layerQueryRunner: Layer.Layer<
         );
 
         return {
-          messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
-            queryRunnerError(cause, "fromAsyncIterable"),
-          ).pipe(
+          messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) => {
+            const refusedRoot = !answered && stderrTail.includes(CLAUDE_ROOT_REFUSAL);
+            return queryRunnerError(
+              refusedRoot ? new ClaudeCodeRootRefusalError({ cause }) : cause,
+              "fromAsyncIterable",
+            );
+          }).pipe(
+            Stream.tap(() =>
+              Effect.sync(() => {
+                answered = true;
+              }),
+            ),
             Stream.tap((message) =>
               logProtocolEvent({
                 direction: "incoming",
