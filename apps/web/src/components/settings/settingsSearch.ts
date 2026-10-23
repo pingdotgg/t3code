@@ -476,6 +476,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "inbox-sort-by-send",
+    title: "Sort inbox by last message",
+    to: "/settings/labs",
+    searchTerms: ["beta order recent newest latest message sent threads inbox sidebar"],
+  },
+  {
     id: "tool-call-visibility",
     title: "Tool calls in chat",
     to: "/settings/chat",

@@ -1,10 +1,12 @@
 import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { EnvironmentThreadShell } from "./models.ts";
 import {
   createInboxReturnTracker,
   isThreadWorking,
   sortInboxThreadsByReturn,
+  sortInboxThreadsBySend,
   sortWorkingThreadsBySend,
 } from "./threadInbox.ts";
 
@@ -239,5 +241,69 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("sortInboxThreadsBySend", () => {
+  const inboxThread = (
+    id: string,
+    overrides: Partial<
+      Pick<
+        EnvironmentThreadShell,
+        "latestRun" | "latestUserMessageAt" | "latestUserAuthoredMessageAt" | "unsettledAt"
+      >
+    > = {},
+  ) => ({
+    ...thread(id, false),
+    latestUserMessageAt: null,
+    latestUserAuthoredMessageAt: null,
+    ...overrides,
+  });
+
+  it("orders by the last message the user sent, ignoring agent runs", () => {
+    const sentEarly = inboxThread("sent-early", {
+      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("run:late"),
+        status: "completed" as const,
+        requestedAt: "2026-06-01T05:00:00.000Z",
+        startedAt: "2026-06-01T05:00:00.000Z",
+        completedAt: "2026-06-01T06:00:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const sentLate = inboxThread("sent-late", {
+      latestUserAuthoredMessageAt: "2026-06-01T03:00:00.000Z",
+    });
+    const untouched = inboxThread("untouched");
+    expect(
+      sortInboxThreadsBySend([untouched, sentEarly, sentLate]).map((entry) => entry.id),
+    ).toEqual(["sent-late", "sent-early", "untouched"]);
+  });
+
+  it("falls back to the latest user message when authorship is unknown", () => {
+    const { latestUserAuthoredMessageAt: _unknown, ...legacy } = inboxThread("legacy", {
+      latestUserMessageAt: "2026-06-01T04:00:00.000Z",
+    });
+    const sent = inboxThread("sent", {
+      latestUserAuthoredMessageAt: "2026-06-01T02:00:00.000Z",
+    });
+    expect(sortInboxThreadsBySend([sent, legacy]).map((entry) => entry.id)).toEqual([
+      "legacy",
+      "sent",
+    ]);
+  });
+
+  it("puts un-settled and returned threads back on top", () => {
+    const sent = inboxThread("sent", {
+      latestUserAuthoredMessageAt: "2026-06-01T02:00:00.000Z",
+    });
+    const unsettled = inboxThread("unsettled", { unsettledAt: "2026-06-01T03:00:00.000Z" });
+    const returned = inboxThread("returned");
+    expect(
+      sortInboxThreadsBySend([sent, unsettled, returned], (entry) =>
+        entry.id === "returned" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
+      ).map((entry) => entry.id),
+    ).toEqual(["returned", "unsettled", "sent"]);
   });
 });
