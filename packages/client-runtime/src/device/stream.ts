@@ -146,6 +146,7 @@ const SEMU_MAGIC = 0x53454d55;
 const SEMU_HEADER_BYTES = 16;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
+const IOS_BACKLOG_RECOVERY_FRAMES = 120;
 // expo-device-hub 0.15.3 serve-emu input.js MAX_TEXT_BYTES limits packets to 300 UTF-8 bytes.
 const ANDROID_MAX_TEXT_BYTES = 300;
 // The pinned hub queue depth is 128; the client does not read queue rejections.
@@ -413,6 +414,8 @@ export function createDeviceStreamClient(
   let mjpeg = false;
   let generation = 0;
   let decoderEpoch = 0;
+  let iosDecoderBacklogs = 0;
+  let iosRecoveryFrames = 0;
   let frameTimer: ReturnType<typeof setTimeout> | null = null;
   let videoReadTimer: ReturnType<typeof setTimeout> | null = null;
   let mjpegImage: HTMLImageElement | null = null;
@@ -592,6 +595,13 @@ export function createDeviceStreamClient(
           ) {
             decodedVideoGeneration = feedGeneration;
             paint(frame, frame.displayWidth, frame.displayHeight);
+            if (
+              platform === "ios" &&
+              iosDecoderBacklogs === 1 &&
+              ++iosRecoveryFrames >= IOS_BACKLOG_RECOVERY_FRAMES
+            ) {
+              iosDecoderBacklogs = 0;
+            }
           }
         } finally {
           frame.close();
@@ -615,7 +625,13 @@ export function createDeviceStreamClient(
     isCurrent = () => !stopped,
   ): Promise<boolean> => {
     const epoch = decoderEpoch;
-    const full: VideoDecoderConfig = { ...config, optimizeForLatency: true };
+    const full: VideoDecoderConfig = {
+      ...config,
+      optimizeForLatency: true,
+      ...(platform === "ios" && iosDecoderBacklogs >= 2
+        ? { hardwareAcceleration: "prefer-software" }
+        : {}),
+    };
     const support = await VideoDecoder.isConfigSupported(full).catch(() => ({ supported: false }));
     if (!isCurrent() || epoch !== decoderEpoch) return false;
     if (!support.supported) {
@@ -641,6 +657,14 @@ export function createDeviceStreamClient(
     if (videoDecoder.decodeQueueSize > SOFT_DECODE_QUEUE) {
       if (platform !== "ios") {
         recoverDecoder();
+        return;
+      }
+      // A fresh keyframe fixes transient lag. Repeated overload with the same
+      // decoder needs software decoding, then MJPEG if that also falls behind.
+      iosRecoveryFrames = 0;
+      if (++iosDecoderBacklogs >= 3) {
+        if (target.videoOnly) fail("This browser cannot keep up with the Duo panel's video.");
+        else fallBackToMjpeg();
         return;
       }
       // Native IDRs are spaced by frame count, so an idle simulator may take
@@ -1231,6 +1255,8 @@ export function createDeviceStreamClient(
     stopped = false;
     generation++;
     configuring = false;
+    iosDecoderBacklogs = 0;
+    iosRecoveryFrames = 0;
     iosInputAdmitted = false;
     iosInputUnavailable = false;
     connecting();
