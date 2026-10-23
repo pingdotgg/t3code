@@ -252,7 +252,8 @@ it.live.each(["thread", "shell"] as const)(
       const items = yield* subscription.pipe(
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           ensureLegacyTranscript: () => Effect.void,
-          getShellSnapshot: () => Effect.succeed({ threads: [] }),
+          getShellSnapshot: () => Effect.die("shell resume must not load a full snapshot"),
+          listActiveSubagentThreadIds: () => Effect.succeed([]),
           streamStoredEventsFrom: (
             input: Parameters<
               ThreadManagement.ThreadManagementService["Service"]["streamStoredEventsFrom"]
