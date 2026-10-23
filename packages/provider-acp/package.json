@@ -19,10 +19,6 @@
       "types": "./src/server/clientTerminals.ts",
       "import": "./src/server/clientTerminals.ts"
     },
-    "./server/coreRuntimeEvents": {
-      "types": "./src/server/coreRuntimeEvents.ts",
-      "import": "./src/server/coreRuntimeEvents.ts"
-    },
     "./server/mcpOverAcpBridge": {
       "types": "./src/server/mcpOverAcpBridge.ts",
       "import": "./src/server/mcpOverAcpBridge.ts"

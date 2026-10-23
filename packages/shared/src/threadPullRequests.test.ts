@@ -6,7 +6,6 @@ import {
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
-  legacyLinkedPullRequestOf,
   legacyThreadPullRequestKey,
   threadPullRequestSearchTerms,
   resolveThreadCurrentPullRequest,
@@ -83,6 +82,26 @@ describe("threadPullRequestKeysEqual", () => {
       }),
     ).toBe(false);
   });
+
+  it("recovers Azure repository keys from stored URLs", () => {
+    const own = link(7, {
+      host: "dev.azure.com",
+      repository: "org-a/project/_git/web",
+      url: "https://dev.azure.com/org-a/project/_git/web/pullrequest/7",
+    });
+    expect(legacyThreadPullRequestKey({ ...own, repository: "web" })).toEqual({
+      host: "dev.azure.com",
+      repository: "org-a/project/_git/web",
+      number: 7,
+    });
+    expect(
+      threadPullRequestKeysEqual(own, {
+        host: "org-a.visualstudio.com",
+        repository: "DefaultCollection/project/_git/web",
+        number: 7,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("resolveThreadCurrentPullRequest", () => {
@@ -128,92 +147,6 @@ describe("resolveThreadCurrentPullRequest", () => {
       link(2, { snapshot: snapshot({ state: "closed", updatedAt: "2026-01-02T00:00:00.000Z" }) }),
     ]);
     expect(current).toMatchObject({ kind: "single", link: { number: 1 } });
-  });
-});
-
-describe("legacyLinkedPullRequestOf", () => {
-  const identity = {
-    canonicalKey: "github.com/pingdotgg/t3code",
-    provider: "github",
-    displayName: "pingdotgg/t3code",
-    locator: {
-      source: "git-remote" as const,
-      remoteName: "origin",
-      remoteUrl: "https://github.com/pingdotgg/t3code.git",
-    },
-  };
-  it("projects only links the owning project can route without a host", () => {
-    expect(legacyLinkedPullRequestOf([link(7)], "project-1" as never, identity)).toEqual({
-      projectId: "project-1",
-      repository: "pingdotgg/t3code",
-      number: 7,
-      url: "https://github.com/pingdotgg/t3code/pull/7",
-    });
-    expect(legacyLinkedPullRequestOf([], "project-1" as never, identity)).toBeNull();
-  });
-  it.each([
-    {
-      host: "github.enterprise.test",
-      url: "https://github.enterprise.test/pingdotgg/t3code/pull/7",
-    },
-    { repository: "acme/other", url: "https://github.com/acme/other/pull/7" },
-  ])("omits an unsafe legacy route %j", (foreign) => {
-    expect(
-      legacyLinkedPullRequestOf([link(7, foreign)], "project-1" as never, identity),
-    ).toBeNull();
-    expect(
-      legacyLinkedPullRequestOf([link(7, foreign), link(8)], "project-1" as never, identity)
-        ?.number,
-    ).toBe(8);
-  });
-  it.each([
-    "dev.azure.com/org-a/project/_git/web",
-    "ssh.dev.azure.com/v3/org-a/project/web",
-    "org-a.visualstudio.com/DefaultCollection/project/_git/web",
-  ])("projects Azure links through the legacy selector for %s", (canonicalKey) => {
-    const azureIdentity = {
-      ...identity,
-      provider: "azure-devops",
-      canonicalKey,
-      displayName: canonicalKey.slice(canonicalKey.indexOf("/") + 1),
-      name: "web",
-    };
-    const own = link(7, {
-      host: "dev.azure.com",
-      repository: "org-a/project/_git/web",
-      url: "https://dev.azure.com/org-a/project/_git/web/pullrequest/7",
-    });
-    const foreign = link(7, {
-      host: "dev.azure.com",
-      repository: "web",
-      url: "https://dev.azure.com/org-b/project/_git/web/pullrequest/7",
-      linkedAt: "2026-01-02T00:00:00.000Z",
-    });
-    for (const repository of ["web", "org-a/project/_git/web"]) {
-      expect(
-        legacyLinkedPullRequestOf(
-          [{ ...own, repository }, foreign],
-          "project-1" as never,
-          azureIdentity,
-        ),
-      ).toEqual({ projectId: "project-1", repository: "web", number: 7, url: own.url });
-    }
-    expect(legacyLinkedPullRequestOf([foreign], "project-1" as never, azureIdentity)).toBeNull();
-    expect(legacyThreadPullRequestKey({ ...own, repository: "web" })).toEqual({
-      host: "dev.azure.com",
-      repository: "org-a/project/_git/web",
-      number: 7,
-    });
-    expect(
-      threadPullRequestKeysEqual(own, {
-        host: "org-a.visualstudio.com",
-        repository: "DefaultCollection/project/_git/web",
-        number: 7,
-      }),
-    ).toBe(true);
-  });
-  it("does not guess when the project identity is unavailable", () => {
-    expect(legacyLinkedPullRequestOf([link(7)], "project-1" as never, null)).toBeNull();
   });
 });
 

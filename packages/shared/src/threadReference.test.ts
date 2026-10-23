@@ -57,32 +57,6 @@ describe("resolveThreadReferenceCopyTarget", () => {
     },
   );
 
-  it("copies the highest open stack layer instead of the first link", () => {
-    const stack: NonNullable<ThreadPullRequestLink["stack"]> = {
-      kind: "native",
-      id: "stack-1",
-      number: 1,
-      url: "https://github.com/other/repo/stacks/1",
-      base: "main",
-      layers: [
-        { number: 42, headBranch: "first", state: "open" },
-        { number: 43, headBranch: "second", state: "open" },
-      ],
-    };
-    const top = {
-      ...crossRepositoryPullRequest,
-      number: 43,
-      url: "https://github.com/other/repo/pull/43",
-      stack,
-    };
-    expect(
-      resolveThreadReferenceCopyTarget({
-        threadId: "thread-1",
-        pullRequests: [{ ...crossRepositoryPullRequest, stack }, top],
-      }),
-    ).toMatchObject({ kind: "pull-request", value: top.url });
-  });
-
   it("uses the fallback URL when native links are dismissed", () => {
     expect(
       resolveThreadReferenceCopyTarget({

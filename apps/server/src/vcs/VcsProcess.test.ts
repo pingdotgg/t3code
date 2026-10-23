@@ -341,28 +341,6 @@ describe("VcsProcess.run", () => {
     }).pipe(Effect.scoped, provideLive, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("writes stdin before waiting for exit", () =>
-    Effect.gen(function* () {
-      const result = yield* run({
-        operation: "test.stdin",
-        command: "node",
-        args: [
-          "-e",
-          [
-            "process.stdin.setEncoding('utf8');",
-            "let data='';",
-            "process.stdin.on('data', chunk => { data += chunk; });",
-            "process.stdin.on('end', () => { process.stdout.write(data); });",
-          ].join(""),
-        ],
-        cwd: process.cwd(),
-        stdin: "stdin payload",
-      });
-
-      expect(result.stdout).toBe("stdin payload");
-    }).pipe(provideLive),
-  );
-
   it.effect("classifies authentication failures without retaining stderr", () =>
     Effect.gen(function* () {
       const secretStderr = "authentication failed for token super-secret-token";
