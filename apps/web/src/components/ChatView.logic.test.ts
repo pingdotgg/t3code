@@ -1102,14 +1102,21 @@ describe("planComposerTurn", () => {
   });
 
   it("queues behind a compaction of a stale session, except for /compact itself", () => {
-    expect(planComposerTurn({ ...base, resumeCompactionTokens: 120_000 })).toMatchObject({
-      compactBeforeSend: true,
-      turnDispatchMode: "queue",
-      shouldQueueBehindActiveRun: true,
-    });
-    expect(
-      planComposerTurn({ ...base, resumeCompactionTokens: 120_000, messageText: "/COMPACT" }),
-    ).toMatchObject({ compactBeforeSend: false, turnDispatchMode: "auto" });
+    const stale = { ...base, resumeCompactionTokens: 120_000 };
+    for (const messageText of ["hello", "/compactfoo"]) {
+      expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
+        compactBeforeSend: true,
+        turnDispatchMode: "queue",
+        shouldQueueBehindActiveRun: true,
+      });
+    }
+    for (const messageText of ["/COMPACT", "/compact keep the API notes", "/compact\n  tests"]) {
+      expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
+        compactBeforeSend: false,
+        turnDispatchMode: "auto",
+        shouldQueueBehindActiveRun: false,
+      });
+    }
   });
 
   it("queues behind a running turn only when asked to", () => {
