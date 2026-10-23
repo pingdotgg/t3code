@@ -459,8 +459,7 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
-// `npm view` ignores min-release-age and before, but `outdated` applies them and
-// their excludes the way `install <pkg>@latest` does.
+// Unlike `npm view`, `outdated` applies min-release-age, before and their excludes.
 const resolveNpmGlobalLatestVersion = Effect.fn("resolveNpmGlobalLatestVersion")(function* (
   packageName: string,
   npmPrefix: string,
