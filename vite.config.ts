@@ -225,8 +225,8 @@ export default defineConfig({
       "t3code/no-low-value-comments": "error",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
-      // Test files only (the rule checks the filename). Becomes an error once existing polls are converted.
-      "t3code/no-polling-loop-in-tests": "warn",
+      // Test files only (the rule checks the filename).
+      "t3code/no-polling-loop-in-tests": "error",
       "t3code/no-raw-mcp-registration": "error",
       "t3code/no-real-time-wait-in-tests": "error",
       "t3code/no-test-in-loop": "error",
@@ -258,8 +258,26 @@ export default defineConfig({
         rules: { "t3code/no-frame-waits-in-browser-tests": "error" },
       },
       {
-        files: ["**/*.browser.test.*"],
-        rules: { "t3code/no-real-time-wait-in-tests": "off" },
+        // Burn-down list: these files still have polling loops, so they stay at "warn".
+        // Remove a file when you convert its loops. New polling loops in all other
+        // test files fail lint. Do not add new files to this list.
+        files: [
+          "apps/mobile/src/features/agent-awareness/remoteRegistration.test.ts",
+          "apps/server/src/background/HostPowerMonitor.test.ts",
+          "apps/server/src/orchestration-v2/Adapters/AcpAdapterV2.test.ts",
+          "apps/server/src/orchestration-v2/FoundationPersistence.test.ts",
+          "apps/server/src/project/ProjectEnrichmentService.test.ts",
+          "apps/server/src/project/ProjectService.test.ts",
+          "apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts",
+          "apps/server/src/usage/UsageService.test.ts",
+          "packages/client-runtime/src/connection/supervisor.test.ts",
+          "packages/client-runtime/src/rpc/client.test.ts",
+          "packages/client-runtime/src/rpc/session.test.ts",
+          "packages/client-runtime/src/state/shell-sync.test.ts",
+          "packages/client-runtime/src/state/threads-sync.test.ts",
+          "packages/shared/src/atomicWrite.test.ts",
+        ],
+        rules: { "t3code/no-polling-loop-in-tests": "warn" },
       },
       {
         files: ["apps/**/src/**", "packages/**/src/**"],
