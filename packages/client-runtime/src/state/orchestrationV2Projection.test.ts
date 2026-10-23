@@ -358,6 +358,24 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       ["item-a", 3],
     ]);
     expect(last?.turnItems.at(0)).toBe(later);
+
+    const earlier = commandItem("item-a", "earlier", 2);
+    const reordered = applyOrchestrationV2ProjectionEvent(last, {
+      id: "event-move-earlier",
+      type: "turn-item.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: earlier,
+    } as OrchestrationV2DomainEvent);
+    expect(reordered?.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
+      ["item-inherited", 0],
+      ["item-a", 1],
+      ["item-b", 2],
+      ["item-c", 3],
+    ]);
+    expect(reordered?.visibleTurnItems[0]).toBe(rows[0]);
+    expect(reordered?.visibleTurnItems[1]?.item).toBe(earlier);
   });
 
   describe("partial timeline", () => {
@@ -517,6 +535,47 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems).toEqual([inheritedRow]);
     expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
   });
+});
+
+it("does not compare historical ordering keys when updating the last local item", () => {
+  let historicalOrdinalReads = 0;
+  const items = Array.from({ length: 1000 }, (_, index) => ({
+    ...commandItem(`item-${index}`, "before", index),
+    get ordinal() {
+      if (index < 999) historicalOrdinalReads++;
+      return index;
+    },
+  }));
+  const projection = {
+    ...emptyProjection,
+    runs: [run],
+    turnItems: items,
+    visibleTurnItems: items.map((item, position) => ({
+      item,
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+    })),
+  };
+  const payload = commandItem("item-999", "streamed output", 999);
+  const event = {
+    id: "stream-ordering-update",
+    type: "turn-item.updated",
+    threadId,
+    occurredAt: now,
+    payload,
+  } as OrchestrationV2DomainEvent;
+  const next = applyOrchestrationV2ProjectionEvent(projection, event);
+
+  expect(next?.visibleTurnItems.at(-1)?.item).toBe(payload);
+  expect(next?.visibleTurnItems.at(-1)?.position).toBe(999);
+  expect(next?.visibleTurnItems[0]).toBe(projection.visibleTurnItems[0]);
+  expect(projection.visibleTurnItems.at(-1)?.item).toBe(items.at(-1));
+  expect(historicalOrdinalReads).toBe(0);
+  expect(applyOrchestrationV2ProjectionEvent(next, event)?.visibleTurnItems).toBe(
+    next?.visibleTurnItems,
+  );
 });
 
 it("does not scan every row against every run for a streaming item update", () => {

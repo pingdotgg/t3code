@@ -180,9 +180,19 @@ function upsertVisibleTurnItem(
   ) {
     return rows;
   }
-  // The item goes before the first later local row, as if its old row were
-  // removed first. One pass builds and renumbers the result: this runs for
-  // every streamed chunk of a thread that can hold thousands of rows.
+  // Canonical ordering fixes the last row's slot while its ordering key is unchanged.
+  if (
+    index === rows.length - 1 &&
+    previous !== undefined &&
+    previous.visibility === "local" &&
+    previous.sourceThreadId === item.threadId &&
+    previous.item.ordinal === item.ordinal
+  ) {
+    const updated = rows.slice();
+    updated[index] = { ...next, position: index };
+    return updated;
+  }
+  // The item goes before the first later local row, as if its old row were removed first.
   let insertion = rows.length;
   for (let candidate = 0; candidate < rows.length; candidate += 1) {
     const row = rows[candidate]!;
