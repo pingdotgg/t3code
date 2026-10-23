@@ -1,9 +1,10 @@
 import * as Mime from "effect/http/Mime";
-import { githubMediaFileName } from "@t3tools/shared/githubMedia";
+import { githubMediaFileName, githubReleaseAsset } from "@t3tools/shared/githubMedia";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import {
   FetchHttpClient,
   HttpClient,
@@ -12,6 +13,7 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 
 /**
@@ -20,6 +22,7 @@ import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHub
  * bearer token.
  */
 const CREDENTIALED_HOSTS = new Set([
+  "api.github.com",
   "github.com",
   "www.github.com",
   "raw.githubusercontent.com",
@@ -50,6 +53,19 @@ const SVG_CONTENT_TYPE = "image/svg+xml";
 // body cannot run script against this origin.
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
+const decodeRelease = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    truncated: Schema.Literal(false),
+    body: Schema.fromJsonString(
+      Schema.Struct({
+        assets: Schema.Array(
+          Schema.Struct({ id: Schema.Int.check(Schema.isGreaterThan(0)), name: Schema.String }),
+        ),
+      }),
+    ),
+  }),
+);
+
 const githubToken = GitHubCredentials.GitHubCredentials.pipe(
   Effect.flatMap((credentials) => credentials.get("github.com")),
   Effect.map((credential) => credential.token),
@@ -71,6 +87,9 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
         HttpClientRequest.get(target).pipe(
           HttpClientRequest.setHeaders({
             ...headers,
+            ...(new URL(target).hostname === "api.github.com"
+              ? { "x-github-api-version": "2022-11-28", "user-agent": "t3code" }
+              : {}),
             // The bytes are streamed straight through, so never let an encoding layer in.
             "accept-encoding": "identity",
             ...(authorization === null ? {} : { authorization }),
@@ -98,7 +117,34 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
-  const response = yield* fetchFollowingRedirects(asset.url, forwarded, token);
+  const release = githubReleaseAsset(asset.url);
+  let response: HttpClientResponse.HttpClientResponse | null = null;
+  if (release !== null && token !== null) {
+    response = yield* Effect.gen(function* () {
+      const api = yield* GitHubRest.GitHubRest;
+      const path = `repos/${encodeURIComponent(release.owner)}/${encodeURIComponent(release.repo)}/releases`;
+      const metadata = yield* api.rest({
+        host: "github.com",
+        operation: "getReleaseByTag",
+        path: `${path}/tags/${encodeURIComponent(release.tag)}`,
+      });
+      const decoded = yield* decodeRelease(metadata);
+      const match = decoded.body.assets.find((candidate) => candidate.name === release.name);
+      if (match === undefined) return null;
+      return yield* fetchFollowingRedirects(
+        `https://api.github.com/${path}/assets/${match.id}`,
+        { ...forwarded, accept: "application/octet-stream" },
+        token,
+      );
+    }).pipe(Effect.orElseSucceed(() => null));
+  }
+  if (response === null || (release !== null && response.status >= 400)) {
+    response = yield* fetchFollowingRedirects(
+      asset.url,
+      forwarded,
+      release === null ? token : null,
+    );
+  }
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
   const headers: Record<string, string> = {
     "cache-control":
