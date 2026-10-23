@@ -3,7 +3,6 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
 
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
@@ -64,38 +63,6 @@ function setup() {
 }
 
 describe("project action editor save lifecycle", () => {
-  it("ProjectScriptEditor-afterRemovingPreviewUrl-clearsPortReservation", async () => {
-    setup();
-    onSubmit.mockResolvedValue(AsyncResult.success(undefined));
-    const editorRequest = request("dev");
-    await using screen = await render(
-      <ProjectScriptEditorDialog
-        environmentId={EnvironmentId.make("test")}
-        request={{
-          ...editorRequest,
-          initial: {
-            ...editorRequest.initial,
-            previewUrl: "http://localhost:${T3CODE_PREVIEW_PORT}",
-            reservePort: true,
-          },
-        }}
-        scripts={[]}
-        onSubmit={onSubmit}
-        onClose={onClose}
-        onDelete={onDelete}
-      />,
-    );
-    const previewUrl = screen.getByLabelText(/Preview URL/);
-    await userEvent.clear(previewUrl);
-    await userEvent.type(previewUrl, "http://localhost:5173");
-    await act(async () => submit());
-
-    expect(onSubmit).toHaveBeenCalledExactlyOnceWith(
-      "dev",
-      expect.objectContaining({ previewUrl: "http://localhost:5173", reservePort: false }),
-    );
-  });
-
   it("does not close a replacement request or release its in-flight save", async () => {
     setup();
     await using screen = await render(null);

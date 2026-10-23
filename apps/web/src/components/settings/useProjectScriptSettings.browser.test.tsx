@@ -73,7 +73,6 @@ const input: NewProjectScriptInput = {
   waitForSetup: false,
   runOnSettle: false,
   previewUrl: null,
-  reservePort: false,
   autoOpenPreview: false,
 };
 

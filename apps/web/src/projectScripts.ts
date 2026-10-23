@@ -4,7 +4,6 @@ import {
   type KeybindingCommand,
   type ProjectScript,
 } from "@t3tools/contracts";
-import { projectScriptReservesPort } from "@t3tools/shared/projectScripts";
 import * as Schema from "effect/Schema";
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
@@ -16,7 +15,6 @@ export interface ProjectScriptInput {
   readonly waitForSetup: boolean;
   readonly runOnSettle: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
-  readonly reservePort: boolean;
   readonly autoOpenPreview: boolean;
 }
 
@@ -33,7 +31,6 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
       ? {}
       : {
           previewUrl: input.previewUrl,
-          ...(projectScriptReservesPort(input) ? { reservePort: true } : {}),
           autoOpenPreview: input.autoOpenPreview,
         }),
   };

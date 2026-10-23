@@ -698,12 +698,11 @@ describe("t3_worktree_status", () => {
         command: "vp dev",
         icon: "play",
         runOnWorktreeCreate: false,
-        reservePort: true,
         previewUrl: "http://localhost:${T3CODE_PREVIEW_PORT}/preview",
       };
       const effectiveScripts = [
         previewScript,
-        { ...previewScript, id: "fixed", reservePort: false },
+        { ...previewScript, id: "fixed", previewUrl: "http://localhost:5173" },
         { ...previewScript, id: "no-preview", previewUrl: undefined },
       ];
       for (const worktreePath of [null, "/worktrees/project/existing"]) {

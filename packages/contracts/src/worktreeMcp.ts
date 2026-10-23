@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * The server picks the location in its managed worktrees folder.
@@ -100,7 +100,7 @@ export const WorktreeMcpStatusResult = Schema.Struct({
     Schema.Struct({
       scriptId: TrimmedNonEmptyString,
       name: TrimmedNonEmptyString,
-      port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+      port: PortSchema,
       url: TrimmedNonEmptyString,
     }),
   ).annotate({

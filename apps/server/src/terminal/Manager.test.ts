@@ -629,12 +629,14 @@ it.layer(
       const originalProcess = ptyAdapter.processes[0]!;
       const restarted = yield* manager.restart(restartInput());
       const currentProcess = ptyAdapter.processes[1]!;
-      const staleWrite = yield* manager.write({
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        expectedPid: originalProcess.pid,
-        data: "stale\r",
-      }).pipe(Effect.flip);
+      const staleWrite = yield* manager
+        .write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          expectedPid: originalProcess.pid,
+          data: "stale\r",
+        })
+        .pipe(Effect.flip);
       assert.equal(staleWrite._tag, "TerminalNotRunningError");
       yield* manager.write({
         threadId: "thread-1",
@@ -653,12 +655,14 @@ it.layer(
       currentProcess.emitExit({ exitCode: 0, signal: 0 });
       yield* Deferred.await(exited);
       unsubscribe();
-      const exitedWrite = yield* manager.write({
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        expectedPid: currentProcess.pid,
-        data: "after exit\r",
-      }).pipe(Effect.flip);
+      const exitedWrite = yield* manager
+        .write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          expectedPid: currentProcess.pid,
+          data: "after exit\r",
+        })
+        .pipe(Effect.flip);
       assert.equal(exitedWrite._tag, "TerminalNotRunningError");
       expect(currentProcess.writes).toEqual(["current\r"]);
     }),

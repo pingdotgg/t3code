@@ -10,6 +10,7 @@ import {
   type WorktreeMcpStatusResult,
 } from "@t3tools/contracts";
 import {
+  projectScriptCwd,
   projectScriptPreviewUrl,
   projectScriptReservesPort,
   resolveProjectScripts,
@@ -447,35 +448,29 @@ const make = Effect.gen(function* () {
       const scriptPreviews = yield* Effect.forEach(
         resolveProjectScripts(settings, project).filter(projectScriptReservesPort),
         (script) =>
-          Effect.gen(function* () {
-            const port = yield* scriptPorts
-              .reserve({
-                cwd: projection.thread.worktreePath ?? project.workspaceRoot,
+          scriptPorts
+            .reserve({
+              cwd: projectScriptCwd({
+                project: { cwd: project.workspaceRoot },
+                worktreePath: projection.thread.worktreePath,
+              }),
+              scriptId: script.id,
+            })
+            .pipe(
+              Effect.map((port) => ({
                 scriptId: script.id,
-              })
-              .pipe(
-                Effect.tapError((error) =>
-                  Effect.logWarning("Unable to reserve a preview port", {
-                    scriptId: script.id,
-                    startPort: error.startPort,
-                    attempts: error.attempts,
-                  }),
-                ),
-                Effect.option,
-              );
-            if (Option.isNone(port)) return [];
-            const url = projectScriptPreviewUrl(script, port.value);
-            return url
-              ? [
-                  {
-                    scriptId: script.id,
-                    name: script.name,
-                    port: port.value,
-                    url,
-                  },
-                ]
-              : [];
-          }),
+                name: script.name,
+                port,
+                url: projectScriptPreviewUrl(script.previewUrl, port),
+              })),
+              Effect.catch((error) =>
+                Effect.logWarning("Unable to reserve a preview port", {
+                  scriptId: script.id,
+                  startPort: error.startPort,
+                  attempts: error.attempts,
+                }).pipe(Effect.as(undefined)),
+              ),
+            ),
       );
 
       const result: WorktreeMcpStatusResult = {
@@ -484,7 +479,7 @@ const make = Effect.gen(function* () {
         branch: projection.thread.branch,
         projectWorkspaceRoot: project.workspaceRoot,
         defaultStartFromOrigin: settings.newWorktreesStartFromOrigin,
-        scriptPreviews: scriptPreviews.flat(),
+        scriptPreviews: scriptPreviews.filter((preview) => preview !== undefined),
       };
       return result;
     },

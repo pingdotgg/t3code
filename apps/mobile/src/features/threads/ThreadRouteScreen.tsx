@@ -699,7 +699,7 @@ function ThreadRouteContent(
       if (result.value.status === "no-script") {
         Dialog.alert(
           "Couldn't run script",
-          `"${script.name}" is no longer saved with a reserved port. Check the action and try again.`,
+          `"${script.name}" is no longer available. Check the action and try again.`,
         );
         return;
       }

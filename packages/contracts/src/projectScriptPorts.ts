@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PortSchema, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const ProjectRunScriptInput = Schema.Struct({
   threadId: ThreadId,
@@ -15,7 +15,7 @@ export const ProjectRunScriptResult = Schema.Union([
     status: Schema.Literal("started"),
     threadId: ThreadId,
     terminalId: TrimmedNonEmptyString,
-    port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+    port: PortSchema,
   }),
 ]);
 export type ProjectRunScriptResult = typeof ProjectRunScriptResult.Type;
@@ -36,10 +36,7 @@ export const ProjectScriptPortsInput = Schema.Struct({
 export type ProjectScriptPortsInput = typeof ProjectScriptPortsInput.Type;
 
 export const ProjectScriptPortsResult = Schema.Struct({
-  ports: Schema.Record(
-    Schema.String,
-    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
-  ),
+  ports: Schema.Record(Schema.String, PortSchema),
 });
 
 export class ProjectScriptPortUnavailableError extends Schema.TaggedError<ProjectScriptPortUnavailableError>()(

@@ -12,8 +12,9 @@ export function getConfiguredPreviewUrls(
   return (
     scripts?.flatMap((script) => {
       if (projectScriptReservesPort(script) && ports[script.id] === undefined) return [];
-      const url = projectScriptPreviewUrl(script, ports[script.id]);
-      return url ? [url] : [];
+      return script.previewUrl
+        ? [projectScriptPreviewUrl(script.previewUrl, ports[script.id])]
+        : [];
     }) ?? []
   );
 }

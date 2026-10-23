@@ -6,7 +6,6 @@ import {
   type ProjectScriptIcon,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { projectScriptReservesPort } from "@t3tools/shared/projectScripts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -95,7 +94,6 @@ export interface NewProjectScriptInput {
   /** Omit to preserve the current shortcut when the form did not edit it. */
   keybinding?: string | null;
   previewUrl: string | null;
-  reservePort: boolean;
   autoOpenPreview: boolean;
 }
 
@@ -110,7 +108,6 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   runOnSettle: false,
   keybinding: null,
   previewUrl: null,
-  reservePort: false,
   autoOpenPreview: false,
 };
 
@@ -135,7 +132,6 @@ export function editorRequestForScript(
       runOnSettle: script.runOnSettle ?? false,
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
-      reservePort: projectScriptReservesPort(script),
       autoOpenPreview: script.autoOpenPreview ?? false,
     },
   };
@@ -238,33 +234,6 @@ export function ProjectScriptEditorDialog({
   );
 }
 
-function ActionToggle({
-  checked,
-  disabled = false,
-  onCheckedChange,
-  children,
-}: {
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <label
-      className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
-        disabled ? "opacity-60" : ""
-      }`}
-    >
-      <span>{children}</span>
-      <Switch
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={(next) => onCheckedChange(Boolean(next))}
-      />
-    </label>
-  );
-}
-
 function ProjectScriptEditorForm({
   environmentId,
   editScope,
@@ -301,7 +270,6 @@ function ProjectScriptEditorForm({
   const [runOnSettle, setRunOnSettle] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
-  const [reservePort, setReservePort] = useState(false);
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
   const [savingRequest, setSavingRequest] = useState<ProjectScriptEditorRequest | null>(null);
   const pendingSubmissionRef = useRef<{ request: ProjectScriptEditorRequest } | null>(null);
@@ -331,7 +299,6 @@ function ProjectScriptEditorForm({
       setRunOnSettle(request.initial.runOnSettle);
       setKeybinding(request.initial.keybinding ?? "");
       setPreviewUrl(request.initial.previewUrl ?? "");
-      setReservePort(projectScriptReservesPort(request.initial));
       setAutoOpenPreview(request.initial.autoOpenPreview);
       setSavingRequest(null);
     }
@@ -408,7 +375,6 @@ function ProjectScriptEditorForm({
           ? { keybinding: keybindingRule?.key ?? null }
           : {}),
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
-        reservePort: projectScriptReservesPort({ previewUrl: trimmedPreviewUrl, reservePort }),
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
     } catch (error) {
@@ -535,46 +501,51 @@ function ProjectScriptEditorForm({
                 id="script-preview-url"
                 placeholder="http://localhost:5173"
                 value={previewUrl}
-                onChange={(event) => {
-                  setPreviewUrl(event.target.value);
-                  if (event.target.value.trim().length === 0) setReservePort(false);
-                }}
+                onChange={(event) => setPreviewUrl(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Open this URL in the in-app preview when this action runs.
+                Use <code>{"${T3CODE_PREVIEW_PORT}"}</code> for a port per checkout, available to
+                the command as <code>T3CODE_PREVIEW_PORT</code>.
               </p>
             </div>
-            <ActionToggle checked={runOnWorktreeCreate} onCheckedChange={setRunOnWorktreeCreate}>
-              Run automatically on worktree creation
-            </ActionToggle>
-            <ActionToggle
-              checked={waitForSetup}
-              disabled={!runOnWorktreeCreate}
-              onCheckedChange={setWaitForSetup}
+            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+              <span>Run automatically on worktree creation</span>
+              <Switch
+                checked={runOnWorktreeCreate}
+                onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+              />
+            </label>
+            <label
+              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
+                runOnWorktreeCreate ? "" : "opacity-60"
+              }`}
             >
-              Wait for it to finish before the agent starts
-            </ActionToggle>
-            <ActionToggle checked={runOnSettle} onCheckedChange={setRunOnSettle}>
-              Run in the thread's worktree when the thread settles
-            </ActionToggle>
-            <ActionToggle
-              checked={reservePort}
-              disabled={previewUrl.trim().length === 0}
-              onCheckedChange={setReservePort}
+              <span>Wait for it to finish before the agent starts</span>
+              <Switch
+                checked={waitForSetup}
+                disabled={!runOnWorktreeCreate}
+                onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+              <span>Run in the thread's worktree when the thread settles</span>
+              <Switch
+                checked={runOnSettle}
+                onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
+              />
+            </label>
+            <label
+              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
+                previewUrl.trim().length === 0 ? "opacity-60" : ""
+              }`}
             >
-              Reserve a port
-              <span className="mt-1 block text-xs text-muted-foreground">
-                Sets the command's <code>T3CODE_PREVIEW_PORT</code> environment variable. Use{" "}
-                <code>{"${T3CODE_PREVIEW_PORT}"}</code> in the Preview URL.
-              </span>
-            </ActionToggle>
-            <ActionToggle
-              checked={autoOpenPreview}
-              disabled={previewUrl.trim().length === 0}
-              onCheckedChange={setAutoOpenPreview}
-            >
-              Open preview automatically when this action runs
-            </ActionToggle>
+              <span>Open preview automatically when this action runs</span>
+              <Switch
+                checked={autoOpenPreview}
+                disabled={previewUrl.trim().length === 0}
+                onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
+              />
+            </label>
             {validationError && <p className="text-sm text-destructive">{validationError}</p>}
           </fieldset>
         </form>

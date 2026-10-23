@@ -64,21 +64,16 @@ export function projectScriptRuntimeEnv(
   return env;
 }
 
-export function projectScriptPreviewUrl(script: ProjectScript, port?: number): string | undefined {
-  return script.reservePort && port !== undefined
-    ? script.previewUrl?.replaceAll("${T3CODE_PREVIEW_PORT}", String(port))
-    : script.previewUrl;
+const PREVIEW_PORT_PLACEHOLDER = "${T3CODE_PREVIEW_PORT}";
+
+export function projectScriptPreviewUrl(url: string, port?: number): string {
+  return port === undefined ? url : url.replaceAll(PREVIEW_PORT_PLACEHOLDER, String(port));
 }
 
-export function projectScriptReservesPort(script: {
-  readonly reservePort?: boolean | undefined;
-  readonly previewUrl?: string | null | undefined;
-}): boolean {
-  return script.reservePort === true && Boolean(script.previewUrl?.trim());
-}
-
-export function projectScriptTerminalId(port: number): string {
-  return `script-${port}`;
+export function projectScriptReservesPort(
+  script: ProjectScript,
+): script is ProjectScript & { readonly previewUrl: string } {
+  return script.previewUrl?.includes(PREVIEW_PORT_PLACEHOLDER) ?? false;
 }
 
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {

@@ -851,15 +851,15 @@ export default function ChatView(props: ChatViewProps) {
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
   });
-  const knownEnvironmentTerminalSessions = useKnownTerminalSessions({
+  const activeThreadKnownSessionsRaw = useKnownTerminalSessions({
     environmentId: activeThread?.environmentId ?? null,
-    threadId: null,
+    threadId: activeThreadId,
   });
   const activeThreadKnownSessions = (() => {
-    if (activeThreadId === null || knownEnvironmentTerminalSessions === null) {
+    if (activeThreadId === null || activeThreadKnownSessionsRaw === null) {
       return [];
     }
-    return knownEnvironmentTerminalSessions.filter(
+    return activeThreadKnownSessionsRaw.filter(
       (session) => session.target.threadId === activeThreadId,
     );
   })();
@@ -952,7 +952,7 @@ export default function ChatView(props: ChatViewProps) {
       surface.kind === "terminal" ? surface.terminalIds : [],
     ),
   );
-  const canReuseTerminal = knownEnvironmentTerminalSessions !== null;
+  const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
@@ -1110,11 +1110,14 @@ export default function ChatView(props: ChatViewProps) {
     .filter(projectScriptReservesPort)
     .map((script) => script.id);
   const scriptPorts = useEnvironmentQuery(
-    activeThreadRef && activeProject && previewScriptIds.length > 0
+    canOperateTerminal && activeThreadRef && activeProject && previewScriptIds.length > 0
       ? projectEnvironment.scriptPorts({
           environmentId: activeThreadRef.environmentId,
           input: {
-            cwd: activeThread?.worktreePath ?? activeProject.workspaceRoot,
+            cwd: projectScriptCwd({
+              project: { cwd: activeProject.workspaceRoot },
+              worktreePath: activeThread?.worktreePath ?? null,
+            }),
             scriptIds: previewScriptIds,
           },
         })

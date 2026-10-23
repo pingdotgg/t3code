@@ -7,7 +7,6 @@ describe("getConfiguredPreviewUrls", () => {
     const scripts = [
       {
         id: "web",
-        reservePort: true,
         previewUrl:
           "http://localhost:${T3CODE_PREVIEW_PORT}/app?literal=$OTHER#${T3CODE_PREVIEW_PORT}",
       },

@@ -41,23 +41,20 @@ const make = Effect.gen(function* () {
   const reserve: ProjectScriptPorts["Service"]["reserve"] = Effect.fn("ProjectScriptPorts.reserve")(
     function* (input) {
       const key = `${path.resolve(input.cwd)}\0${input.scriptId}`;
-      return yield* lock.withPermit(
-        Effect.gen(function* () {
-          const existing = assignments.get(key);
-          if (existing !== undefined) return existing;
-          const startPort = FIRST_PORT + (Math.abs(Hash.string(key)) % PORT_COUNT);
-          for (let offset = 0; offset < PORT_COUNT; offset++) {
-            const port = FIRST_PORT + ((startPort - FIRST_PORT + offset) % PORT_COUNT);
-            if (assignedPorts.has(port) || !(yield* net.isPortAvailableOnLoopback(port))) continue;
-            assignments.set(key, port);
-            assignedPorts.add(port);
-            yield* Effect.annotateCurrentSpan({ startPort, port, attempts: offset + 1 });
-            return port;
-          }
-          return yield* new ProjectScriptPortUnavailableError({ startPort, attempts: PORT_COUNT });
-        }),
-      );
+      const existing = assignments.get(key);
+      if (existing !== undefined) return existing;
+      const startPort = FIRST_PORT + (Math.abs(Hash.string(key)) % PORT_COUNT);
+      for (let offset = 0; offset < PORT_COUNT; offset++) {
+        const port = FIRST_PORT + ((startPort - FIRST_PORT + offset) % PORT_COUNT);
+        if (assignedPorts.has(port) || !(yield* net.isPortAvailableOnLoopback(port))) continue;
+        assignments.set(key, port);
+        assignedPorts.add(port);
+        yield* Effect.annotateCurrentSpan({ startPort, port, attempts: offset + 1 });
+        return port;
+      }
+      return yield* new ProjectScriptPortUnavailableError({ startPort, attempts: PORT_COUNT });
     },
+    lock.withPermit,
   );
 
   return ProjectScriptPorts.of({
