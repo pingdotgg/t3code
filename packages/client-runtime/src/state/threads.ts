@@ -286,13 +286,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  // Unlike the streaming path, also write an active thread here, once, so
+  // reopening it later shows this copy instead of waiting on the server.
   yield* Effect.addFinalizer(() =>
     Effect.suspend(() => {
       const { state: current, sequence: snapshotSequence } = committed;
       return Option.match(current.data, {
         onNone: () => Effect.void,
         onSome: (projection) =>
-          shouldPersistThread(projection, current.history)
+          !current.history.expanded
             ? persist(
                 snapshotToPersist(
                   snapshotSequence,
