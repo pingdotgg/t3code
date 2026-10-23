@@ -512,7 +512,7 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
+export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return thread.lineage.relationshipToParent === "subagent";
 }
 
