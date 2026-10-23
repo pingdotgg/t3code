@@ -67,7 +67,15 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
-type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
+/** Ends the stream with a defect, like a chunk the client cannot decode. */
+class TestStreamDefect {
+  readonly message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+type TestThreadInput = OrchestrationV2ThreadStreamItem | Error | TestStreamDefect;
 
 function testSession(
   client: WsRpcProtocolClient,
@@ -118,6 +126,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const latest = yield* Ref.make<EnvironmentThreadState>(EMPTY_ENVIRONMENT_THREAD_STATE);
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* Ref.make(0);
+  const subscriptions = yield* Queue.unbounded<number | undefined>();
+  const streamsEnded = yield* Queue.unbounded<void>();
   const loaderCalls = yield* Ref.make(0);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
@@ -132,7 +142,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const streamFrom = (queue: Queue.Queue<TestThreadInput>) =>
     Stream.fromQueue(queue).pipe(
       Stream.mapEffect((input) =>
-        input instanceof Error ? Effect.fail(input) : Effect.succeed(input),
+        input instanceof Error
+          ? Effect.fail(input)
+          : input instanceof TestStreamDefect
+            ? Effect.die(new Error(input.message))
+            : Effect.succeed(input),
       ),
     );
   const client = {
@@ -150,7 +164,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           ),
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
           Effect.andThen(Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems)),
-          Effect.as(streamFrom(inputs)),
+          Effect.andThen(Queue.offer(subscriptions, input.afterSequence)),
+          Effect.as(streamFrom(inputs).pipe(Stream.ensuring(Queue.offer(streamsEnded, undefined)))),
         ),
       ),
   } as unknown as WsRpcProtocolClient;
@@ -261,6 +276,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     latest,
     retryCount,
     subscriptionCount,
+    subscriptions,
+    streamsEnded,
     loaderCalls,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
@@ -1248,6 +1265,112 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.isNone(recovered.error)).toBe(true);
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("reloads the full snapshot after a resumed replay hits a defect", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      expect(yield* Queue.take(harness.subscriptions)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+
+      yield* Queue.offer(harness.inputs, new TestStreamDefect("Replayed event did not decode"));
+      expect(yield* Queue.take(harness.subscriptions)).toBeUndefined();
+
+      yield* Queue.offerAll(harness.inputs, [
+        snapshot(
+          { ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, title: "Reloaded thread" } },
+          CACHED_SNAPSHOT_SEQUENCE + 5,
+        ),
+        synchronized(),
+      ]);
+      // The failed resume is retried silently: no state on the way to live
+      // reports an error.
+      let live = yield* Queue.take(harness.observed);
+      while (live.status !== "live") {
+        expect(Option.isNone(live.error)).toBe(true);
+        live = yield* Queue.take(harness.observed);
+      }
+      expect(Option.getOrThrow(live.data).thread.title).toBe("Reloaded thread");
+      expect(Option.isNone(live.error)).toBe(true);
+
+      yield* harness.replaceSession;
+      expect(yield* Queue.take(harness.subscriptions)).toBe(CACHED_SNAPSHOT_SEQUENCE + 5);
+    }),
+  );
+
+  it.effect("reloads the snapshot when a session replacement races a failed resume", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      expect(yield* Queue.take(harness.subscriptions)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+
+      // Hold state application so the replay defect waits behind an update.
+      const applying = yield* Deferred.make<void>();
+      const releaseApplying = yield* Deferred.make<void>();
+      yield* SubscriptionRef.updateEffect(harness.threadState, (value) =>
+        Deferred.succeed(applying, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseApplying)),
+          Effect.as(value),
+        ),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(applying);
+      yield* Queue.offerAll(harness.inputs, [
+        titleUpdated("Replayed update", CACHED_SNAPSHOT_SEQUENCE + 1),
+        new TestStreamDefect("Replayed event did not decode"),
+      ]);
+      yield* Queue.take(harness.streamsEnded);
+
+      // A replacement session starts building its input before the buffered
+      // defect reaches the retry.
+      const replacementStarted = yield* Deferred.make<void>();
+      const releaseReplacement = yield* Deferred.make<void>();
+      const session = Option.getOrThrow(yield* SubscriptionRef.get(harness.supervisorSession));
+      yield* SubscriptionRef.set(
+        harness.supervisorSession,
+        Option.some({
+          ...session,
+          initialConfig: Deferred.succeed(replacementStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseReplacement)),
+            Effect.andThen(session.initialConfig),
+          ),
+        }),
+      );
+      yield* Deferred.await(replacementStarted);
+      yield* Deferred.succeed(releaseApplying, undefined);
+      yield* Deferred.succeed(releaseReplacement, undefined);
+
+      expect(yield* Queue.take(harness.subscriptions)).toBeUndefined();
+      yield* Queue.offerAll(harness.inputs, [
+        snapshot(
+          { ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, title: "Reloaded thread" } },
+          CACHED_SNAPSHOT_SEQUENCE + 5,
+        ),
+        synchronized(),
+      ]);
+      let live = yield* Queue.take(harness.observed);
+      while (live.status !== "live") {
+        expect(Option.isNone(live.error)).toBe(true);
+        live = yield* Queue.take(harness.observed);
+      }
+      expect(Option.getOrThrow(live.data).thread.title).toBe("Reloaded thread");
+      expect(Option.isNone(live.error)).toBe(true);
+    }),
+  );
+
+  it.effect("stops when the snapshot reload after a failed resume also hits a defect", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      expect(yield* Queue.take(harness.subscriptions)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      yield* Queue.offer(harness.inputs, new TestStreamDefect("Replayed event did not decode"));
+      expect(yield* Queue.take(harness.subscriptions)).toBeUndefined();
+
+      // A failed resume never publishes an error, so this one is the snapshot attempt's.
+      yield* Queue.offer(harness.inputs, new TestStreamDefect("Snapshot did not decode"));
+      const failed = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(failed.status).not.toBe("live");
+      expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize the thread.");
+      expect(yield* Queue.size(harness.subscriptions)).toBe(0);
     }),
   );
 
