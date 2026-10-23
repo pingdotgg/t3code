@@ -384,7 +384,7 @@ function recoveryFixture(
     { getContext: () => ({ drawImage }) } as unknown as HTMLCanvasElement,
     events,
   );
-  client.setMjpegImage(image as unknown as HTMLImageElement);
+  if (!videoOnly) client.setMjpegImage(image as unknown as HTMLImageElement);
   const imageReady = () => {
     image.naturalWidth = 400;
     image.naturalHeight = 800;
@@ -486,7 +486,7 @@ describe("shared device stream readiness and recovery", () => {
   });
 
   it("stops retrying a Simlock lease that ended and keeps its reason", async () => {
-    const { client, events, fetch, sockets, videoBodies } = recoveryFixture("ios", false, true);
+    const { client, events, fetch, sockets, videoBodies } = recoveryFixture("ios", false, false, true);
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     const reason = [...new TextEncoder().encode('{"reason":"expired"}')];
@@ -498,6 +498,32 @@ describe("shared device stream readiness and recovery", () => {
     expect(sockets).toHaveLength(1);
     expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.stringContaining("expired"));
     client.stop();
+  });
+
+  it("keeps serve-sim-only Android backlog recovery on AVCC", async () => {
+    const { client, configureVideo, overloadVideo, videoBodies, events, Decoder } = recoveryFixture(
+      "android",
+      false,
+      false,
+      true,
+    );
+    try {
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      for (let index = 0; index < 3; index++) {
+        await configureVideo(index);
+        await overloadVideo(index);
+      }
+      expect(videoBodies).toHaveLength(4);
+      expect(events.onMjpegFallback).not.toHaveBeenCalled();
+      await configureVideo(3);
+      expect(Decoder.isConfigSupported.mock.lastCall?.[0]).not.toHaveProperty(
+        "hardwareAcceleration",
+      );
+    } finally {
+      client.stop();
+    }
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("does not repaint a delayed JPEG seed over newer decoded video", async () => {
@@ -600,6 +626,109 @@ describe("shared device stream readiness and recovery", () => {
       client.stop();
     }
   });
+
+  it.each([false, true])(
+    "retries a transient software backlog after recovery for an iOS video-only feed: %s",
+    async (videoOnly) => {
+      const {
+        client,
+        Decoder,
+        decoders,
+        videoBodies,
+        events,
+        decodedFrame,
+        configureVideo,
+        overloadVideo,
+      } = recoveryFixture("ios", false, videoOnly);
+      try {
+        client.start();
+        await vi.advanceTimersByTimeAsync(0);
+        await configureVideo(0);
+        await overloadVideo(0);
+        await configureVideo(1);
+        await overloadVideo(1);
+        await configureVideo(2);
+        for (let frame = 0; frame < 120; frame++) decodedFrame();
+
+        await overloadVideo(2);
+        expect(events.onMjpegFallback).not.toHaveBeenCalled();
+        expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.any(String));
+        expect(videoBodies).toHaveLength(4);
+        await configureVideo(3);
+        expect(Decoder.isConfigSupported.mock.lastCall?.[0]).toMatchObject({
+          hardwareAcceleration: "prefer-software",
+        });
+        expect(decoders[3]!.configure).toHaveBeenCalledWith(
+          expect.objectContaining({ hardwareAcceleration: "prefer-software" }),
+        );
+        decodedFrame();
+        expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+
+        await overloadVideo(3);
+        expect(videoBodies).toHaveLength(4);
+        if (videoOnly) {
+          expect(events.onStatus).toHaveBeenLastCalledWith(
+            "error",
+            "This browser cannot keep up with the Duo panel's video.",
+          );
+          expect(events.onMjpegFallback).not.toHaveBeenCalled();
+        } else {
+          expect(events.onMjpegFallback).toHaveBeenCalledOnce();
+        }
+      } finally {
+        client.stop();
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each([
+    { videoOnly: false, failure: "callback" },
+    { videoOnly: true, failure: "callback" },
+    { videoOnly: false, failure: "decode" },
+    { videoOnly: true, failure: "decode" },
+  ])(
+    "handles software decoder $failure failure immediately for an iOS video-only feed: $videoOnly",
+    async ({ videoOnly, failure }) => {
+      const { client, decoders, videoBodies, events, sockets, configureVideo, overloadVideo } =
+        recoveryFixture("ios", false, videoOnly);
+      try {
+        client.start();
+        await vi.advanceTimersByTimeAsync(0);
+        await configureVideo(0);
+        await overloadVideo(0);
+        await configureVideo(1);
+        await overloadVideo(1);
+        await configureVideo(2);
+        const decoder = decoders[2]!;
+        if (failure === "callback") decoder.callbacks.error();
+        else {
+          decoder.decode.mockImplementationOnce(() => {
+            throw new Error("decoder failed");
+          });
+          videoBodies[2]!.enqueue(Uint8Array.from(envelope(2, [2])));
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        if (videoOnly) {
+          expect(events.onStatus).toHaveBeenLastCalledWith(
+            "error",
+            "This browser could not decode the Duo panel's video.",
+          );
+          expect(events.onMjpegFallback).not.toHaveBeenCalled();
+          expect(vi.getTimerCount()).toBe(0);
+        } else {
+          expect(events.onMjpegFallback).toHaveBeenCalledOnce();
+          expect(sockets[0]!.close).not.toHaveBeenCalled();
+        }
+        expect(decoder.state).toBe("closed");
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(videoBodies).toHaveLength(3);
+      } finally {
+        client.stop();
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it.each([false, true])(
     "bounds software fallback failure for an iOS video-only feed: %s",
