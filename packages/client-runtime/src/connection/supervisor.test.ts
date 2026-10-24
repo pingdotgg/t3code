@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -773,6 +774,103 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }),
+  );
+
+  it.effect(
+    "keeps a live session when the automatic follow-up to a slow foreground probe answers",
+    () =>
+      Effect.gen(function* () {
+        const probeCount = yield* Ref.make(0);
+        const probeStarted = yield* Queue.unbounded<number>();
+        const harness = yield* makeHarness({
+          probe: () =>
+            Ref.updateAndGet(probeCount, (count) => count + 1).pipe(
+              Effect.tap((call) => Queue.offer(probeStarted, call)),
+              Effect.flatMap((call) => (call === 1 ? Effect.never : Effect.void)),
+            ),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 1,
+        );
+        yield* harness.wake("application-active");
+        expect(yield* Queue.take(probeStarted)).toBe(1);
+        // A busy server misses the foreground probe deadline once while the
+        // socket stays open; the supervisor asks again on its own.
+        yield* TestClock.adjust("15 seconds");
+        expect(yield* Queue.take(probeStarted)).toBe(2);
+        yield* TestClock.adjust("30 seconds");
+
+        expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+        expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+          phase: "connected",
+          generation: 1,
+        });
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("replaces a session when the automatic follow-up probe also goes unanswered", () =>
+    Effect.gen(function* () {
+      const probeCount = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        probe: () =>
+          Ref.update(probeCount, (count) => count + 1).pipe(Effect.andThen(Effect.never)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      // One foreground event and no other signal: the follow-up's miss alone
+      // replaces the session.
+      yield* harness.wake("application-active");
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("15 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(yield* Ref.get(probeCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("replaces a session when a retry lands late in a slow foreground probe", () =>
+    Effect.gen(function* () {
+      const probeStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        probe: () => Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* harness.wake("application-active");
+      yield* Deferred.await(probeStarted);
+      yield* TestClock.adjust("13 seconds");
+      // The retry's own deadline falls after the foreground one, but it still
+      // asks for a definite answer, so the first miss is not forgiven.
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("5 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not churn a healthy session when credentials change", () =>
