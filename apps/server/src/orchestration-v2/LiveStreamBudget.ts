@@ -385,6 +385,7 @@ export const replayAndBufferProjectedLiveEvents = <
               // The finite database page is independent of the live tail.
               // Charge only the item being delivered so a fast reader can
               // consume a page larger than the budget without overflowing.
+              Stream.filter((event) => input.filter?.(event) ?? true),
               Stream.rechunk(1),
               Stream.mapEffect((event) => budget.retain(input.project(event))),
             );

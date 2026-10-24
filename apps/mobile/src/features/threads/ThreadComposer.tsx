@@ -147,7 +147,8 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
   const editorWidth = useSharedValue(0);
-  const inset = Platform.OS === "android" ? 0 : collapsedEditorInset(text);
+  const inset =
+    Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
   const height = Math.max(
     minimum,
@@ -216,7 +217,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       }
     },
     editorProps: {
-      singleLineCentered: false,
+      singleLineCentered: !isExpanded,
       scrollEnabled: Platform.OS === "android" || contentHeight >= text.lineHeight * 4,
       contentInsetVertical: inset,
       onContentSizeChange: (size: { width: number; height: number }) => {
@@ -232,6 +233,7 @@ export interface ThreadComposerProps {
   readonly canOperateThread: boolean;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
+  readonly draftControls?: ReactNode;
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
@@ -848,8 +850,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </>
   ) : null;
 
-  // The row and the card's toolbar share this picker. It shrinks to the provider
-  // icon in the row once the draft has text, so the draft keeps the width.
   const modelControl = (
     <View className="min-w-0 shrink">
       <ComposerModelControl
@@ -860,9 +860,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={
-          (draftMessage.length > 0 || stripAttachments.length > 0) && !compactEditor.isExpanded
-        }
+        iconOnly={!compactEditor.isExpanded}
         onPress={openSettings}
       />
     </View>
@@ -894,6 +892,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
+        {props.draftControls}
         {!isSubmissionLocked &&
         composerMenu.trigger &&
         (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (

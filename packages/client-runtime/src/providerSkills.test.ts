@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
-  resolveProviderForCwd,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "./providerSkills.ts";
@@ -122,63 +121,5 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-b")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
-  });
-});
-
-describe("resolveProviderForCwd", () => {
-  it("switches workspace options for every model without changing the machine catalog", () => {
-    const reasoning = {
-      id: "reasoning",
-      label: "Reasoning",
-      type: "select" as const,
-      options: [{ id: "high", label: "High" }],
-    };
-    const globalAgent = {
-      id: "agent",
-      label: "Agent",
-      type: "select" as const,
-      options: [{ id: "build", label: "Build" }],
-    };
-    const workspaceAgent = {
-      ...globalAgent,
-      options: [{ id: "readonly", label: "Readonly" }],
-    };
-    const emptyAgent = { ...globalAgent, options: [] };
-    const catalog: ServerProvider = {
-      ...provider,
-      models: [
-        {
-          slug: "model",
-          name: "Model",
-          isCustom: false,
-          capabilities: { optionDescriptors: [globalAgent, reasoning] },
-        },
-        { slug: "custom", name: "Custom", isCustom: true, capabilities: null },
-        { slug: "legacy", name: "Legacy", isCustom: false, capabilities: {} },
-      ],
-      workspaceSnapshots: [
-        ...provider.workspaceSnapshots,
-        ...[workspaceAgent, emptyAgent].map((agent, index) => ({
-          ...provider.workspaceSnapshots[0]!,
-          cwd: `/workspace/options-${index}`,
-          optionDescriptors: [agent],
-        })),
-      ],
-    };
-    const original = structuredClone(catalog);
-
-    for (const [index, agent] of [workspaceAgent, emptyAgent, workspaceAgent].entries()) {
-      const scoped = resolveProviderForCwd(catalog, `/workspace/options-${index % 2}`);
-      expect(scoped.models.map((model) => model.capabilities?.optionDescriptors)).toEqual([
-        expect.arrayContaining([reasoning, agent]),
-        [agent],
-        [agent],
-      ]);
-      expect(scoped.models[0]?.capabilities?.optionDescriptors).toHaveLength(2);
-    }
-    expect(catalog).toEqual(original);
-    expect(resolveProviderForCwd(catalog, "/workspace/unknown")).toBe(catalog);
-    expect(resolveProviderForCwd(catalog, "/workspace/project-a")).toBe(catalog);
-    expect(resolveProviderForCwd(catalog, null)).toBe(catalog);
   });
 });

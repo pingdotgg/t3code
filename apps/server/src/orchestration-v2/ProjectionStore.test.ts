@@ -1105,6 +1105,36 @@ const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(functio
   return { projectId, activeThreadId, forkThreadId, otherThreadId };
 });
 
+it.effect("lists only active subagent IDs without loading shell data", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const createdAt = "2026-01-05T00:00:00.000Z";
+    for (const [id, relationship, archivedAt, deletedAt] of [
+      ["parent", null, null, null],
+      ["active-subagent", "subagent", null, null],
+      ["archived-subagent", "subagent", createdAt, null],
+      ["deleted-subagent", "subagent", null, createdAt],
+    ] as const) {
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, archived_at, deleted_at, payload_json
+        ) VALUES (
+          ${id}, 'project:test', ${id}, 'codex', 'full-access', 'default',
+          ${createdAt}, ${createdAt}, ${archivedAt}, ${deletedAt},
+          ${JSON.stringify({ lineage: { relationshipToParent: relationship }, archivedAt })}
+        )
+      `;
+    }
+
+    assert.sameMembers(
+      [...(yield* store.listActiveSubagentThreadIds())],
+      [ThreadId.make("active-subagent")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
@@ -2372,6 +2402,170 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         [activeThreadId, forkThreadId],
       );
     }),
+  );
+
+  it.effect("looks up shell stop requests through the interrupt request index", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const { projectId } = yield* assertProjectScopedShells("sql-shell-stop-index");
+      const { statements, tracer } = traceSqlStatements();
+      yield* projectionStore
+        .getShellSnapshot({ projectId, location: "active" })
+        .pipe(Effect.withTracer(tracer));
+
+      const threadQuery = statements.find((statement) =>
+        statement.includes("AS latest_run_stop_requested"),
+      );
+      assert.isDefined(threadQuery);
+      const stopRequestLookups = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${threadQuery}`,
+      ))
+        .map((row) => row.detail)
+        .filter((detail) => detail.startsWith("SEARCH stop_request "));
+      assert.lengthOf(stopRequestLookups, 2);
+      for (const lookup of stopRequestLookups) {
+        assert.include(lookup, "orchestration_v2_projection_turn_items_stop_request_idx");
+      }
+    }),
+  );
+
+  it.effect(
+    "counts each shell's own runless and live-run items, skipping rolled back and missing runs",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = ProjectId.make("project:shell-item-counts");
+        const busyThreadId = ThreadId.make("thread:shell-item-counts:busy");
+        const emptyThreadId = ThreadId.make("thread:shell-item-counts:empty");
+        const otherThreadId = ThreadId.make("thread:shell-item-counts:other");
+        for (const threadId of [busyThreadId, emptyThreadId, otherThreadId]) {
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${threadId}:created`),
+            type: "thread.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId,
+              title: threadId,
+              providerInstanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          });
+        }
+        const applyRun = (
+          threadId: ThreadId,
+          suffix: string,
+          ordinal: number,
+          rolledBack: boolean,
+        ) => {
+          const runId = RunId.make(`run:shell-item-counts:${suffix}`);
+          const rootNodeId = NodeId.make(`node:shell-item-counts:${suffix}`);
+          return projectionStore
+            .apply({
+              id: EventId.make(`event:shell-item-counts:${suffix}:run`),
+              type: "run.created",
+              threadId,
+              runId,
+              nodeId: rootNodeId,
+              driver,
+              occurredAt: now,
+              payload: {
+                id: runId,
+                threadId,
+                ordinal,
+                providerInstanceId,
+                modelSelection,
+                providerThreadId: null,
+                userMessageId: MessageId.make(`message:shell-item-counts:${suffix}:user`),
+                rootNodeId,
+                activeAttemptId: null,
+                status: rolledBack ? "rolled_back" : "completed",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            })
+            .pipe(Effect.as(runId));
+        };
+        let ordinal = 0;
+        const applyItem = (threadId: ThreadId, runId: RunId | null) => {
+          ordinal += 1;
+          return projectionStore.apply({
+            id: EventId.make(`event:shell-item-counts:item:${ordinal}`),
+            type: "turn-item.updated",
+            threadId,
+            ...(runId === null ? {} : { runId }),
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`turn-item:shell-item-counts:${ordinal}`),
+              threadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "assistant_message",
+              messageId: MessageId.make(`message:shell-item-counts:${ordinal}`),
+              text: `item ${ordinal}`,
+              streaming: false,
+            },
+          });
+        };
+
+        const completedRunId = yield* applyRun(busyThreadId, "busy-completed", 1, false);
+        const rolledBackRunId = yield* applyRun(busyThreadId, "busy-rolled-back", 2, true);
+        const otherRunId = yield* applyRun(otherThreadId, "other", 1, false);
+        yield* applyItem(busyThreadId, null);
+        yield* applyItem(busyThreadId, null);
+        yield* applyItem(busyThreadId, completedRunId);
+        yield* applyItem(busyThreadId, completedRunId);
+        yield* applyItem(busyThreadId, rolledBackRunId);
+        yield* applyItem(busyThreadId, RunId.make("run:shell-item-counts:missing"));
+        yield* applyItem(otherThreadId, otherRunId);
+
+        const snapshot = yield* projectionStore.getShellSnapshot({ projectId });
+        const expected = [
+          [busyThreadId, 4],
+          [emptyThreadId, 0],
+          [otherThreadId, 1],
+        ] as const;
+        for (const [threadId, itemCount] of expected) {
+          const shell = yield* projectionStore.getThreadShell(threadId);
+          assert.deepEqual(
+            snapshot.threads.find((thread) => thread.id === threadId),
+            shell ?? undefined,
+          );
+          assert.equal(shell?.itemCount, itemCount);
+        }
+      }),
   );
 
   it.effect("does not treat visited or marked-unread state as thread activity", () =>

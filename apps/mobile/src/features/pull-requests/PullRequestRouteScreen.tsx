@@ -56,7 +56,6 @@ import {
   View,
 } from "react-native";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
-import { useRestingTopOffset } from "../../native/useRestingTopOffset";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -64,6 +63,7 @@ import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
+import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
@@ -117,16 +117,9 @@ import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFa
 const EMPTY_IDS: readonly string[] = [];
 
 function PullRequestTabScrollView(props: ScrollViewProps) {
-  const insets = useSafeAreaInsets();
-  const restingOffset = useRestingTopOffset(insets.top, props);
   return (
     <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView
-        {...props}
-        {...restingOffset}
-        automaticallyAdjustContentInsets={false}
-        contentInsetAdjustmentBehavior="never"
-      />
+      <ScrollView {...props} />
     </ScrollViewMarker>
   );
 }
@@ -281,6 +274,7 @@ function usePullRequestToolbarHeight(bottomInset: number) {
 export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
   const returnToList = useAndroidWorkspaceBack("pullRequests");
   const { layout } = useAdaptiveWorkspaceLayout();
+  const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
@@ -405,7 +399,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             unstable_headerSubtitle: connected
               ? params.repository
               : `${params.repository} · Offline`,
+            unstable_headerLeftItems: layout.usesSplitView ? () => [sidebarHeaderItem] : undefined,
           }}
+          optionsVersion={[layout.usesSplitView, sidebarHeaderItem]}
         />
         {Platform.OS === "android" ? (
           <AndroidScreenHeader
@@ -572,10 +568,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   renderScrollComponent={
                     Platform.OS === "ios" ? PullRequestTabScrollView : undefined
                   }
-                  contentInsetAdjustmentBehavior="never"
-                  contentInset={
-                    Platform.OS === "ios" ? { top: insets.top, bottom: insets.bottom } : undefined
-                  }
+                  // UIKit owns the bar's inset, so a minimizing bar and a resized column
+                  // move the list in the same frame as the bar.
+                  contentInsetAdjustmentBehavior="automatic"
                   contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
                   refreshControl={
                     <RefreshControl

@@ -89,12 +89,19 @@ export const ThreadPullRequestWatch = Schema.Struct({
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** Checks still pending when required ones passed early, owed one wake once all settle. */
+  owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   remarksThrough: IsoDateTime,
   /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
   /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
   wakes: NonNegativeInt,
+  /**
+   * When the head was first read without any check, until a check shows up or the agent is told
+   * none did. Null once either happened; absent on watches saved before it existed.
+   */
+  checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

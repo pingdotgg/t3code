@@ -323,14 +323,18 @@ const CLAUDE_GROUP_WATCH_SCRIPT = [
  * When the CLI exits it stops the MCP servers it started, but not their children: a plugin's
  * `bun run start` wrapper dies and its `bun server.ts` keeps running, writing to a pipe nobody
  * reads (#3089). Those stay in the CLI's group, so the rest of the group gets SIGKILL once the
- * CLI exits for any reason.
+ * CLI exits for any reason. `onExit` then stops the CLI's agent scope, for daemons a tool
+ * detached from the group with setsid.
  *
  * That cleanup needs this server alive, and the CLI finishes its turn after its pipes close. A
  * server that crashes or is killed would leave the CLI working next to the session it resumes
  * (#23370), so a watcher in the group reads a pipe only this server holds and stops the group at
  * its end-of-file.
  */
-export function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
+export function spawnClaudeProcessGroup(
+  options: ClaudeSpawnOptions,
+  onExit?: () => void,
+): ClaudeSpawnedProcess {
   const child = NodeChildProcess.spawn(
     "/bin/sh",
     ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
@@ -346,6 +350,7 @@ export function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpaw
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
     } catch {}
+    onExit?.();
   });
   // Node's typings make stdin and stdout nullable once stdio has a fourth entry; both are pipes.
   return child as ClaudeSpawnedProcess;
@@ -892,6 +897,7 @@ export const layerQueryRunner: Layer.Layer<
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
+    const runFork = Effect.runForkWith(yield* Effect.context<never>());
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto
@@ -942,10 +948,16 @@ export const layerQueryRunner: Layer.Layer<
                 pathToClaudeCodeExecutable: launch.command,
                 executableArgs: [...launch.args, ...(queryOptions.executableArgs ?? [])],
               };
+        const unit = launch?.unit;
+        const stopScope =
+          unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
         // Windows has no process groups, so there the SDK spawns the CLI itself.
         const spawnClaudeCodeProcess =
           options.spawnClaudeCodeProcess ??
-          (platform === "win32" ? undefined : spawnClaudeProcessGroup);
+          (platform === "win32"
+            ? undefined
+            : (spawnOptions: ClaudeSpawnOptions) =>
+                spawnClaudeProcessGroup(spawnOptions, stopScope));
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>
@@ -2892,6 +2904,7 @@ export function permissionResultFromDecision(input: {
   readonly toolInput: Record<string, unknown>;
   readonly toolUseID: string;
   readonly suggestions?: Parameters<CanUseTool>[2]["suggestions"];
+  readonly feedback?: string;
 }): PermissionResult {
   if (input.decision === "accept" || input.decision === "acceptForSession") {
     return {
@@ -2911,9 +2924,10 @@ export function permissionResultFromDecision(input: {
   return {
     behavior: "deny",
     message:
-      input.decision === "cancel"
+      input.feedback?.trim() ||
+      (input.decision === "cancel"
         ? "User cancelled tool execution."
-        : "User declined tool execution.",
+        : "User declined tool execution."),
     toolUseID: input.toolUseID,
     decisionClassification: "user_reject",
     ...(input.decision === "cancel" ? { interrupt: true } : {}),
@@ -2942,11 +2956,11 @@ function toSessionPermissionUpdates(
 }
 
 export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecision")(function* (
-  decision: Deferred.Deferred<ProviderApprovalDecision>,
+  decision: Deferred.Deferred<ClaudeApprovalResponse>,
   signal: AbortSignal,
 ) {
-  const cancellation = Effect.callback<ProviderApprovalDecision>((resume) => {
-    const abort = () => resume(Effect.succeed("cancel"));
+  const cancellation = Effect.callback<ClaudeApprovalResponse>((resume) => {
+    const abort = () => resume(Effect.succeed({ decision: "cancel" }));
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) {
       abort();
@@ -3625,12 +3639,17 @@ function rememberClaudeSubagentLaunch(
   }
 }
 
+type ClaudeApprovalResponse = {
+  readonly decision: ProviderApprovalDecision;
+  readonly feedback?: string;
+};
+
 type PendingClaudeRuntimeRequest =
   | {
       readonly type: "approval";
       readonly requestId: OrchestrationV2RuntimeRequest["id"];
       readonly requestKind: ProviderRequestKind;
-      readonly decision: Deferred.Deferred<ProviderApprovalDecision, never>;
+      readonly decision: Deferred.Deferred<ClaudeApprovalResponse, never>;
     }
   | {
       readonly type: "user_input";
@@ -6467,6 +6486,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             responseCapability: {
               type: "live",
               providerSessionId,
+              ...(input.questions === undefined ? { supportsFeedback: true } : {}),
             },
             createdAt,
             resolvedAt: null,
@@ -8986,7 +9006,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               callbackOptions,
             }),
           });
-          const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+          const decision = yield* Deferred.make<ClaudeApprovalResponse, never>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {
             const updated = new Map(current);
             updated.set(String(artifacts.request.id), {
@@ -9033,7 +9053,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           return permissionResultFromDecision({
             toolName,
-            decision: resolvedDecision,
+            ...resolvedDecision,
             toolInput,
             toolUseID: callbackOptions.toolUseID,
             ...(callbackOptions.suggestions === undefined
@@ -10283,7 +10303,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
                 });
               }
-              yield* Deferred.succeed(pending.decision, requestInput.decision);
+              yield* Deferred.succeed(pending.decision, {
+                decision: requestInput.decision,
+                ...(requestInput.feedback === undefined ? {} : { feedback: requestInput.feedback }),
+              });
             },
             (effect, requestInput) =>
               effect.pipe(

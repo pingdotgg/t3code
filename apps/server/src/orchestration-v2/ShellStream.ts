@@ -106,6 +106,32 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
     };
 
+/** Focused subagents receive these updates through their thread subscription. */
+export function shouldPublishShellApplicationEvent(
+  stored: ApplicationStoredEvent,
+  subagentThreadIds: Set<string>,
+): boolean {
+  if ("aggregateKind" in stored) return true;
+  const { event } = stored;
+  if (event.type === "thread.created") {
+    if (event.payload.lineage.relationshipToParent === "subagent") {
+      subagentThreadIds.add(event.threadId);
+    }
+    return true;
+  }
+  if (event.type === "thread.deleted") {
+    // Replay and the live tail overlap; keep known IDs so late events stay filtered.
+    return true;
+  }
+  return !(
+    subagentThreadIds.has(event.threadId) &&
+    (event.type === "node.updated" ||
+      event.type === "turn-item.updated" ||
+      event.type === "provider-turn.updated" ||
+      event.type === "message.updated")
+  );
+}
+
 /** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
 export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
   return "aggregateKind" in stored

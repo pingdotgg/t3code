@@ -530,65 +530,124 @@ it.effect("Stop still stops the thread when a delegated child cannot be read", (
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("Stop ends watches, holds queues, and stops the delegated tasks under the thread", () =>
+it.effect.each(["run.interrupt", "thread.stop"] as const)(
+  "%s Stop ends watches, holds queues, and stops the delegated tasks under the thread",
+  (type) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const sql = yield* SqlClient.SqlClient;
+      const parentThreadId = ThreadId.make("thread:stop-parent");
+      yield* createWatchingThread(parentThreadId, 1);
+      yield* send(parentThreadId, "first", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, "child task");
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(childThreadId, 2))));
+      const grandchildThreadId = yield* delegate(childThreadId, "grandchild task");
+      yield* send(childThreadId, "child follow-up", "queue_after_active");
+
+      const now = yield* DateTime.now;
+      const firstRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+      yield* projections.apply({
+        id: EventId.make("event:stop-parent:first-run-completed"),
+        type: "run.updated",
+        threadId: parentThreadId,
+        runId: firstRun.id,
+        occurredAt: now,
+        payload: { ...firstRun, status: "completed", completedAt: now },
+      });
+      yield* send(parentThreadId, "second", "start_immediately");
+      const secondRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!;
+
+      const stopCommandId = CommandId.make("stop-parent");
+      yield* orchestrator.dispatch(
+        type === "thread.stop"
+          ? { type, commandId: stopCommandId, threadId: parentThreadId }
+          : {
+              type,
+              commandId: stopCommandId,
+              threadId: parentThreadId,
+              runId: secondRun.id,
+              holdQueue: true,
+            },
+      );
+
+      assert.deepEqual(yield* threadState(parentThreadId), {
+        runs: ["completed", "interrupted"],
+        watched: [],
+      });
+      const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+      assert.equal(parent.subagents[0]?.completionDelivery?.state, "disposed");
+      const effects = yield* sql<{ readonly effect_type: string }>`
+      SELECT effect_type FROM orchestration_v2_effect_outbox WHERE command_id = ${stopCommandId}
+    `;
+      assert.include(
+        effects.map((row) => row.effect_type),
+        "delegated-tasks.stop",
+      );
+
+      yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+      assert.deepEqual(yield* threadState(childThreadId), {
+        runs: ["interrupted", "queued:held"],
+        watched: [],
+      });
+      assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
+
+      yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+      assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
+      // The walk stops each level itself, so the child stops it sends queue no walk of their own.
+      const walks = yield* sql<{ readonly command_id: string }>`
+      SELECT command_id FROM orchestration_v2_effect_outbox
+      WHERE effect_type = 'delegated-tasks.stop'
+    `;
+      assert.deepEqual(
+        walks.map((row) => row.command_id),
+        [stopCommandId],
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a repeated Stop that changes nothing still stops the delegated tasks", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threads = yield* ThreadManagementService.ThreadManagementService;
     const sql = yield* SqlClient.SqlClient;
-    const parentThreadId = ThreadId.make("thread:stop-parent");
+    const parentThreadId = ThreadId.make("thread:stop-again");
     yield* createWatchingThread(parentThreadId, 1);
     yield* send(parentThreadId, "first", "start_immediately");
-    const childThreadId = yield* delegate(parentThreadId, "child task");
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(childThreadId, 2))));
-    const grandchildThreadId = yield* delegate(childThreadId, "grandchild task");
-    yield* send(childThreadId, "child follow-up", "queue_after_active");
-
+    yield* delegate(parentThreadId, "stop-again child");
     const now = yield* DateTime.now;
-    const firstRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+    const run = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
     yield* projections.apply({
-      id: EventId.make("event:stop-parent:first-run-completed"),
+      id: EventId.make("event:stop-again:run-completed"),
       type: "run.updated",
       threadId: parentThreadId,
-      runId: firstRun.id,
+      runId: run.id,
       occurredAt: now,
-      payload: { ...firstRun, status: "completed", completedAt: now },
+      payload: { ...run, status: "completed", completedAt: now },
     });
-    yield* send(parentThreadId, "second", "start_immediately");
-    const secondRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!;
-
-    const stopCommandId = CommandId.make("stop-parent");
     yield* orchestrator.dispatch({
-      type: "run.interrupt",
-      commandId: stopCommandId,
+      type: "thread.stop",
+      commandId: CommandId.make("stop-again:first"),
       threadId: parentThreadId,
-      runId: secondRun.id,
-      holdQueue: true,
     });
 
-    assert.deepEqual(yield* threadState(parentThreadId), {
-      runs: ["completed", "interrupted"],
-      watched: [],
+    // The first Stop already disposed the delivery and ended the watch, so this one writes no
+    // events, like Stop on a thread an older server stopped without stopping its children.
+    const again = yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-again:second"),
+      threadId: parentThreadId,
     });
-    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
-    assert.equal(parent.subagents[0]?.completionDelivery?.state, "disposed");
-    const effects = yield* sql<{ readonly effect_type: string }>`
-      SELECT effect_type FROM orchestration_v2_effect_outbox WHERE command_id = ${stopCommandId}
+    assert.lengthOf(again.storedEvents, 0);
+    const walks = yield* sql<{ readonly command_id: string }>`
+      SELECT command_id FROM orchestration_v2_effect_outbox
+      WHERE effect_type = 'delegated-tasks.stop'
     `;
-    assert.include(
-      effects.map((row) => row.effect_type),
-      "delegated-tasks.stop",
+    assert.deepEqual(
+      walks.map((row) => row.command_id),
+      ["stop-again:first", "stop-again:second"],
     );
-
-    yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
-    assert.deepEqual(yield* threadState(childThreadId), {
-      runs: ["interrupted", "queued:held"],
-      watched: [],
-    });
-    assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
-
-    yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
-    assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
   }).pipe(Effect.provide(layerTest)),
 );
 

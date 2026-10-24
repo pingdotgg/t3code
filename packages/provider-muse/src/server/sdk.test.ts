@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { afterEach, describe, expect, vi } from "vite-plus/test";
+import { afterEach, describe, expect, onTestFinished, vi } from "vite-plus/test";
 import {
   createMuseSdkHost,
   createMuseSdkHostEffect,
@@ -133,6 +133,85 @@ describe("Muse SDK host", () => {
         message: "Muse SDK returned an unsupported protocol envelope version.",
       });
     },
+  );
+
+  it.effect(
+    "observes native host exit while the SDK still waits for a detached stdout holder",
+    () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        yield* Effect.promise(async () => {
+          const sdk = await vi.importActual<typeof import("@muse-code/sdk")>("@muse-code/sdk");
+          const processExited = pending<{ code: number | null; signal: NodeJS.Signals | null }>();
+          const holderSource = `process.send("ready", () => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+      });`;
+          const fixture = `
+        const { spawn } = require("node:child_process");
+        require("node:readline").createInterface({ input: process.stdin }).on("line", async line => {
+          const frame = JSON.parse(line);
+          if (!("id" in frame)) return;
+          let result = { schema: { version: 1, fingerprint: "t3-native-fixture" }, grantedCapabilities: [] };
+          if (frame.method === "fixture/exit") {
+            const holder = spawn(process.execPath, ["-e", ${JSON.stringify(holderSource)}], {
+              detached: true, stdio: ["ignore", 1, 2, "ipc"]
+            });
+            await new Promise(resolve => holder.once("message", resolve));
+            result = { pid: holder.pid };
+          }
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }) + "\\n",
+            () => { if (frame.method === "fixture/exit") process.exit(7); });
+        });
+      `;
+          let holderPid: number | undefined;
+          let host: MuseSdkHost | undefined;
+          const reap = () => {
+            if (holderPid !== undefined) {
+              try {
+                process.kill(holderPid, "SIGKILL");
+              } catch {
+                /* Already reaped. */
+              }
+              holderPid = undefined;
+            }
+          };
+          onTestFinished(async () => {
+            reap();
+            await host?.close();
+          });
+          try {
+            host = await createMuseSdkHost(
+              {
+                binaryPath: process.execPath,
+                launch: { command: process.execPath, args: ["-e", fixture] },
+                onProcessExit: processExited.resolve,
+              },
+              sdk.spawnMspConnection,
+            );
+            let sdkExited = false;
+            let connectionClosed = false;
+            void host.exited.then(() => {
+              sdkExited = true;
+            });
+            void host.connection.closed.then(() => {
+              connectionClosed = true;
+            });
+            const response = await host.connection.request("fixture/exit", {});
+            expect(response).toMatchObject({ pid: expect.any(Number) });
+            holderPid = Number((response as { pid: number }).pid);
+            expect(await processExited.promise).toEqual({ code: 7, signal: null });
+            expect(sdkExited).toBe(false);
+            expect(connectionClosed).toBe(false);
+            reap();
+            expect(await host.exited).toEqual({ code: 7, signal: null });
+            await host.close();
+            expect(connectionClosed).toBe(true);
+          } finally {
+            reap();
+            await host?.close();
+          }
+        });
+      }),
   );
 
   it.effect("closes a fulfilled host when interruption wins before acquisition is delivered", () =>

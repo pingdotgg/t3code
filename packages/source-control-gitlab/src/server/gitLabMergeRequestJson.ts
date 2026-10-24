@@ -441,6 +441,34 @@ export function decodeProjectUsersJson(
   return Result.succeed({ candidates, rawCount: decoded.success.length });
 }
 
+const RawLabelSchema = Schema.Struct({
+  name: Schema.String,
+  color: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const decodeLabelEntry = Schema.decodeUnknownExit(RawLabelSchema);
+
+export interface GitLabProjectLabels {
+  readonly labels: ReadonlyArray<PullRequestLabel>;
+  readonly rawCount: number;
+}
+
+export function decodeProjectLabelsJson(
+  raw: string,
+): Result.Result<GitLabProjectLabels, DecodeFailure> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const labels: PullRequestLabel[] = [];
+  for (const entry of decoded.success) {
+    const label = decodeLabelEntry(entry);
+    if (Exit.isFailure(label)) continue;
+    const name = trimmed(label.value.name);
+    if (name !== null) labels.push({ name, color: trimmed(label.value.color) });
+  }
+  return Result.succeed({ labels, rawCount: decoded.success.length });
+}
+
 export function decodeProjectMergeCapabilitiesJson(
   raw: string,
 ): Result.Result<PullRequestMergeCapabilities, DecodeFailure> {

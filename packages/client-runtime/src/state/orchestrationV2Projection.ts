@@ -15,6 +15,36 @@ export type ApplyOrchestrationV2ProjectionEventOptions = {
   readonly latestLocalTurnOrdinal?: number | null;
 };
 
+// Only this exact pair differs at one index. Both keys are weak so hints
+// neither retain streaming history nor apply to replacement snapshots.
+const arrayReplacements = new WeakMap<
+  ReadonlyArray<unknown>,
+  WeakMap<ReadonlyArray<unknown>, number>
+>();
+
+export function getProjectionArrayReplacementIndex(
+  previous: ReadonlyArray<unknown>,
+  next: ReadonlyArray<unknown>,
+): number | undefined {
+  return arrayReplacements.get(previous)?.get(next);
+}
+
+function replaceProjectionArrayItem<T>(
+  items: ReadonlyArray<T>,
+  index: number,
+  item: T,
+): ReadonlyArray<T> {
+  const next = items.slice();
+  next[index] = item;
+  let replacements = arrayReplacements.get(items);
+  if (replacements === undefined) {
+    replacements = new WeakMap();
+    arrayReplacements.set(items, replacements);
+  }
+  replacements.set(next, index);
+  return next;
+}
+
 function upsertEntity<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
   item: T,
@@ -167,11 +197,12 @@ function upsertVisibleTurnItem(
   if (
     previous !== undefined &&
     previous.visibility === next.visibility &&
-    previous.sourceThreadId === next.sourceThreadId &&
-    previous.sourceItemId === next.sourceItemId &&
-    previous.item === item
+    previous.sourceThreadId === next.sourceThreadId
   ) {
-    return rows;
+    if (previous.item === item) return rows;
+    if (previous.item.ordinal === item.ordinal) {
+      return replaceProjectionArrayItem(rows, index, { ...next, position: previous.position });
+    }
   }
   if (
     index === -1 &&
@@ -181,8 +212,8 @@ function upsertVisibleTurnItem(
     return rows;
   }
   // The item goes before the first later local row, as if its old row were
-  // removed first. One pass builds and renumbers the result: this runs for
-  // every streamed chunk of a thread that can hold thousands of rows.
+  // removed first. Inserts, reorders, and inherited-to-local changes need
+  // this ordering pass; replacements above preserve every other row.
   let insertion = rows.length;
   for (let candidate = 0; candidate < rows.length; candidate += 1) {
     const row = rows[candidate]!;
@@ -326,9 +357,10 @@ export function applyOrchestrationV2ProjectionEvent(
       ) {
         return projection;
       }
-      const turnItems = [...projection.turnItems];
-      if (itemIndex === -1) turnItems.push(event.payload);
-      else turnItems[itemIndex] = event.payload;
+      const turnItems =
+        itemIndex === -1
+          ? [...projection.turnItems, event.payload]
+          : replaceProjectionArrayItem(projection.turnItems, itemIndex, event.payload);
       const next = { ...base, turnItems };
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.

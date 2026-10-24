@@ -157,6 +157,25 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("narrows by author and draft state in the same query", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.listPullRequests({
+        repository: "acme/web",
+        state: "open",
+        limit: 50,
+        author: 'ana"',
+        draft: false,
+      });
+
+      expect(filterOfCall(0)).toBe(
+        '(author.nickname = "ana\\"" OR author.display_name = "ana\\"") AND draft = false',
+      );
+    }),
+  );
+
   it.effect("refuses a repository that is not workspace and slug", () =>
     Effect.gen(function* () {
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;

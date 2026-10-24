@@ -123,6 +123,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
@@ -167,6 +168,7 @@ import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinar
 import * as ProcessGroupMetrics from "./resourceTelemetry/ProcessGroupMetrics.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as AntigravityUsage from "./provider/Drivers/AntigravityUsage.ts";
+import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
@@ -268,6 +270,7 @@ const layerUsage = UsageService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       AntigravityUsage.layer,
+      MuseUsageHome.layer,
       CodexUsageHistory.layer,
       CursorUsageAccounts.layer.pipe(
         Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
@@ -653,6 +656,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
+  Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),

@@ -184,6 +184,37 @@ export function appendPullRequestListPage(
   };
 }
 
+/**
+ * A filter picker's rows: what is picked stays in view, then the loaded rows' values that match,
+ * then the host's answers, each once. The host matched its own way (an author's display name, say),
+ * so its answers are not narrowed again here.
+ */
+const FILTER_CHOICE_LIMIT = 100;
+
+export function pullRequestFilterChoices(input: {
+  readonly selected: readonly string[];
+  readonly suggestions: readonly string[];
+  readonly hosted: readonly string[];
+  readonly query: string;
+}): readonly string[] {
+  const needle = input.query.trim().toLowerCase();
+  const seen = new Set<string>();
+  const rows: string[] = [];
+  const add = (value: string) => {
+    const key = value.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push(value);
+  };
+  const loaded = input.suggestions.filter((value) => value.toLowerCase().includes(needle));
+  for (const value of input.selected) add(value);
+  // Loaded matches alone could fill the list, so the host's answers get room after the first half.
+  for (const value of loaded.slice(0, FILTER_CHOICE_LIMIT / 2)) add(value);
+  for (const value of input.hosted) add(value);
+  for (const value of loaded.slice(FILTER_CHOICE_LIMIT / 2)) add(value);
+  return rows.slice(0, FILTER_CHOICE_LIMIT);
+}
+
 export function pullRequestListFacets(entries: readonly PullRequestListEntry[]) {
   return {
     authors: [
@@ -192,7 +223,21 @@ export function pullRequestListFacets(entries: readonly PullRequestListEntry[]) 
     labels: [...new Set(entries.flatMap((entry) => entry.labels.map((label) => label.name)))].sort(
       (a, b) => a.localeCompare(b),
     ),
+    labelColors: pullRequestLabelColors(entries.flatMap((entry) => entry.labels)),
   };
+}
+
+/** Each label's dot color by lowercased name; the first usable color a name carries wins. */
+export function pullRequestLabelColors(
+  labels: readonly { readonly name: string; readonly color: string | null }[],
+): Readonly<Record<string, string>> {
+  const colors: Record<string, string> = {};
+  for (const label of labels) {
+    const key = label.name.toLowerCase();
+    const color = pullRequestLabelColor(label.color);
+    if (color && !(key in colors)) colors[key] = color;
+  }
+  return colors;
 }
 
 export function filterPullRequestList<

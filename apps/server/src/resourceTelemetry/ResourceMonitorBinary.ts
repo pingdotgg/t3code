@@ -146,6 +146,20 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
     environment.T3CODE_RESOURCE_MONITOR_PATH,
     config.resourceMonitorPath,
   ].filter((candidate): candidate is string => Boolean(candidate));
+  const cargoOutputDirectories =
+    rustTarget === undefined
+      ? []
+      : [
+          path.join("target", rustTarget, "release"),
+          path.join("target", "release"),
+          path.join("target", "debug"),
+        ];
+  const sourceCandidates = [
+    path.resolve(import.meta.dirname, "../../../../native/resource-monitor"),
+    path.resolve(import.meta.dirname, "../../../native/resource-monitor"),
+  ].flatMap((crateDirectory) =>
+    cargoOutputDirectories.map((directory) => path.join(crateDirectory, directory, executableName)),
+  );
   const bundledCandidates =
     platformKey === undefined || rustTarget === undefined
       ? []
@@ -153,30 +167,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
           path.resolve(import.meta.dirname, "resource-monitor", platformKey, executableName),
           path.resolve(import.meta.dirname, "resource-monitor", executableName),
           path.resolve(import.meta.dirname, "../resource-monitor", executableName),
-          path.resolve(
-            import.meta.dirname,
-            "../../../../native/resource-monitor/target",
-            rustTarget,
-            "release",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
-            "../../../native/resource-monitor/target",
-            rustTarget,
-            "release",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
-            "../../../../native/resource-monitor/target/release",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
-            "../../../../native/resource-monitor/target/debug",
-            executableName,
-          ),
+          ...sourceCandidates,
         ];
   if (overrideCandidates.length === 0 && bundledCandidates.length === 0) {
     return ResourceMonitorBinary.of({

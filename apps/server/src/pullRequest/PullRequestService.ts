@@ -51,6 +51,10 @@ import {
   type PullRequestListProjectError,
   type PullRequestListResult,
   type PullRequestListStatsInput,
+  type PullRequestFilterOptions,
+  type PullRequestFilterOptionsInput,
+  type PullRequestActor,
+  type PullRequestLabel,
   type PullRequestListStatsResult,
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
@@ -88,6 +92,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   type ProviderChangeRequest,
+  type ProviderFilterOptionPage,
   type ProviderListCursor,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
@@ -123,6 +128,7 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
 const REPOSITORY_CONCURRENCY = 12;
 const REPOSITORY_SEARCH_CHUNK = 100;
+const FILTERED_LIST_READS = 5;
 
 /**
  * Every read leaves the process — a CLI per repository, against hosts whose limits are low
@@ -174,6 +180,9 @@ export class PullRequestService extends Context.Service<
     readonly listStats: (
       input: PullRequestListStatsInput,
     ) => Effect.Effect<PullRequestListStatsResult, PullRequestError>;
+    readonly filterOptions: (
+      input: PullRequestFilterOptionsInput,
+    ) => Effect.Effect<PullRequestFilterOptions, PullRequestError>;
     readonly routing: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestRoutingResult, PullRequestError>;
@@ -341,7 +350,7 @@ interface ListCursor extends ProviderListCursor {
 }
 
 const LIST_CURSOR_PATTERN =
-  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))\|(\d{1,9})\|(\d{1,9}(?:,\d{1,9})*)?$/;
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))\|(\d{1,9})\|(\d{1,9}(?:,\d{1,9})*)?(?:\|([\w.:~+-]{1,128}))?$/;
 
 function parseListCursor(raw: string): ListCursor | null {
   const match = LIST_CURSOR_PATTERN.exec(raw);
@@ -351,6 +360,7 @@ function parseListCursor(raw: string): ListCursor | null {
     updatedBefore: match[1]!,
     delivered: Number(match[2]),
     seenAt: seenAt === undefined ? [] : seenAt.split(",").map(Number),
+    ...(match[4] === undefined ? {} : { resumeAfter: match[4] }),
   };
 }
 
@@ -368,6 +378,7 @@ function nextListCursor(
   delivered: ReadonlyArray<ProviderChangeRequest>,
   /** A provider may consume malformed offset-paged rows that never appear in `delivered`. */
   cursorAdvance = delivered.length,
+  resumeAfter?: string,
 ): string | null {
   if (fetched.length === 0) return null;
   // Taken from what the host answered rather than from what survived de-duplication: a slice can
@@ -375,7 +386,7 @@ function nextListCursor(
   // repository's boring afternoon — and reading "nothing new" as "nothing left" would end the
   // walk on the instant it was stuck on, with everything older unreachable for good.
   const oldest = fetched.reduce((left, right) => (right.updatedAt < left.updatedAt ? right : left));
-  return listCursorAt(previous, oldest.updatedAt, fetched, cursorAdvance);
+  return listCursorAt(previous, oldest.updatedAt, fetched, cursorAdvance, resumeAfter);
 }
 
 function listCursorAt(
@@ -383,12 +394,14 @@ function listCursorAt(
   boundary: string,
   fetched: ReadonlyArray<ProviderChangeRequest>,
   deliveredCount: number,
+  resumeAfter?: string,
 ): string {
   const seenAt = new Set([
     ...(previous?.updatedBefore === boundary ? previous.seenAt : []),
     ...fetched.filter((item) => item.updatedAt === boundary).map((item) => item.number),
   ]);
-  return `${boundary}|${(previous?.delivered ?? 0) + deliveredCount}|${[...seenAt].join(",")}`;
+  const cursor = `${boundary}|${(previous?.delivered ?? 0) + deliveredCount}|${[...seenAt].join(",")}`;
+  return resumeAfter === undefined ? cursor : `${cursor}|${resumeAfter}`;
 }
 
 function isProviderUnusable(error: PullRequestProviderError): boolean {
@@ -569,6 +582,17 @@ function withRateLimitBackoff(
       ? {}
       : { listLabelCandidates: interactive("listLabelCandidates", api.listLabelCandidates) }),
     ...(api.setLabels === undefined ? {} : { setLabels: interactive("setLabels", api.setLabels) }),
+    ...(api.listRepositoryLabels === undefined
+      ? {}
+      : { listRepositoryLabels: interactive("listRepositoryLabels", api.listRepositoryLabels) }),
+    ...(api.searchRepositoryAuthors === undefined
+      ? {}
+      : {
+          searchRepositoryAuthors: interactive(
+            "searchRepositoryAuthors",
+            api.searchRepositoryAuthors,
+          ),
+        }),
     replyToThread: interactive("replyToThread", api.replyToThread),
     setReaction: interactive("setReaction", api.setReaction),
     setThreadResolution: interactive("setThreadResolution", api.setThreadResolution),
@@ -576,6 +600,52 @@ function withRateLimitBackoff(
   // Optional provider methods must be forwarded too; returning the interface alone permits omissions.
   return wrapped satisfies PullRequestProviderApi &
     Record<Exclude<keyof PullRequestProviderApi, keyof typeof wrapped>, never>;
+}
+
+const FILTER_OPTIONS_LIMIT = 100;
+
+/**
+ * Exact matches first, then names that begin with the query, then the rest, so a short query
+ * still puts the obvious answer at the top of a long list.
+ */
+function rankFilterOptions<A>(
+  pages: ReadonlyArray<ProviderFilterOptionPage<A>>,
+  input: {
+    readonly query: string | undefined;
+    readonly keyOf: (item: A) => string;
+    readonly textsOf: (item: A) => ReadonlyArray<string | null>;
+  },
+): { readonly items: ReadonlyArray<A>; readonly truncated: boolean } {
+  const query = input.query?.trim().toLowerCase() ?? "";
+  const unique = new Map<string, A>();
+  for (const page of pages) {
+    for (const item of page.items) {
+      const key = input.keyOf(item).toLowerCase();
+      if (!unique.has(key)) unique.set(key, item);
+    }
+  }
+  const rank = (item: A) => {
+    const texts = input.textsOf(item).flatMap((text) => (text ? [text.toLowerCase()] : []));
+    if (query.length === 0) return 0;
+    if (texts.includes(query)) return 0;
+    if (texts.some((text) => text.startsWith(query))) return 1;
+    if (texts.some((text) => text.includes(query))) return 2;
+    return null;
+  };
+  const ranked = [...unique.values()]
+    .flatMap((item) => {
+      const score = rank(item);
+      return score === null ? [] : [{ item, score, key: input.keyOf(item) }];
+    })
+    .toSorted(
+      (left, right) =>
+        left.score - right.score ||
+        left.key.localeCompare(right.key, undefined, { sensitivity: "base" }),
+    );
+  return {
+    items: ranked.slice(0, FILTER_OPTIONS_LIMIT).map(({ item }) => item),
+    truncated: ranked.length > FILTER_OPTIONS_LIMIT || pages.some((page) => page.truncated),
+  };
 }
 
 // Capture before the provider read so a slow response keeps its original freshness through caches.
@@ -1165,11 +1235,13 @@ export const make = Effect.gen(function* () {
     const cursorOf = (project: SupportedProject): ListCursor | undefined =>
       continuation?.get(project.cursorKey);
 
-    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
+    const readSlice = (
+      project: SupportedProject,
+      cursor: ListCursor | undefined,
+    ): Effect.Effect<RepositoryBatch> => {
       {
         const viewer = viewers[project.host]!;
         const key = project.cursorKey;
-        const cursor = cursorOf(project);
         return project.api
           .listChangeRequests({
             cwd: project.project.workspaceRoot,
@@ -1188,6 +1260,7 @@ export const make = Effect.gen(function* () {
                     updatedBefore: cursor.updatedBefore,
                     delivered: cursor.delivered,
                     seenAt: cursor.seenAt,
+                    resumeAfter: cursor.resumeAfter,
                   },
                 }),
           })
@@ -1214,7 +1287,13 @@ export const make = Effect.gen(function* () {
                 truncated: page.truncated,
                 nextCursor:
                   page.continues && page.truncated
-                    ? nextListCursor(cursor, page.items, items, page.cursorAdvance)
+                    ? nextListCursor(
+                        cursor,
+                        page.items,
+                        items,
+                        page.cursorAdvance,
+                        page.resumeAfter,
+                      )
                     : null,
               };
             }),
@@ -1233,6 +1312,32 @@ export const make = Effect.gen(function* () {
             })),
           );
       }
+    };
+
+    // Filters a host cannot apply thin out the slices it hands over, so a repository keeps
+    // reading until it has a page's worth or runs out. The reads are bounded: a filter that
+    // matches nothing would otherwise walk the repository's whole history in one request.
+    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
+      const fill = (batch: RepositoryBatch, reads: number): Effect.Effect<RepositoryBatch> => {
+        const cursor = batch.nextCursor === null ? null : parseListCursor(batch.nextCursor);
+        if (
+          input.filters === undefined ||
+          cursor === null ||
+          batch.entries.length >= limit ||
+          reads >= FILTERED_LIST_READS
+        ) {
+          return Effect.succeed(batch);
+        }
+        return readSlice(project, cursor).pipe(
+          Effect.flatMap((next) =>
+            // A slice that failed keeps the cursor before it, so the reader can try again.
+            next.errors.length > 0
+              ? Effect.succeed(batch)
+              : fill({ ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
+          ),
+        );
+      };
+      return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
     };
 
     const readTogether = (
@@ -2286,6 +2391,61 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const filterOptions: PullRequestService["Service"]["filterOptions"] = Effect.fn(
+    "PullRequestService.filterOptions",
+  )(function* (input) {
+    const { supported } = yield* listWorkspaceProjects(input);
+    // Worktrees of one checkout are separate projects over the same repository.
+    const repositories = [
+      ...new Map(supported.map((project) => [project.cursorKey, project])).values(),
+    ];
+    const refOf = (project: SupportedProject) => ({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      query: input.query,
+    });
+    // One repository the host cannot read leaves the others' options standing, as a listing does.
+    const gather = <A>(
+      read: (
+        project: SupportedProject,
+      ) => Effect.Effect<ProviderFilterOptionPage<A>, PullRequestProviderError> | undefined,
+    ) =>
+      Effect.forEach(
+        repositories,
+        (project): Effect.Effect<ReadonlyArray<ProviderFilterOptionPage<A>>> => {
+          const page = read(project);
+          return page === undefined
+            ? Effect.succeed([])
+            : page.pipe(
+                Effect.map((answered) => [answered]),
+                Effect.orElseSucceed(() => []),
+              );
+        },
+        { concurrency: REPOSITORY_CONCURRENCY },
+      ).pipe(Effect.map((pages) => pages.flat()));
+    if (input.kind === "labels") {
+      const pages = yield* gather<PullRequestLabel>((project) =>
+        project.api.listRepositoryLabels?.(refOf(project)),
+      );
+      const { items, truncated } = rankFilterOptions(pages, {
+        query: input.query,
+        keyOf: (label) => label.name,
+        textsOf: (label) => [label.name],
+      });
+      return { labels: items, authors: [], truncated };
+    }
+    const pages = yield* gather<PullRequestActor>((project) =>
+      project.api.searchRepositoryAuthors?.(refOf(project)),
+    );
+    const { items, truncated } = rankFilterOptions(pages, {
+      query: input.query,
+      keyOf: (author) => author.login,
+      textsOf: (author) => [author.login, author.name],
+    });
+    return { labels: [], authors: items, truncated };
+  });
+
   const labelCandidates: PullRequestService["Service"]["labelCandidates"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<PullRequestLabelCandidateList, PullRequestError> => {
@@ -2790,7 +2950,11 @@ export const make = Effect.gen(function* () {
                   host: project.host,
                   number: input.number,
                 })
-                .pipe(Effect.mapError(toPullRequestError("checks"))),
+                .pipe(
+                  Effect.mapError(toPullRequestError("checks")),
+                  observeRead,
+                  Effect.map(({ value, observedAt }) => ({ ...value, observedAt })),
+                ),
         ),
       );
     },
@@ -3388,6 +3552,7 @@ export const make = Effect.gen(function* () {
     routingIdentity,
     withRoutingCredential,
     list,
+    filterOptions,
     listStats: (input) =>
       Effect.forEach(input.refs, (ref) => canonicalRef(ref).pipe(Effect.option)).pipe(
         Effect.flatMap((refs) => listStats({ ...input, refs: refs.flatMap(Option.toArray) })),

@@ -21,7 +21,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { useRestingTopOffset } from "../../native/useRestingTopOffset";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
@@ -46,16 +45,9 @@ import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 
 function PullRequestScrollView(props: ScrollViewProps) {
-  const insets = useSafeAreaInsets();
-  const restingOffset = useRestingTopOffset(insets.top, props);
   return (
     <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView
-        {...props}
-        {...restingOffset}
-        automaticallyAdjustContentInsets={false}
-        contentInsetAdjustmentBehavior="never"
-      />
+      <ScrollView {...props} />
     </ScrollViewMarker>
   );
 }
@@ -200,8 +192,14 @@ export function PullRequestsScreen(
           ...facets.labels,
         ]),
       ].sort(),
+      labelColors: {
+        ...facets.labelColors,
+        ...(previous.environmentId === environmentId ? previous.labelColors : {}),
+      },
     }));
   }
+  const labelColors =
+    knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
   const projects = allProjects.filter(
     (project) =>
       !project.isScratch && (environmentId === null || project.environmentId === environmentId),
@@ -260,8 +258,9 @@ export function PullRequestsScreen(
         showsVerticalScrollIndicator={Platform.OS !== "android"}
         recycleItems
         renderScrollComponent={Platform.OS === "ios" ? PullRequestScrollView : undefined}
-        contentInsetAdjustmentBehavior="never"
-        contentInset={Platform.OS === "ios" ? { top: insets.top } : undefined}
+        // UIKit owns the bar's inset, so a minimizing bar and a resized column move
+        // the list in the same frame as the bar.
+        contentInsetAdjustmentBehavior="automatic"
         // A plain offset: LegendList adds the list header to an index-based restore, which
         // landed every return one header lower.
         initialScrollOffset={
@@ -269,7 +268,9 @@ export function PullRequestsScreen(
         }
         contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
         contentContainerStyle={{
-          paddingBottom: Math.max(insets.bottom, workspace.bottomClearance),
+          paddingBottom:
+            Math.max(insets.bottom, workspace.bottomClearance) -
+            (Platform.OS === "ios" ? insets.bottom : 0),
         }}
         onScroll={(event) => {
           workspace.recordScrollOffset(
@@ -318,7 +319,18 @@ export function PullRequestsScreen(
               labels={
                 knownFacets.environmentId === environmentId ? knownFacets.labels : facets.labels
               }
+              labelColors={labelColors}
               projects={projects}
+              onSearch={(kind) =>
+                navigation.navigate("PullRequestFilterSearch", {
+                  kind,
+                  environmentId,
+                  environmentIds: targets.map((target) => String(target.environmentId)),
+                  suggestions:
+                    knownFacets.environmentId === environmentId ? knownFacets[kind] : facets[kind],
+                  labelColors,
+                })
+              }
             />
             {result.data?.errors.length ? (
               <PullRequestListErrors
@@ -346,6 +358,15 @@ export function PullRequestsScreen(
                 label="Try again"
                 accessibilityLabel="Retry loading more pull requests"
                 onPress={() => void result.loadMore(true)}
+              />
+            </View>
+          ) : result.hasMore ? (
+            // A filtered page can be too short to scroll, which leaves nothing to reach the end of.
+            <View className="items-center py-4">
+              <Button
+                label="Load more"
+                accessibilityLabel="Load more pull requests"
+                onPress={() => void result.loadMore()}
               />
             </View>
           ) : undefined

@@ -55,6 +55,26 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
+function normalizePullRequestQuery<A>(
+  query: (target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef }) => A,
+) {
+  return ({
+    environmentId,
+    input: { projectId, host, repository, number, allowStale, expectedAccountId },
+  }: Parameters<typeof query>[0]) =>
+    query({
+      environmentId,
+      input: {
+        projectId,
+        ...(host === undefined ? {} : { host }),
+        repository,
+        number,
+        ...(allowStale === undefined ? {} : { allowStale }),
+        ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
+      },
+    });
+}
+
 function writableQueryFamily<A, E>(
   family: (target: {
     readonly environmentId: EnvironmentId;
@@ -77,22 +97,7 @@ function writableQueryFamily<A, E>(
       (refresh) => refresh(source),
     ).pipe(Atom.setIdleTTL(5 * 60_000)),
   );
-  return ({
-    environmentId,
-    input: { projectId, host, repository, number, allowStale },
-  }: Parameters<typeof family>[0]) =>
-    writable(
-      family({
-        environmentId,
-        input: {
-          projectId,
-          ...(host === undefined ? {} : { host }),
-          repository,
-          number,
-          ...(allowStale === undefined ? {} : { allowStale }),
-        },
-      }),
-    );
+  return normalizePullRequestQuery((target) => writable(family(target)));
 }
 
 /** Restart pre-mutation reads before patching so they cannot restore stale values. */
@@ -317,16 +322,23 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
+    filterOptions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:filter-options",
+      tag: WS_METHODS.pullRequestsFilterOptions,
+      staleTimeMs: 5 * 60_000,
+    }),
     detail,
     preview,
-    checks: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:checks",
-      persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
-      tag: WS_METHODS.pullRequestsChecks,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
-      staleTimeMs: 45_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-    }),
+    checks: normalizePullRequestQuery(
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:pull-requests:checks",
+        persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
+        tag: WS_METHODS.pullRequestsChecks,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
+        staleTimeMs: 45_000,
+        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      }),
+    ),
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",

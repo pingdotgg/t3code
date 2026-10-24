@@ -6,8 +6,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import {
   NonNegativeInt,
+  SourceControlProviderKind,
   TrimmedNonEmptyString,
   type SourceControlProviderAuth,
   type SourceControlRepositoryCloneUrls,
@@ -32,12 +34,14 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
 
 import * as BitbucketClient from "../client/definition.ts";
-import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
+/** A sweep over many branches would otherwise reach Bitbucket as one burst of lookups. */
+const CONCURRENCY = 4;
 
 const BitbucketApiEnvConfig = Config.all({
   baseUrl: Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
@@ -262,6 +266,7 @@ export const BitbucketApiError = Schema.Union([
   BitbucketRepositoryRemoteNotFoundError,
   BitbucketPullRequestBodyReadError,
   BitbucketCheckoutError,
+  SourceControlRateLimit.SourceControlRateLimitPausedError,
 ]);
 export type BitbucketApiError = typeof BitbucketApiError.Type;
 const isBitbucketApiError = Schema.is(BitbucketApiError);
@@ -607,7 +612,7 @@ const responseError = Effect.fn("BitbucketApi.responseError")(function* (
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.fn.Return<never, BitbucketApiError> {
   const now = yield* Clock.currentTimeMillis;
-  const retryAt = retryAtFromHeader(response.headers["retry-after"], now);
+  const retryAt = SourceControlRateLimit.retryAtFromHeader(response.headers["retry-after"], now);
   const collected = yield* collectUint8StreamText({
     stream: response.stream,
     maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
@@ -637,6 +642,13 @@ export const make = Effect.gen(function* () {
   const git = host.git;
   const httpClient = yield* HttpClient.HttpClient;
   const fileSystem = yield* FileSystem.FileSystem;
+  const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+  const slots = yield* Semaphore.make(CONCURRENCY);
+  // The repository host PullRequestService keys its own backoff under, so both share one pause.
+  const rateLimitKey = {
+    provider: SourceControlProviderKind.make("bitbucket"),
+    host: "bitbucket.org",
+  };
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
@@ -673,6 +685,33 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Every request waits for one of the shared slots, then honors the pause a 429 starts for the
+   * whole host. Each queued lookup would otherwise spend its own 429 and keep the quota exhausted.
+   * Background reads fail at once while paused; a write or an interactive read has a user waiting
+   * on it, so it still goes out.
+   */
+  const throttled = Effect.fn("BitbucketApi.throttled")(
+    function* <A, R>(method: string, effect: Effect.Effect<A, BitbucketApiError, R>) {
+      const interactive = yield* SourceControlRateLimit.Interactive;
+      const lease = yield* limits.check(
+        rateLimitKey,
+        interactive || method !== "GET" ? { allowPaused: true } : undefined,
+      );
+      return yield* effect.pipe(
+        Effect.tap(() => limits.recordSuccess({ ...rateLimitKey, lease })),
+        Effect.tapError((error) =>
+          (error._tag === "BitbucketResponseError" ||
+            error._tag === "BitbucketResponseBodyReadError") &&
+          error.status === 429
+            ? limits.recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
+            : Effect.void,
+        ),
+      );
+    },
+    (effect) => slots.withPermit(effect),
+  );
+
   const decodeResponse = <S extends Schema.Top>(
     operation: BitbucketApiOperation,
     schema: S,
@@ -698,20 +737,23 @@ export const make = Effect.gen(function* () {
     request: HttpClientRequest.HttpClientRequest,
     schema: S,
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
-    withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
-      Effect.flatMap(httpClient.execute),
-      Effect.mapError(
-        (cause) =>
-          new BitbucketRequestError({
-            operation,
-            cause,
-          }),
+    throttled(
+      request.method,
+      withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
+        Effect.flatMap(httpClient.execute),
+        Effect.mapError(
+          (cause) =>
+            new BitbucketRequestError({
+              operation,
+              cause,
+            }),
+        ),
+        Effect.flatMap((response) => decodeResponse(operation, schema, response)),
+        Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
+        Effect.catchTags({
+          TimeoutError: (cause) => Effect.fail(new BitbucketRequestError({ operation, cause })),
+        }),
       ),
-      Effect.flatMap((response) => decodeResponse(operation, schema, response)),
-      Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: (cause) => Effect.fail(new BitbucketRequestError({ operation, cause })),
-      }),
     );
 
   const resolveRepository = Effect.fn("BitbucketApi.resolveRepository")(function* (input: {
@@ -913,38 +955,41 @@ export const make = Effect.gen(function* () {
   };
 
   const request: BitbucketApi["Service"]["request"] = (input) =>
-    send({ ...input, redirects: 0 }).pipe(
-      Effect.flatMap((response) =>
-        HttpClientResponse.matchStatus({
-          // Read through the body stream rather than `text`, so an oversized diff is stopped as
-          // it arrives instead of being materialized whole and then cut.
-          "2xx": (success) =>
-            collectUint8StreamText({
-              stream: success.stream,
-              maxBytes: input.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new BitbucketResponseBodyReadError({
-                    operation: "request",
-                    status: success.status,
-                    cause,
-                  }),
+    throttled(
+      input.method,
+      send({ ...input, redirects: 0 }).pipe(
+        Effect.flatMap((response) =>
+          HttpClientResponse.matchStatus({
+            // Read through the body stream rather than `text`, so an oversized diff is stopped as
+            // it arrives instead of being materialized whole and then cut.
+            "2xx": (success) =>
+              collectUint8StreamText({
+                stream: success.stream,
+                maxBytes: input.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new BitbucketResponseBodyReadError({
+                      operation: "request",
+                      status: success.status,
+                      cause,
+                    }),
+                ),
+                Effect.map((collected) => ({
+                  body: collected.text,
+                  truncated: collected.truncated,
+                })),
               ),
-              Effect.map((collected) => ({
-                body: collected.text,
-                truncated: collected.truncated,
-              })),
-            ),
-          orElse: (failed) => responseError("request", failed),
-        })(response),
+            orElse: (failed) => responseError("request", failed),
+          })(response),
+        ),
+        // This also caps redirect hops: no request can finish headers then stall its body forever.
+        Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            Effect.fail(new BitbucketRequestError({ operation: "request", cause })),
+        }),
       ),
-      // This also caps redirect hops: no request can finish headers then stall its body forever.
-      Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: (cause) =>
-          Effect.fail(new BitbucketRequestError({ operation: "request", cause })),
-      }),
     );
 
   return BitbucketApi.of({

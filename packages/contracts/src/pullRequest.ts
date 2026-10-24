@@ -525,6 +525,26 @@ export const PullRequestListStatsResult = Schema.Struct({
 });
 export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
 
+export const PullRequestFilterOptionKind = Schema.Literals(["labels", "authors"]);
+export type PullRequestFilterOptionKind = typeof PullRequestFilterOptionKind.Type;
+
+/** Scoped like `PullRequestListInput`, so the options come from the repositories it lists. */
+export const PullRequestFilterOptionsInput = Schema.Struct({
+  kind: PullRequestFilterOptionKind,
+  projectId: Schema.optional(ProjectId),
+  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  host: Schema.optional(TrimmedNonEmptyString),
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestFilterOptionsInput = typeof PullRequestFilterOptionsInput.Type;
+
+export const PullRequestFilterOptions = Schema.Struct({
+  labels: Schema.Array(PullRequestLabel),
+  authors: Schema.Array(PullRequestActor),
+  truncated: Schema.Boolean,
+});
+export type PullRequestFilterOptions = typeof PullRequestFilterOptions.Type;
+
 /**
  * A separate request rather than a flag on the reads, so an explicit "refresh" one person
  * presses is the only thing that spends host requests — every ordinary read shares.
@@ -589,6 +609,7 @@ export const PullRequestDetail = Schema.Struct({
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
 export const PullRequestChecks = Schema.Struct({
+  observedAt: Schema.optional(Schema.Finite),
   state: PullRequestState,
   checks: Schema.Array(PullRequestCheck),
 });

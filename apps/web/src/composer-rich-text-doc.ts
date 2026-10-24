@@ -15,6 +15,7 @@ import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic
 import {
   type Command,
   type Editor,
+  Extension,
   markInputRule,
   markPasteRule,
   mergeAttributes,
@@ -150,6 +151,20 @@ export const ComposerItalicExtension = Italic.extend({
   },
   addPasteRules() {
     return [markPasteRule({ find: starPasteRegex, type: this.type })];
+  },
+});
+
+/**
+ * Mod+B bolds selected text only. Without a selection Tiptap would toggle bold
+ * for the next typed text, which users hit by accident when they mean the
+ * sidebar toggle. Runs ahead of the Bold extension and swallows the chord.
+ */
+export const ComposerBoldSelectionOnlyExtension = Extension.create({
+  name: "composerBoldSelectionOnly",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
+    return { "Mod-b": ignoreWithoutSelection, "Mod-B": ignoreWithoutSelection };
   },
 });
 

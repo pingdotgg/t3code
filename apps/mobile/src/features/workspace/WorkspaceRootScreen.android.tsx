@@ -1,3 +1,7 @@
+import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
+import { useEnabledNavigationTabs } from "./navigation-tabs";
+import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
+import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,11 +20,12 @@ import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
-const TABS: readonly WorkspaceTab[] = ["threads", "pullRequests"];
+const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
 
 export function WorkspaceRootScreen() {
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
+  const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
   const context = useMemo(
@@ -33,6 +38,7 @@ export function WorkspaceRootScreen() {
   const tab = workspace.state.selectedTab;
 
   if (layout.usesSplitView) {
+    if (enabled.length === 0) return <View className="flex-1 bg-screen" />;
     return (
       <WorkspaceTabPanes
         tabs={TABS}
@@ -40,6 +46,8 @@ export function WorkspaceRootScreen() {
         renderTab={(tab) =>
           tab === "threads" ? (
             <HomeRouteScreen />
+          ) : tab !== "pullRequests" ? (
+            <WorkspaceExtraTab tab={tab} />
           ) : (
             <>
               <NativeStackScreenOptions options={{ headerShown: false }} />
@@ -63,22 +71,28 @@ export function WorkspaceRootScreen() {
       <View className="flex-1 bg-header">
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <SafeAreaInsetsContext value={{ ...insets, bottom: 0 }}>
-          <WorkspaceTabPanes
-            tabs={TABS}
-            selected={tab}
-            renderTab={(tab) =>
-              tab === "threads" ? (
-                <HomeRouteScreen />
-              ) : (
-                <PullRequestFilterMenuProvider>
-                  <PullRequestToolbar />
-                  <ScreenContent>
-                    <PullRequestsScreen />
-                  </ScreenContent>
-                </PullRequestFilterMenuProvider>
-              )
-            }
-          />
+          {enabled.length === 0 ? (
+            <WorkspaceNoTabs />
+          ) : (
+            <WorkspaceTabPanes
+              tabs={TABS}
+              selected={tab}
+              renderTab={(tab) =>
+                tab === "threads" ? (
+                  <HomeRouteScreen />
+                ) : tab !== "pullRequests" ? (
+                  <WorkspaceExtraTab tab={tab} />
+                ) : (
+                  <PullRequestFilterMenuProvider>
+                    <PullRequestToolbar />
+                    <ScreenContent>
+                      <PullRequestsScreen />
+                    </ScreenContent>
+                  </PullRequestFilterMenuProvider>
+                )
+              }
+            />
+          )}
         </SafeAreaInsetsContext>
         <AndroidWorkspaceNavigation onNewThread={startNewTask} />
       </View>

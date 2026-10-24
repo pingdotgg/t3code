@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -58,6 +58,11 @@ const CAPABILITIES: PullRequestCapabilities = {
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
 };
+const USER_SEARCH_LIMIT = 50;
+const ForgejoUserSearch = Schema.Struct({
+  data: Schema.optional(Schema.NullOr(Schema.Array(ForgejoUser))),
+});
+
 const repoPath = (input: ProviderRepositoryRef) =>
   `repos/${input.repository.split("/").map(encodeURIComponent).join("/")}`;
 const pullPath = (input: ProviderRepositoryRef & { readonly number: number }) =>
@@ -100,7 +105,8 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-  const read = Effect.fn("ForgejoPullRequestProvider.read")(function* <A>(
+  /** A response, and whether its `link` header points at a further page. */
+  const readLinked = Effect.fn("ForgejoPullRequestProvider.readLinked")(function* <A>(
     input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
   ) {
@@ -108,10 +114,15 @@ export const make = Effect.gen(function* () {
     if (result.stdoutTruncated)
       return yield* failure(input.path, "Forgejo response exceeded the output limit.");
     const decoded = decodeJsonResult(schema)(result.stdout);
-    return Result.isSuccess(decoded)
-      ? decoded.success
-      : yield* failure(input.path, "Forgejo returned an invalid response.", decoded.failure);
+    if (Result.isFailure(decoded))
+      return yield* failure(input.path, "Forgejo returned an invalid response.", decoded.failure);
+    const links = /^link:\s*(.*)$/im.exec(result.stderr)?.[1];
+    return { value: decoded.success, next: links !== undefined && /rel="?next"?/i.test(links) };
   });
+  const read = <A>(
+    input: ForgejoCli.ForgejoApiInput,
+    schema: Schema.Codec<A, unknown, never, never>,
+  ) => readLinked(input, schema).pipe(Effect.map(({ value }) => value));
   const readArray = <A>(
     input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
@@ -254,13 +265,36 @@ export const make = Effect.gen(function* () {
         const offset = input.cursor?.delivered ?? 0;
         const items: ReturnType<typeof forgejoChangeRequest>[] = [];
         const state = input.state === "merged" ? "closed" : input.state;
-        const query = {
-          ...input,
-          path: `${repoPath(input)}/pulls?state=${state}&sort=recentupdate`,
-        };
+        const params = new URLSearchParams({ state, sort: "recentupdate" });
+        const filters = input.filters;
+        // Several `labels` match a pull request holding any of them but list it once per label it
+        // holds, which would throw the row offset off, so one required label is all Forgejo is
+        // asked for. The service narrows the rest.
+        const single = filters?.labels?.find((group) => group.length === 1)?.[0];
+        if (single !== undefined) {
+          const labels = yield* page({ ...input, path: `${repoPath(input)}/labels` }, ForgejoLabel);
+          const label = labels.items.find(
+            (candidate) => candidate.name.toLowerCase() === single.trim().toLowerCase(),
+          );
+          if (label !== undefined) params.set("labels", String(label.id));
+        }
+        if (filters?.author !== undefined)
+          params.set("poster", resolvePullRequestAuthorFilter(filters.author, input.viewer));
+        const query = { ...input, path: `${repoPath(input)}/pulls?${params}` };
         // Self-hosted servers may cap pages below 50. Establish their actual page size before
         // translating the service's row offset into an API page number.
-        const first = yield* readPage(query, Schema.NullOr(ForgejoPullRequest), 1);
+        const first = yield* readPage(query, Schema.NullOr(ForgejoPullRequest), 1).pipe(
+          Effect.catchTags({
+            // Forgejo answers a `poster` naming no account with a 400: nobody to list for.
+            PullRequestProviderError: (error) =>
+              params.has("poster") &&
+              isForgejoCliError(error.cause) &&
+              error.cause.httpStatus === 400
+                ? Effect.succeed(null)
+                : Effect.fail(error),
+          }),
+        );
+        if (first === null) return { items: [], truncated: false, continues: false };
         const pageSize = first.rows.length || 50;
         const firstIndex = Math.floor(offset / pageSize) + 1;
         let consumed = 0;
@@ -465,11 +499,25 @@ export const make = Effect.gen(function* () {
     runAction: (input) => {
       switch (input.action) {
         case "merge":
-          return write({
-            ...input,
-            path: `${pullPath(input)}/merge`,
-            method: "POST",
-            body: { Do: input.mergeMethod ?? "merge" },
+          return Effect.gen(function* () {
+            const deleteBranch = (yield* getRepo(input)).default_delete_branch_after_merge ?? false;
+            yield* write({
+              ...input,
+              path: `${pullPath(input)}/merge`,
+              method: "POST",
+              body: { Do: input.mergeMethod ?? "merge", delete_branch_after_merge: deleteBranch },
+            }).pipe(
+              Effect.catchTags({
+                // Forgejo merges before deleting the branch, so a refused deletion still merged.
+                PullRequestProviderError: (error) =>
+                  deleteBranch
+                    ? getPull(input).pipe(
+                        Effect.mapError(() => error),
+                        Effect.flatMap((pr) => (pr.merged ? Effect.void : Effect.fail(error))),
+                      )
+                    : Effect.fail(error),
+              }),
+            );
           });
         case "close":
         case "reopen":
@@ -592,6 +640,48 @@ export const make = Effect.gen(function* () {
             isApplied: pr.labels?.some((applied) => applied.id === label.id) ?? false,
           })),
           truncated: labels.truncated,
+        };
+      },
+    ),
+    listRepositoryLabels: Effect.fn("ForgejoPullRequestProvider.listRepositoryLabels")(
+      function* (input) {
+        const labels = yield* page({ ...input, path: `${repoPath(input)}/labels` }, ForgejoLabel);
+        return {
+          items: labels.items.map((label) => ({ name: label.name, color: label.color ?? null })),
+          truncated: labels.truncated,
+        };
+      },
+    ),
+    searchRepositoryAuthors: Effect.fn("ForgejoPullRequestProvider.searchRepositoryAuthors")(
+      function* (input) {
+        const query = input.query?.trim() ?? "";
+        const actors = (users: ReadonlyArray<typeof ForgejoUser.Type>) =>
+          users.flatMap((user) => {
+            const actor = forgejoActor(user);
+            return actor ? [actor] : [];
+          });
+        // Before anything is typed the repository's own people stand in; a search reaches
+        // contributors from forks, who are never assignable.
+        if (query.length === 0) {
+          const users = yield* page(
+            { ...input, path: `${repoPath(input)}/assignees` },
+            ForgejoUser,
+            100,
+          );
+          return { items: actors(users.items), truncated: users.truncated };
+        }
+        const found = yield* readLinked(
+          {
+            ...input,
+            path: `users/search?${new URLSearchParams({ q: query, limit: String(USER_SEARCH_LIMIT) })}`,
+          },
+          ForgejoUserSearch,
+        );
+        const users = found.value.data ?? [];
+        // A server may cap pages below the limit asked for; its `link` header still says more.
+        return {
+          items: actors(users),
+          truncated: found.next || users.length >= USER_SEARCH_LIMIT,
         };
       },
     ),

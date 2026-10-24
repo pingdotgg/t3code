@@ -12,12 +12,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { ChildProcessSpawner } from "effect/process";
+import * as Metric from "effect/Metric";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
+import { gitCommandDuration, gitCommandsTotal } from "../observability/Metrics.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -1016,4 +1019,225 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const detectionError = yield* driver.detectRepository(process.cwd()).pipe(Effect.flip);
       assert.strictEqual(detectionError._tag, "VcsProcessSpawnError");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const gitCommandCount = (operation: string, outcome: string) =>
+  Metric.value(
+    Metric.withAttributes(gitCommandsTotal, [
+      ["operation", operation],
+      ["outcome", outcome],
+    ]),
+  ).pipe(Effect.map((state) => state.count));
+
+const gitCommandTiming = (operation: string) =>
+  Metric.value(Metric.withAttributes(gitCommandDuration, [["operation", operation]]));
+
+// Keep VcsProcess's exit classification; replace only the subprocess and its clock.
+const makeMeteredDriver = Effect.fn("test.makeMeteredDriver")(function* (exitCode: number) {
+  const process = yield* VcsProcess.make.pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: () =>
+        TestClock.adjust("250 millis").pipe(
+          Effect.as({
+            code: ChildProcessSpawner.ExitCode(exitCode),
+            stdout: "git output",
+            stderr: exitCode === 0 ? "" : "fatal: test failure",
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+        ),
+    }),
+  );
+  return yield* GitVcsDriver.makeVcsDriverShape().pipe(
+    Effect.provideService(VcsProcess.VcsProcess, process),
+  );
+});
+
+it.effect("GitVcsDriver meters each git command once under its operation", () =>
+  Effect.gen(function* () {
+    const operation = "GitVcsDriver.checkpoints.resolveHeadCommit";
+    const driver = yield* makeMeteredDriver(0);
+
+    const result = yield* driver.execute({ operation, cwd: "/repo", args: ["rev-parse", "HEAD"] });
+    yield* driver.execute({ operation, cwd: "/another-repo", args: ["rev-parse", "other-ref"] });
+
+    assert.strictEqual(result.stdout, "git output");
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 2);
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 0);
+    const timing = yield* gitCommandTiming(operation);
+    assert.strictEqual(timing.count, 2);
+    assert.strictEqual(timing.sum, 500);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
+);
+
+it.effect("GitVcsDriver counts an allowed non-zero exit as a success", () =>
+  Effect.gen(function* () {
+    const operation = "GitVcsDriver.checkpoints.hasHeadCommit";
+    const driver = yield* makeMeteredDriver(1);
+
+    const result = yield* driver.execute({
+      operation,
+      cwd: "/repo",
+      args: ["rev-parse", "--verify", "HEAD"],
+      allowNonZeroExit: true,
+    });
+
+    assert.strictEqual(result.exitCode, 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 0);
+    const timing = yield* gitCommandTiming(operation);
+    assert.strictEqual(timing.count, 1);
+    assert.strictEqual(timing.sum, 250);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
+);
+
+it.effect("GitVcsDriver counts a failed git command as a failure", () =>
+  Effect.gen(function* () {
+    const operation = "GitVcsDriver.checkpoints.resolveHeadCommit";
+    const driver = yield* makeMeteredDriver(128);
+
+    const error = yield* driver
+      .execute({ operation, cwd: "/repo", args: ["rev-parse", "HEAD"] })
+      .pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "VcsProcessExitError");
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 0);
+    const timing = yield* gitCommandTiming(operation);
+    assert.strictEqual(timing.count, 1);
+    assert.strictEqual(timing.sum, 250);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
+);
+
+it.effect("checkpoint capture meters every git process it starts, including streamed ones", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    let started = 0;
+    let streamed = 0;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.operation === operation) {
+            started++;
+            if (input.onStdoutChunk !== undefined) streamed++;
+          }
+          return liveProcess.run(input);
+        },
+      }),
+    );
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-metrics-" });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+
+    yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.isAbove(streamed, 0);
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), started);
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 0);
+    assert.strictEqual((yield* gitCommandTiming(operation)).count, started);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(layerGitContract),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
+);
+
+it.effect("git metrics finalize cancellation without exposing arbitrary operation labels", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const process = yield* VcsProcess.make.pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      }),
+    );
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, process),
+    );
+    const operation = "arbitrary operation /private/path";
+    const fiber = yield* driver
+      .execute({ operation, cwd: "/repo", args: ["rev-parse", "HEAD"] })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("250 millis");
+    yield* Fiber.interrupt(fiber);
+
+    assert.strictEqual(yield* gitCommandCount("other", "interrupt"), 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "interrupt"), 0);
+    const timing = yield* gitCommandTiming("other");
+    assert.strictEqual(timing.count, 1);
+    assert.strictEqual(timing.sum, 250);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
+);
+
+it.effect("git metrics count fsync fallback and transient retry subprocesses separately", () =>
+  Effect.gen(function* () {
+    const retryReady = yield* Deferred.make<void>();
+    const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    let attempts = 0;
+    const process = yield* VcsProcess.make.pipe(
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: (input) =>
+          Effect.gen(function* () {
+            attempts++;
+            yield* TestClock.adjust("250 millis");
+            if (attempts === 2) {
+              assert.include(input.args, "core.fsyncMethod=writeout-only");
+              yield* Deferred.succeed(retryReady, undefined);
+            }
+            return {
+              code: ChildProcessSpawner.ExitCode(attempts < 3 ? 128 : 0),
+              stdout: "",
+              stderr:
+                attempts === 1
+                  ? "fatal: fsync error on '.git/objects/test': Operation not supported"
+                  : attempts === 2
+                    ? "fatal: Unable to create '/repo/.git/index.lock': File exists."
+                    : "",
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      }),
+    );
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, process),
+    );
+    const fiber = yield* driver
+      .execute({ operation, cwd: "/repo", args: ["-c", "core.fsyncMethod=batch", "add"] })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(retryReady);
+    yield* TestClock.adjust("75 millis");
+    yield* Fiber.join(fiber);
+
+    assert.strictEqual(attempts, 3);
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 2);
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 1);
+    const timing = yield* gitCommandTiming(operation);
+    assert.strictEqual(timing.count, 3);
+    assert.strictEqual(timing.sum, 750);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
 );

@@ -129,6 +129,84 @@ export function collectPullRequestListFacets(
   };
 }
 
+/**
+ * What a filter picker offers for `query`: the loaded rows that match keep their counts and lead,
+ * then whatever the host found that no loaded row carries, so a name nobody has loaded yet is
+ * still one search away.
+ */
+/** How many loaded matches come before the host's answers. */
+const HOSTED_CHOICE_ROOM = 15;
+
+export function pullRequestAuthorChoices(
+  facets: ReadonlyArray<PullRequestAuthorFacet>,
+  hosted: ReadonlyArray<PullRequestActor>,
+  query: string,
+): ReadonlyArray<PullRequestAuthorFacet> {
+  const needle = normalize(query);
+  const loaded = facets.filter(
+    (facet) =>
+      needle === null ||
+      facet.actor.login.toLowerCase().includes(needle) ||
+      facet.actor.name?.toLowerCase().includes(needle),
+  );
+  const known = new Map(facets.map((facet) => [normalize(facet.actor.login), facet]));
+  const seen = new Set(loaded.map((facet) => normalize(facet.actor.login)));
+  const added: PullRequestAuthorFacet[] = [];
+  for (const actor of hosted) {
+    const key = normalize(actor.login);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    added.push(known.get(key) ?? { actor, count: 0, mergedCount: 0 });
+  }
+  // The picker shows a short list, and loaded matches alone could fill it.
+  return [...loaded.slice(0, HOSTED_CHOICE_ROOM), ...added, ...loaded.slice(HOSTED_CHOICE_ROOM)];
+}
+
+/**
+ * The author a filter names, as a choice: an author picked from the host's answer is on no
+ * loaded row, so it stays shown after the search that found it clears.
+ */
+export function selectedPullRequestAuthor(
+  facets: ReadonlyArray<PullRequestAuthorFacet>,
+  hosted: ReadonlyArray<PullRequestActor>,
+  value: string | undefined,
+): PullRequestAuthorFacet | undefined {
+  if (value === undefined) return undefined;
+  const key = normalize(value);
+  return (
+    facets.find((facet) => normalize(facet.actor.login) === key) ?? {
+      actor: hosted.find((actor) => normalize(actor.login) === key) ?? {
+        login: value,
+        name: null,
+        avatarUrl: null,
+      },
+      count: 0,
+      mergedCount: 0,
+    }
+  );
+}
+
+export function pullRequestLabelChoices(
+  facets: ReadonlyArray<PullRequestLabelFacet>,
+  hosted: ReadonlyArray<PullRequestLabel>,
+  query: string,
+): ReadonlyArray<PullRequestLabelFacet> {
+  const needle = normalize(query);
+  const loaded = facets.filter(
+    (facet) => needle === null || facet.name.toLowerCase().includes(needle),
+  );
+  const known = new Map(facets.map((facet) => [normalize(facet.name), facet]));
+  const seen = new Set(loaded.map((facet) => normalize(facet.name)));
+  const added: PullRequestLabelFacet[] = [];
+  for (const label of hosted) {
+    const key = normalize(label.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    added.push(known.get(key) ?? { ...label, count: 0 });
+  }
+  return [...loaded, ...added];
+}
+
 export function pullRequestEntryViewer(
   entry: ScopedEntry,
   viewers: PullRequestViewers,

@@ -18,6 +18,7 @@ import {
 
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -68,7 +69,6 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
 };
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
-  if (item.kind === "project") return "folder";
   if (item.kind === "thread") return "text.bubble";
   return ACTION_ICONS[item.key] ?? "ellipsis";
 }
@@ -101,11 +101,24 @@ function PaletteRow(props: {
       style={{ height: ROW_HEIGHT }}
     >
       <View className="w-7 items-center">
-        <SymbolView
-          name={itemIcon(props.item)}
-          size={20}
-          tintColorClassName={props.selected ? "accent-thread-selected-foreground" : "accent-icon"}
-        />
+        {props.item.project ? (
+          <ProjectFavicon
+            environmentId={props.item.project.environmentId}
+            faviconPath={props.item.project.faviconPath}
+            projectIcon={props.item.project.projectIcon}
+            projectTitle={props.item.project.title}
+            size={20}
+            workspaceRoot={props.item.project.workspaceRoot}
+          />
+        ) : (
+          <SymbolView
+            name={itemIcon(props.item)}
+            size={20}
+            tintColorClassName={
+              props.selected ? "accent-thread-selected-foreground" : "accent-icon"
+            }
+          />
+        )}
       </View>
       <View className="flex-1">
         <Text numberOfLines={1} className={cn("text-base", foregroundClassName)}>
@@ -310,6 +323,7 @@ export function CommandPalette(props: {
     const projectItems: CommandPaletteItem[] = projects.map((project) => ({
       key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
       kind: "project",
+      project,
       title: project.title,
       detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
       searchTerms: [project.workspaceRoot, "new thread", "project"],
@@ -324,7 +338,10 @@ export function CommandPalette(props: {
         }),
     }));
     const threadItems: CommandPaletteItem[] = threads
-      .filter((thread) => thread.archivedAt === null)
+      .filter(
+        (thread) =>
+          thread.archivedAt === null && thread.lineage.relationshipToParent !== "subagent",
+      )
       .sort((left, right) =>
         (right.latestUserMessageAt ?? right.updatedAt).localeCompare(
           left.latestUserMessageAt ?? left.updatedAt,

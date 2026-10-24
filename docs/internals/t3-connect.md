@@ -5,9 +5,10 @@ credentials for reaching environments, and managed tunnel allocations. After
 bootstrap, clients send application traffic through the environment's tunnel
 hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.
 The one exception is automation webhooks: the relay forwards
-`/v1/hooks/:environmentId/:hookId/:token` to the environment's tunnel so
-senders get a stable URL. It keeps bodies and tokens out of its traces and
-leaves token and signature verification to the environment
+`/v1/hooks/:endpointKey/:hookId/:token` to the environment's tunnel so
+senders get a stable URL. `endpointKey` is the 16-hex hash suffix of the
+managed tunnel's name, not the environment id. It keeps bodies and tokens out
+of its traces and leaves token and signature verification to the environment
 ([forwarder](../../infra/relay/src/hooks/HookForwarder.ts)).
 
 By default the forwarder stores nothing. An environment can opt in to having

@@ -2,8 +2,8 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24;
-Bun is optional. From the repository root:
+Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
+pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
 
 ```sh
 vp i
@@ -14,6 +14,47 @@ Open the pairing URL printed by the dev runner. The bare origin does not authent
 a new browser.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
+
+## GitCafe mirror (optional)
+
+GitHub is the source of truth. [git.cafe/pingdotgg/t3code](https://git.cafe/pingdotgg/t3code) is a
+two-way synced mirror with much higher API rate limits, which helps when many agents read PRs and
+issues at once. You never need it to contribute.
+
+Comments, reviews, labels, and issue edits made on GitCafe sync back to GitHub. The exception is
+code: push branches and open PRs on GitHub, where CI runs. GitCafe mirrors a new PR within about a
+minute, and from then on you can work with it through either forge.
+
+```sh
+git remote set-url origin https://git.cafe/pingdotgg/t3code.git
+git remote add github https://github.com/pingdotgg/t3code.git
+# The GitHub remote you push to: `github`, or your fork's remote.
+git config remote.pushDefault github
+gh repo set-default pingdotgg/t3code
+bun install -g @gitcafe/cli   # `cafe` needs Bun 1.2 or newer
+cafe auth login && cafe auth http setup
+cafe skills install --global  # optional: cafe-* skills for coding agents
+```
+
+With `origin` on git.cafe:
+
+- Use `cafe` for existing PRs, issues, comments, reviews, and labels, both reading and writing. Check status
+  comes from `cafe pr status <n> --json`.
+- Create PRs on GitHub: `git push` (to the `pushDefault` remote), then `gh pr create` or `gh stack`.
+  A PR opened with `cafe pr create` or `cafe stack submit` can get a different number on each forge,
+  a sync marker appended to its body, and rewritten references, and it cannot come from a fork.
+- Write or edit text with closing keywords using `gh`. Any text GitCafe writes to GitHub has its
+  `#<n>` references turned into GitCafe links, so a `Fixes #<n>` edited through `cafe` silently stops
+  closing the issue.
+- Merge with `gh pr merge <branch> --match-head-commit <sha>`. `cafe pr merge` only pins the head
+  GitCafe last saw, not the commit you reviewed.
+- Use `gh` where the mirror falls short: CI logs and reruns, a fork PR's head repository, and
+  anything `cafe` returns empty or 403/404 for.
+- PR and issue numbers can differ between the forges. Name PRs by branch
+  (`cafe pr list --head <branch>`, `gh pr view <branch>`), and write `Fixes #<GitHub number>`.
+- `cafe` flags differ from `gh`: `--repo` not `-R`, `cafe issue comments <n>` not `--comments`,
+  `cafe pr status` not `pr checks`. This repository's CI is GitHub Actions on GitHub, so `cafe ci`
+  has no runs for it; read logs with `gh run view`. `cafe api` paths omit `/api` (`cafe api /repos/...`).
 
 ## Choosing a dev process
 
@@ -27,7 +68,9 @@ Add `--browser` to open a browser automatically.
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev/userdata`. An explicit `--home-dir` wins in both cases.
+The main checkout defaults to `~/.t3/dev`. An explicit `--home-dir` wins in both cases.
+The first start in a worktree seeds its empty database from a read-only copy of
+`~/.t3/userdata`; `--no-seed` or `T3CODE_DEV_SEED=0` skips that.
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
@@ -117,6 +160,11 @@ files to packages with [ci-changes.cjs](../../.github/scripts/ci-changes.cjs), a
 compares against the merge base with `origin/main`, or with a ref you pass. CI still runs the full
 test suites and the jobs the summary lists, so a local pass does not promise a green CI run.
 
+The steps run side by side, so a run takes about as long as its slowest step, usually knip's
+exports pass at about 10 s. When the files are exactly those of the last passing run, it prints that
+run's summary instead of running again. Any change to a file, the install, or a generated file runs
+the checks again.
+
 While you iterate, run single checks:
 
 ```sh
@@ -132,7 +180,6 @@ and runs in headless Chromium with the React Compiler on, like the app. There is
 TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
 `@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
 refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
-Marketing keeps `astro check` for Astro files.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.

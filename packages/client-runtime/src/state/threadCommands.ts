@@ -166,6 +166,28 @@ export function createThreadEnvironmentAtoms<R, E>(
     );
   });
 
+  // Runs whether or not the server accepted the interrupt, so a stale cached item still
+  // settles when Stop had nothing to interrupt; the interrupt's own failure still surfaces.
+  // The repair is detached: its lookups must not hold the thread's serial command key, and
+  // closing the thread cancels the repair, not the Stop that triggered it.
+  const interruptTurn = Effect.fn("ThreadCommands.interruptTurn")(function* (
+    input: InterruptThreadTurnInput,
+  ) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const controller = yield* Effect.serviceOption(ThreadHistoryController.ThreadHistoryController);
+    return yield* interruptThreadTurn(input).pipe(
+      Effect.ensuring(
+        Option.match(controller, {
+          onNone: () => Effect.void,
+          onSome: (value) =>
+            value
+              .reconcilePendingWork(supervisor.target.environmentId, input.threadId)
+              .pipe(Effect.forkDetach, Effect.asVoid),
+        }),
+      ),
+    );
+  });
+
   const commands = {
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
@@ -301,7 +323,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",
-      execute: (input: InterruptThreadTurnInput) => interruptThreadTurn(input),
+      execute: interruptTurn,
       scheduler,
       concurrency,
     }),

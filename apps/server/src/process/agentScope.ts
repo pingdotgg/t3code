@@ -44,7 +44,7 @@ export interface ScopeState {
   readonly loadState: string;
   readonly activeState: string;
   readonly result: string;
-  readonly oomKills: number;
+  readonly oomKills: number | undefined;
   readonly populated: boolean | undefined;
 }
 
@@ -62,7 +62,11 @@ export function classifyScope(state: ScopeState): "oom-killed" | "gone" | "runni
   ) {
     return "gone";
   }
-  if (state.activeState === "deactivating" || state.oomKills > 0 || state.populated === false) {
+  if (
+    state.activeState === "deactivating" ||
+    (state.oomKills ?? 0) > 0 ||
+    state.populated === false
+  ) {
     return "stopping";
   }
   return "running";
@@ -220,7 +224,7 @@ export const make = Effect.gen(function* () {
       loadState: values.get("LoadState") ?? "",
       activeState: values.get("ActiveState") ?? "",
       result: values.get("Result") ?? "",
-      oomKills: parseCgroupCounter(memoryEvents, "oom_kill") ?? 0,
+      oomKills: parseCgroupCounter(memoryEvents, "oom_kill"),
       populated: populated === undefined ? undefined : populated === 1,
     } satisfies ScopeState;
   });
@@ -300,6 +304,32 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const stop = Effect.fn("AgentScope.stop")(function* (unit: string) {
+    if (!unit.startsWith("t3code-") || !unit.endsWith(".scope")) return;
+    const scope = yield* systemd;
+    if (scope === undefined) return;
+    const state = yield* readScope(scope.systemctl, unit);
+    if (
+      state === undefined ||
+      state.loadState !== "loaded" ||
+      state.activeState !== "active" ||
+      state.result === "oom-kill" ||
+      state.populated === false
+    )
+      return;
+    // The kernel counts OOM kills before signaling the victim. Let OOMPolicy
+    // record the result before a manual stop can overwrite it; an unreadable
+    // counter cannot rule out that race. Older managers need us to stop it.
+    if (scope.supportsOomPolicy && (state.oomKills === undefined || state.oomKills > 0)) return;
+    const stopped = yield* run(scope.systemctl, ["--user", "stop", "--no-block", unit]);
+    if (stopped._tag === "None" || stopped.value.code !== 0) {
+      yield* Effect.logWarning("Could not stop an exited agent's scope", {
+        unit,
+        exitCode: stopped._tag === "Some" ? stopped.value.code : undefined,
+      });
+    }
+  });
+
   const clear: AgentScopeShape["clear"] = Effect.fn("agentScope.clear")(function* (threadId) {
     if (!scopeByThread.has(threadId)) return;
     const scope = yield* systemd;
@@ -341,9 +371,10 @@ export const make = Effect.gen(function* () {
           ...(owned ? [] : ["--collect"]),
         ],
       };
-      return agentScopeCommand({ command: resolved, args, scope: systemdScope });
+      return { ...agentScopeCommand({ command: resolved, args, scope: systemdScope }), unit };
     }),
     oomKilled,
+    stop,
     clear,
   } satisfies AgentScopeShape;
 });

@@ -24,6 +24,7 @@ import {
 
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   parseGitCloneProgressLine,
   type GitCloneProgressLine,
@@ -231,20 +232,23 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const lookupRepository = Effect.fn("SourceControlRepositoryService.lookupRepository")(function* (
-    input: SourceControlRepositoryLookupInput,
-  ) {
-    const providerKind = yield* ensureConcreteProvider({
-      operation: "lookupRepository",
-      provider: input.provider,
-    });
-    const provider = yield* providers.get(providerKind);
-    const urls = yield* provider.getRepositoryCloneUrls({
-      cwd: input.cwd ?? config.cwd,
-      repository: input.repository.trim(),
-    });
-    return toRepositoryInfo(providerKind, urls);
-  });
+  const lookupRepository = Effect.fn("SourceControlRepositoryService.lookupRepository")(
+    function* (input: SourceControlRepositoryLookupInput) {
+      const providerKind = yield* ensureConcreteProvider({
+        operation: "lookupRepository",
+        provider: input.provider,
+      });
+      const provider = yield* providers.get(providerKind);
+      const urls = yield* provider.getRepositoryCloneUrls({
+        cwd: input.cwd ?? config.cwd,
+        repository: input.repository.trim(),
+      });
+      return toRepositoryInfo(providerKind, urls);
+    },
+    // Someone adding or cloning a repository is waiting, so a background rate-limit pause must not
+    // refuse the lookup.
+    Effect.provideService(SourceControlRateLimit.Interactive, true),
+  );
 
   const normalizeDestinationPath = Effect.fn("SourceControlRepositoryService.normalizeDestination")(
     function* (destinationPath: string) {

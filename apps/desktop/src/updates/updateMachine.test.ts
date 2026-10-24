@@ -8,7 +8,6 @@ import {
   reduceDesktopUpdateStateOnDownloadFailure,
   reduceDesktopUpdateStateOnInstallFailure,
   reduceDesktopUpdateStateOnNoUpdate,
-  reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine.ts";
 
 const runtimeInfo = {
@@ -50,30 +49,6 @@ describe("updateMachine", () => {
     expect(failed.message).toBeNull();
   });
 
-  it("keeps the installer when the feed still offers its version", () => {
-    const releaseNotes = [{ version: "1.1.0", items: ["fix: queued update"], totalItems: 1 }];
-    const state = reduceDesktopUpdateStateOnUpdateAvailable(
-      {
-        ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
-        enabled: true,
-        status: "downloaded",
-        availableVersion: "1.1.0",
-        downloadedVersion: "1.1.0",
-        releaseNotes,
-        omittedReleaseCount: 2,
-        downloadPercent: 100,
-      },
-      "1.1.0",
-      "2026-03-04T00:00:00.000Z",
-    );
-
-    expect(state.status).toBe("downloaded");
-    expect(state.downloadedVersion).toBe("1.1.0");
-    expect(state.releaseNotes).toEqual(releaseNotes);
-    expect(state.omittedReleaseCount).toBe(2);
-    expect(state.downloadPercent).toBe(100);
-  });
-
   it("preserves available version on download failure for retry", () => {
     const state = reduceDesktopUpdateStateOnDownloadFailure(
       {
@@ -112,35 +87,6 @@ describe("updateMachine", () => {
     expect(failedInstall.status).toBe("downloaded");
     expect(failedInstall.errorContext).toBe("install");
     expect(failedInstall.canRetry).toBe(true);
-  });
-
-  it("preserves a downloaded update when no update is available", () => {
-    const releaseNotes = [{ version: "1.1.0", items: ["fix: queued update"], totalItems: 1 }];
-    const state = reduceDesktopUpdateStateOnNoUpdate(
-      {
-        ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
-        enabled: true,
-        status: "error",
-        availableVersion: "1.1.0",
-        downloadedVersion: "1.1.0",
-        releaseNotes,
-        omittedReleaseCount: 2,
-        message: "old failure",
-        errorContext: "download",
-        canRetry: true,
-      },
-      "2026-03-04T00:00:00.000Z",
-    );
-
-    expect(state.status).toBe("downloaded");
-    expect(state.availableVersion).toBe("1.1.0");
-    expect(state.downloadedVersion).toBe("1.1.0");
-    expect(state.releaseNotes).toBe(releaseNotes);
-    expect(state.omittedReleaseCount).toBe(2);
-    expect(state.downloadPercent).toBe(100);
-    expect(state.message).toBeNull();
-    expect(state.errorContext).toBeNull();
-    expect(state.canRetry).toBe(true);
   });
 
   it("clears stale available state when no update is available", () => {

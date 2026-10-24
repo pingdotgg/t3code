@@ -14,6 +14,7 @@ export type ThreadHistoryLoadEarlierResult =
 
 export type ThreadHistoryHandler = {
   readonly loadEarlier: (throughEntryId?: string) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
+  readonly reconcilePendingWork: () => Effect.Effect<void>;
 };
 
 export type ThreadHistoryRegistration = {
@@ -36,6 +37,10 @@ export class ThreadHistoryController extends Context.Service<
       threadId: ThreadId,
       throughEntryId?: string,
     ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
+    readonly reconcilePendingWork: (
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+    ) => Effect.Effect<void>;
   }
 >()("@t3tools/client-runtime/state/threadHistoryController") {}
 
@@ -80,6 +85,14 @@ export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
             }
             return handler.loadEarlier(throughEntryId);
           }),
+        ),
+      reconcilePendingWork: (environmentId, threadId) =>
+        Ref.get(handlers).pipe(
+          Effect.flatMap(
+            (current) =>
+              current.get(threadKey({ environmentId, threadId }))?.reconcilePendingWork() ??
+              Effect.void,
+          ),
         ),
     });
   }),

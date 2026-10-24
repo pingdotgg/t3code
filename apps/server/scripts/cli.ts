@@ -94,7 +94,7 @@ const buildCmd = Command.make(
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
       } else {
-        yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");
+        yield* Effect.logWarning("[cli] Web dist not found. Skipping client bundle.");
       }
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));

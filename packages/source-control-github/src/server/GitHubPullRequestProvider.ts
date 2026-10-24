@@ -547,6 +547,12 @@ export const make = Effect.gen(function* () {
     listLabelCandidates: (input) =>
       cli.listLabelCandidates(input).pipe(Effect.mapError(fail("listLabelCandidates"))),
 
+    listRepositoryLabels: (input) =>
+      cli.listRepositoryLabels(input).pipe(Effect.mapError(fail("listRepositoryLabels"))),
+
+    searchRepositoryAuthors: (input) =>
+      cli.searchRepositoryAuthors(input).pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
     setLabels: (input) =>
       cli
         .setLabels({

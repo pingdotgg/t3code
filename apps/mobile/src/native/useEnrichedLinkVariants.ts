@@ -6,12 +6,13 @@ import type {
   MarkdownStyle,
 } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
-import { contextChipPresentation } from "../lib/composerChipPresentation";
+import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
+import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
 import type {
   MarkdownLinkCustomization,
@@ -22,19 +23,42 @@ import {
   enrichedLinkVariantPattern,
   enrichedSkillDisplayName,
   enrichedSkillReference,
+  enrichedThreadLinkPresentation,
 } from "../lib/enrichedLinkPresentation";
+
+function chipCustomization(
+  chip: ReturnType<typeof enrichedContextLinkPresentation>,
+): MarkdownLinkCustomization | undefined {
+  if (!chip) return undefined;
+  return {
+    label: chip.label,
+    icon: contextChipIconSource(chip.icon),
+    chip: { accent: chip.accent, tintsIcon: chip.icon.kind === "chip" },
+  };
+}
 
 export function enrichedContextLinkCustomization(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
+) {
+  return chipCustomization(enrichedContextLinkPresentation(href, records));
+}
+
+export function enrichedThreadLinkCustomization(href: string) {
+  return chipCustomization(enrichedThreadLinkPresentation(href));
+}
+
+export function withChipIcon(
+  customization: MarkdownLinkCustomization | undefined,
+  iconUri: string | undefined,
 ): MarkdownLinkCustomization | undefined {
-  const context = enrichedContextLinkPresentation(href, records);
-  if (!context) return undefined;
-  return {
-    label: context.label,
-    icon: contextChipIconSource(context.icon),
-    chip: { accent: context.accent, tintsIcon: context.icon.kind === "chip" },
-  };
+  return iconUri && customization?.chip
+    ? {
+        ...customization,
+        icon: { uri: iconUri },
+        chip: { ...customization.chip, tintsIcon: false },
+      }
+    : customization;
 }
 
 function presentation(
@@ -74,6 +98,7 @@ export function useEnrichedLinkVariants(
   props: SelectableMarkdownTextProps,
 ) {
   const { linkCustomization, skills, textStyle } = props;
+  const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const asset of assets) {
@@ -88,10 +113,12 @@ export function useEnrichedLinkVariants(
       new Map(
         [...links].map(([url, link]) => [
           url,
-          link.chip ? (link.chip.accent ?? textStyle.color) : undefined,
+          link.chip
+            ? (contextChipAccent(link.chip.accent, theme, textStyle.color) ?? textStyle.color)
+            : undefined,
         ]),
       ),
-    [links, textStyle],
+    [links, textStyle, theme],
   );
   const linkVariants = useMemo<MarkdownStyle["linkVariants"]>(
     () =>

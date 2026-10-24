@@ -8,12 +8,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
@@ -162,11 +164,26 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
       alive.resume();
 
-      const session = yield* openFakeCli(cli);
+      const stopped = yield* Deferred.make<string>();
+      const session = yield* openFakeCli(cli).pipe(
+        Effect.provide(
+          realQueryRunner.pipe(
+            Layer.provide(
+              Layer.succeed(AgentScope, {
+                ...AgentScope.defaultValue(),
+                wrap: ({ command, args }) =>
+                  Effect.succeed({ command, args, unit: "t3code-claude-test.scope" }),
+                stop: (unit) => Deferred.succeed(stopped, unit).pipe(Effect.asVoid),
+              }),
+            ),
+          ),
+        ),
+      );
       yield* Effect.promise(() => leftoverStarted);
       yield* session.close;
       yield* Effect.promise(() => leftoverStopped);
-    }).pipe(Effect.provide(realQueryRunner)),
+      assert.strictEqual(yield* Deferred.await(stopped), "t3code-claude-test.scope");
+    }),
   );
 
   // The CLI keeps running its turn after its pipes close, so a server that

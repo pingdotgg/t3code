@@ -29,6 +29,8 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
 import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/observability";
 
+import desktopPackageJson from "../../package.json" with { type: "json" };
+
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -366,19 +368,19 @@ const resolveOtlpEndpoints = Effect.gen(function* () {
       otel,
       "traces",
       { url: Option.getOrUndefined(environment.otlpTracesUrl), export: signalExport },
-      persisted.otlpTracesUrl,
+      { bootstrapUrl: undefined, settingsUrl: persisted.otlpTracesUrl },
     ),
     metrics: OtelEnvironment.resolveSignalEndpoint(
       otel,
       "metrics",
       { url: Option.getOrUndefined(environment.otlpMetricsUrl), export: signalExport },
-      persisted.otlpMetricsUrl,
+      { bootstrapUrl: undefined, settingsUrl: persisted.otlpMetricsUrl },
     ),
     logs: OtelEnvironment.resolveSignalEndpoint(
       otel,
       "logs",
       { url: Option.getOrUndefined(environment.otlpLogsUrl), export: signalExport },
-      persisted.otlpLogsUrl,
+      { bootstrapUrl: undefined, settingsUrl: persisted.otlpLogsUrl },
     ),
     warnings: otel.warnings,
     resourceAttributes: otel.resourceAttributes,
@@ -597,7 +599,8 @@ const layerTelemetry = Layer.unwrap(
     const endpoints = yield* resolveOtlpEndpoints;
     const resource = {
       serviceName: "t3code-desktop",
-      serviceVersion: environment.appVersion,
+      // Unpackaged runs launch a script, so Electron reports its own version.
+      serviceVersion: environment.isPackaged ? environment.appVersion : desktopPackageJson.version,
       attributes: {
         "service.namespace": "t3code",
         "service.runtime": "desktop",

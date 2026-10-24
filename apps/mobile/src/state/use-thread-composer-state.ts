@@ -526,7 +526,10 @@ export function useThreadComposerState() {
 
   const onSendMessage = async (
     followUpOverride?: ActiveTurnComposerAction,
-    beforeDispatch?: () => Promise<boolean>,
+    beforeDispatch?: (
+      text: string,
+      hasAttachmentsOrContext: boolean,
+    ) => Promise<boolean | "responded">,
   ) => {
     if (
       selectedThreadShell &&
@@ -645,7 +648,11 @@ export function useThreadComposerState() {
     }
 
     if (beforeDispatch !== undefined) {
-      if (!(await beforeDispatch())) return null;
+      const response = await beforeDispatch(
+        text,
+        attachments.length > 0 || draft.context !== undefined,
+      );
+      if (!response) return null;
       // A context paste still landing, or any draft or settings change while approvals were
       // declined, means this snapshot is no longer what the user sent.
       if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
@@ -660,6 +667,10 @@ export function useThreadComposerState() {
         current.attachments.some((attachment, index) => attachment.id !== attachments[index]?.id)
       )
         return null;
+      if (response === "responded") {
+        clearComposerDraftContent(threadKey);
+        return null;
+      }
     }
 
     // Resolved here rather than at drain time: the outbox can deliver minutes

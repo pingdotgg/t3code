@@ -25,6 +25,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -711,6 +712,7 @@ const make = Effect.gen(function* () {
       FROM provider_session_runtime
       WHERE provider_name IN ('cursor', 'grok', 'opencode')
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         (cause) =>
           new ServerSettingsError({
@@ -734,6 +736,7 @@ const make = Effect.gen(function* () {
           FROM projection_projects
           WHERE deleted_at IS NULL
         `.pipe(
+            NodeSqliteClient.readOnly,
             Effect.mapError(
               (cause) =>
                 new ServerSettingsError({

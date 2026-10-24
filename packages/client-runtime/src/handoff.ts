@@ -23,8 +23,12 @@ export function resolvePendingHandoff(
   // A thread with an empty timeline has nothing to hand off. Any loaded row
   // counts: paging can leave a window of only tool rows.
   if (!projection?.visibleTurnItems.length) return null;
+  // The handoff row is committed before the provider starts. Use its destination
+  // during startup so the footer does not duplicate the committed handoff.
   const from = projection.runs.findLast(
-    (run) => run.startedAt !== null && run.status !== "rolled_back",
+    (run) =>
+      run.status !== "rolled_back" &&
+      (run.startedAt !== null || (run.status === "starting" && run.contextHandoffId !== null)),
   )?.modelSelection;
   if (from === undefined || selection == null) return null;
   const source = providers.find((provider) => provider.instanceId === from.instanceId);

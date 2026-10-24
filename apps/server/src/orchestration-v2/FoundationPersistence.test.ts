@@ -3218,3 +3218,83 @@ it.effect.each(["events", "receipts"] as const)(
       }).pipe(Effect.provide(maintenanceLayer));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("routes projection node lookups to the reader connection", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "projection-reader-" });
+    const database = SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"));
+    const projectionLayer = ProjectionStore.layer.pipe(Layer.provideMerge(database));
+    yield* Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const nodeId = NodeId.make("node:reader-routing");
+      const node = {
+        id: nodeId,
+        threadId: ThreadId.make("thread:reader-routing"),
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: "subagent" as const,
+        status: "running" as const,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const spans: Array<Tracer.Span> = [];
+      const observe: Statement.Transformer = (statement, _sql, _fiber, span) => {
+        const [query] = statement.compile();
+        if (/orchestration_v2_projection_nodes WHERE node_id/.test(query)) {
+          spans.push(span);
+        }
+        return Effect.succeed(statement);
+      };
+      yield* Effect.gen(function* () {
+        assert.isFalse(yield* projections.isNodeStored(node));
+      }).pipe(
+        Effect.provideService(Statement.CurrentTransformer, observe),
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+      );
+      assert.equal(spans.length, 1);
+      assert.isTrue(
+        spans.every((span) => span.attributes.get("db.connection") === "reader"),
+        JSON.stringify(spans.map((span) => span.attributes.get("db.connection"))),
+      );
+    }).pipe(Effect.provide(projectionLayer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("loads a shell snapshot while the writer connection is occupied", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "shell-reader-" });
+    const database = SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"));
+    const projectionLayer = ProjectionStore.layer.pipe(Layer.provideMerge(database));
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const writer = yield* sql
+        .withTransaction(
+          sql`SELECT 1`.pipe(
+            Effect.andThen(Deferred.succeed(held, undefined)),
+            Effect.andThen(Deferred.await(release)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(held);
+      const snapshot = yield* projections.getShellSnapshot();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(writer);
+      assert.deepEqual(snapshot.threads, []);
+    }).pipe(Effect.provide(projectionLayer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

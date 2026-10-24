@@ -33,6 +33,7 @@ export interface ShowcaseIosDevice {
   readonly appearance: ShowcaseAppearance;
   readonly theme: ShowcaseTheme;
   readonly orientation?: "portrait" | "landscape";
+  readonly fold?: "closed" | "open";
   readonly scenes: ReadonlyArray<ShowcaseScene>;
   readonly storeAsset: ShowcaseStoreAssetSpec;
 }
@@ -117,6 +118,26 @@ const config: ShowcaseConfig = {
         maximumUploadCount: 10,
       },
     },
+    ...(["closed", "open"] as const).map((fold): ShowcaseIosDevice => ({
+      id: `iphone-duo-${fold}`,
+      platform: "ios",
+      simulator: `T3 Showcase iPhone Duo ${fold}`,
+      simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
+      appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
+      orientation: fold === "closed" ? "portrait" : "landscape",
+      fold,
+      // Both poses share one ten-image App Store slot.
+      scenes: ["thread", "terminal", "review", "threads", "environments"],
+      storeAsset: {
+        store: "apple",
+        directory: `apple/iphone-duo-${fold}`,
+        width: fold === "closed" ? 1398 : 2853,
+        height: fold === "closed" ? 2034 : 2007,
+        minimumUploadCount: 1,
+        maximumUploadCount: 5,
+      },
+    })),
     {
       id: "ipad-13",
       platform: "ios",

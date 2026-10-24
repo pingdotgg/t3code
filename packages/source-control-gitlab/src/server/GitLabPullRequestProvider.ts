@@ -130,6 +130,7 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           query: input.query,
           cursor: input.cursor,
+          filters: input.filters,
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
@@ -230,6 +231,16 @@ export const make = Effect.gen(function* () {
           number: input.number,
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
+
+    listRepositoryLabels: (input) =>
+      cli
+        .listProjectLabels({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .pipe(Effect.mapError(fail("listRepositoryLabels"))),
+
+    searchRepositoryAuthors: (input) =>
+      cli
+        .listProjectUsers({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
     setReviewerRequest: (input) =>
       cli

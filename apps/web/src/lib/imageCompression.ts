@@ -205,41 +205,73 @@ async function encodeCanvas(
 }
 
 const composerThumbnails = new WeakMap<File, Promise<string | null>>();
+const settledComposerThumbnails = new WeakMap<File, string | null>();
+
+function cacheComposerImageThumbnail(
+  file: File,
+  thumbnail: Promise<string | null>,
+): Promise<string | null> {
+  composerThumbnails.set(file, thumbnail);
+  void thumbnail.then((src) => settledComposerThumbnails.set(file, src));
+  return thumbnail;
+}
+
+/** `undefined` until the thumbnail settles, so a tile can paint a known thumbnail immediately. */
+export function readComposerImageThumbnail(file: File): string | null | undefined {
+  return settledComposerThumbnails.get(file);
+}
 
 export function createComposerImageThumbnail(file: File): Promise<string | null> {
-  const cached = composerThumbnails.get(file);
-  if (cached) return cached;
-  const thumbnail = (async () => {
-    if (!canRecompress()) return null;
-    let bitmap: ImageBitmap | undefined;
-    try {
-      bitmap = await createImageBitmap(file);
-      const side = Math.min(bitmap.width, bitmap.height);
-      if (side <= 0) return null;
-      const dimension = Math.min(256, side);
-      const surface = createCanvas(dimension, dimension);
-      if (!surface) return null;
-      surface.context.drawImage(
-        bitmap,
-        (bitmap.width - side) / 2,
-        (bitmap.height - side) / 2,
-        side,
-        side,
-        0,
-        0,
-        dimension,
-        dimension,
-      );
-      const blob = await encodeCanvas(surface.canvas, 1, "image/png");
-      return blob ? await readFileAsDataUrl(blob) : null;
-    } catch {
-      return null;
-    } finally {
-      bitmap?.close();
-    }
-  })();
-  composerThumbnails.set(file, thumbnail);
-  return thumbnail;
+  return (
+    composerThumbnails.get(file) ??
+    cacheComposerImageThumbnail(file, renderComposerImageThumbnail(file))
+  );
+}
+
+/**
+ * Pasted images are re-encoded after their placeholder already shows the source's thumbnail.
+ * Reusing it keeps the tile from flashing back to its fallback while the new file is decoded.
+ */
+export function inheritComposerImageThumbnail(source: File, target: File): void {
+  const sourceThumbnail = composerThumbnails.get(source);
+  if (source === target || !sourceThumbnail || composerThumbnails.has(target)) return;
+  const settled = settledComposerThumbnails.get(source);
+  if (settled) settledComposerThumbnails.set(target, settled);
+  cacheComposerImageThumbnail(
+    target,
+    sourceThumbnail.then((src) => src ?? renderComposerImageThumbnail(target)),
+  );
+}
+
+async function renderComposerImageThumbnail(file: File): Promise<string | null> {
+  // Placeholders thumbnail the uncompressed source, which can be big enough to OOM the decode.
+  if (!canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    if (side <= 0) return null;
+    const dimension = Math.min(256, side);
+    const surface = createCanvas(dimension, dimension);
+    if (!surface) return null;
+    surface.context.drawImage(
+      bitmap,
+      (bitmap.width - side) / 2,
+      (bitmap.height - side) / 2,
+      side,
+      side,
+      0,
+      0,
+      dimension,
+      dimension,
+    );
+    const blob = await encodeCanvas(surface.canvas, 1, "image/png");
+    return blob ? await readFileAsDataUrl(blob) : null;
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
 }
 
 async function encodeWithinBudget(

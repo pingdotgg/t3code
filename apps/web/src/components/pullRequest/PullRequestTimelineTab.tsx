@@ -166,7 +166,7 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
     <Button
       size="icon-xs"
       variant="ghost-muted"
-      className="-mr-1 -mt-1 shrink-0"
+      className="-mr-1 shrink-0"
       aria-label="Open activity on host"
       onClick={() => onOpen(url)}
     >
@@ -217,7 +217,7 @@ function ConversationCard({
   return (
     <article className="group py-2">
       <div className="px-2">
-        <div className="flex min-w-0 flex-wrap items-start gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
               <ActorName actor={event.actor} />
@@ -237,11 +237,7 @@ function ConversationCard({
             </PullRequestMetaLine>
           </div>
           {editable !== null && !editing ? (
-            <PullRequestEditButton
-              className="-mt-1"
-              aria-label="Edit comment"
-              onClick={() => setEditing(true)}
-            />
+            <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
           ) : null}
           {reactions.canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
@@ -393,7 +389,7 @@ function ReviewThreadEvent({
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
-        className="top-6"
+        className="top-4"
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!expanded}
       />
@@ -564,7 +560,7 @@ function ReviewVerdictEvent({
         className="top-6"
         fallback={<PullRequestReviewOutcomeIcon outcome={outcome} />}
       />
-      <div className="flex min-w-0 flex-wrap items-start gap-2 py-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 py-1.5">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />

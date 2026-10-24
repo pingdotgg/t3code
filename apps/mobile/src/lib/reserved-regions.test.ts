@@ -21,6 +21,28 @@ describe("bottom controls around reserved regions", () => {
     expect(innerDisplay.width - insets.left - insets.right).toBeGreaterThan(320);
   });
 
+  it("does not reserve a hinge twice when a native column starts at the division", () => {
+    expect(
+      deriveBottomControlInsets({
+        ...innerDisplay,
+        width: 412,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 0, right: 0, bottom: 0 });
+  });
+
+  it("keeps a native column's trailing division at its existing edge", () => {
+    expect(
+      deriveBottomControlInsets({
+        ...innerDisplay,
+        width: 456,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 455.75, y: 0, width: 0.25, height: 560 }],
+      }),
+    ).toEqual({ left: 0, right: 0, bottom: 0 });
+  });
+
   it("keeps controls below a horizontal fold in a hands-free pose", () => {
     expect(
       deriveBottomControlInsets({

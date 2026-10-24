@@ -491,6 +491,14 @@ describe("orchestrator MCP toolkit", () => {
           expect(finalProjection.runs.find((run) => run.id === queuedFollowup.runId)?.status).toBe(
             "completed",
           );
+          expect(
+            finalProjection.turnItems.find(
+              (item) =>
+                item.runId === runningFollowup.runId && item.type === "run_interrupt_result",
+            ),
+          ).toMatchObject({
+            message: "Stopped by an agent: Allow the queued replay follow-up to run.",
+          });
           yield* orchestrator
             .streamStoredEventsFrom({
               threadId: parentThreadId,

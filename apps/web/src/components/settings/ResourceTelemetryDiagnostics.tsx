@@ -517,7 +517,7 @@ function ProcessActions({
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   if (!canSignalProcess(process)) {
-    return <span className="text-3xs text-muted-foreground/35">—</span>;
+    return <span className="text-3xs text-muted-foreground/35">-</span>;
   }
   const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
@@ -822,6 +822,11 @@ export function ResourceTelemetryDiagnostics({
     },
     environmentId,
   );
+  const refreshHistory = history.refresh;
+  const selectedHistoryRef = useRef({ environmentId, windowMs, refreshHistory });
+  useEffect(() => {
+    selectedHistoryRef.current = { environmentId, windowMs, refreshHistory };
+  }, [environmentId, windowMs, refreshHistory]);
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -929,6 +934,17 @@ export function ResourceTelemetryDiagnostics({
       return;
     setIsRetrying(true);
     void retryTelemetry()
+      .then(() => {
+        refreshHistory();
+        const selectedHistory = selectedHistoryRef.current;
+        if (
+          environmentIdRef.current === environmentId &&
+          selectedHistory.environmentId === environmentId &&
+          selectedHistory.windowMs !== windowMs
+        ) {
+          selectedHistory.refreshHistory();
+        }
+      })
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",

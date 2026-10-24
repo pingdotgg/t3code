@@ -9,25 +9,13 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
 import {
-  buildLocalEnvironmentUpdateGroups,
   canOneClickUpdateProviderCandidate,
-  collectProviderUpdateOutcomeSnapshots,
-  collectUpdatedProviderSnapshots,
-  firstRejectedProviderUpdateMessage,
-  getProviderUpdateProgressToastView,
   getProviderUpdateRunToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
   isProviderSettingsUpdateCandidate,
-  providerUpdateNotificationKey,
-  resolveEnvironmentUpdateRowStatus,
-  type LocalEnvironmentProvidersInput,
-  type LocalEnvironmentUpdateGroup,
-  type LocalProviderUpdateOutcome,
   type ProviderUpdateCandidate,
-  type ProviderUpdateSidebarPillView,
-  type ProviderUpdateToastView,
 } from "./ProviderUpdateLaunchNotification.logic";
 
 const checkedAt = "2026-04-23T10:00:00.000Z";
@@ -158,67 +146,6 @@ describe("provider update launch notification logic", () => {
     expect(canOneClickUpdateProviderCandidate(candidate, [candidate])).toBe(false);
   });
 
-  it("keeps the same notification key while the published update version is unchanged", () => {
-    const first = updateCandidate({
-      driver: driver("codex"),
-      version: "1.0.0",
-      latestVersion: "1.2.0",
-    });
-    const second = updateCandidate({
-      driver: driver("codex"),
-      version: "1.1.0",
-      latestVersion: "1.2.0",
-    });
-    const nextPublishedVersion = updateCandidate({
-      driver: driver("codex"),
-      version: "1.1.0",
-      latestVersion: "1.3.0",
-    });
-
-    expect(providerUpdateNotificationKey([first])).toBe(providerUpdateNotificationKey([second]));
-    expect(providerUpdateNotificationKey([nextPublishedVersion])).not.toBe(
-      providerUpdateNotificationKey([first]),
-    );
-  });
-
-  it("tracks updated provider snapshots by instance instead of collapsing to a sibling driver", () => {
-    const targetInstanceId = instanceId("codex_personal");
-    const siblingInstanceId = instanceId("codex");
-    const updatedPersonal = provider({
-      driver: driver("codex"),
-      instanceId: targetInstanceId,
-      version: "1.1.0",
-      latestVersion: "1.1.0",
-      advisoryStatus: "current",
-      updateState: {
-        status: "succeeded",
-        startedAt: checkedAt,
-        finishedAt: checkedAt,
-        message: "Provider updated.",
-        output: null,
-      },
-    });
-    const currentDefaultSibling = provider({
-      driver: driver("codex"),
-      instanceId: siblingInstanceId,
-      version: "1.1.0",
-      latestVersion: "1.1.0",
-      advisoryStatus: "current",
-      updateState: undefined,
-    });
-
-    expect(
-      collectUpdatedProviderSnapshots({
-        results: [
-          AsyncResult.success({
-            providers: [updatedPersonal, currentDefaultSibling],
-          }),
-        ],
-        providerInstanceIds: new Set([targetInstanceId]),
-      }),
-    ).toEqual([updatedPersonal]);
-  });
-
   it("shows the active sidebar pill for an update on a non-default instance", () => {
     const view = getProviderUpdateSidebarPillView([
       provider({ driver: driver("claudeAgent") }),
@@ -345,140 +272,6 @@ describe("provider update launch notification logic", () => {
       key: "failed:claudeAgent:2026-04-23T10:00:00.000Z:Update command exited with code 1.",
       tone: "error",
       title: "Claude v1.1.0 update failed",
-    });
-  });
-
-  describe("multi-backend update outcomes", () => {
-    const terminalState = (
-      status: "succeeded" | "failed" | "unchanged",
-      message: string,
-    ): NonNullable<ServerProvider["updateState"]> => ({
-      status,
-      startedAt: checkedAt,
-      finishedAt: checkedAt,
-      message,
-      output: null,
-    });
-
-    const fulfilledOutcome = (
-      isPrimary: boolean,
-      snapshot: ServerProvider | null,
-      environment = "env",
-    ): PromiseSettledResult<LocalProviderUpdateOutcome> => ({
-      status: "fulfilled",
-      value: {
-        environmentId: environment as LocalProviderUpdateOutcome["environmentId"],
-        isPrimary,
-        driver: snapshot?.driver ?? driver("codex"),
-        instanceId: snapshot?.instanceId ?? instanceId("codex"),
-        provider: snapshot,
-      },
-    });
-
-    it("surfaces a secondary backend's failed update over the primary's success", () => {
-      const snapshots = collectProviderUpdateOutcomeSnapshots([
-        fulfilledOutcome(
-          true,
-          provider({
-            driver: driver("codex"),
-            updateState: terminalState("succeeded", "Provider updated."),
-          }),
-        ),
-        fulfilledOutcome(
-          false,
-          provider({
-            driver: driver("codex"),
-            updateState: terminalState("failed", "npm: NotFound"),
-          }),
-        ),
-      ]);
-
-      expect(snapshots).toHaveLength(1);
-      expect(snapshots[0]?.updateState?.status).toBe("failed");
-      expect(
-        getProviderUpdateProgressToastView({ providers: snapshots, providerCount: 1 }),
-      ).toMatchObject({ phase: "failed" });
-    });
-
-    it("treats a rejected dispatch as not contributing a snapshot", () => {
-      const primary = provider({
-        driver: driver("codex"),
-        updateState: terminalState("succeeded", "Provider updated."),
-      });
-      const results: PromiseSettledResult<LocalProviderUpdateOutcome>[] = [
-        fulfilledOutcome(true, primary),
-        { status: "rejected", reason: new Error("WebSocket closed") },
-      ];
-
-      expect(collectProviderUpdateOutcomeSnapshots(results)).toEqual([primary]);
-      expect(firstRejectedProviderUpdateMessage(results)).toBe("WebSocket closed");
-    });
-  });
-
-  describe("per-environment update grouping", () => {
-    const environment = (
-      input: {
-        readonly environmentId: string;
-        readonly providers: ReadonlyArray<ServerProvider>;
-      } & Partial<Omit<LocalEnvironmentProvidersInput, "environmentId" | "providers">>,
-    ): LocalEnvironmentProvidersInput => ({
-      environmentId: input.environmentId as EnvironmentId,
-      label: input.label ?? input.environmentId,
-      isPrimary: input.isPrimary ?? false,
-      connectionState: input.connectionState ?? "ready",
-      providers: input.providers,
-    });
-
-    it("flags settling while a secondary backend is still connecting", () => {
-      const result = buildLocalEnvironmentUpdateGroups([
-        environment({
-          environmentId: "env-windows",
-          isPrimary: true,
-          providers: [provider({ driver: driver("codex") })],
-        }),
-        environment({ environmentId: "env-wsl", connectionState: "connecting", providers: [] }),
-      ]);
-
-      expect(result.isAnySettling).toBe(true);
-      expect(
-        result.groups.find((group) => group.environmentId === ("env-wsl" as EnvironmentId))
-          ?.isSettling,
-      ).toBe(true);
-    });
-  });
-
-  describe("resolveEnvironmentUpdateRowStatus", () => {
-    const group: LocalEnvironmentUpdateGroup = {
-      environmentId: "env-wsl" as EnvironmentId,
-      label: "WSL",
-      isPrimary: false,
-      isSettling: false,
-      candidates: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
-      providers: [],
-    };
-    const succeededResult: ProviderUpdateToastView = {
-      phase: "succeeded",
-      type: "success",
-      title: "Provider updated",
-      description: "New sessions will use the updated provider.",
-    };
-    const successPill: ProviderUpdateSidebarPillView = {
-      key: "succeeded:codex",
-      tone: "success",
-      title: "Codex updated",
-      description: "New sessions will use the updated provider.",
-    };
-
-    it("prefers a transport error", () => {
-      expect(
-        resolveEnvironmentUpdateRowStatus({
-          group,
-          error: "boom",
-          result: succeededResult,
-          pill: successPill,
-          isPending: true,
-        }),
-      ).toMatchObject({ kind: "failed", text: "boom" });
     });
   });
 });

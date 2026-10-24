@@ -150,6 +150,8 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly involvement: PullRequestInvolvement;
       readonly viewer: string;
       readonly limit: number;
+      /** Matched by `--creator`, which takes the email a row shows as its login. */
+      readonly author?: string | undefined;
       /**
        * Where to carry on from. Azure has no date filter for a pull request listing, so the only
        * part of a cursor it can use is how many rows have already been handed over.
@@ -403,6 +405,7 @@ export const make = Effect.gen(function* () {
     readonly state: PullRequestListState;
     readonly involvement: PullRequestInvolvement;
     readonly viewer: string;
+    readonly author?: string | undefined;
     readonly limit: number;
     readonly skip: number;
     readonly cursorAdvance: number;
@@ -429,6 +432,9 @@ export const make = Effect.gen(function* () {
         input.repository,
         ...statusArgs(input.state),
         ...involvementArgs(input),
+        ...(input.author === undefined || input.involvement === "authored"
+          ? []
+          : ["--creator", input.author]),
         "--include-links",
         ...(input.skip === 0 ? [] : ["--skip", String(input.skip)]),
         "--top",
@@ -546,6 +552,7 @@ export const make = Effect.gen(function* () {
         state: input.state,
         involvement: input.involvement,
         viewer: input.viewer,
+        author: input.author,
         limit: input.limit,
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,

@@ -3,12 +3,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/contracts";
 import type {
   PullRequestAction,
+  PullRequestActor,
   PullRequestComment,
   PullRequestCommit,
   PullRequestInvolvement,
+  PullRequestLabel,
+  PullRequestListFilters,
   PullRequestListState,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
@@ -36,6 +39,7 @@ import {
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeProjectMergeCapabilitiesJson,
+  decodeProjectLabelsJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
   decodeViewerJson,
@@ -223,6 +227,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly limit: number;
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
+      readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
 
     readonly getMergeRequestDetail: (input: {
@@ -284,6 +289,24 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitLabPullRequestCliError>;
+
+    readonly listProjectLabels: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly search?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestLabel>; readonly truncated: boolean },
+      GitLabPullRequestCliError
+    >;
+
+    readonly listProjectUsers: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly search?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean },
+      GitLabPullRequestCliError
+    >;
 
     readonly setReviewerRequest: (input: {
       readonly cwd: string;
@@ -419,6 +442,41 @@ function involvementParams(input: {
   }
 }
 
+/**
+ * GitLab's `labels` asks for every label it names, so only groups of one go to it; a group of
+ * alternatives is left for the service to narrow. A comma would split a name in two, and `None`
+ * and `Any` mean "unlabeled" and "labeled" to GitLab rather than labels of those names.
+ */
+function filterParams(input: {
+  readonly filters?: PullRequestListFilters | undefined;
+  readonly involvement: PullRequestInvolvement;
+  readonly viewer: string;
+}): ReadonlyArray<readonly [string, string]> {
+  const filters = input.filters;
+  if (filters === undefined) return [];
+  const listable = (names: ReadonlyArray<string>) =>
+    names.filter((name) => !name.includes(",") && !/^(?:none|any)$/iu.test(name.trim()));
+  const required = listable(
+    (filters.labels ?? []).flatMap((group) => (group.length === 1 ? group : [])),
+  );
+  const excluded = listable(filters.excludedLabels ?? []);
+  return [
+    ...(required.length === 0 ? [] : [["labels", required.join(",")] as const]),
+    ...(excluded.length === 0 ? [] : [["not[labels]", excluded.join(",")] as const]),
+    ...(filters.author === undefined || input.involvement === "authored"
+      ? []
+      : [
+          [
+            "author_username",
+            resolvePullRequestAuthorFilter(filters.author, input.viewer),
+          ] as const,
+        ]),
+    ...(filters.draft === undefined
+      ? []
+      : [["wip", filters.draft === "only" ? "yes" : "no"] as const]),
+  ];
+}
+
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
 }
@@ -514,6 +572,7 @@ export const make = Effect.gen(function* () {
     readonly limit: number;
     readonly query?: string | undefined;
     readonly cursor?: ProviderListCursor | undefined;
+    readonly filters?: PullRequestListFilters | undefined;
     readonly page: number;
     readonly collected: ReadonlyArray<GitLabMergeRequestListItem>;
     readonly cursorAdvance: number;
@@ -535,6 +594,7 @@ export const make = Effect.gen(function* () {
         ["state", stateParam(input.state)],
         ...involvementParams(input),
         ...searchParams(input.query),
+        ...filterParams(input),
         ["order_by", "updated_at"],
         ["sort", "desc"],
         ["per_page", String(perPage)],
@@ -880,11 +940,13 @@ export const make = Effect.gen(function* () {
   const projectUsers = (input: {
     readonly cwd: string;
     readonly repository: string;
+    readonly search?: string | undefined;
   }): Effect.Effect<GitLabProjectUsers, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
+        ...searchParams(input.search),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -1236,6 +1298,40 @@ export const make = Effect.gen(function* () {
                 }),
               );
         }),
+      ),
+
+    listProjectLabels: (input) =>
+      api({
+        cwd: input.cwd,
+        path: `projects/${projectPath(input.repository)}/labels?${query([
+          ["per_page", String(MAX_PAGE_SIZE)],
+          ...searchParams(input.search),
+        ])}`,
+      }).pipe(
+        Effect.flatMap((result) => {
+          const decoded = decodeProjectLabelsJson(result.stdout.trim());
+          return Result.isSuccess(decoded)
+            ? Effect.succeed({
+                items: decoded.success.labels,
+                truncated: decoded.success.rawCount >= MAX_PAGE_SIZE,
+              })
+            : Effect.fail(
+                new GitLabMergeRequestReadError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "listProjectLabels",
+                  cause: decoded.failure,
+                }),
+              );
+        }),
+      ),
+
+    listProjectUsers: (input) =>
+      projectUsers(input).pipe(
+        Effect.map(({ candidates, rawCount }) => ({
+          items: candidates.map(({ login, name, avatarUrl }) => ({ login, name, avatarUrl })),
+          truncated: rawCount >= MAX_PAGE_SIZE,
+        })),
       ),
 
     listReviewerCandidates: (input) =>

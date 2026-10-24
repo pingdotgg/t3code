@@ -16,6 +16,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
+import { isMacPlatform } from "~/lib/utils";
 import {
   ComposerPromptEditor,
   type ComposerPromptEditorHandle,
@@ -146,6 +147,25 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(`${value}_`);
   expect(textWithMark(editor, "italic")).toEqual([]);
   expect(textWithMark(editor, "code")).toEqual(code);
+});
+
+it("bolds with Mod+B only when text is selected", async () => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const modB = isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}";
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  await userEvent.keyboard(modB);
+  // Without the guard, Tiptap stores bold for the next typed text.
+  expect(editor.state.storedMarks).toBeNull();
+
+  await act(async () => {
+    editor.commands.setTextSelection({ from: 1, to: 5 });
+  });
+  await userEvent.keyboard(modB);
+  await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual(["ship"]));
 });
 
 it.each([false, true])(

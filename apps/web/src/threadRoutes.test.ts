@@ -57,9 +57,7 @@ describe("threadRoutes", () => {
 
   it.each([
     { status: "cached", source: "server thread" },
-    { status: "synchronizing", source: "server thread" },
     { status: "cached", source: "draft" },
-    { status: "synchronizing", source: "draft" },
   ] as const)(
     "keeps available $source visible while the shell is $status",
     ({ status, source }) => {

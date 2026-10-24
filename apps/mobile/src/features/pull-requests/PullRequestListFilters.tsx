@@ -73,7 +73,11 @@ export function PullRequestListFilters(props: {
   readonly onChange: (value: PullRequestListControls) => void;
   readonly authors: readonly string[];
   readonly labels: readonly string[];
+  /** Dot colors by lowercased label name, for the labels that have one. */
+  readonly labelColors: Readonly<Record<string, string>>;
   readonly projects: readonly { id: string; title: string; environmentId: string }[];
+  /** Opens a picker that searches the host, for a label or author no loaded row carries. */
+  readonly onSearch: (kind: "labels" | "authors") => void;
 }) {
   const { value } = props;
   const projects = useProjectsInSidebarOrder(props.projects);
@@ -144,6 +148,9 @@ export function PullRequestListFilters(props: {
         break;
       case "author":
         props.onChange({ ...value, filters: { ...value.filters, author: next || undefined } });
+        break;
+      case "search":
+        if (next === "labels" || next === "authors") props.onSearch(next);
         break;
       case "draft":
         props.onChange({
@@ -248,22 +255,30 @@ export function PullRequestListFilters(props: {
   const stateActions = choices("state", STATES, value.state);
   const involvementActions = choices("involvement", INVOLVEMENT, value.involvement);
   const labelActions: MenuProps["actions"] = [
+    { id: id("search", "labels"), title: "Search labels…", image: "magnifyingglass" },
     { id: id("labels", ""), title: "All labels", state: selectedLabels.length ? "off" : "on" },
-    ...labels.map((label) => ({
-      id: id("label", label),
-      title: label,
-      state: selectedLabelSet.has(label) ? ("on" as const) : ("off" as const),
-    })),
+    ...labels.map((label) => {
+      const color = props.labelColors[label.toLowerCase()];
+      return {
+        id: id("label", label),
+        title: label,
+        state: selectedLabelSet.has(label) ? ("on" as const) : ("off" as const),
+        ...(color ? { image: "circle.fill", imageColor: color } : {}),
+      };
+    }),
   ];
-  const authorActions = choices(
-    "author",
-    Object.fromEntries([
-      ["", "All authors"],
-      ["me", "Me"],
-      ...authors.map((login) => [login, login]),
-    ]),
-    author ?? "",
-  );
+  const authorActions: MenuProps["actions"] = [
+    { id: id("search", "authors"), title: "Search authors…", image: "magnifyingglass" },
+    ...choices(
+      "author",
+      Object.fromEntries([
+        ["", "All authors"],
+        ["me", "Me"],
+        ...authors.map((login) => [login, login]),
+      ]),
+      author ?? "",
+    ),
+  ];
   const customized = count > 0 || value.sort !== "updated" || props.environmentId !== null;
   // The Android header's filter button opens every filter.
   const headerMenu =

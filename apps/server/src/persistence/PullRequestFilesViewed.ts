@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -90,6 +91,7 @@ const make = Effect.gen(function* () {
   return PullRequestFilesViewedRepository.of({
     list: (input) =>
       listRows(input).pipe(
+        NodeSqliteClient.readOnly,
         Effect.map((rows) => ({
           files: rows.slice(0, MAX_FILES_VIEWED_ROWS),
           truncated: rows.length > MAX_FILES_VIEWED_ROWS,

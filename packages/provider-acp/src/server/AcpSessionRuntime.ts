@@ -1435,19 +1435,24 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             cause: new Error("Contained ACP command was not found on PATH"),
           });
         });
-  const scopedSpawnCommand =
+  const agentScope = yield* AgentScope;
+  const scopedLaunch =
     linuxCgroupLease !== undefined || spawnCommand.shell
-      ? spawnCommand
-      : {
-          ...(yield* (yield* AgentScope).wrap({
-            command: spawnCommand.command,
-            args: spawnCommand.args,
-            name: "acp",
-            threadId: yield* AgentScopeThreadId,
-            env: { ...process.env, ...options.spawn.env },
-          })),
-          shell: false,
-        };
+      ? undefined
+      : yield* agentScope.wrap({
+          command: spawnCommand.command,
+          args: spawnCommand.args,
+          name: "acp",
+          threadId: yield* AgentScopeThreadId,
+          env: { ...process.env, ...options.spawn.env },
+        });
+  const scopedSpawnCommand =
+    scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
+  // Finalizers run in reverse order: reap detached work after terminating the agent.
+  const scopeUnit = scopedLaunch?.unit;
+  const stopScope =
+    scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+  yield* Scope.addFinalizer(runtimeScope, stopScope);
   const containedSpawnCommand =
     linuxCgroupLease === undefined
       ? scopedSpawnCommand
@@ -1485,6 +1490,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           }),
       ),
     );
+
+  // Detached children can keep stdout open, delaying protocol termination.
+  if (scopeUnit !== undefined) {
+    yield* child.exitCode.pipe(
+      Effect.matchEffect({ onFailure: () => stopScope, onSuccess: () => stopScope }),
+      Effect.forkIn(runtimeScope),
+    );
+  }
 
   const posixOwnershipLedger = new Map<string, AcpOwnedPosixProcess>();
   const posixOwnershipFrontier = new Map<number, AcpOwnedPosixProcess>();

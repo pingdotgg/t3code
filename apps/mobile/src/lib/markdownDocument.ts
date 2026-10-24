@@ -55,8 +55,56 @@ function attribute(tag: string, name: string): string | null {
   return null;
 }
 
-/** Called only for parsed HTML nodes, so Markdown code examples keep their literal tags. */
-export function markdownHtmlContent(content: string): string {
+function markdownDestination(url: string): string {
+  return `<${url.replace(/&/g, "\\&").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\|/g, "%7C").replace(/\n/g, "")}>`;
+}
+
+const ANCHOR_TAG = /^<\/?a[\s/>]/i;
+
+/** Replacements for the anchor tags still ahead, and how many emitted links are open. */
+type AnchorState = { readonly pending: string[]; open: number };
+
+// Code spans keep their text; an odd trailing backslash would escape the closing "]".
+function escapeLinkLabel(text: string): string {
+  return text
+    .replace(/(`+)[\s\S]*?\1|\\*[[\]]/g, (match) =>
+      match.startsWith("`") || match.length % 2 === 0
+        ? match
+        : `${match.slice(0, -1)}\\${match.slice(-1)}`,
+    )
+    .replace(/\\+$/, (slashes) => (slashes.length % 2 ? `${slashes}\\` : slashes));
+}
+
+// An unescaped "!" before the inserted "[" would turn the link into an image.
+function bangBefore(text: string, index: number): boolean {
+  if (text[index - 1] !== "!") return false;
+  let backslashes = 0;
+  while (text[index - 2 - backslashes] === "\\") backslashes += 1;
+  return backslashes % 2 === 0;
+}
+
+/**
+ * Pairs `<a>` tags in order. Only a closed anchor with an http(s) or mailto href becomes a
+ * Markdown link; any other anchor keeps its text unlinked.
+ */
+function anchorMarkdown(tags: readonly string[]): AnchorState {
+  const replacements = tags.map(() => "");
+  const open: Array<{ index: number; href: string | undefined }> = [];
+  tags.forEach((tag, index) => {
+    if (tag[1] !== "/") {
+      const href = attribute(tag, "href")?.trim();
+      open.push({ index, href: href && /^(?:https?|mailto):/i.test(href) ? href : undefined });
+      return;
+    }
+    const opening = open.pop();
+    if (!opening?.href) return;
+    replacements[opening.index] = "[";
+    replacements[index] = `](${markdownDestination(opening.href)})`;
+  });
+  return { pending: replacements, open: 0 };
+}
+
+function markdownHtmlTags(content: string): RegExpExecArray[] {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
   const tags = [...content.matchAll(HTML_TAG)];
@@ -101,40 +149,113 @@ export function markdownHtmlContent(content: string): string {
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
     index = closingIndex;
   }
-  return content.replace(HTML_TAG, (tag, offset: number) => {
-    if (codeRanges.some((range) => offset >= range.start && offset < range.end)) return tag;
-    if (tag.startsWith("<!--")) return "";
-    if (/^<img\b/i.test(tag)) {
-      const src = attribute(tag, "src");
-      if (!src) return "";
-      const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
-      const href = src
-        .replace(/&/g, "\\&")
-        .replace(/</g, "%3C")
-        .replace(/>/g, "%3E")
-        .replace(/\n/g, "");
-      return `![${alt}](<${href}>)`;
-    }
-    if (/^<summary\b/i.test(tag)) return "\n\n**";
-    if (/^<\/summary\s*>/i.test(tag)) return "**\n\n";
-    if (/^<br\b/i.test(tag)) return "  \n";
-    if (/^<\/?(?:p|div|details)\b/i.test(tag)) return "\n\n";
-    return "";
-  });
+  return tags.filter(
+    (tag) => !codeRanges.some((range) => tag.index >= range.start && tag.index < range.end),
+  );
+}
+
+/**
+ * Called only for parsed HTML nodes, so Markdown code examples keep their literal tags.
+ * `anchors` is shared across sibling inline HTML nodes because each of those carries a single tag.
+ */
+export function markdownHtmlContent(
+  content: string,
+  options: { readonly anchors?: AnchorState; readonly inTableCell?: boolean } = {},
+): string {
+  const tags = markdownHtmlTags(content);
+  const anchors =
+    options.anchors ??
+    anchorMarkdown(tags.map((tag) => tag[0]).filter((tag) => ANCHOR_TAG.test(tag)));
+  let result = "";
+  let end = 0;
+  for (const match of tags) {
+    const text = content.slice(end, match.index);
+    result += anchors.open > 0 ? escapeLinkLabel(text) : text;
+    const replacement = htmlTagMarkdown(match[0], anchors, options);
+    if (replacement === "[" && bangBefore(result, result.length))
+      result = `${result.slice(0, -1)}\\!`;
+    result +=
+      anchors.open > 0 && /[\s[]/.test(result.at(-1) ?? "")
+        ? replacement.replace(/^ /, "")
+        : replacement;
+    end = match.index + match[0].length;
+  }
+  const text = content.slice(end);
+  return result + (anchors.open > 0 ? escapeLinkLabel(text) : text);
+}
+
+function htmlTagMarkdown(
+  tag: string,
+  anchors: AnchorState,
+  options: { readonly inTableCell?: boolean },
+): string {
+  if (tag.startsWith("<!--")) return "";
+  if (ANCHOR_TAG.test(tag)) {
+    const replacement = anchors.pending.shift() ?? "";
+    if (replacement === "[") anchors.open += 1;
+    else if (replacement) anchors.open -= 1;
+    return replacement;
+  }
+  if (/^<img\b/i.test(tag)) {
+    const src = attribute(tag, "src");
+    if (!src) return "";
+    const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
+    return `![${alt}](${markdownDestination(src)})`;
+  }
+  // A blank line inside an open link label would end the paragraph before its "]".
+  const blockBreak = anchors.open === 0 ? "\n\n" : " ";
+  if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
+  if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
+  // A line break would end the table row, so a cell keeps its content on one line.
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? " " : "  \n";
+  if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
+  return "";
 }
 
 export function markdownWithHtml(markdown: string): string {
   if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return markdown;
   const edits: Array<{ start: number; end: number; content: string }> = [];
-  const visit = (node: MarkdownNode) => {
-    if (node.type === "html") {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        edits.push({ start, end, content: markdownHtmlContent(node.value) });
-    } else if ("children" in node) node.children.forEach(visit);
+  const visit = (node: MarkdownNode, inTableCell: boolean, inLink: boolean) => {
+    if (!("children" in node)) return;
+    inTableCell ||= node.type === "tableCell";
+    const children: readonly MarkdownNode[] = node.children;
+    // Inline HTML arrives one tag per node, so anchors pair across phrasing siblings.
+    const anchors =
+      node.type === "root" || node.type === "blockquote" || node.type === "listItem"
+        ? undefined
+        : anchorMarkdown(
+            children.flatMap((child) =>
+              child.type === "html"
+                ? markdownHtmlTags(child.value)
+                    .map((tag) => tag[0])
+                    .filter((tag) => ANCHOR_TAG.test(tag))
+                : [],
+            ),
+          );
+    for (const child of children) {
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      const linkLabel = inLink || (anchors?.open ?? 0) > 0;
+      if (child.type === "text") {
+        if (linkLabel && start !== undefined && end !== undefined) {
+          const content = escapeLinkLabel(markdown.slice(start, end));
+          if (content !== markdown.slice(start, end)) edits.push({ start, end, content });
+        }
+        continue;
+      }
+      if (child.type !== "html") {
+        visit(child, inTableCell, linkLabel);
+        continue;
+      }
+      const content = markdownHtmlContent(child.value, { anchors, inTableCell });
+      if (start === undefined || end === undefined) continue;
+      // Text before an outermost link is never edited, so this edit cannot overlap another.
+      if (content.startsWith("[") && !linkLabel && bangBefore(markdown, start))
+        edits.push({ start: start - 1, end: start, content: "\\!" });
+      edits.push({ start, end, content });
+    }
   };
-  visit(parser.parse(markdown));
+  visit(parser.parse(markdown), false, false);
   for (const edit of edits.reverse())
     markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
   return markdown;

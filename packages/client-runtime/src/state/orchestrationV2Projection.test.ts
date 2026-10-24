@@ -555,3 +555,86 @@ it("does not scan every row against every run for a streaming item update", () =
   expect(next?.visibleTurnItems[0]).toBe(projection.visibleTurnItems[0]);
   expect(runReads).toBeLessThanOrEqual(100);
 });
+
+it("does not scan ordering or positions for a streamed replacement", () => {
+  const size = 100;
+  let ordinalReads = 0;
+  let positionReads = 0;
+  const items = Array.from({ length: size }, (_, index) => ({
+    ...commandItem(`item-${index}`, "before", index),
+    get ordinal() {
+      ordinalReads++;
+      return index;
+    },
+  }));
+  const rows = items.map((item, index) => ({
+    item,
+    get position() {
+      positionReads++;
+      return index;
+    },
+    visibility: "local" as const,
+    sourceThreadId: threadId,
+    sourceItemId: item.id,
+  }));
+  const payload = commandItem(`item-${size - 1}`, "after", size - 1);
+  const next = applyOrchestrationV2ProjectionEvent(
+    { ...emptyProjection, runs: [run], turnItems: items, visibleTurnItems: rows },
+    {
+      id: "stable-replacement",
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload,
+    } as OrchestrationV2DomainEvent,
+  );
+
+  expect(ordinalReads).toBeLessThanOrEqual(2);
+  expect(positionReads).toBeLessThanOrEqual(2);
+  expect(next?.visibleTurnItems.at(-1)).toMatchObject({ item: payload, position: size - 1 });
+  expect(next?.visibleTurnItems[0]).toBe(rows[0]);
+  expect(items.at(-1)).toMatchObject({ output: "before" });
+  expect(rows.at(-1)?.item).toBe(items.at(-1));
+});
+
+it("rechecks visibility when an existing item changes runs without changing ordinal", () => {
+  const first = commandItem("item-first", "first", 1);
+  const second = commandItem("item-second", "second", 2);
+  const rolledBackRun = { ...run, id: RunId.make("rolled-back"), status: "rolled_back" as const };
+  const projection = {
+    ...emptyProjection,
+    runs: [run, rolledBackRun],
+    turnItems: [first, second],
+    visibleTurnItems: [first, second].map((item, position) => ({
+      item,
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+    })),
+  };
+  const update = (payload: OrchestrationV2TurnItem) =>
+    ({
+      id: "visibility-update",
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload,
+    }) as OrchestrationV2DomainEvent;
+  const hidden = applyOrchestrationV2ProjectionEvent(
+    projection,
+    update({
+      ...first,
+      runId: rolledBackRun.id,
+    }),
+  );
+  expect(hidden?.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
+    [second.id, 0],
+  ]);
+  const restored = applyOrchestrationV2ProjectionEvent(hidden, update(first));
+  expect(restored?.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
+    [first.id, 0],
+    [second.id, 1],
+  ]);
+  expect(projection.visibleTurnItems[0]?.item).toBe(first);
+});

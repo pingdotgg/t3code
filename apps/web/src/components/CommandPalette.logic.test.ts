@@ -300,6 +300,116 @@ describe("buildThreadActionItems", () => {
       expect.objectContaining({ value: `thread:${idThread.id}` }),
     ]);
   });
+
+  it("hides subagent threads but keeps forks", () => {
+    const parentId = ThreadId.make("parent");
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({ id: parentId, title: "Parent" }),
+        makeThread({
+          id: ThreadId.make("subagent"),
+          title: "Subagent",
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "subagent",
+          },
+        }),
+        makeThread({
+          id: ThreadId.make("fork"),
+          title: "Fork",
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "fork",
+          },
+        }),
+      ],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+
+    expect(items.map((item) => item.value).toSorted()).toEqual(["thread:fork", "thread:parent"]);
+  });
+
+  it("ranks word-start title matches above newer mid-word matches", () => {
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({
+          id: ThreadId.make("mid-word"),
+          title: "Fix oauth redirect",
+          updatedAt: "2026-03-20T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("word-start"),
+          title: "Clean up auth tokens",
+          updatedAt: "2026-03-02T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("branch-word-start"),
+          title: "Refactor login",
+          branch: "feature/auth-cleanup",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+        }),
+      ],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "auth",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: items,
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      "thread:word-start",
+      "thread:branch-word-start",
+      "thread:mid-word",
+    ]);
+  });
+
+  it("breaks ties within a match tier by latest user message", () => {
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({
+          id: ThreadId.make("prefix-stale"),
+          title: "Auth refactor",
+          updatedAt: "2026-03-20T00:00:00.000Z",
+          latestUserMessageAt: "2025-09-01T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("word-fresh"),
+          title: "Fix auth refresh",
+          updatedAt: "2026-03-10T00:00:00.000Z",
+          latestUserMessageAt: "2026-03-10T00:00:00.000Z",
+        }),
+      ],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "auth",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: items,
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      "thread:word-fresh",
+      "thread:prefix-stale",
+    ]);
+  });
 });
 
 describe("filterPinnedBrowseEntries", () => {
