@@ -49,6 +49,41 @@ describe("deriveThreadFeedInitialContentInset", () => {
   });
 });
 
+describe("native workspace sizing", () => {
+  it("keeps the detail mounted in a narrow iPad window while UIKit still has two columns", () => {
+    const nativeMetrics = {
+      width: 715,
+      height: 1013.5,
+      hasHinge: false,
+      horizontalSizeClass: "regular" as const,
+      verticalBarEdge: "none" as const,
+      safeArea: { top: 32, bottom: 20, left: 0, right: 0 },
+      reservedRegions: [],
+    };
+    expect(deriveLayout({ ...nativeMetrics, nativeMetrics, nativeWorkspace: true })).toMatchObject({
+      usesSplitView: true,
+      listPaneWidth: 280,
+    });
+  });
+
+  it.each([
+    { width: 600, horizontalSizeClass: "regular" as const, split: true },
+    { width: 599, horizontalSizeClass: "regular" as const, split: false },
+    { width: 715, horizontalSizeClass: "compact" as const, split: false },
+  ])("respects UIKit collapse and native column minimums: %j", ({ split, ...size }) => {
+    const nativeMetrics = {
+      ...size,
+      height: 800,
+      verticalBarEdge: "none" as const,
+      safeArea: { top: 32, bottom: 20, left: 0, right: 0 },
+      reservedRegions: [],
+    };
+    expect(
+      deriveLayout({ ...nativeMetrics, nativeMetrics, nativeWorkspace: true }).usesSplitView,
+    ).toBe(split);
+  });
+});
+
 describe("isPrimarySidebarPinned", () => {
   // regression: #20406 sidebar toggle works on iPad and iPhone Duo
   it("keeps compact native roots pinned so search cannot hide the sidebar for a later split", () => {

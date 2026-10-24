@@ -90,12 +90,13 @@ export function deriveLayout(input: {
   readonly width: number;
   readonly height: number;
   readonly nativeMetrics?: NativeLayoutMetrics | null;
+  readonly nativeWorkspace?: boolean;
 }): Layout {
   const { width, height } = input;
   const metrics = input.nativeMetrics;
   const usableWidth = width - (metrics?.safeArea.left ?? 0) - (metrics?.safeArea.right ?? 0);
-  // UIKit's size class supports the shorter Duo inner display. Geometry remains
-  // a floor so a narrow multitasking window cannot squeeze both columns.
+  // UIKit retains split columns below the generic tablet breakpoint. Native
+  // columns follow its size class while reserving room for both column minimums.
   // Unfolded in portrait, the inner display reports neither a side bar nor a
   // fold, only its hinge.
   const hasDuoGeometry =
@@ -103,11 +104,12 @@ export function deriveLayout(input: {
     (metrics.hasHinge === true ||
       metrics.verticalBarEdge !== "none" ||
       metrics.reservedRegions.some((region) => region.kind === "division"));
-  const wideEnoughForSplit = hasDuoGeometry
-    ? metrics.horizontalSizeClass === "regular" &&
-      usableWidth >= SPLIT_SIDEBAR_MIN_WIDTH + 320 &&
-      height >= 400
-    : width >= SPLIT_LAYOUT_MIN_WIDTH && height >= SPLIT_LAYOUT_MIN_HEIGHT;
+  const wideEnoughForSplit =
+    metrics && (input.nativeWorkspace || hasDuoGeometry)
+      ? metrics.horizontalSizeClass === "regular" &&
+        usableWidth >= SPLIT_SIDEBAR_MIN_WIDTH + 320 &&
+        (input.nativeWorkspace || height >= 400)
+      : width >= SPLIT_LAYOUT_MIN_WIDTH && height >= SPLIT_LAYOUT_MIN_HEIGHT;
 
   if (!wideEnoughForSplit) {
     return {
