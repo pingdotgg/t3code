@@ -1675,6 +1675,20 @@ describe("MuseAdapterV2", () => {
           turnId: nativeId,
           subagentId: "subagent-1",
           controlStatus: "running",
+          objective: "Check the thing",
+          role: "general-purpose",
+        },
+      });
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: {
+          itemId: "sub-1",
+          kind: "subagent",
+          revision: 2,
+          status: "inProgress",
+          turnId: nativeId,
+          subagentId: "subagent-1",
+          controlStatus: "running",
           childSessionId: "child-session-1",
           objective: "Check the thing",
           role: "general-purpose",
@@ -1682,12 +1696,26 @@ describe("MuseAdapterV2", () => {
       });
       const created = yield* harness.takeEvent("app_thread.created");
       const childThreadId = created.appThread.id;
+      const row = yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) => event.turnItem.type === "subagent" && event.turnItem.childThreadId !== null,
+      );
+      const roster = harness.allEvents.findLast(
+        (event) => event.type === "provider_thread.updated",
+      );
+      // Clients drop roster entries whose task is a live run's own row.
+      assert.deepStrictEqual(
+        roster?.type === "provider_thread.updated"
+          ? roster.providerThread.pendingBackgroundTasks?.map((task) => task.taskId)
+          : undefined,
+        [row.turnItem.nativeItemRef?.nativeId],
+      );
       yield* fake.emit("item/updated", {
         turnId: nativeId,
         item: {
           itemId: "sub-1",
           kind: "subagent",
-          revision: 2,
+          revision: 3,
           status: "inProgress",
           turnId: nativeId,
           subagentId: "subagent-1",
