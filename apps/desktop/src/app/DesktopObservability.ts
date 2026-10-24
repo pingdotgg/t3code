@@ -46,6 +46,8 @@ export interface RotatingLogFileWriter {
 }
 
 export interface DesktopBackendOutputLogShape {
+  // Absent when the log file could not be opened.
+  readonly filePath?: string;
   readonly beginSession: (input: { readonly details: string }) => Effect.Effect<void>;
   readonly writeOutputChunk: (
     streamName: "stdout" | "stderr",
@@ -501,6 +503,7 @@ const makeBackendOutputLogShape = (
           },
         );
         return {
+          filePath: backendLogFilePathForInstance(environment, id),
           beginSession: Effect.fn("desktop.observability.backendOutput.beginSession")(function* ({
             details,
           }) {

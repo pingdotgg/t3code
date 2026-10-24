@@ -34,6 +34,8 @@ import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
 const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
+// About 3.5s of back-to-back restarts without readiness.
+const REPEATED_START_FAILURE_ATTEMPTS = 3;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
@@ -243,6 +245,12 @@ export interface BackendInstanceSpec {
   readonly onShutdown?: () => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
+  // Fires once per streak of restarts without readiness (crashes, config
+  // failures, missing entry), detached from the restart loop.
+  readonly onRepeatedStartFailure?: (failure: {
+    readonly reason: string;
+    readonly logFilePath: string | undefined;
+  }) => Effect.Effect<void>;
 }
 
 interface ActiveBackendRun {
@@ -261,6 +269,9 @@ interface BackendManagerState {
   readonly active: Option.Option<ActiveBackendRun>;
   readonly restartAttempt: number;
   readonly preflightFailureAttempt: number;
+  // Separate from restartAttempt so bounded preflight retries, which surface
+  // their own dialog, cannot step past the notification threshold.
+  readonly startFailureStreak: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -272,6 +283,7 @@ const initialState: BackendManagerState = {
   active: Option.none(),
   restartAttempt: 0,
   preflightFailureAttempt: 0,
+  startFailureStreak: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -755,7 +767,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               spec.onPreflightFailed?.(preflightFailure.value) ?? Effect.succeed(false)
             );
             if (shouldRestart) {
-              yield* scheduleRestart(reason);
+              yield* scheduleRestart(reason, { countsAsStartFailure: false });
             } else {
               yield* Ref.update(state, (latest) => ({
                 ...latest,
@@ -765,7 +777,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             }
             return;
           }
-          yield* scheduleRestart(reason);
+          yield* scheduleRestart(reason, { countsAsStartFailure: false });
           return;
         }
         yield* Ref.update(state, (latest) =>
@@ -912,6 +924,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 {
                   ...latest,
                   restartAttempt: 0,
+                  startFailureStreak: 0,
                   ready: true,
                 },
               ] as const;
@@ -964,25 +977,41 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
   const scheduleRestart = Effect.fn("desktop.backendInstance.scheduleRestart")(function* (
     reason: string,
+    options?: { readonly countsAsStartFailure?: boolean },
   ) {
+    const countsAsStartFailure = options?.countsAsStartFailure ?? true;
     const scheduled = yield* Ref.modify(state, (latest) => {
       if (!latest.desiredRunning || Option.isSome(latest.restartFiber)) {
-        return [Option.none<Duration.Duration>(), latest] as const;
+        return [Option.none<{ delay: Duration.Duration; notify: boolean }>(), latest] as const;
       }
 
-      const delay = calculateRestartDelay(latest.restartAttempt);
+      const startFailureStreak = latest.startFailureStreak + (countsAsStartFailure ? 1 : 0);
       return [
-        Option.some(delay),
+        Option.some({
+          delay: calculateRestartDelay(latest.restartAttempt),
+          notify: countsAsStartFailure && startFailureStreak === REPEATED_START_FAILURE_ATTEMPTS,
+        }),
         {
           ...latest,
           restartAttempt: latest.restartAttempt + 1,
+          startFailureStreak,
         },
       ] as const;
     });
 
     yield* Option.match(scheduled, {
       onNone: () => Effect.void,
-      onSome: Effect.fn("desktop.backendInstance.scheduleRestartFiber")(function* (delay) {
+      onSome: Effect.fn("desktop.backendInstance.scheduleRestartFiber")(function* ({
+        delay,
+        notify,
+      }) {
+        if (notify && spec.onRepeatedStartFailure) {
+          // Forked so a dialog awaiting the user never holds the mutex or delays the restart.
+          yield* Effect.forkIn(
+            spec.onRepeatedStartFailure({ reason, logFilePath: backendOutputLog.filePath }),
+            parentScope,
+          );
+        }
         yield* logInstanceError("backend exited unexpectedly; restart scheduled", {
           reason,
           delayMs: Duration.toMillis(delay),
@@ -1041,6 +1070,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...latest,
               desiredRunning: false,
               ready: false,
+              startFailureStreak: 0,
               active,
               restartFiber: Option.none<Fiber.Fiber<void, never>>(),
             },

@@ -22,6 +22,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
@@ -105,6 +106,7 @@ export const layer = Layer.effect(
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const electronApp = yield* ElectronApp.ElectronApp;
+    const electronShell = yield* ElectronShell.ElectronShell;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     // Without this, instance scopes are orphaned: they only close via explicit unregister() calls,
     // so on app shutdown the WSL backend child process gets hard-killed by the OS instead of
@@ -176,6 +178,28 @@ export const layer = Layer.effect(
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
+      onRepeatedStartFailure: Effect.fn("desktop.backendPool.primaryRepeatedStartFailure")(
+        function* ({ reason, logFilePath }) {
+          const diagnostics = `Reason: ${reason}\nBackend log: ${logFilePath ?? "unavailable"}`;
+          const { response } = yield* electronDialog.showMessageBox({
+            type: "error",
+            title: "T3 Code's backend couldn't start",
+            message: "The local backend keeps stopping before it is ready.",
+            detail: `${diagnostics}\n\nT3 Code keeps retrying in the background. If the window stays blank, copy the diagnostics, check the log, then quit and reopen T3 Code.`,
+            buttons: ["Copy Diagnostics", "Close"],
+            defaultId: 0,
+            cancelId: 1,
+          });
+          if (response === 0) {
+            yield* electronShell.copyText(diagnostics);
+          }
+        },
+        Effect.catch((error) =>
+          logBackendPoolWarning("failed to show repeated backend start failure", {
+            error: error.message,
+          }),
+        ),
+      ),
       onStateDirOwned: () =>
         electronDialog
           .showErrorBox(
