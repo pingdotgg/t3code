@@ -6895,12 +6895,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          options: { readonly terminalizeSubagents: boolean },
+          options: {
+            readonly terminalizeSubagents: boolean;
+            readonly toolStatus: "interrupted" | "failed";
+          },
         ) {
           for (const tool of context.tools.values()) {
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running" || status === "waiting") {
-              yield* emitTool(context, tool, "interrupted");
+              yield* emitTool(context, tool, options.toolStatus);
             }
           }
           if (!options.terminalizeSubagents) return;
@@ -6974,9 +6977,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (settledStatus === "completed") {
             yield* terminalizeOpenForegroundTools(context);
-          } else if (settledStatus === "interrupted") {
+          } else {
+            // Provider-side cancellation and prompt failures may omit final tool updates.
+            // Close their run-owned items before settlement so they cannot become phantom work.
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
+              toolStatus: settledStatus === "failed" ? "failed" : "interrupted",
             });
           }
           yield* closeTextStreams(context);

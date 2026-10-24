@@ -3367,6 +3367,90 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live.each(["cancelled", "failed", "end_turn"] as const)(
+    "closes unfinished ACP tools before a %s turn settles",
+    (outcome) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make("acp-unfinished-tool");
+        const threadId = ThreadId.make("thread-acp-unfinished-tool");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              environment: { T3_ACP_ACTIVE_TOOL_OUTCOME: outcome },
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-acp-unfinished-tool"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const toolUpdates = events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "tool-call-long-running-1"
+            ? [event.turnItem]
+            : [],
+        );
+        const expectedStatus = outcome === "end_turn" ? "completed" : outcome;
+        assert.include(
+          toolUpdates.map((item) => item.status),
+          "running",
+        );
+        const lastTool = toolUpdates.at(-1);
+        assert.equal(lastTool?.status, outcome === "cancelled" ? "interrupted" : expectedStatus);
+        assert.isNotNull(lastTool?.completedAt);
+        const lastWait = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "tool-call-pending-wait",
+        );
+        assert.equal(lastWait?.type, "turn_item.updated");
+        if (lastWait?.type === "turn_item.updated") {
+          assert.equal(lastWait.turnItem.type, "dynamic_tool");
+          assert.equal(lastWait.turnItem.status, lastTool?.status);
+          assert.isNotNull(lastWait.turnItem.completedAt);
+        }
+        assert.equal(
+          events.find((event) => event.type === "turn.terminal")?.status,
+          expectedStatus,
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("terminalizes an empty successful foreground Bash tool when the turn completes", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

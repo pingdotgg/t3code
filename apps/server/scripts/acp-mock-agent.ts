@@ -48,6 +48,7 @@ const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
 const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const grokKillTaskShape = process.env.T3_ACP_GROK_KILL_TASK_SHAPE;
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
+const activeToolOutcome = process.env.T3_ACP_ACTIVE_TOOL_OUTCOME;
 const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
 const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
 const emitGrokBackgroundTaskPoll = process.env.T3_ACP_GROK_BACKGROUND_TASK_COMPLETION === "poll";
@@ -1592,7 +1593,7 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (emitActiveToolThenHang) {
+      if (emitActiveToolThenHang || activeToolOutcome !== undefined) {
         const toolCallId = "tool-call-long-running-1";
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -1613,6 +1614,25 @@ const program = Effect.gen(function* () {
             status: "in_progress",
           },
         });
+        if (activeToolOutcome !== undefined) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-pending-wait",
+              title: "Waiting for task",
+              kind: "other",
+              status: "pending",
+              rawInput: { taskId: "framer" },
+            },
+          });
+        }
+        if (activeToolOutcome === "failed") {
+          return yield* AcpError.AcpRequestError.internalError("Prompt failed with an open tool");
+        }
+        if (activeToolOutcome === "cancelled" || activeToolOutcome === "end_turn") {
+          return yield* finishPrompt(requestedSessionId, activeToolOutcome);
+        }
         return yield* Effect.never;
       }
       if (emitEmptySuccessfulBash || (emitEmptySuccessfulBashThenHang && promptCount === 1)) {
