@@ -41,6 +41,10 @@ export interface EnvironmentConnectionLease {
 export type RouteCheck = "answered" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
+// Preferred direct routes share one head start, so relay connections do not
+// wait the full probe timeout for each LAN the phone has already left. A route
+// that misses it connects over relay, then upgrades with a second reconnect.
+const ROUTE_CHECK_HEAD_START_MS = 500;
 
 export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
@@ -72,6 +76,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     routes.length === 1
       ? []
       : yield* Effect.forEach(routes, (route) => Effect.forkChild(checkRoute(route)));
+  const headStart = yield* Effect.forkChild(Effect.sleep(ROUTE_CHECK_HEAD_START_MS));
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
@@ -91,7 +96,13 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   });
   const silent: Array<ConnectionRoute> = [];
   for (const [index, route] of routes.entries()) {
-    const check = checks.length === 0 ? "unchecked" : yield* Fiber.join(checks[index]!);
+    const check =
+      checks.length === 0
+        ? "unchecked"
+        : yield* Effect.raceFirst(
+            Fiber.join(checks[index]!),
+            Fiber.join(headStart).pipe(Effect.as<RouteCheck>("silent")),
+          );
     if (check === "silent") {
       silent.push(route);
       continue;

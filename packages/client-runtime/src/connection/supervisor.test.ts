@@ -1022,6 +1022,143 @@ describe("EnvironmentSupervisor", () => {
 });
 
 describe("EnvironmentSupervisor routes", () => {
+  it.effect("connects over relay before a slow LAN reachability check times out", () =>
+    Effect.gen(function* () {
+      const checkingLan = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Deferred.succeed(checkingLan, undefined).pipe(
+                Effect.andThen(Effect.sleep("2500 millis")),
+                Effect.as("silent" as const),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLan);
+      yield* TestClock.adjust("500 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("shares one head start across several slow LAN routes", () =>
+    Effect.gen(function* () {
+      const secondLanTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "bearer:second-lan",
+      });
+      const entry: ConnectionCatalogEntry = {
+        ...LAN_THEN_RELAY_ENTRY,
+        alternateRoutes: [
+          {
+            target: secondLanTarget,
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: secondLanTarget.connectionId,
+                environmentId: TARGET.environmentId,
+                label: TARGET.label,
+                httpBaseUrl: "http://192.168.56.1:3773/",
+                wsBaseUrl: "ws://192.168.56.1:3773/",
+              }),
+            ),
+          },
+          { target: RELAY_TARGET, profile: Option.none() },
+        ],
+      };
+      const checking = yield* Ref.make(0);
+      const checkingLans = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.updateAndGet(checking, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count === 2 ? Deferred.succeed(checkingLans, undefined) : Effect.void,
+                ),
+                Effect.andThen(Effect.sleep("2500 millis")),
+                Effect.as("silent" as const),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLans);
+      yield* TestClock.adjust("500 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("still prefers a LAN route that responds within its head start", () =>
+    Effect.gen(function* () {
+      const checkingLan = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Deferred.succeed(checkingLan, undefined).pipe(
+                Effect.andThen(Effect.sleep("100 millis")),
+                Effect.as("answered" as const),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLan);
+      yield* TestClock.adjust("100 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("still tries a slow LAN route when relay fails", () =>
+    Effect.gen(function* () {
+      const checkingLan = yield* Deferred.make<void>();
+      const attempted: string[] = [];
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Deferred.succeed(checkingLan, undefined).pipe(
+                Effect.andThen(Effect.sleep("2500 millis")),
+                Effect.as("answered" as const),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => {
+          attempted.push(target._tag);
+          return target._tag === "RelayConnectionTarget"
+            ? Effect.fail(blocked("Sign in to T3 Connect."))
+            : Effect.succeed(preparedFor(target));
+        },
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLan);
+      yield* TestClock.adjust("500 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(attempted).toEqual(["RelayConnectionTarget", "BearerConnectionTarget"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("skips a silent LAN route and connects over T3 Connect", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
