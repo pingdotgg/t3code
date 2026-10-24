@@ -227,6 +227,24 @@ describe("AgentScope service", () => {
     ),
   );
 
+  it.effect("delegates every agent scope so rootless containers can manage their cgroups", () =>
+    withFakeSystemd(({ scope }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const codex = yield* launchCodex(scope, "a");
+        const terminal = yield* scope.wrap({
+          command: "agent",
+          args: [],
+          name: "terminal",
+          survivesRestart: true,
+        });
+        for (const launch of [agent, codex, terminal]) {
+          expect(launch.args).toContain("--property=Delegate=yes");
+        }
+      }),
+    ),
+  );
+
   it.effect("stops agents a killed server left before the first launch", () =>
     withFakeSystemd(({ scope, units, calls, stateDir }) =>
       Effect.gen(function* () {
