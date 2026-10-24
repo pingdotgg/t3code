@@ -489,10 +489,12 @@ function PoolBar({
   pool,
   color,
   now,
+  showAccountName,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly showAccountName: boolean;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   return (
@@ -512,7 +514,7 @@ function PoolBar({
               color={color}
               now={now}
               index={position + 1}
-              showAccountName={pool.columns.length > 1}
+              showAccountName={showAccountName}
             />
           ) : null,
         )}
@@ -525,12 +527,14 @@ function PoolWindowCard({
   pool,
   color,
   now,
+  showAccountName,
   label,
   description,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly showAccountName: boolean;
   readonly label?: string | undefined;
   readonly description?: string | undefined;
 }) {
@@ -554,7 +558,7 @@ function PoolWindowCard({
           </span>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
+      <PoolBar pool={pool} color={color} now={now} showAccountName={showAccountName} />
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
@@ -586,6 +590,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
             pool={window}
             color={color}
             now={now}
+            showAccountName={pool.accounts.length > 1}
             label={details?.label}
             description={details?.description}
           />

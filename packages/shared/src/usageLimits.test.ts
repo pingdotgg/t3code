@@ -800,6 +800,33 @@ describe("pooled account columns", () => {
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
   });
 
+  it("gives accounts with no limit in common full-width rows but keeps shared limits aligned", () => {
+    const monthly = { ...window, id: "monthly_spend", kind: "monthly", label: "Monthly" } as const;
+    const accounts = [
+      account("personal", [window, weekly]),
+      account("enterprise", [monthly]),
+      account("shared", [{ ...window, usedPercent: 50 }]),
+    ];
+    const [pool] = collectLimitPools(accounts, now);
+    expect(keys(pool!)).toEqual([["personal", "shared"], ["personal", null], ["enterprise"]]);
+  });
+
+  it("keeps placeholders within the accounts linked by a shared limit", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("a", [window]),
+        account("b", [window]),
+        account("c", [weekly]),
+        account("d", [weekly]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([
+      ["a", "b"],
+      ["c", "d"],
+    ]);
+  });
+
   it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
     "keeps blocked sessions empty without predicting a refill from a missing or stale clock (%s)",
     (resetsAt) => {

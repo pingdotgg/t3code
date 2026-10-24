@@ -477,6 +477,16 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       else byKey.set(key, [member]);
     }
   }
+  // An empty slot keeps rows aligned only between accounts linked by shared limits;
+  // accounts with nothing in common would otherwise halve every row.
+  const linked = new Map<string, Set<string>>();
+  for (const members of byKey.values()) {
+    const group = new Set<string>();
+    for (const { account } of members) {
+      for (const key of linked.get(account.key) ?? [account.key]) group.add(key);
+    }
+    for (const key of group) linked.set(key, group);
+  }
   const pools = [...byKey].map(([key, members]): LimitPoolWindow => {
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
@@ -511,9 +521,11 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       kind: first.kind,
       label: first.label,
       members,
-      columns: accounts.map(
-        (account) => memberByAccount.get(account.key) ?? { account, window: null },
-      ),
+      columns: accounts
+        .filter((account) =>
+          members.some((member) => linked.get(member.account.key)?.has(account.key)),
+        )
+        .map((account) => memberByAccount.get(account.key) ?? { account, window: null }),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
