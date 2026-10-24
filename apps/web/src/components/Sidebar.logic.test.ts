@@ -272,6 +272,15 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("approval");
   });
 
+  it("shows cached work from an unavailable environment as Offline, not Working", () => {
+    expect(resolveSidebarThreadStatus({ ...idle, runtime, environmentUnavailable: true })).toBe(
+      "offline",
+    );
+    expect(resolveSidebarThreadStatus({ ...idle, runtime, environmentUnavailable: false })).toBe(
+      "working",
+    );
+  });
+
   it("keeps usage-limit stops Limited and visible until the thread recovers", () => {
     const limited = {
       ...runtime,

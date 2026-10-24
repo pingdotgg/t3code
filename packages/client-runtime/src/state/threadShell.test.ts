@@ -6,6 +6,7 @@ import {
   ThreadId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -23,6 +24,8 @@ const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
 
 function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
+  const environmentAvailableAtom = Atom.family((_environmentId: EnvironmentId) => Atom.make(true));
+  const locallyHiddenThreadRefsAtom = Atom.make<ReadonlyArray<ScopedThreadRef>>([]);
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
   );
@@ -48,7 +51,14 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     registry: AtomRegistry.make(),
     snapshotAtom,
     catalogValueAtom,
-    threads: createEnvironmentThreadShellAtoms({ catalogValueAtom, snapshotAtom }),
+    environmentAvailableAtom,
+    locallyHiddenThreadRefsAtom,
+    threads: createEnvironmentThreadShellAtoms({
+      catalogValueAtom,
+      snapshotAtom,
+      environmentAvailableAtom,
+      locallyHiddenThreadRefsAtom,
+    }),
   };
 }
 
@@ -244,6 +254,50 @@ describe("v2 thread shell lists", () => {
     expect(environmentsOf()).toEqual(new Set([environmentId]));
     setRemotePaused(false);
     expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
+    dispose();
+    registry.dispose();
+  });
+
+  it("stops presenting cached work as Working while its environment is unavailable", () => {
+    const { registry, threads, snapshotAtom, environmentAvailableAtom } = makeHarness();
+    const running = {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("running"),
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+    };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [running] });
+    const shell = threads.threadShellAtom({ environmentId, threadId: running.id });
+    const dispose = registry.mount(shell);
+    expect(isThreadWorking(registry.get(shell)!)).toBe(true);
+    expect(registry.get(shell)?.environmentUnavailable).toBe(false);
+
+    registry.set(environmentAvailableAtom(environmentId), false);
+    expect(registry.get(shell)?.environmentUnavailable).toBe(true);
+    expect(isThreadWorking(registry.get(shell)!)).toBe(false);
+
+    registry.set(environmentAvailableAtom(environmentId), true);
+    expect(isThreadWorking(registry.get(shell)!)).toBe(true);
+    dispose();
+    registry.dispose();
+  });
+
+  it("hides a locally removed thread only while its environment is unavailable", () => {
+    const { registry, threads, environmentAvailableAtom, locallyHiddenThreadRefsAtom } =
+      makeHarness([environmentId, remoteEnvironmentId]);
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    const environmentsOf = () =>
+      registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.environmentId);
+
+    registry.set(environmentAvailableAtom(remoteEnvironmentId), false);
+    registry.set(locallyHiddenThreadRefsAtom, [
+      { environmentId: remoteEnvironmentId, threadId: v2ThreadShell.id },
+    ]);
+    expect(environmentsOf()).toEqual([environmentId]);
+
+    // The original environment owns the thread again once it reconnects.
+    registry.set(environmentAvailableAtom(remoteEnvironmentId), true);
+    expect(environmentsOf()).toEqual([environmentId, remoteEnvironmentId]);
     dispose();
     registry.dispose();
   });

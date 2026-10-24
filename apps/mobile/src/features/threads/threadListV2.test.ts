@@ -99,6 +99,23 @@ describe("resolveThreadListV2Status", () => {
     );
   });
 
+  it("shows cached work from an unavailable environment as Offline, not Working", () => {
+    const running = presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          status: "running",
+          activeRunId: RunId.make("run-offline"),
+          latestRunId: RunId.make("run-offline"),
+        }),
+      ),
+    );
+    expect(resolveThreadListV2Status({ ...running, environmentUnavailable: true })).toBe("offline");
+    expect(resolveThreadListV2Status({ ...running, environmentUnavailable: false })).toBe(
+      "working",
+    );
+  });
+
   it.each([
     { kind: "command", status: "ready" },
     { kind: "monitor", status: "waiting" },
