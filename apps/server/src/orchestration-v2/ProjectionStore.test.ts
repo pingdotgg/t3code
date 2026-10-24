@@ -26,12 +26,16 @@ import {
   TurnItemId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -5838,3 +5842,63 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+// regression: #23687 pure reads must not queue behind the write lock
+const readerReads: ReadonlyArray<{
+  readonly name: string;
+  readonly read: (
+    store: ProjectionStore.ProjectionStoreV2Shape,
+    threadId: ThreadId,
+  ) => Effect.Effect<unknown, ProjectionStore.ProjectionStoreV2Error>;
+}> = [
+  {
+    name: "getThreadRecords",
+    read: (store, threadId) => store.getThreadRecords(threadId, ["runs"]),
+  },
+  { name: "getShellSnapshot", read: (store) => store.getShellSnapshot() },
+  { name: "getThreadShell", read: (store, threadId) => store.getThreadShell(threadId) },
+  { name: "getRecoveryThreadIds", read: (store) => store.getRecoveryThreadIds("runtime") },
+  {
+    name: "getSettlementCandidates",
+    read: (store, threadId) => store.getSettlementCandidates(threadId),
+  },
+];
+it.effect.each(readerReads)("$name runs on the reader connection", ({ read }) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // The reader worker is a second connection, so the database must be a file.
+    const directory = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-projection-reader-",
+    });
+    const layerFile = ProjectionStore.layer.pipe(
+      Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"))),
+    );
+
+    yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("reader");
+      const connections: Array<unknown> = [];
+      // nodeSqliteClient stamps db.connection only on the span that acquired the connection.
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            const connection = span.attributes.get("db.connection");
+            if (connection !== undefined) connections.push(connection);
+          };
+          return span;
+        },
+      });
+
+      yield* read(store, threadId).pipe(
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        Effect.withTracer(tracer),
+      );
+
+      assert.deepEqual(connections, ["reader"]);
+    }).pipe(Effect.provide(layerFile));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
