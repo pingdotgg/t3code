@@ -312,7 +312,7 @@ export function decodeThreadsJson(
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
-    const path = trimmed(thread.threadContext?.filePath);
+    const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       if (
