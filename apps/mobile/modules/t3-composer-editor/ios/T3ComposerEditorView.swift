@@ -864,12 +864,19 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   private func applyControlledDocument(force: Bool = false) {
     // Rebuilding the attributed string tears down an active IME composition.
-    // Skip while marked text exists; committing the composition sends a new
-    // value from JS, and that update rebuilds, keeping any skipped force.
+    // While JS only echoes the text being composed, defer the rebuild until the
+    // composition commits. A different value is a deliberate replacement, such
+    // as send clearing the draft: it must win, or committing the composition
+    // later emits the sent text back into the draft.
     if textView.markedTextRange != nil {
-      hasDeferredForcedRebuild = hasDeferredForcedRebuild || force
-      updatePlaceholderVisibility()
-      return
+      if textView.serializedText() == value {
+        hasDeferredForcedRebuild = hasDeferredForcedRebuild || force
+        updatePlaceholderVisibility()
+        return
+      }
+      isApplyingControlledValue = true
+      textView.unmarkText()
+      isApplyingControlledValue = false
     }
     let shouldForce = force || hasDeferredForcedRebuild
     let currentSource = textView.serializedText()
