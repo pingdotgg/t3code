@@ -1,12 +1,33 @@
 import type { UsageTokenTotals } from "@t3tools/contracts";
+import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import {
   isModelCostUnknown,
   type CategoryCost,
+  type DailyTotals,
   type ModelTotals,
   type SpeedCost,
 } from "@t3tools/shared/usageMerge";
 
 import type { ShareSegment } from "./UsageShareBar";
+
+export function timeBreakdownMetric(metric: "cost" | "tokens") {
+  const formatCost = (totals: Pick<DailyTotals, "costUsd" | "totalTokens"> | undefined) =>
+    formatUsd(totals?.costUsd ?? 0);
+  const formatTokenCount = (totals: Pick<DailyTotals, "costUsd" | "totalTokens"> | undefined) =>
+    formatTokens(totals?.totalTokens ?? 0);
+
+  return metric === "tokens"
+    ? {
+        formatValue: formatTokenCount,
+        secondaryLabel: "Cost",
+        formatSecondaryValue: formatCost,
+      }
+    : {
+        formatValue: formatCost,
+        secondaryLabel: "Tokens",
+        formatSecondaryValue: formatTokenCount,
+      };
+}
 
 export function sortModelsByTokens(models: readonly ModelTotals[]) {
   return models.toSorted(
