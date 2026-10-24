@@ -12,6 +12,7 @@ import {
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -134,20 +135,21 @@ const make = Effect.gen(function* () {
     let updated: StoredUsage | undefined;
     for (const provider of providers) {
       const live = observedLimits(provider);
-      if (!live || stored[provider.instanceId]?.checkedAt === live.checkedAt) {
+      if (!live) {
         continue;
       }
       const { email, workspaceId } = provider.auth;
-      updated = {
-        ...(updated ?? stored),
-        [provider.instanceId]: {
-          driver: provider.driver,
-          checkedAt: live.checkedAt,
-          windows: live.windows,
-          ...(email ? { email } : {}),
-          ...(workspaceId ? { workspaceId } : {}),
-        },
+      const observation: StoredObservation = {
+        driver: provider.driver,
+        checkedAt: live.checkedAt,
+        windows: live.windows,
+        ...(email ? { email } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
       };
+      // `checkedAt` has millisecond resolution, so two updates can share it.
+      if (!Equal.equals(stored[provider.instanceId], observation)) {
+        updated = { ...(updated ?? stored), [provider.instanceId]: observation };
+      }
     }
     if (updated) {
       yield* writeStored(updated).pipe(

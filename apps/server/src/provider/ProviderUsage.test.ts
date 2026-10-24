@@ -95,17 +95,17 @@ const readSession = (
     ),
   );
 
-/** A session in which the registry publishes `provider` once; returns after it is saved. */
-const observeOnce = (baseDir: string, provider: ServerProvider) =>
+/** A session in which the registry publishes each snapshot in turn; returns after they are saved. */
+const observe = (baseDir: string, ...snapshots: ReadonlyArray<ServerProvider>) =>
   Effect.gen(function* () {
     // The change stream is consumed in order, so `persisted` completes only
     // after the observation before it has been written.
     const persisted = yield* Deferred.make<void>();
     return yield* readSession(
       baseDir,
-      [provider],
+      snapshots.slice(-1),
       Stream.concat(
-        Stream.make([provider]),
+        Stream.fromIterable(snapshots.map((snapshot) => [snapshot])),
         Stream.fromEffect(Deferred.succeed(persisted, undefined)).pipe(Stream.drain),
       ),
       Deferred.await(persisted),
@@ -144,7 +144,7 @@ it.layer(NodeServices.layer)("ProviderUsage", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped();
-      const first = yield* observeOnce(
+      const first = yield* observe(
         baseDir,
         makeProvider("claudeAgent", {
           usageLimits: claudeLimits,
@@ -172,7 +172,7 @@ it.layer(NodeServices.layer)("ProviderUsage", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped();
-      yield* observeOnce(
+      yield* observe(
         baseDir,
         makeProvider("claudeAgent", {
           usageLimits: claudeLimits,
@@ -184,6 +184,24 @@ it.layer(NodeServices.layer)("ProviderUsage", (it) => {
         makeProvider("claudeAgent", { auth: claudeAuth("b@example.com") }),
       ]);
       assert.strictEqual(switched.providers[0]?.source, "none");
+    }),
+  );
+
+  it.effect("saves a changed observation that shares the previous checkedAt", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const [session, weekly] = claudeLimits.windows;
+      yield* observe(
+        baseDir,
+        makeProvider("claudeAgent", { usageLimits: claudeLimits }),
+        makeProvider("claudeAgent", {
+          usageLimits: { ...claudeLimits, windows: [{ ...session!, usedPercent: 43 }, weekly!] },
+        }),
+      );
+
+      const restarted = yield* readSession(baseDir, [makeProvider("claudeAgent")]);
+      assert.strictEqual(restarted.providers[0]?.windows[0]?.usedPercent, 43);
     }),
   );
 });
