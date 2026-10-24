@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { useState } from "react";
+import { isElectron } from "../../env";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
@@ -376,6 +377,34 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        {isElectron ? (
+          <SettingsRow
+            {...searchableSetting("styled-context-menu")}
+            description="Use T3 Code styling for right-click menus instead of your system's native menus."
+            resetAction={
+              settings.styledContextMenuEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.styledContextMenuEnabled ? (
+                <SettingResetButton
+                  label="styled context menu"
+                  onClick={() =>
+                    updateSettings({
+                      styledContextMenuEnabled: DEFAULT_UNIFIED_SETTINGS.styledContextMenuEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.styledContextMenuEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ styledContextMenuEnabled: Boolean(checked) })
+                }
+                aria-label="Styled Context Menu"
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection id="motion" title="Motion">
