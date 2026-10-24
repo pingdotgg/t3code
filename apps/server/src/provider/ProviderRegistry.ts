@@ -433,6 +433,14 @@ export const layer = Layer.effect(
       new Map(),
     );
     const syncSemaphore = yield* Semaphore.make(1);
+    const publishSemaphore = yield* Semaphore.make(1);
+    // Publish the current list rather than one captured before an await (such
+    // as a cache write), so a slower update never emits an older list last.
+    const publishProviders = publishSemaphore.withPermits(1)(
+      Ref.get(providersRef).pipe(
+        Effect.flatMap((providers) => PubSub.publish(changesPubSub, providers)),
+      ),
+    );
 
     const getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>> = Ref.get(
       liveSubsRef,
@@ -525,7 +533,7 @@ export const layer = Layer.effect(
           });
         }
         if (options?.publish !== false) {
-          yield* PubSub.publish(changesPubSub, providers);
+          yield* publishProviders;
         }
       }
 
@@ -800,7 +808,7 @@ export const layer = Layer.effect(
             },
           );
           if (haveProvidersChanged(previousProviders, providers)) {
-            yield* PubSub.publish(changesPubSub, providers);
+            yield* publishProviders;
           }
         }
 
@@ -851,7 +859,7 @@ export const layer = Layer.effect(
           },
         );
         if (haveProvidersChanged(previousProviders, providers)) {
-          yield* PubSub.publish(changesPubSub, providers);
+          yield* publishProviders;
         }
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
           const next = new Map(previous);
@@ -906,9 +914,7 @@ export const layer = Layer.effect(
         return [[currentProviders, nextProviders] as const, nextProviders];
       }).pipe(
         Effect.tap(([previousProviders, nextProviders]) =>
-          haveProvidersChanged(previousProviders, nextProviders)
-            ? PubSub.publish(changesPubSub, nextProviders)
-            : Effect.void,
+          haveProvidersChanged(previousProviders, nextProviders) ? publishProviders : Effect.void,
         ),
         Effect.map(([, nextProviders]) => nextProviders),
       );
