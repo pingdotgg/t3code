@@ -144,7 +144,7 @@ function stripTerminalControl(text: string): string {
   );
 }
 
-type CompletionShell = "posix" | "fish" | "powershell";
+type CompletionShell = "posix" | "fish" | "nu" | "powershell";
 
 function resolveCompletionShell(
   platform: NodeJS.Platform,
@@ -154,6 +154,7 @@ function resolveCompletionShell(
   const shell = env.SHELL ?? "";
   const name = shell.split("/").at(-1) ?? shell;
   if (name === "fish") return "fish";
+  if (name === "nu") return "nu";
   if (name === "pwsh" || name === "powershell") return "powershell";
   return "posix";
 }
@@ -175,6 +176,12 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+    case "nu":
+      // Nushell raises an unhandled failed external as an error, so a body that completes
+      // succeeded. It runs unpiped and non-final inside `try`: piping would hide that error and a
+      // final external would be captured instead of streamed, so a final internal value is not
+      // printed.
+      return `let __t3c = try {\r${body}\r0 } catch {|e| print -e $e.rendered; $e.exit_code? | default 1 }; print $"\\n${sentinel}($__t3c)"`;
     case "posix":
       return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
