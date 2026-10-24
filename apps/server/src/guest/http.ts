@@ -1,4 +1,5 @@
 import {
+  GUEST_RENDER_ROUTE,
   GUEST_ROUTE_PREFIX,
   GUEST_SHARE_PARAM,
   GUEST_SHARE_TTL_MS,
@@ -13,6 +14,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
+import { htmlRenderFileName } from "@t3tools/shared/htmlRender";
+
+import { assetFileResponse } from "../http.ts";
 import { GuestShareService, type GuestShareAccessError } from "./GuestShareService.ts";
 
 // Cloudflare closes idle streams after about 100 seconds.
@@ -26,7 +30,10 @@ const errorResponse = (error: GuestShareAccessError) =>
   HttpServerResponse.json(
     { reason: error.reason, message: error.message },
     {
-      status: error.reason === "invalid" || error.reason === "inactive" ? 403 : 409,
+      status:
+        error.reason === "invalid" || error.reason === "inactive" || error.reason === "unavailable"
+          ? 403
+          : 409,
       headers: NO_STORE,
     },
   );
@@ -125,4 +132,31 @@ const sessionRoute = HttpRouter.add(
   }),
 );
 
-export const layer = Layer.mergeAll(redeemRoute, sessionRoute, submitRoute, streamRoute);
+// The response carries the asset route's sandbox CSP: the page gets an opaque origin, so its
+// scripts cannot send the guest cookie or call these routes as the guest.
+const renderRoute = HttpRouter.add(
+  "GET",
+  GUEST_RENDER_ROUTE,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const itemId = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("item");
+    if (!itemId) return yield* badRequest;
+    const guestShares = yield* GuestShareService;
+    return yield* guestShares.render(yield* sessionToken, itemId).pipe(
+      Effect.flatMap(({ path, title }) =>
+        assetFileResponse({ path, mimeType: "text/html", fileName: htmlRenderFileName(title) }),
+      ),
+      // Each load re-checks the share, so a closed, replaced, or expired link stops it at once.
+      Effect.map((response) => HttpServerResponse.setHeaders(response, NO_STORE)),
+      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+    );
+  }),
+);
+
+export const layer = Layer.mergeAll(
+  redeemRoute,
+  sessionRoute,
+  submitRoute,
+  streamRoute,
+  renderRoute,
+);

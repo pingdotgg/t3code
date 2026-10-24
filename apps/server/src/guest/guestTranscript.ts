@@ -7,6 +7,7 @@ import type {
   OrchestrationV2TurnItem,
   RunId,
 } from "@t3tools/contracts";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 // The kind only: tool titles and arguments can carry paths, commands, and secrets.
 const TOOL_KINDS: Partial<
@@ -16,7 +17,6 @@ const TOOL_KINDS: Partial<
   file_change: "file_change",
   file_search: "file_search",
   web_search: "web_search",
-  dynamic_tool: "tool",
   subagent: "subagent",
 };
 
@@ -61,6 +61,20 @@ export function guestTranscriptItem(item: OrchestrationV2TurnItem): GuestTranscr
           options: question.options.map((option) => option.label),
         })),
       };
+    case "dynamic_tool": {
+      // A published visual is shown, sandboxed; other tool calls stay a fixed label.
+      const render = item.status === "completed" ? htmlRenderFromToolItem(item) : undefined;
+      if (render !== undefined) {
+        return {
+          kind: "html-render",
+          id: item.id,
+          title: render.title,
+          height: render.height,
+          ...(render.heights === undefined ? {} : { heights: render.heights }),
+        };
+      }
+      return { kind: "tool", id: item.id, tool: "tool" };
+    }
     default: {
       const tool = TOOL_KINDS[item.type];
       return tool === undefined ? null : { kind: "tool", id: item.id, tool };

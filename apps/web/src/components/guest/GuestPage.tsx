@@ -20,6 +20,7 @@ import { useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
+import { GuestHtmlRender } from "./GuestHtmlRender";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
@@ -324,7 +325,7 @@ function GuestThread({
               </li>
             ) : (
               <li key={row.item.id}>
-                <TranscriptItem item={row.item} ownMessageIds={ownMessageIds} />
+                <TranscriptItem item={row.item} ownMessageIds={ownMessageIds} shareId={shareId} />
               </li>
             ),
           )}
@@ -376,9 +377,11 @@ function UnplacedGuestMessage({ message }: { readonly message: ThreadGuestMessag
 function TranscriptItem({
   item,
   ownMessageIds,
+  shareId,
 }: {
   readonly item: GuestTranscriptItem;
   readonly ownMessageIds: ReadonlySet<string>;
+  readonly shareId: string;
 }) {
   switch (item.kind) {
     case "user":
@@ -429,6 +432,8 @@ function TranscriptItem({
       );
     case "tool":
       return null;
+    case "html-render":
+      return <GuestHtmlRender item={item} shareId={shareId} />;
   }
 }
 

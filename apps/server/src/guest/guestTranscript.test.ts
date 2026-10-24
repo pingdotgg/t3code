@@ -32,6 +32,26 @@ describe("guestTranscriptItem", () => {
     ).toEqual({ kind: "tool", id: "item", tool: "command" });
   });
 
+  it("shows a published visual by reference, and other tool calls as a fixed label", () => {
+    const htmlRender = { attachmentId: "thread-a-1", title: "Chart", height: 320 };
+    const tool = (toolName: string, output: unknown) =>
+      item({ type: "dynamic_tool", status: "completed", toolName, output });
+    const published = tool("mcp__t3-code__html_render", [
+      { type: "text", text: JSON.stringify({ htmlRender }) },
+    ]);
+    expect(guestTranscriptItem(published)).toEqual({
+      kind: "html-render",
+      id: "item",
+      title: "Chart",
+      height: 320,
+    });
+    expect(guestTranscriptItem(tool("mcp__other__lookup", "secret"))).toEqual({
+      kind: "tool",
+      id: "item",
+      tool: "tool",
+    });
+  });
+
   it("drops reasoning, approvals, secret requests, and unknown items", () => {
     for (const type of ["reasoning", "approval_request", "secret_request", "future_item"]) {
       expect(guestTranscriptItem(item({ type, text: "hidden" }))).toBeNull();

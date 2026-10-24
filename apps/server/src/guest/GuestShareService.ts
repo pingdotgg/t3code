@@ -14,6 +14,7 @@ import {
   type RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -32,6 +33,8 @@ import {
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { resolveAttachmentPathById, threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import { GUEST_FAILURE } from "../orchestration-v2/GuestShareDecider.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -60,6 +63,7 @@ const GUEST_ACCESS_MESSAGES = {
   ...GUEST_FAILURE,
   invalid: "This guest link is not valid.",
   stale_page: "This page is for an older guest link. Reload it to continue.",
+  unavailable: "This visual is not available.",
   rejected: "The owner's server rejected this request.",
 } as const;
 
@@ -67,7 +71,15 @@ const GUEST_ACCESS_MESSAGES = {
 export class GuestShareAccessError extends Schema.TaggedError<GuestShareAccessError>()(
   "GuestShareAccessError",
   {
-    reason: Schema.Literals(["invalid", "inactive", "used", "busy", "stale_page", "rejected"]),
+    reason: Schema.Literals([
+      "invalid",
+      "inactive",
+      "used",
+      "busy",
+      "stale_page",
+      "unavailable",
+      "rejected",
+    ]),
   },
 ) {
   override get message(): string {
@@ -125,12 +137,18 @@ export class GuestShareService extends Context.Service<
     readonly stream: (
       session: string,
     ) => Effect.Effect<Stream.Stream<GuestStreamEvent>, GuestShareAccessError>;
+    /** The file of an HTML render the guest can see in the transcript, and its title. */
+    readonly render: (
+      session: string,
+      itemId: string,
+    ) => Effect.Effect<{ readonly path: string; readonly title: string }, GuestShareAccessError>;
   }
 >()("t3/guest/GuestShareService") {}
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const managedEndpoint = yield* CloudManagedEndpointRuntime;
+  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const signingKey = yield* Effect.cached(
@@ -396,7 +414,49 @@ const make = Effect.gen(function* () {
     ).pipe(Stream.takeUntil((event) => event.type === "ended"));
   });
 
-  return GuestShareService.of({ create, redeem, check, submit, stream });
+  const renderUnavailable = new GuestShareAccessError({ reason: "unavailable" });
+  // Only an item the guest's transcript shows right now: the same snapshot window and
+  // visibility rules as the stream, so a rolled-back or out-of-window render is not served.
+  const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
+    const { thread, share } = yield* authorize(session, "session");
+    const { projection } = yield* orchestrator
+      .getThreadSnapshotWindow(thread.id, {
+        rowLimit: SNAPSHOT_ROW_LIMIT,
+        userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
+      })
+      .pipe(Effect.mapError(() => inactive));
+    // The share can end between authorize and this read, as in `stream`.
+    if (
+      projection.thread.guestShare?.id !== share.id ||
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null
+    ) {
+      return yield* inactive;
+    }
+    const item = projection.visibleTurnItems.find(
+      (entry) => entry.visibility === "local" && entry.item.id === itemId,
+    )?.item;
+    const run = item?.runId == null ? undefined : projection.runs.find((r) => r.id === item.runId);
+    if (
+      item === undefined ||
+      item.type !== "dynamic_tool" ||
+      run === undefined ||
+      !isGuestVisibleRun(run, share.historyStartRunOrdinal) ||
+      guestTranscriptItem(item)?.kind !== "html-render"
+    ) {
+      return yield* renderUnavailable;
+    }
+    const [attachmentId] = threadHtmlRenderAttachmentIds(thread.id, [item]);
+    const path =
+      attachmentId === undefined
+        ? null
+        : resolveAttachmentPathById({ attachmentsDir, attachmentId });
+    const reference = htmlRenderFromToolItem(item);
+    if (path === null || reference === undefined) return yield* renderUnavailable;
+    return { path, title: reference.title };
+  });
+
+  return GuestShareService.of({ create, redeem, check, submit, stream, render });
 });
 
 export const layer = Layer.effect(GuestShareService, make);
