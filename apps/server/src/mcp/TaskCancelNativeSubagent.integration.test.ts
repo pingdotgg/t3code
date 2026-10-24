@@ -13,6 +13,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -49,6 +50,132 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
 const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
+const provider: ServerProvider = {
+  instanceId,
+  driver,
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-10-22T00:00:00.000Z",
+  models: [
+    { slug: modelSelection.model, name: modelSelection.model, isCustom: false, capabilities: null },
+  ],
+  slashCommands: [],
+  skills: [],
+};
+
+const makeHarness = Effect.fn(function* (name: string) {
+  const cwd = yield* checkpointWorkspace(name);
+  const turns: Array<{
+    readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
+    readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
+  }> = [];
+  const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+    instanceId,
+    driver,
+    getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    openSession: (input) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        return {
+          instanceId,
+          driver,
+          providerSessionId: input.providerSessionId,
+          providerSession: {
+            id: input.providerSessionId,
+            driver,
+            providerInstanceId: instanceId,
+            status: "ready",
+            cwd,
+            model: modelSelection.model,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.fromQueue(events),
+          ensureThread: ({ threadId }) =>
+            Effect.succeed({
+              id: ProviderThreadId.make(`provider-thread:${threadId}`),
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId: input.providerSessionId,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            }),
+          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          startTurn: (turn) =>
+            Effect.gen(function* () {
+              turns.push({ turn, events });
+              yield* Queue.offer(events, {
+                type: "provider_turn.updated",
+                driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                  providerThreadId: turn.providerThread.id,
+                  nodeId: turn.rootNodeId,
+                  runAttemptId: turn.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: turn.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              });
+            }),
+          steerTurn: () => Effect.die("unused"),
+          interruptTurn: () => Effect.void,
+          respondToRuntimeRequest: () => Effect.die("unused"),
+          readThreadSnapshot: () => Effect.die("unused"),
+          rollbackThread: () => Effect.die("unused"),
+          forkThread: () => Effect.die("unused"),
+        };
+      }),
+  };
+  const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
+  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry({ name }, layerAdapters, {
+    runEffectWorker: false,
+  });
+  const layerOrchestration = Layer.merge(
+    layerOrchestrator,
+    ThreadManagementService.layer.pipe(
+      Layer.provide(layerOrchestrator),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
+  );
+  const layerTest = layerOrchestratorService.pipe(
+    Layer.provideMerge(layerOrchestration),
+    Layer.provide(
+      Layer.mergeAll(
+        layerAdapters,
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([provider]),
+          refreshInstance: () => Effect.succeed([provider]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        ServerSettings.layerTest(),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        NodeServices.layer,
+      ),
+    ),
+  );
+  return { cwd, turns, layerTest };
+});
 
 // A delegated Claude child ends its turn while a background native subagent it
 // started keeps running (#17154).
@@ -56,115 +183,7 @@ const modelSelection = { instanceId, model: "claude-test" };
 it.effect("task_cancel ends a delegated child's background native subagent", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("task-cancel-native-subagent");
-      const turns: Array<{
-        readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
-        readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
-      }> = [];
-      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
-        instanceId,
-        driver,
-        getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
-        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-        openSession: (input) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-            return {
-              instanceId,
-              driver,
-              providerSessionId: input.providerSessionId,
-              providerSession: {
-                id: input.providerSessionId,
-                driver,
-                providerInstanceId: instanceId,
-                status: "ready",
-                cwd,
-                model: modelSelection.model,
-                capabilities: ClaudeProviderCapabilitiesV2,
-                createdAt: now,
-                updatedAt: now,
-                lastError: null,
-              },
-              events: Stream.fromQueue(events),
-              ensureThread: ({ threadId }) =>
-                Effect.succeed({
-                  id: ProviderThreadId.make(`provider-thread:${threadId}`),
-                  driver,
-                  providerInstanceId: instanceId,
-                  providerSessionId: input.providerSessionId,
-                  appThreadId: threadId,
-                  ownerNodeId: null,
-                  nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
-                  nativeConversationHeadRef: null,
-                  status: "idle",
-                  firstRunOrdinal: null,
-                  lastRunOrdinal: null,
-                  handoffIds: [],
-                  forkedFrom: null,
-                  createdAt: now,
-                  updatedAt: now,
-                }),
-              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-              startTurn: (turn) =>
-                Effect.gen(function* () {
-                  turns.push({ turn, events });
-                  yield* Queue.offer(events, {
-                    type: "provider_turn.updated",
-                    driver,
-                    providerTurn: {
-                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                      providerThreadId: turn.providerThread.id,
-                      nodeId: turn.rootNodeId,
-                      runAttemptId: turn.attemptId,
-                      nativeTurnRef: null,
-                      ordinal: turn.providerTurnOrdinal,
-                      status: "running",
-                      startedAt: now,
-                      completedAt: null,
-                    },
-                  });
-                }),
-              steerTurn: () => Effect.die("unused"),
-              interruptTurn: () => Effect.void,
-              respondToRuntimeRequest: () => Effect.die("unused"),
-              readThreadSnapshot: () => Effect.die("unused"),
-              rollbackThread: () => Effect.die("unused"),
-              forkThread: () => Effect.die("unused"),
-            };
-          }),
-      };
-      const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
-      const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-        { name: "task-cancel-native-subagent" },
-        layerAdapters,
-        { runEffectWorker: false },
-      );
-      const layerOrchestration = Layer.merge(
-        layerOrchestrator,
-        ThreadManagementService.layer.pipe(
-          Layer.provide(layerOrchestrator),
-          Layer.provide(ServerSettings.layerTest()),
-          Layer.provide(
-            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
-          ),
-        ),
-      );
-      const layerTest = layerOrchestratorService.pipe(
-        Layer.provideMerge(layerOrchestration),
-        Layer.provide(
-          Layer.mergeAll(
-            layerAdapters,
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            ServerSettings.layerTest(),
-            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-            NodeServices.layer,
-          ),
-        ),
-      );
-
+      const { cwd, turns, layerTest } = yield* makeHarness("task-cancel-native-subagent");
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -367,6 +386,243 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
         const after = yield* service.taskStatus(scope, task.id);
         assert.equal(after.status, "completed");
         assert.notEqual(after.workState, "waiting_for_children");
+      }).pipe(Effect.provide(layerTest));
+    }),
+  ),
+);
+
+// The root Claude turn ends while a background native subagent it started still
+// runs and delegates (#16808).
+it.effect("a native background subagent delegates after its parent's run completes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { cwd, turns, layerTest } = yield* makeHarness("native-subagent-delegates");
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const parentThreadId = ThreadId.make("thread:native-delegate-parent");
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        const turnRunning = () =>
+          watch(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-parent"),
+          threadId: parentThreadId,
+          projectId: ProjectId.make("project:native-delegate"),
+          title: "Parent",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const parentRunning = yield* turnRunning();
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("start-parent"),
+          threadId: parentThreadId,
+          messageId: MessageId.make("message:start-parent"),
+          text: "Start a background agent",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(parentRunning);
+        const root = turns[0]!;
+        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+        const rootTurn = (yield* orchestrator.getThreadProjection(parentThreadId))
+          .providerTurns[0]!;
+
+        const now = yield* DateTime.now;
+        const subagentId = NodeId.make("node:native-subagent");
+        const native = {
+          threadId: parentThreadId,
+          runId: parentRun.id,
+          origin: "provider_native",
+          driver,
+          providerInstanceId: instanceId,
+          providerThreadId: rootTurn.providerThreadId,
+          childThreadId: null,
+          prompt: "Sleep, then delegate",
+          title: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        } as const;
+        const waiting = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === parentRun.id &&
+            event.payload.status === "waiting",
+        );
+        for (const event of [
+          {
+            type: "node.updated",
+            driver,
+            node: {
+              id: subagentId,
+              threadId: parentThreadId,
+              runId: parentRun.id,
+              parentNodeId: root.turn.rootNodeId,
+              rootNodeId: root.turn.rootNodeId,
+              kind: "subagent",
+              status: "running",
+              countsForRun: false,
+              providerThreadId: rootTurn.providerThreadId,
+              providerTurnId: rootTurn.id,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            type: "subagent.updated",
+            driver,
+            subagent: {
+              ...native,
+              id: subagentId,
+              parentNodeId: root.turn.rootNodeId,
+              createdBy: "agent",
+              nativeTaskRef: null,
+              model: null,
+            },
+          },
+          {
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              ...native,
+              id: TurnItemId.make("turn-item:native-subagent"),
+              nodeId: subagentId,
+              providerTurnId: rootTurn.id,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              type: "subagent",
+              subagentId,
+            },
+          },
+          {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: { ...rootTurn, status: "completed", completedAt: now },
+          },
+          {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: rootTurn.providerThreadId,
+            providerTurnId: rootTurn.id,
+            runOrdinal: root.turn.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          },
+        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) {
+          yield* Queue.offer(root.events, event);
+        }
+        yield* Fiber.join(waiting);
+        yield* worker.drain();
+
+        const settled = yield* orchestrator.getThreadShell(parentThreadId);
+        assert.equal(settled?.activeRunId, null);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]?.status,
+          "completed",
+        );
+        assert.equal(settled?.pendingBackgroundTasks?.[0]?.kind, "subagent");
+
+        const scope: McpInvocationScope = {
+          environmentId: EnvironmentId.make("environment:native-delegate"),
+          requestNamespace: "provider-session:native-delegate",
+          thread: {
+            threadId: parentThreadId,
+            providerSessionId: "provider-session:native-delegate",
+            providerInstanceId: instanceId,
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        };
+        const childRunning = yield* turnRunning();
+        const delegated = yield* service.delegateTask(scope, {
+          task: "Reply with exactly OK.",
+          mode: "async",
+          clientRequestId: "delegate-from-native-subagent",
+        });
+        assert.equal(delegated.status, "running");
+        yield* worker.drain();
+        yield* Fiber.join(childRunning);
+
+        const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (entry) => entry.origin === "app_owned",
+        )!;
+        assert.equal(task.runId, parentRun.id);
+        assert.equal(task.parentNodeId, parentRun.rootNodeId);
+
+        // The settled run's cohort still claims the result to wake the parent.
+        const child = turns.find((entry) => entry.turn.threadId === task.childThreadId)!;
+        const childTurn = (yield* orchestrator.getThreadProjection(task.childThreadId!))
+          .providerTurns[0]!;
+        const finished = yield* DateTime.now;
+        const childWaiting = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.threadId === task.childThreadId &&
+            event.payload.status === "waiting",
+        );
+        const taskCompleted = yield* watch(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.payload.id === task.id &&
+            event.payload.status === "completed",
+        );
+        for (const event of [
+          {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: { ...childTurn, status: "completed", completedAt: finished },
+          },
+          {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: childTurn.providerThreadId,
+            providerTurnId: childTurn.id,
+            runOrdinal: child.turn.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          },
+        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) {
+          yield* Queue.offer(child.events, event);
+        }
+        yield* Fiber.join(childWaiting);
+        yield* worker.drain();
+        yield* Fiber.join(taskCompleted);
+        yield* worker.drain();
+        const after = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.equal(
+          after.subagents.find((entry) => entry.id === task.id)?.completionDelivery?.state,
+          "claimed",
+        );
+        assert.deepEqual(after.runs[0]?.delegatedCompletion?.delivery?.taskIds, [task.id]);
       }).pipe(Effect.provide(layerTest));
     }),
   ),

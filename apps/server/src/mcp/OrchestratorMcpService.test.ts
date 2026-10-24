@@ -1489,6 +1489,112 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("a native background subagent delegates after its parent's run settles", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Reply with exactly OK.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      let delegated = false;
+      // The root turn ended, so checkpoint capture completed its run, while the
+      // background subagent it launched still runs and calls tools.
+      const settledParent = (subagents: ReadonlyArray<unknown>) => {
+        const projection = parentProjection(subagents);
+        return {
+          ...projection,
+          runs: projection.runs.map((run) => ({ ...run, status: "completed" })),
+        } as unknown as OrchestrationV2ThreadProjection;
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? settledParent(delegated ? [task] : [])
+                : childProjection,
+            ),
+          getThreadShell: (threadId) =>
+            Effect.succeed({
+              ...liveThreadShell(threadId, { activeRunId: null }),
+              latestRunId: parentRunId,
+              pendingBackgroundTasks: [
+                {
+                  taskId: "native-background-subagent",
+                  kind: "subagent" as const,
+                  providerInstanceId: codexInstanceId,
+                },
+              ],
+            }),
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          assertProviderInstanceEnabled: () => Effect.void,
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  delegated = true;
+                }),
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ServerSettings.layerTest(),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* service
+          .delegateTask(scope, {
+            task: "Reply with exactly OK.",
+            target: { providerInstanceId: codexInstanceId, model: "gpt-5.4" },
+            mode: "async",
+            clientRequestId: "delegate-from-background-subagent-1",
+          })
+          .pipe(Effect.catch((error) => Effect.succeed(error)));
+        assert.deepInclude(result, { status: "running" });
+        assert.equal((yield* Ref.get(dispatched)).length, 1);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect(
     "retrying an accepted driver-only delegation replays even after the project disables every candidate",
     () =>

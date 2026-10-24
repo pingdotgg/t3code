@@ -66,6 +66,7 @@ import {
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { hasPendingBackgroundSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   normalizeThreadPullRequestKey,
@@ -232,10 +233,7 @@ export const isLiveCallerShell = (
   shell.archivedAt === null &&
   shell.providerInstanceId === providerInstanceId &&
   (shell.activeRunId !== null ||
-    (shell.pendingBackgroundTasks?.some(
-      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
-    ) ??
-      false));
+    hasPendingBackgroundSubagent(shell.pendingBackgroundTasks, providerInstanceId));
 
 /**
  * Threads an agent starts over MCP are `mcp:<uuid>`, and agents often paste the
@@ -1277,6 +1275,21 @@ const make = Effect.gen(function* () {
       : Effect.void;
   };
 
+  // A background subagent keeps calling tools after the run that started it settles. Its
+  // delegations join that latest run, whose completion cohort wakes the thread once they finish.
+  const backgroundSubagentRun = (
+    scope: McpInvocationScope,
+    parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  ) =>
+    threadManagement.getThreadShell(parent.thread.id).pipe(
+      Effect.mapError(threadManagementFailure),
+      Effect.map((shell) =>
+        shell?.activeRunId === null && isLiveCallerShell(shell, scope.thread?.providerInstanceId)
+          ? parent.runs.find((run) => run.id === shell.latestRunId)
+          : undefined,
+      ),
+    );
+
   const loadReadableThread = Effect.fn("OrchestratorMcpService.loadReadableThread")(function* (
     scope: McpInvocationScope,
     threadId: ThreadId,
@@ -2149,9 +2162,9 @@ const make = Effect.gen(function* () {
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
-      const parentRun = parent.runs
-        .filter(ThreadManagementService.isActiveRun)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      const parentRun =
+        ThreadManagementService.latestActiveRun(parent) ??
+        (yield* backgroundSubagentRun(scope, parent));
       if (
         parentRun === undefined ||
         parentRun.rootNodeId === null ||
