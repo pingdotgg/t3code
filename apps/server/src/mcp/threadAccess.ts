@@ -10,7 +10,9 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
+import { EventSinkRuntimeRequestNotPendingError } from "../orchestration-v2/EventSink.ts";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
@@ -22,20 +24,25 @@ export const unavailable = () =>
     message: "The operation could not be completed.",
   });
 
+// Its message is built only from the request id and status, so it is safe to expose.
+const isRuntimeRequestNotPending = Schema.is(EventSinkRuntimeRequestNotPendingError);
+
 export const dispatchFailure = (
   error: OrchestratorV2Error | ThreadManagement.ThreadManagementProviderInstanceDisabledError,
 ) =>
   error._tag === "ThreadManagementProviderInstanceDisabledError"
     ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
-    : (error._tag === "OrchestratorDispatchError" ||
-          error._tag === "OrchestratorCommandRejectedError") &&
-        typeof error.cause === "string" &&
-        error.cause.length > 0
-      ? new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: Array.from(error.cause).slice(0, 1000).join(""),
-        })
-      : unavailable();
+    : error._tag === "OrchestratorDispatchError" && isRuntimeRequestNotPending(error.cause)
+      ? new OrchestratorMcpFailure({ code: "orchestration_error", message: error.cause.message })
+      : (error._tag === "OrchestratorDispatchError" ||
+            error._tag === "OrchestratorCommandRejectedError") &&
+          typeof error.cause === "string" &&
+          error.cause.length > 0
+        ? new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: Array.from(error.cause).slice(0, 1000).join(""),
+          })
+        : unavailable();
 
 export interface CallerLimits {
   readonly runtimeMode: RuntimeMode;

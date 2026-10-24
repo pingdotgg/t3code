@@ -31,6 +31,7 @@ import {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
 } from "../../orchestration-v2/Orchestrator.ts";
+import { EventSinkRuntimeRequestNotPendingError } from "../../orchestration-v2/EventSink.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -216,6 +217,17 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
       new OrchestratorCommandRejectedError({ ...command, cause: "Run is not queued." }),
     ).message,
   ).toBe("Run is not queued.");
+  expect(
+    dispatchFailure(
+      new OrchestratorDispatchError({
+        ...command,
+        cause: new EventSinkRuntimeRequestNotPendingError({
+          requestId: RuntimeRequestId.make("mcp-core-request"),
+          status: "cancelled",
+        }),
+      }),
+    ).message,
+  ).toBe("Runtime request mcp-core-request is cancelled.");
   for (const cause of [
     undefined,
     "",

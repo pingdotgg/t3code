@@ -10,6 +10,7 @@ import {
   RuntimeRequestId,
   NodeId,
   type ProjectId,
+  ProviderRequestKind,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -63,7 +64,27 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
   }
 }
 
-export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
+// A respond command plans from a pending read outside the provider ingestor's
+// writes, so terminal normalization can cancel the request before it commits.
+export class EventSinkRuntimeRequestNotPendingError extends Schema.TaggedError<EventSinkRuntimeRequestNotPendingError>()(
+  "EventSinkRuntimeRequestNotPendingError",
+  {
+    requestId: RuntimeRequestId,
+    status: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Runtime request ${this.requestId} is ${this.status}.`;
+  }
+}
+
+const isRuntimeRequestNotPending = Schema.is(EventSinkRuntimeRequestNotPendingError);
+
+export const EventSinkV2Error = Schema.Union([
+  EventSinkWriteError,
+  EventSinkStreamError,
+  EventSinkRuntimeRequestNotPendingError,
+]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
 export interface EventSinkV2Shape {
@@ -291,8 +312,9 @@ const layerBase: Layer.Layer<
           );
       });
 
-    // A user can answer after terminal normalization reads the pending request.
+    // A user can answer a question or approval after terminal normalization reads it pending.
     // Recheck inside the write transaction so stale cleanup cannot erase answers.
+    const isApprovalRequestKind = Schema.is(ProviderRequestKind);
     const guardUserInputCancellations =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
@@ -301,7 +323,7 @@ const layerBase: Layer.Layer<
         for (const event of events) {
           if (
             event.type !== "runtime-request.updated" ||
-            event.payload.kind !== "user_input" ||
+            (event.payload.kind !== "user_input" && !isApprovalRequestKind(event.payload.kind)) ||
             event.payload.status !== "cancelled"
           )
             continue;
@@ -311,7 +333,7 @@ const layerBase: Layer.Layer<
           );
           if (
             current?.status !== "pending" ||
-            current.kind !== "user_input" ||
+            current.kind !== event.payload.kind ||
             current.providerTurnId !== event.payload.providerTurnId ||
             current.responseCapability.type === "message"
           ) {
@@ -327,7 +349,8 @@ const layerBase: Layer.Layer<
               return event.payload.status !== "cancelled" || !staleNodes.has(event.payload.id);
             case "turn-item.updated":
               return (
-                event.payload.type !== "user_input_request" ||
+                (event.payload.type !== "user_input_request" &&
+                  event.payload.type !== "approval_request") ||
                 event.payload.status !== "cancelled" ||
                 !staleRequests.has(event.payload.requestId)
               );
@@ -655,6 +678,24 @@ const layerBase: Layer.Layer<
             const existing = yield* existingCommandResult(input.commandId);
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
+          for (const event of input.events) {
+            if (event.type !== "runtime-request.updated" || event.payload.status !== "resolved")
+              continue;
+            const current = yield* projectionStore.getRuntimeRequest(
+              event.threadId,
+              event.payload.id,
+            );
+            if (
+              current?.status !== "pending" ||
+              current.kind !== event.payload.kind ||
+              current.providerTurnId !== event.payload.providerTurnId
+            ) {
+              return yield* new EventSinkRuntimeRequestNotPendingError({
+                requestId: event.payload.id,
+                status: current?.status ?? "missing",
+              });
+            }
+          }
 
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({
@@ -930,13 +971,14 @@ const layerBase: Layer.Layer<
         ),
       commitCommand: (input) =>
         commitCommandEffect(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EventSinkWriteError({
-                commandId: input.commandId,
-                eventCount: input.events.length,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isRuntimeRequestNotPending(cause)
+              ? cause
+              : new EventSinkWriteError({
+                  commandId: input.commandId,
+                  eventCount: input.events.length,
+                  cause,
+                }),
           ),
         ),
       commitRejectedCommand: (input) =>

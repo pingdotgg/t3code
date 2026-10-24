@@ -911,6 +911,129 @@ it.effect("SQL projection keeps background thread updates out of updatedAt", () 
   backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(layerTest)),
 );
 
+const pendingNativeRequestsStayWithTheirTurn = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const suffix = "pending-native-requests";
+  const threadId = yield* addRolledBackRecoveryCandidate(suffix);
+  const providerThreadId = ProviderThreadId.make(`provider-thread:${suffix}`);
+  const turnId = ProviderTurnId.make(`turn:${suffix}`);
+  const otherTurnId = ProviderTurnId.make(`turn:${suffix}:other`);
+  const live = {
+    type: "live" as const,
+    providerSessionId: ProviderSessionId.make(`session:${suffix}`),
+  };
+  const requests = [
+    ["approval", turnId, "command", "pending", live],
+    ["other-turn-approval", otherTurnId, "command", "pending", live],
+    ["session-approval", null, "command", "pending", live],
+    ["resolved-approval", turnId, "command", "resolved", live],
+    ["dynamic-tool", turnId, "dynamic_tool_call", "pending", live],
+    ["question", turnId, "user_input", "pending", live],
+    ["message-question", turnId, "user_input", "pending", { type: "message" as const }],
+  ] as const;
+  for (const [
+    ordinal,
+    [name, providerTurnId, kind, status, responseCapability],
+  ] of requests.entries()) {
+    const requestId = RuntimeRequestId.make(`request:${suffix}:${name}`);
+    const nodeId = NodeId.make(`node:${suffix}:${name}`);
+    const approval = kind === "command";
+    yield* store.apply({
+      id: EventId.make(`event:${suffix}:${name}:request`),
+      type: "runtime-request.updated",
+      threadId,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: requestId,
+        nodeId,
+        providerTurnId,
+        nativeRequestRef: null,
+        kind,
+        status,
+        responseCapability,
+        createdAt: now,
+        resolvedAt: status === "pending" ? null : now,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make(`event:${suffix}:${name}:node`),
+      type: "node.updated",
+      threadId,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: nodeId,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: approval ? "approval_request" : "user_input_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        runtimeRequestId: requestId,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    if (kind === "dynamic_tool_call") continue;
+    yield* store.apply({
+      id: EventId.make(`event:${suffix}:${name}:item`),
+      type: "turn-item.updated",
+      threadId,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`item:${suffix}:${name}`),
+        threadId,
+        runId: null,
+        nodeId,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "waiting",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        ...(approval
+          ? { type: "approval_request" as const, requestId, requestKind: "command" as const }
+          : { type: "user_input_request" as const, requestId, questions: [] }),
+      },
+    });
+  }
+
+  const names = (records: ReadonlyArray<{ readonly id: string }>) =>
+    records.map((record) => record.id.slice(record.id.lastIndexOf(":") + 1)).toSorted();
+  const withoutApprovals = yield* store.getPendingNativeRequests(threadId, turnId, {
+    includeApprovals: false,
+  });
+  assert.deepEqual(names(withoutApprovals.runtimeRequests), ["question"]);
+  assert.deepEqual(names(withoutApprovals.nodes), ["question"]);
+  assert.deepEqual(names(withoutApprovals.turnItems), ["question"]);
+  const withApprovals = yield* store.getPendingNativeRequests(threadId, turnId, {
+    includeApprovals: true,
+  });
+  assert.deepEqual(names(withApprovals.runtimeRequests), ["approval", "question"]);
+  assert.deepEqual(names(withApprovals.nodes), ["approval", "question"]);
+  assert.deepEqual(names(withApprovals.turnItems), ["approval", "question"]);
+});
+
+it.effect("memory pending native requests: approvals are opt-in and stay with their turn", () =>
+  pendingNativeRequestsStayWithTheirTurn.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
+it.effect("SQL pending native requests: approvals are opt-in and stay with their turn", () =>
+  pendingNativeRequestsStayWithTheirTurn.pipe(Effect.provide(layerTest)),
+);
+
 it.effect("memory recovery selection includes unfinished items from missing runs", () =>
   Effect.gen(function* () {
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

@@ -345,13 +345,18 @@ export const layer: Layer.Layer<
         );
       });
 
-    const dismissNativeUserInputs = Effect.fn("ProviderEventIngestor.dismissNativeUserInputs")(
+    const dismissNativeRequests = Effect.fn("ProviderEventIngestor.dismissNativeRequests")(
       function* (
         input: ProviderEventIngestInput,
         providerTurnId: ProviderTurnId,
+        turnStatus: OrchestrationV2ProviderTurn["status"],
         threadId = input.threadId,
       ) {
-        const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId);
+        // A stopped turn's approval callbacks are gone with it. A completed or failed root turn
+        // can leave subagent turns working whose approvals are filed under the root turn.
+        const pending = yield* projections.getPendingNativeRequests(threadId, providerTurnId, {
+          includeApprovals: turnStatus === "interrupted" || turnStatus === "cancelled",
+        });
         const now = yield* DateTime.now;
         const events: Array<OrchestrationV2DomainEvent> = [];
         for (const request of pending.runtimeRequests) {
@@ -360,7 +365,19 @@ export const layer: Layer.Layer<
               type: "runtime-request.updated",
               threadId,
               nodeId: request.nodeId,
-              payload: { ...request, status: "cancelled", resolvedAt: now },
+              payload: {
+                ...request,
+                status: "cancelled",
+                resolvedAt: now,
+                ...(request.kind === "user_input"
+                  ? {}
+                  : {
+                      responseCapability: {
+                        type: "not_resumable" as const,
+                        reason: "The provider turn ended before this request was resolved.",
+                      },
+                    }),
+              },
             }),
           );
         }
@@ -585,9 +602,10 @@ export const layer: Layer.Layer<
                 ...(["completed", "interrupted", "failed", "cancelled"].includes(
                   input.event.providerTurn.status,
                 )
-                  ? yield* dismissNativeUserInputs(
+                  ? yield* dismissNativeRequests(
                       input,
                       input.event.providerTurn.id,
+                      input.event.providerTurn.status,
                       input.event.threadId,
                     )
                   : []),
@@ -682,7 +700,11 @@ export const layer: Layer.Layer<
               // Live output is routed to the command output hub before ingestion.
               return [];
             case "turn.terminal":
-              const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
+              const dismissed = yield* dismissNativeRequests(
+                input,
+                input.event.providerTurnId,
+                input.event.status,
+              );
               if (input.event.status !== "failed") {
                 return dismissed;
               }
