@@ -214,6 +214,14 @@ describe("makeCodexVoice", () => {
             { type: "answer", sdp: "replacement-answer" },
             { type: "closed", reason: "replacement-done" },
           ]);
+          // The predecessor is stopped once, before the successor starts, and
+          // its finalizer must not stop the successor's session.
+          NodeAssert.deepEqual(
+            fake.requests
+              .map((request) => request.method)
+              .filter((method) => method.startsWith("thread/realtime/")),
+            ["thread/realtime/start", "thread/realtime/stop", "thread/realtime/start"],
+          );
         }),
       ),
   );

@@ -4809,8 +4809,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.type === "userMessage") {
               const handoff = readRealtimeDelegationFromItem(payload.item);
               const voiceThread = yield* Ref.get(voiceProviderThread);
+              // Without a continuation sink an interrupted handoff could not be resubmitted.
               if (
                 handoff !== undefined &&
+                continuationRequests !== undefined &&
                 voiceThread !== undefined &&
                 voiceThread.nativeThreadRef?.nativeId === payload.threadId &&
                 !(yield* Ref.get(activeTurns)).has(payload.turnId) &&
