@@ -980,7 +980,6 @@ interface StagePackageJson {
 }
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
-export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Cursor finds platform assets by walking up from argv[1]. Keep them outside
   // asar so spawning helpers and loading native addons both use real paths.
@@ -1074,7 +1073,9 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
   ];
 }
 
-export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;
+// Catches loose dependency trees, which run to hundreds of files. Chromium's
+// locale paks alone are 55 files.
+export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 140;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
@@ -2832,7 +2833,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
-    electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // Leave electronLanguages unset. Chromium takes navigator.language, the
+    // default Intl locale and date input formats from the shipped locale paks,
+    // so trimming them pins every page in the built-in browser to en-US.
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"
