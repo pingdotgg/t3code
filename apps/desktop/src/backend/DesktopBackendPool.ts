@@ -1,3 +1,4 @@
+import { DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -101,6 +103,8 @@ type UnregisterAction =
 export const layer = Layer.effect(
   DesktopBackendPool,
   Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -167,13 +171,24 @@ export const layer = Layer.effect(
       // Window creation errors propagating out of handleBackendReady must not block the readiness
       // callback (that would prevent restartAttempt from being reset), so we absorb them here.
       onReady: (httpBaseUrl) =>
-        desktopWindow.handleBackendReady(httpBaseUrl).pipe(
-          Effect.catch((error) =>
-            logBackendPoolWarning("failed to open main window after backend readiness", {
-              error: error.message,
-            }),
+        fileSystem
+          .remove(
+            environment.path.join(
+              environment.baseDir,
+              "runtime",
+              DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+            ),
+            { force: true },
+          )
+          .pipe(
+            Effect.ignore,
+            Effect.andThen(desktopWindow.handleBackendReady(httpBaseUrl)),
+            Effect.catch((error) =>
+              logBackendPoolWarning("failed to open main window after backend readiness", {
+                error: error.message,
+              }),
+            ),
           ),
-        ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
