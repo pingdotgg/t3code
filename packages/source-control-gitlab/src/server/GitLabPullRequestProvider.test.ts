@@ -63,6 +63,7 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   const readWith = (divergence: { readonly divergedCommits?: number }) =>

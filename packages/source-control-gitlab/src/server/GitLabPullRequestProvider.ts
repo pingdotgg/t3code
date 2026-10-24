@@ -229,6 +229,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           number: input.number,
+          query: input.query,
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
 

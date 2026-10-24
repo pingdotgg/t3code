@@ -516,7 +516,11 @@ export interface PullRequestProviderApi {
    * request.
    */
   readonly listReviewerCandidates: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Asks the host to search past its first page of candidates. */
+      readonly query?: string | undefined;
+    },
   ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestProviderError>;
 
   readonly setReviewerRequest: (

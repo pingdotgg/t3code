@@ -192,6 +192,7 @@ import {
   PullRequestLinkedThreadsResult,
   PullRequestSummary,
   PullRequestReviewerCandidateList,
+  PullRequestReviewerCandidatesInput,
   PullRequestReviewerRequestInput,
   PullRequestLabelCandidateList,
   PullRequestLabelChangeInput,
@@ -1141,7 +1142,7 @@ const WsPullRequestsSubscribeRefreshesRpc = Rpc.make(WS_METHODS.pullRequestsSubs
  * per host on a list nobody looked at.
  */
 const WsPullRequestsReviewerCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsReviewerCandidates, {
-  payload: PullRequestRef,
+  payload: PullRequestReviewerCandidatesInput,
   success: PullRequestReviewerCandidateList,
   error: PullRequestRpcError,
 });

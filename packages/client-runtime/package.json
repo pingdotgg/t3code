@@ -442,6 +442,10 @@
     "./model-traits": {
       "types": "./src/modelTraits.ts",
       "default": "./src/modelTraits.ts"
+    },
+    "./pull-request-reviewers": {
+      "types": "./src/pullRequestReviewers.ts",
+      "default": "./src/pullRequestReviewers.ts"
     }
   },
   "scripts": {
