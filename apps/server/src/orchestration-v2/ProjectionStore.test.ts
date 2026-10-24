@@ -3592,25 +3592,27 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       const due = (yield* store.getLimitRecoveryCandidates({
         ...recoveryOptions,
-        now: reset,
+        now: DateTime.add(reset, { minutes: 2 }),
       })).find((row) => row.id === threadId)!;
       assert.deepEqual(due.limitRecovery, recovery);
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
         (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
         VALUES ('limit-shell:pending-request', ${threadId}, ${original.rootNodeId}, 'approval', 'pending', ${DateTime.formatIso(now)}, '{}')`;
       assert.isUndefined(
-        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, now: reset })).find(
-          (row) => row.id === threadId,
-        ),
+        (yield* store.getLimitRecoveryCandidates({
+          ...recoveryOptions,
+          now: DateTime.add(reset, { minutes: 2 }),
+        })).find((row) => row.id === threadId),
       );
       yield* sql`DELETE FROM orchestration_v2_projection_runtime_requests WHERE runtime_request_id = 'limit-shell:pending-request'`;
       yield* sql`UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_set(payload_json, '$.snoozedUntil', ${DateTime.formatIso(DateTime.add(reset, { minutes: 1 }))})
+        SET payload_json = json_set(payload_json, '$.snoozedUntil', ${DateTime.formatIso(DateTime.add(reset, { minutes: 3 }))})
         WHERE thread_id = ${threadId}`;
       assert.isUndefined(
-        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, now: reset })).find(
-          (row) => row.id === threadId,
-        ),
+        (yield* store.getLimitRecoveryCandidates({
+          ...recoveryOptions,
+          now: DateTime.add(reset, { minutes: 2 }),
+        })).find((row) => row.id === threadId),
       );
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.snoozedUntil', NULL, '$.limitRecovery.autoResume', json('false'))
@@ -3618,7 +3620,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates({
           ...recoveryOptions,
-          now: reset,
+          now: DateTime.add(reset, { minutes: 2 }),
           autoResume: true,
         })).find((row) => row.id === threadId),
       );
