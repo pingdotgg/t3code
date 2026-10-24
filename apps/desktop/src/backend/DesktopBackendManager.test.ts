@@ -72,6 +72,7 @@ function makeProcess(options?: {
   readonly stdout?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly stderr?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>;
+  readonly isRunning?: Effect.Effect<boolean>;
   readonly kill?: ChildProcessSpawner.ChildProcessHandle["kill"];
   readonly getOutputFd?: ChildProcessSpawner.ChildProcessHandle["getOutputFd"];
 }): ChildProcessSpawner.ChildProcessHandle {
@@ -81,7 +82,7 @@ function makeProcess(options?: {
     stderr: options?.stderr ?? Stream.empty,
     all: Stream.merge(options?.stdout ?? Stream.empty, options?.stderr ?? Stream.empty),
     exitCode: options?.exitCode ?? Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-    isRunning: Effect.succeed(false),
+    isRunning: options?.isRunning ?? Effect.succeed(false),
     kill: options?.kill ?? (() => Effect.void),
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
@@ -136,6 +137,7 @@ interface MakeInstanceInput {
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
   >;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly stopServer?: DesktopWslEnvironment.DesktopWslEnvironment["Service"]["stopServer"];
 }
 
 function makeTestInstance(input: MakeInstanceInput) {
@@ -169,9 +171,10 @@ function makeTestInstance(input: MakeInstanceInput) {
       ...input.desktopTelemetryPublisher,
     }),
     DesktopBrowserHost.layer,
-    DesktopWslEnvironment.layerTest(
-      input.pruneRuntimes === undefined ? {} : { pruneRuntimes: input.pruneRuntimes },
-    ),
+    DesktopWslEnvironment.layerTest({
+      ...(input.pruneRuntimes === undefined ? {} : { pruneRuntimes: input.pruneRuntimes }),
+      ...(input.stopServer === undefined ? {} : { stopServer: input.stopServer }),
+    }),
   );
 
   const instance = DesktopBackendManager.makeBackendInstance({
@@ -540,6 +543,78 @@ describe("DesktopBackendManager", () => {
         assert.equal(restarted.desiredRunning, true);
         assert.deepEqual(restarted.activePid, Option.some(123));
       }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect.each([
+    {
+      stopResult: "exited",
+      title: "stops a WSL server by its Linux pid before killing its launcher",
+    },
+    {
+      stopResult: "timed-out",
+      title: "still kills the launcher when the WSL server outlives its stop grace",
+    },
+  ] as const)("$title", ({ stopResult }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const events: Array<string> = [];
+        const stopped: Array<readonly [string, unknown]> = [];
+        const serverLineLogged = yield* Deferred.make<void>();
+        const launcherKilled = yield* Deferred.make<void>();
+        const encoder = new TextEncoder();
+
+        const layerSpawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              // Stands in for the spawner's taskkill of wsl.exe on scope close.
+              yield* Scope.addFinalizer(
+                scope,
+                Effect.sync(() => events.push("kill launcher")).pipe(
+                  Effect.andThen(Deferred.succeed(launcherKilled, void 0)),
+                ),
+              );
+              return makeProcess({
+                // wsl.exe can warn before the Linux side writes anything.
+                stderr: Stream.make(
+                  encoder.encode("wsl: localhost proxy warning\nt3code-wsl-server-"),
+                  encoder.encode("process 4242 98765\n"),
+                ),
+                exitCode: Deferred.await(launcherKilled).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(1)),
+                ),
+                isRunning: Deferred.isDone(launcherKilled).pipe(Effect.map((done) => !done)),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer: layerSpawner,
+          config: { ...baseConfig, runningDistro: "Ubuntu" },
+          stopServer: (distro, process) =>
+            Effect.sync(() => {
+              events.push("stop server");
+              stopped.push([distro, process]);
+              return stopResult;
+            }),
+          backendOutputLog: {
+            writeOutputChunk: (_streamName, chunk) =>
+              new TextDecoder().decode(chunk).includes("98765")
+                ? Deferred.succeed(serverLineLogged, void 0).pipe(Effect.asVoid)
+                : Effect.void,
+          },
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(serverLineLogged);
+        yield* instance.stop();
+
+        assert.deepEqual(stopped, [["Ubuntu", { pid: 4242, startTime: "98765" }]]);
+        assert.deepEqual(events, ["stop server", "kill launcher"]);
+      }),
     ),
   );
 

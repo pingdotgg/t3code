@@ -30,6 +30,7 @@ import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import { initialWslServerProcessScan, scanWslServerStderr } from "../wsl/wslServerProcess.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
@@ -203,6 +204,8 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
     chunk: Uint8Array,
   ) => Effect.Effect<void, Error>;
   readonly onOutputFailure?: (error: BackendProcessOutputError) => Effect.Effect<void>;
+  // Runs when the run is stopped, before the process is killed.
+  readonly beforeKill?: Effect.Effect<void>;
 }
 
 export interface DesktopBackendSnapshot {
@@ -567,6 +570,18 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
 
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
+  const beforeKill = options.beforeKill;
+  if (beforeKill !== undefined) {
+    // Scope finalizers run in reverse order, so this one runs before the
+    // spawner's kill and while output is still being drained.
+    yield* Effect.addFinalizer(() =>
+      handle.isRunning.pipe(
+        Effect.orElseSucceed(() => true),
+        Effect.flatMap((running) => (running ? beforeKill : Effect.void)),
+      ),
+    );
+  }
+
   const exit = yield* handle.exitCode.pipe(
     Effect.map((exitCode) => ({
       code: Option.some(exitCode),
@@ -879,6 +894,24 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           );
         });
 
+        const wslDistro = config.value.runningDistro;
+        const wslServerScan = yield* Ref.make(initialWslServerProcessScan);
+        const stopWslServer = Effect.fn("desktop.backendInstance.stopWslServer")(function* (
+          distro: string,
+        ) {
+          const { process } = yield* Ref.get(wslServerScan);
+          if (process === null) {
+            yield* logInstanceWarning("WSL server pid unknown; killing only its launcher");
+            return;
+          }
+          const result = yield* wslEnvironment.stopServer(distro, process);
+          if (result === "timed-out") {
+            yield* logInstanceWarning("WSL server did not exit before its launcher was killed", {
+              pid: process.pid,
+            });
+          }
+        });
+
         const program = runBackendProcess({
           ...config.value,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
@@ -941,7 +974,12 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               });
             },
           ),
-          onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
+          onOutput: (streamName, chunk) =>
+            (wslDistro !== undefined && streamName === "stderr"
+              ? Ref.update(wslServerScan, (scan) => scanWslServerStderr(scan, chunk))
+              : Effect.void
+            ).pipe(Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk))),
+          ...(wslDistro === undefined ? {} : { beforeKill: stopWslServer(wslDistro) }),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -1063,6 +1101,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         Effect.gen(function* () {
           const closed = yield* closeRun(run, parentScope, options);
           if (!closed) {
+            yield* logInstanceWarning("backend did not stop within the timeout");
             return;
           }
           const cleanup = yield* mutex.withPermits(1)(

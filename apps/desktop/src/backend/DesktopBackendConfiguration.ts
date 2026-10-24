@@ -24,6 +24,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { wrapWslServerLaunch } from "../wsl/wslServerProcess.ts";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -735,12 +736,14 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     args: [
       ...distroArgs,
       "--exec",
-      "env",
-      `PATH=${launchPath}`,
-      ...command,
-      "--bootstrap-fd",
-      "0",
-      ...devUrlArgs,
+      ...wrapWslServerLaunch([
+        "env",
+        `PATH=${launchPath}`,
+        ...command,
+        "--bootstrap-fd",
+        "0",
+        ...devUrlArgs,
+      ]),
     ],
     preflightFailure: Option.none(),
     ...(preflight.runtimeId === undefined ? {} : { wslRuntimeId: preflight.runtimeId }),

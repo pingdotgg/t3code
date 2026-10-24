@@ -18,6 +18,7 @@ import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { wrapWslServerLaunch } from "../wsl/wslServerProcess.ts";
 
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
@@ -432,11 +433,13 @@ describe("DesktopBackendConfiguration", () => {
             "-d",
             "Ubuntu",
             "--exec",
-            "env",
-            `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
-            `${linuxAppRoot}/t3`,
-            "--bootstrap-fd",
-            "0",
+            ...wrapWslServerLaunch([
+              "env",
+              `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
+              `${linuxAppRoot}/t3`,
+              "--bootstrap-fd",
+              "0",
+            ]),
           ]);
           assert.notInclude(config.args, "/usr/bin/node");
           assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
@@ -647,18 +650,18 @@ describe("DesktopBackendConfiguration", () => {
           "-d",
           "Ubuntu",
           "--exec",
-          "env",
-          "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
-          nodePath,
-          linuxEntryPath,
-          "--bootstrap-fd",
-          "0",
-          "--dev-url",
-          devServerUrl,
+          ...wrapWslServerLaunch([
+            "env",
+            "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
+            nodePath,
+            linuxEntryPath,
+            "--bootstrap-fd",
+            "0",
+            "--dev-url",
+            devServerUrl,
+          ]),
         ]);
         assert.notInclude(config.args, "bash");
-        assert.notInclude(config.args, "/bin/sh");
-        assert.notInclude(config.args, "-c");
         assert.isTrue(Option.isNone(config.preflightFailure));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
