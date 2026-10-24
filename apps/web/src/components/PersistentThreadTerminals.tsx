@@ -166,6 +166,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const storeNewTerminal = useTerminalUiStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalUiStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
+  const storeMoveTerminalToGroup = useTerminalUiStateStore((state) => state.moveTerminalToGroup);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
   useEffect(() => {
@@ -233,6 +234,11 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     bumpFocusRequestId();
   };
 
+  const moveTerminalToGroup = useStableCallback((terminalId: string, groupId: string | null) => {
+    storeMoveTerminalToGroup(threadRef, terminalId, groupId);
+    bumpFocusRequestId();
+  });
+
   const closeTerminal = useStableCallback((terminalId: string) => {
     if (!terminalActions.canWrite()) return;
     terminalActions.closeTerminalSession(terminalId);
@@ -287,6 +293,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           keybindings={keybindings}
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
+          onMoveTerminalToGroup={moveTerminalToGroup}
           onHeightChange={setTerminalHeight}
           onAddTerminalContext={handleAddTerminalContext}
           terminalLabelsById={terminalLabelsById}

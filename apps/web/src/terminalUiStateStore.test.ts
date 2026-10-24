@@ -12,6 +12,13 @@ const THREAD_ID = ThreadId.make("thread-1");
 const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
 const OTHER_THREAD_REF = scopeThreadRef("environment-b" as never, THREAD_ID);
 
+function readTerminalUiState() {
+  return selectThreadTerminalUiState(
+    useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+    THREAD_REF,
+  );
+}
+
 describe("terminalUiStateStore actions", () => {
   beforeEach(() => {
     useTerminalUiStateStore.persist.clearStorage();
@@ -136,6 +143,65 @@ describe("terminalUiStateStore actions", () => {
     expect(terminalUiState.terminalGroups).toEqual([
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
+  });
+
+  it("merges a terminal into another group and drops the emptied group", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "term-a");
+    store.splitTerminal(THREAD_REF, "term-b");
+    store.newTerminal(THREAD_REF, "term-c");
+
+    store.moveTerminalToGroup(THREAD_REF, "term-c", "group-term-a");
+
+    expect(readTerminalUiState()).toMatchObject({
+      terminalIds: ["term-a", "term-b", "term-c"],
+      terminalGroups: [{ id: "group-term-a", terminalIds: ["term-a", "term-b", "term-c"] }],
+      activeTerminalId: "term-c",
+      activeTerminalGroupId: "group-term-a",
+    });
+  });
+
+  it("ungroups a terminal into its own group", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "term-a");
+    store.splitTerminal(THREAD_REF, "term-b");
+    store.newTerminal(THREAD_REF, "term-c");
+
+    store.moveTerminalToGroup(THREAD_REF, "term-a", null);
+
+    expect(readTerminalUiState()).toMatchObject({
+      terminalGroups: [
+        { id: "group-term-a", terminalIds: ["term-b"] },
+        { id: "group-term-c", terminalIds: ["term-c"] },
+        { id: "group-term-a-2", terminalIds: ["term-a"] },
+      ],
+      activeTerminalId: "term-a",
+      activeTerminalGroupId: "group-term-a-2",
+    });
+
+    store.moveTerminalToGroup(THREAD_REF, "term-a", "group-term-a");
+    expect(readTerminalUiState().terminalGroups).toEqual([
+      { id: "group-term-a", terminalIds: ["term-b", "term-a"] },
+      { id: "group-term-c", terminalIds: ["term-c"] },
+    ]);
+  });
+
+  it("leaves groups unchanged when a regroup is not possible", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "term-a");
+    store.splitTerminal(THREAD_REF, "term-b");
+    store.splitTerminal(THREAD_REF, "term-c");
+    store.splitTerminal(THREAD_REF, "term-d");
+    store.newTerminal(THREAD_REF, "term-e");
+    const before = readTerminalUiState();
+
+    store.moveTerminalToGroup(THREAD_REF, "term-e", "group-term-a");
+    store.moveTerminalToGroup(THREAD_REF, "term-a", "group-term-a");
+    store.moveTerminalToGroup(THREAD_REF, "term-e", "missing-group");
+    store.moveTerminalToGroup(THREAD_REF, "missing-terminal", "group-term-e");
+    store.moveTerminalToGroup(THREAD_REF, "term-e", null);
+
+    expect(readTerminalUiState()).toBe(before);
   });
 
   it("does not import a closed panel terminal from stale metadata", () => {

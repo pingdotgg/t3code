@@ -444,6 +444,45 @@ function closeThreadTerminal(
   });
 }
 
+function moveThreadTerminalToGroup(
+  state: ThreadTerminalUiState,
+  terminalId: string,
+  targetGroupId: string | null,
+): ThreadTerminalUiState {
+  const normalized = normalizeThreadTerminalUiState(state);
+  const terminalGroups = copyTerminalGroups(normalized.terminalGroups);
+  const sourceGroupIndex = findGroupIndexByTerminalId(terminalGroups, terminalId);
+  const sourceGroup = terminalGroups[sourceGroupIndex];
+  const targetGroup = terminalGroups.find((group) => group.id === targetGroupId);
+  if (
+    !sourceGroup ||
+    (targetGroup
+      ? targetGroup === sourceGroup || targetGroup.terminalIds.length >= MAX_TERMINALS_PER_GROUP
+      : targetGroupId !== null || sourceGroup.terminalIds.length === 1)
+  ) {
+    return normalized;
+  }
+
+  sourceGroup.terminalIds = sourceGroup.terminalIds.filter((id) => id !== terminalId);
+  const destinationGroup = targetGroup ?? {
+    id: assignUniqueGroupId(
+      fallbackGroupId(terminalId),
+      new Set(terminalGroups.map((group) => group.id)),
+    ),
+    terminalIds: [],
+  };
+  if (!targetGroup) {
+    terminalGroups.push(destinationGroup);
+  }
+  destinationGroup.terminalIds.push(terminalId);
+  return normalizeThreadTerminalUiState({
+    ...normalized,
+    activeTerminalId: terminalId,
+    terminalGroups,
+    activeTerminalGroupId: destinationGroup.id,
+  });
+}
+
 function reconcileThreadTerminalSessionIds(
   state: ThreadTerminalUiState,
   nextIds: string[],
@@ -568,6 +607,11 @@ interface TerminalUiStateStoreState {
   ) => void;
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  moveTerminalToGroup: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    groupId: string | null,
+  ) => void;
   reconcileTerminalIds: (threadRef: ScopedThreadRef, nextIds: string[]) => void;
   clearTerminalUiState: (threadRef: ScopedThreadRef) => void;
   removeTerminalUiState: (threadRef: ScopedThreadRef) => void;
@@ -679,6 +723,10 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             terminalId,
             suppressed: true,
           }),
+        moveTerminalToGroup: (threadRef, terminalId, groupId) =>
+          updateTerminal(threadRef, (state) =>
+            moveThreadTerminalToGroup(state, terminalId, groupId),
+          ),
         reconcileTerminalIds: (threadRef, nextIds) =>
           updateTerminal(threadRef, (state, suppressedTerminalIds) => {
             if (suppressedTerminalIds.length === 0) {
