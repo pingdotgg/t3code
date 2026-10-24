@@ -1339,6 +1339,10 @@ interface SnapshotMessageState {
 
 const TOOL_UPDATE_PERSIST_EVERY = 10;
 
+// A command row only ever shows a tail read from the last 256 KiB of its persisted
+// output, so project a little more than that instead of the whole terminal buffer.
+const MAX_AGENT_TERMINAL_OUTPUT_CHARS = 320 * 1024;
+
 /**
  * Some agents stream a tool's arguments (a file write's diff, `rawInput`) and
  * resend the whole call each time.
@@ -4408,6 +4412,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             embeddedToolCallIds === undefined || embeddedToolCallIds.size === 0
               ? [`acp-agent-terminal:${update.terminalId}`]
               : [...embeddedToolCallIds];
+          // Every chunk re-emits the output, so a whole long build log here grew
+          // serialization and the event store with the square of its length.
+          const output = next.output.slice(-MAX_AGENT_TERMINAL_OUTPUT_CHARS);
           for (const toolCallId of projectedToolCallIds) {
             const existing = context.tools.get(toolCallId);
             const seeded: AcpToolCallState =
@@ -4428,7 +4435,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   status,
                   ...(next.command === undefined ? {} : { command: next.command }),
                 },
-                next.output,
+                output,
               ),
             );
           }
