@@ -842,6 +842,48 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live("status after a refused navigation reports the failed URL and its error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const refused = "http://localhost:59999/";
+      const navigation = {
+        url: () => refused,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+      };
+      page.emit("request", navigation);
+      page.emit("requestfailed", navigation);
+      // Chromium then commits its error page in place of the refused URL.
+      yield* Effect.promise(() => page.goto("chrome-error://chromewebdata/"));
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        loading: false,
+        url: refused,
+        navStatus: { _tag: "LoadFailed", url: refused, description: "ERR_CONNECTION_REFUSED" },
+      });
+      // Retrying starts a new navigation, which clears the failure.
+      page.emit("request", navigation);
+      const retrying = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(retrying.loading).toBe(true);
+      expect(retrying.navStatus).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("only the controlling viewer's copy and cut keys reach its clipboard", () =>
   Effect.scoped(
     Effect.gen(function* () {

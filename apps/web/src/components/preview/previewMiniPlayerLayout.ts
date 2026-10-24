@@ -15,6 +15,9 @@ export const PREVIEW_MINI_PLAYER_CORNER_RADIUS = 12;
 export const PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX = 48;
 const PREVIEW_MINI_PLAYER_DEFAULT_BOX = { width: 320, height: 320 } as const;
 const PREVIEW_MINI_PLAYER_MIN_SIZE = { width: 240, height: 150 } as const;
+// A failed page has nothing to preserve the aspect of, and a wide viewport's
+// ratio would leave no height for the message, actions, and stream controls.
+export const PREVIEW_MINI_PLAYER_FAILURE_SOURCE = PREVIEW_MINI_PLAYER_DEFAULT_BOX;
 
 export interface PreviewMiniPlayerFrame extends PreviewMiniPlayerPosition, PreviewMiniPlayerSize {}
 

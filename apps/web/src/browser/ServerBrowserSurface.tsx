@@ -32,6 +32,7 @@ import {
 } from "react";
 
 import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
+import { PreviewLoadFailure } from "~/components/preview/PreviewLoadFailure";
 import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -146,6 +147,7 @@ export function ServerBrowserSurface(props: {
   readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
   readonly pdfUrl?: string | null;
+  readonly failure?: { readonly message: string; readonly onClose: () => void } | null;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
   const {
@@ -161,6 +163,7 @@ export function ServerBrowserSurface(props: {
     onPopup,
     className,
     pdfUrl = null,
+    failure = null,
     ref,
   } = props;
   const access = usePreviewStreamAccess(environmentId);
@@ -820,6 +823,28 @@ export function ServerBrowserSurface(props: {
               </Button>
             </div>
           </div>
+        ) : null}
+        {failure ? (
+          // Leaves the control bar uncovered: reload is refused until this viewer takes control.
+          <PreviewLoadFailure
+            className="z-10"
+            message={failure.message}
+            hint={
+              control?.canOperate && control.controller !== "you" ? "Take control to retry." : null
+            }
+            actions={
+              <>
+                <Button size="sm" variant="outline" onClick={failure.onClose}>
+                  Close
+                </Button>
+                {control?.controller === "you" ? (
+                  <Button size="sm" onClick={() => send({ type: "reload" })}>
+                    Retry
+                  </Button>
+                ) : null}
+              </>
+            }
+          />
         ) : null}
         {control?.dialog ? (
           <div

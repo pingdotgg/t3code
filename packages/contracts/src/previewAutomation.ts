@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
+  PreviewNavStatus,
   PreviewRenderedViewportSize,
   PreviewTabId,
   PreviewViewportPresetId,
@@ -89,6 +90,8 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  /** Present while the last navigation failed; `url` is then the URL that failed. */
+  navStatus: Schema.optional(PreviewNavStatus),
   control: Schema.optional(
     Schema.Struct({
       owner: PreviewAutomationTabOwner,

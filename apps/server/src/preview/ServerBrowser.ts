@@ -308,6 +308,7 @@ interface ServerTab {
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
   loading: boolean;
+  navStatus: PreviewNavStatus;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
@@ -546,6 +547,7 @@ const make = Effect.gen(function* () {
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
+    tab.navStatus = navStatus;
     void tab.cdp
       .send("Page.getNavigationHistory")
       .catch(() => null)
@@ -775,6 +777,7 @@ const make = Effect.gen(function* () {
       colorScheme: "system",
       zoomFactor: 1,
       loading: false,
+      navStatus: snapshot.navStatus,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -1372,7 +1375,9 @@ const make = Effect.gen(function* () {
         ...profileStatus(),
       };
     }
-    const url = tab.page.url();
+    const failure = tab.navStatus._tag === "LoadFailed" ? tab.navStatus : null;
+    // A refused page commits Chromium's error page; the agent needs the URL it asked for.
+    const url = failure?.url ?? tab.page.url();
     const viewport = tab.page.viewportSize();
     const status = {
       available: true,
@@ -1381,6 +1386,7 @@ const make = Effect.gen(function* () {
       url: url === "about:blank" ? null : url,
       title: null,
       loading: tab.loading,
+      ...(failure ? { navStatus: failure } : {}),
       control: {
         owner: tabOwner(tab),
         ownedByCaller: tab.control.agentId === agentSessionId,
@@ -1412,7 +1418,7 @@ const make = Effect.gen(function* () {
         completedAt,
       })),
     };
-    if (status.url === null || tab.dialog) return status;
+    if (status.url === null || failure || tab.dialog) return status;
     return { ...status, title: (await tab.page.title().catch(() => "")) || null };
   };
 

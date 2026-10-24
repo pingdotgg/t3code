@@ -48,6 +48,8 @@ import { useDeviceState } from "~/state/device";
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
+import { describePreviewError } from "./errorCodeMessages";
+import { PreviewLoadFailure } from "./PreviewLoadFailure";
 import { previewBridge } from "./previewBridge";
 import { showPreviewPopup } from "./showPreviewPopup";
 import {
@@ -58,6 +60,7 @@ import {
   type PreviewMiniPlayerFrame,
   resizePreviewMiniPlayer,
   resolveDeviceMiniPlayerCornerRadius,
+  PREVIEW_MINI_PLAYER_FAILURE_SOURCE,
   resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
@@ -134,8 +137,13 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
   const serverPictureInPicture =
     useServerPictureInPictureKey() === serverPictureInPictureKey(threadRef.threadId, tabId);
-  const sourceSize =
-    serverTab && streamViewport
+  const failure =
+    snapshot?.navStatus._tag === "LoadFailed" && !snapshot.navStatus.download
+      ? snapshot.navStatus
+      : null;
+  const sourceSize = failure
+    ? PREVIEW_MINI_PLAYER_FAILURE_SOURCE
+    : serverTab && streamViewport
       ? streamViewport
       : resolvePreviewMiniPlayerSourceSize(
           snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
@@ -174,6 +182,9 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   };
 
   if (!snapshot) return null;
+  const failureMessage = failure
+    ? `Couldn’t load ${failure.url}. ${describePreviewError(failure.description)}.`
+    : null;
   const pdfUrl =
     snapshot.navStatus._tag === "Success"
       ? previewPdfAssetUrl(snapshot.navStatus.url, httpBaseUrl)
@@ -191,6 +202,14 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       label="Floating browser preview"
       recording={recording}
       onOpenInPanel={openInPanel}
+      failure={
+        failureMessage && !serverTab
+          ? {
+              message: failureMessage,
+              onRetry: () => void previewBridge?.refresh(runtimeTabId),
+            }
+          : null
+      }
       pillActions={
         canPopOut ? (
           <Tooltip>
@@ -229,6 +248,14 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               threadId={threadRef.threadId}
               tabId={tabId}
               pdfUrl={pdfUrl}
+              failure={
+                failureMessage
+                  ? {
+                      message: failureMessage,
+                      onClose: () => usePreviewMiniPlayerStore.getState().close(threadRef),
+                    }
+                  : null
+              }
               visible
               followSize={false}
               controlPosition="bottom"
@@ -241,14 +268,14 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
           <>
             <BrowserSurfaceSlot
               tabId={runtimeTabId}
-              visible={Boolean(desktopOverlay?.hasWebContents)}
+              visible={Boolean(desktopOverlay?.hasWebContents) && !failure}
               cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
               zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
               fitSourceContent
               layoutVersion={`${frame.x}:${frame.y}`}
               className="absolute inset-0"
             />
-            {!desktopOverlay?.hasWebContents ? (
+            {!desktopOverlay?.hasWebContents && !failure ? (
               <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
                 Reconnecting preview…
               </div>
@@ -327,6 +354,7 @@ function MiniPlayerShell({
   label,
   onOpenInPanel,
   pillActions,
+  failure = null,
   recording = false,
   cornerRadius = frameCornerRadius,
   children,
@@ -337,6 +365,7 @@ function MiniPlayerShell({
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
+  readonly failure?: { readonly message: string; readonly onRetry: () => void } | null;
   readonly recording?: boolean;
   readonly cornerRadius?: (frame: PreviewMiniPlayerSize) => number;
   readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
@@ -543,6 +572,24 @@ function MiniPlayerShell({
 
           <div className="absolute inset-0 z-[47] rounded-[inherit] bg-muted shadow-2xl/35" />
           {children(frame)}
+          {failure ? (
+            // Covers the failed page with its own Close, which the hover-only pill hides.
+            <PreviewLoadFailure
+              className="pointer-events-auto rounded-[inherit]"
+              style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
+              message={failure.message}
+              actions={
+                <>
+                  <Button size="sm" variant="outline" onClick={close}>
+                    Close
+                  </Button>
+                  <Button size="sm" onClick={failure.onRetry}>
+                    Retry
+                  </Button>
+                </>
+              }
+            />
+          ) : null}
           <div className="pointer-events-none absolute inset-0 z-[49] rounded-[inherit] ring-1 ring-inset ring-border/80" />
           {RESIZE_HANDLES.map(({ direction, className }) => (
             <div

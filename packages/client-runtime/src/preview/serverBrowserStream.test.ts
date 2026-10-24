@@ -91,6 +91,17 @@ describe("preview stream control", () => {
     client.stop();
   });
 
+  it("lets a viewer recover an agent-owned tab by taking control before reloading", () => {
+    const { client, socket } = connect();
+    socket.control(agent);
+    expect(client.send({ type: "reload" })).toBe(false);
+    expect(client.send({ type: "takeControl" })).toBe(true);
+    socket.control({ ...agent, controller: "you", generation: 2 });
+    expect(client.send({ type: "reload" })).toBe(true);
+    expect(socket.sent.slice(-2)).toEqual(['{"type":"takeControl"}', '{"type":"reload"}']);
+    client.stop();
+  });
+
   it("revokes input immediately on release and exposes pending dialog state", () => {
     const { client, socket, onControl } = connect();
     const owned = {
