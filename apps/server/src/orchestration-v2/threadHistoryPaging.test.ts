@@ -176,6 +176,53 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
 }
 
 describe("threadHistoryPaging", () => {
+  it("bounds a single human turn and pages every item exactly once", () => {
+    const items = Array.from({ length: 180 }, (_, index) => makeRow(index));
+    items[0] = {
+      ...items[0]!,
+      item: {
+        ...items[0]!.item,
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "turn_start",
+        messageId: MessageId.make("long-human-turn"),
+        text: "Continue",
+        attachments: [],
+      },
+    } as OrchestrationV2ProjectedTurnItem;
+    const recent = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    expect(recent.items).toHaveLength(THREAD_HISTORY_PAGE_POLICY.maxItems);
+    const loaded = [...recent.items];
+    let cursor = recent.nextCursor;
+    for (let pages = 0; cursor !== null; pages += 1) {
+      expect(pages).toBeLessThan(items.length);
+      const page = selectHistoryPageFromCursor({ items, cursor, snapshotSequence: 1 });
+      expect(page.items.length).toBeGreaterThan(0);
+      expect(page.items.length).toBeLessThanOrEqual(THREAD_HISTORY_PAGE_POLICY.maxItems);
+      loaded.unshift(...page.items);
+      cursor = page.nextCursor;
+    }
+    expect(loaded.map((row) => row.sourceItemId)).toEqual(items.map((row) => row.sourceItemId));
+
+    const large = items
+      .slice(0, 12)
+      .map((row) =>
+        row.item.type === "command_execution"
+          ? { ...row, item: { ...row.item, output: "x".repeat(200_000) } }
+          : row,
+      );
+    const bounded = buildBoundedThreadProjection({
+      projection: makeProjection(large),
+      snapshotSequence: 1,
+    });
+    expect(bounded.projection.visibleTurnItems.length).toBeLessThan(large.length);
+    expect(bounded.payloadBudgetExceeded).toBe(false);
+    expect(boundedTimelineEncodedBytes(bounded.projection)).toBeLessThanOrEqual(
+      THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+    );
+  });
+
   it("keeps background turns with user turns, with main's 150-turn fan-out ceiling", () => {
     const items = Array.from({ length: 161 }, (_, turn) => {
       const row = makeRow(turn * 2);
@@ -195,13 +242,15 @@ describe("threadHistoryPaging", () => {
       };
       return [prompt, makeRow(turn * 2 + 1)];
     }).flat();
-    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    const policy = { ...THREAD_HISTORY_PAGE_POLICY, maxItems: 1_000, maxEncodedBytes: 10_000_000 };
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
     expect(first.items).toHaveLength(300);
     expect(first.items[0]?.sourceItemId).toBe("item-22");
     const older = selectHistoryPageFromCursor({
       items,
       cursor: first.nextCursor!,
       snapshotSequence: 1,
+      policy,
     });
     expect(older.items).toHaveLength(22);
     expect(older.hasMoreHistory).toBe(false);
@@ -244,13 +293,15 @@ describe("threadHistoryPaging", () => {
       inRun(run * 4 + 2, run, notification(`Steer ${run}`)),
       inRun(run * 4 + 3, run),
     ]).flat();
-    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    const policy = { ...THREAD_HISTORY_PAGE_POLICY, maxItems: 1_000, maxEncodedBytes: 10_000_000 };
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
     expect(first.items).toHaveLength(150 * 4 - 1);
     expect(first.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
     const older = selectHistoryPageFromCursor({
       items,
       cursor: first.nextCursor!,
       snapshotSequence: 1,
+      policy,
     });
     expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
       items.map((row) => row.sourceItemId),
@@ -288,26 +339,46 @@ describe("threadHistoryPaging", () => {
   });
 
   it("always includes at least one pathological oversized item", () => {
-    const items = [makeRow(0, { outputBytes: 2_000_000 }), makeRow(1, { outputBytes: 10 })];
-    const page = selectRecentTimelineWindow({
-      items,
-      snapshotSequence: 1,
-      policy: { maxItems: 50, maxEncodedBytes: 1_024 },
-    });
-    expect(page.items).toHaveLength(1);
-    expect(page.items[0]?.sourceItemId).toBe("item-1");
-    expect(page.hasMoreHistory).toBe(true);
+    for (const humanTurn of [false, true]) {
+      const oversized = makeRow(0, { outputBytes: 2_000_000 });
+      const items = [
+        humanTurn
+          ? ({
+              ...oversized,
+              item: {
+                ...oversized.item,
+                type: "user_message",
+                createdBy: "user",
+                creationSource: "web",
+                inputIntent: "turn_start",
+                messageId: MessageId.make("oversized-human-turn"),
+                text: "x".repeat(2_000_000),
+                attachments: [],
+              },
+            } as OrchestrationV2ProjectedTurnItem)
+          : oversized,
+        makeRow(1, { outputBytes: 10 }),
+      ];
+      const policy = { ...THREAD_HISTORY_PAGE_POLICY, maxItems: 50, maxEncodedBytes: 1_024 };
+      const page = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.sourceItemId).toBe("item-1");
+      expect(page.hasMoreHistory).toBe(true);
 
-    const older = selectHistoryPageFromCursor({
-      items,
-      cursor: page.nextCursor!,
-      snapshotSequence: 1,
-      policy: { maxItems: 50, maxEncodedBytes: 1_024 },
-    });
-    expect(older.items).toHaveLength(1);
-    expect(older.items[0]?.sourceItemId).toBe("item-0");
-    expect(older.hasMoreHistory).toBe(false);
-    expect(older.nextCursor).toBeNull();
+      const older = selectHistoryPageFromCursor({
+        items,
+        cursor: page.nextCursor!,
+        snapshotSequence: 1,
+        policy,
+      });
+      expect(older.items).toHaveLength(1);
+      expect(older.items[0]?.sourceItemId).toBe("item-0");
+      expect(older.hasMoreHistory).toBe(false);
+      expect(older.nextCursor).toBeNull();
+      expect([...older.items, ...page.items].map((row) => row.sourceItemId)).toEqual(
+        items.map((row) => row.sourceItemId),
+      );
+    }
   });
 
   it("recovers identity-miss cursors when position is past a shrunken timeline", () => {
