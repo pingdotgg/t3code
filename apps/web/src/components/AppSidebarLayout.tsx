@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
-import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { isElectron } from "../env";
 import {
   releaseThreadUndoShortcut,
@@ -46,6 +46,13 @@ import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
+import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useScratchProject } from "../hooks/useScratchProject";
+import { useClientSettings } from "../hooks/useSettings";
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { selectProjectGroupingSettings } from "../logicalProject";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import {
   clampThreadSidebarWidth,
   resolveInitialThreadSidebarWidth,
@@ -218,6 +225,104 @@ function routePanelsOpen(routeThreadRef: ReturnType<typeof useThreadRouteRef>) {
       selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
       "preview",
   };
+}
+
+function NewThreadShortcuts() {
+  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
+    useHandleNewThread();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const legacySidebarEnabled = useLegacySidebarEnabled();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projects = useProjects();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
+  const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
+        return;
+      }
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          previewFocus: isPreviewFocused(),
+          ...routePanelsOpen(routeThreadRef),
+          editableFocus: isEditableFocused(event.target),
+          modelPickerOpen: isModelPickerOpen(),
+          usagePageOpen,
+        },
+      });
+
+      if (command === "chat.newLocal") {
+        event.preventDefault();
+        event.stopPropagation();
+        void startNewThreadFromContext({
+          activeDraftThread,
+          activeThread: activeThread ?? undefined,
+          defaultProjectRef,
+          handleNewThread,
+        });
+        return;
+      }
+
+      if (command === "chat.newWithoutProject") {
+        const environmentId = scratchEnvironmentId(
+          activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId,
+        );
+        if (environmentId === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void startScratchThread(environmentId);
+        return;
+      }
+
+      if (command === "chat.new") {
+        event.preventDefault();
+        event.stopPropagation();
+        const projectGroupCount = buildSidebarProjectSnapshots({
+          projects,
+          settings: projectGroupingSettings,
+          primaryEnvironmentId,
+          resolveEnvironmentLabel: () => null,
+        }).length;
+        if (!legacySidebarEnabled && projectGroupCount > 1) {
+          openCommandPalette({ open: "new-thread-in" });
+          return;
+        }
+        void startNewThreadFromContext({
+          activeDraftThread,
+          activeThread: activeThread ?? undefined,
+          defaultProjectRef,
+          handleNewThread,
+        });
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    handleNewThread,
+    keybindings,
+    legacySidebarEnabled,
+    primaryEnvironmentId,
+    projectGroupingSettings,
+    projects,
+    routeThreadRef,
+    scratchEnvironmentId,
+    startScratchThread,
+    usagePageOpen,
+  ]);
+
+  return null;
 }
 
 export function NavigationHistoryShortcuts() {
@@ -436,6 +541,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         {children}
         <SidebarControl />
         <NavigationHistoryShortcuts />
+        <NewThreadShortcuts />
         {isOnSettings ? null : <ThreadUndoShortcut />}
         <MainAppLocationTracker />
       </SidebarProvider>
