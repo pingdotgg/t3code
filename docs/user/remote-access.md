@@ -58,6 +58,10 @@ in the receiving app. Connection settings are under **Settings → Connections**
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
+On a computer with the desktop app, you can open the printed `t3code://pair`
+app link instead. The desktop app asks you to confirm the server address, then
+adds it.
+
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while
