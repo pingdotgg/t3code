@@ -54,7 +54,7 @@ export function renderSkillInlineMarkdownChildren(
   });
 }
 
-function SkillChip(props: { skill: InlineSkill; rawText: string }) {
+export function SkillChip(props: { skill: InlineSkill; rawText: string }) {
   return (
     <ContextChip kind="skill" data-markdown-copy={props.rawText}>
       <SkillChipIcon />
