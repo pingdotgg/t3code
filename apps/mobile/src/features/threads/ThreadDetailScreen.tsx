@@ -229,7 +229,11 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadSyncError?: string | null;
   readonly historyControls?: ThreadFeedHistoryControls;
+  /** A message link's target. See ThreadFeed. */
+  readonly linkedMessageId?: string | null;
+  readonly onLinkedMessageHandled?: () => void;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
   readonly queuedRunEdit: QueuedRunEdit | null;
@@ -1428,6 +1432,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
+              linkedMessageId={props.linkedMessageId}
+              onLinkedMessageHandled={props.onLinkedMessageHandled}
+              threadSyncStatus={props.threadSyncStatus}
+              threadSyncError={props.threadSyncError}
+              connectionPhase={props.connectionStateLabel}
               contentSideInsets={nativeMetrics?.safeArea}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}

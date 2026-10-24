@@ -15,6 +15,7 @@ export function useTimelinePositionRestore({
   rememberedPosition,
   rows,
   citationRequest,
+  linkedMessage,
   cancelPositionRestoreRef,
   onManualNavigation,
   onPositioned,
@@ -24,6 +25,7 @@ export function useTimelinePositionRestore({
   readonly restoringThreadPosition: boolean;
   readonly rememberedPosition: RememberedTimelinePosition | undefined;
   readonly rows: MessagesTimelineRow[];
+  readonly linkedMessage?: unknown;
   readonly citationRequest: AssistantCitationRequest | null;
   readonly cancelPositionRestoreRef: React.RefObject<(() => void) | null> | undefined;
   readonly onManualNavigation: () => void;
@@ -49,8 +51,8 @@ export function useTimelinePositionRestore({
     if (!restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;
     if (!list) return;
-    if (citationRequest !== null) {
-      // The citation scroll owns positioning once the list has mounted.
+    if (citationRequest !== null || linkedMessage != null) {
+      // Link navigation owns positioning once the list has mounted.
       onPositioned(listIdentityKey);
       return;
     }
@@ -154,6 +156,7 @@ export function useTimelinePositionRestore({
     };
   }, [
     citationRequest,
+    linkedMessage,
     cancelPositionRestoreRef,
     listIdentityKey,
     listRef,

@@ -1,3 +1,5 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -166,7 +168,7 @@ import { CopyTextButton } from "./CopyTextButton";
 import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
-import { copyPromptLink } from "../prompt-links/prompt-link-actions";
+import { copyMessageLink, copyPromptLink } from "../prompt-links/prompt-link-actions";
 import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
 import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
 import {
@@ -199,6 +201,7 @@ import {
   createThreadFeedCache,
   failedFeedRunIds,
   deriveThreadFeedPresentation,
+  threadFeedFoldRunIdHiding,
   threadFeedRunIsUnsettled,
   isContextCompactionActivityGroup,
   isContextHandoffActivityGroup,
@@ -226,6 +229,12 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
+import {
+  linkedMessageFoldRowId,
+  persistedMessageLink,
+  resolveLinkedMessageStep,
+  resolveMessageCopyContent,
+} from "./thread-feed-message-link";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
@@ -326,7 +335,8 @@ export interface ThreadFeedHistoryControls {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
   readonly error: string | null;
-  readonly onLoadEarlier: () => void;
+  /** Loads the next page, or through `throughEntryId` when a link needs that message. */
+  readonly onLoadEarlier: (throughEntryId?: string) => Promise<unknown> | void;
 }
 
 export interface ThreadFeedProps {
@@ -361,6 +371,13 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  /** A message link's target: the feed opens at it, then calls `onLinkedMessageHandled`. */
+  readonly linkedMessageId?: string | null;
+  readonly onLinkedMessageHandled?: () => void;
+  /** The thread has caught up with the server. A linked message it lacks is older history. */
+  readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadSyncError?: string | null;
+  readonly connectionPhase: EnvironmentConnectionPhase;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
@@ -375,32 +392,57 @@ async function waitForThreadShell(
   });
 }
 
-const USER_MESSAGE_COPY_MENU_ACTIONS = [
-  { id: "copy-prompt-link", title: "Copy prompt link", image: "link" },
-];
+const COPY_PROMPT_LINK_ACTION = {
+  id: "copy-prompt-link",
+  title: "Copy prompt link",
+  image: "link",
+};
+const COPY_MESSAGE_LINK_ACTION = {
+  id: "copy-message-link",
+  title: "Copy message link",
+  image: "link",
+};
 
-function UserMessageCopyButton(props: {
+function MessageCopyButton(props: {
   readonly text: string;
-  readonly onCopy: (() => Promise<void>) | undefined;
+  readonly onCopy?: (() => Promise<void>) | undefined;
   readonly tintColor: ColorValue;
+  readonly isPrompt: boolean;
+  readonly messageLink: Parameters<typeof copyMessageLink>[0] | null;
 }) {
+  const content = resolveMessageCopyContent(props.text, props.messageLink);
+  if (content === null) return null;
   const button = (
     <CopyTextButton
-      accessibilityLabel="Copy message"
-      text={props.text}
-      onCopy={props.onCopy}
+      accessibilityLabel={content.kind === "message-link" ? "Copy message link" : "Copy message"}
+      text={content.text}
+      onCopy={content.kind === "text" ? props.onCopy : undefined}
       tintColor={props.tintColor}
       buttonSize={28}
       iconSize={13}
     />
   );
-  const linkText = replaceComposerContextReferences(props.text, (reference) => reference.label);
-  if (linkText.length > PROMPT_LINK_MAX_PROMPT_LENGTH) return button;
+  const promptLinkText =
+    props.isPrompt && content.kind === "text"
+      ? replaceComposerContextReferences(props.text, (reference) => reference.label)
+      : null;
+  const actions = [
+    ...(props.messageLink ? [COPY_MESSAGE_LINK_ACTION] : []),
+    ...(promptLinkText !== null && promptLinkText.length <= PROMPT_LINK_MAX_PROMPT_LENGTH
+      ? [COPY_PROMPT_LINK_ACTION]
+      : []),
+  ];
+  if (actions.length === 0) return button;
   return (
     <Menu
-      actions={USER_MESSAGE_COPY_MENU_ACTIONS}
+      actions={actions}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "copy-prompt-link") void copyPromptLink(linkText);
+        if (nativeEvent.event === "copy-prompt-link" && promptLinkText !== null) {
+          void copyPromptLink(promptLinkText);
+        }
+        if (nativeEvent.event === "copy-message-link" && props.messageLink) {
+          void copyMessageLink(props.messageLink);
+        }
       }}
       shouldOpenOnLongPress
     >
@@ -1071,6 +1113,7 @@ function OpenSenderThreadButton(props: {
 /** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
 function ThreadAutomationMessageRow(props: {
   readonly environmentId: EnvironmentId;
+  readonly messageLink: ReturnType<typeof persistedMessageLink>;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
@@ -1176,7 +1219,9 @@ function ThreadAutomationMessageRow(props: {
           <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
             {props.timestampLabel}
           </Text>
-          <UserMessageCopyButton
+          <MessageCopyButton
+            isPrompt
+            messageLink={props.messageLink}
             text={props.text}
             onCopy={undefined}
             tintColor={props.iconSubtleColor}
@@ -1409,6 +1454,10 @@ function renderFeedEntry(
       return (
         <ThreadAutomationMessageRow
           environmentId={props.environmentId}
+          messageLink={persistedMessageLink(
+            { environmentId: props.environmentId, threadId: props.threadId },
+            message,
+          )}
           text={presentation.text}
           context={message.context}
           scheduledTaskId={presentation.scheduledTaskId}
@@ -1624,22 +1673,25 @@ function renderFeedEntry(
                   <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
                 </Pressable>
               ) : null}
-              {presentation.text.trim().length > 0 ? (
-                <UserMessageCopyButton
-                  text={presentation.text}
-                  onCopy={
-                    message.context
-                      ? () =>
-                          writeComposerContextClipboard(message.text, {
-                            version: 1,
-                            source: { environmentId: props.environmentId, messageId: message.id },
-                            records: message.context!.records,
-                          })
-                      : undefined
-                  }
-                  tintColor={iconSubtleColor}
-                />
-              ) : null}
+              <MessageCopyButton
+                isPrompt
+                messageLink={persistedMessageLink(
+                  { environmentId: props.environmentId, threadId: props.threadId },
+                  message,
+                )}
+                text={presentation.text}
+                onCopy={
+                  message.context
+                    ? () =>
+                        writeComposerContextClipboard(message.text, {
+                          version: 1,
+                          source: { environmentId: props.environmentId, messageId: message.id },
+                          records: message.context!.records,
+                        })
+                    : undefined
+                }
+                tintColor={iconSubtleColor}
+              />
             </View>
           ) : null}
         </Animated.View>
@@ -1705,12 +1757,14 @@ function renderFeedEntry(
         ) : null}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
-            <CopyTextButton
-              accessibilityLabel="Copy message"
+            <MessageCopyButton
               text={renderedText}
               tintColor={iconSubtleColor}
-              buttonSize={28}
-              iconSize={13}
+              isPrompt={false}
+              messageLink={persistedMessageLink(
+                { environmentId: props.environmentId, threadId: props.threadId },
+                message,
+              )}
             />
             {message.projectedItem ? (
               <AssistantForkButton
@@ -2547,7 +2601,29 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userScrollSettleTimerRef.current = null;
     }
   };
+  // A message link opens the feed at that message, loading earlier history through it and
+  // expanding the turn that hides it. That is a manual navigation, so live follow stops.
+  const linkedMessageId = props.linkedMessageId ?? null;
+  const onLinkedMessageHandled = props.onLinkedMessageHandled;
+  const handledLinkedMessageIdRef = useRef<string | null>(null);
+  // The feed a load through the linked message started from, so a finished load that left it
+  // unchanged is known. Keyed by message, so a newer link never reads an older link's load.
+  const [linkedMessageLoad, setLinkedMessageLoad] = useState<{
+    readonly messageId: string;
+    readonly feed: ReadonlyArray<ThreadFeedEntry>;
+    readonly inFlight: boolean;
+  } | null>(null);
+  const finishLinkedMessage = () => {
+    if (linkedMessageId === null) return;
+    handledLinkedMessageIdRef.current = linkedMessageId;
+    setLinkedMessageLoad(null);
+    onLinkedMessageHandled?.();
+  };
   const handleScrollBeginDrag = () => {
+    // The user takes over from a message link that is still loading or unfolding.
+    if (linkedMessageId !== null && handledLinkedMessageIdRef.current !== linkedMessageId) {
+      finishLinkedMessage();
+    }
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
     cancelReflow();
@@ -2609,6 +2685,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, [feedThreadKey, reportHeaderMaterialVisibility]);
 
   const presentedFeed = useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups);
+  const presentedFeedRef = useRef(presentedFeed);
+  useLayoutEffect(() => {
+    presentedFeedRef.current = presentedFeed;
+  }, [presentedFeed]);
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
@@ -2691,6 +2771,132 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (entry) => (entry.type === "message" ? entry.id : null),
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
+  useEffect(() => {
+    if (linkedMessageId === null) {
+      handledLinkedMessageIdRef.current = null;
+      return;
+    }
+    if (handledLinkedMessageIdRef.current === linkedMessageId) return;
+    const index = presentedFeed.findIndex(
+      (entry) => entry.type === "message" && entry.id === linkedMessageId,
+    );
+    const inFeed = props.feed.some(
+      (entry) => entry.type === "message" && entry.id === linkedMessageId,
+    );
+    const foldRunId =
+      index < 0 && inFeed
+        ? threadFeedFoldRunIdHiding(
+            props.feed,
+            props.latestRun,
+            props.activeWorkStartedAt,
+            props.runlessWorkActive ?? false,
+            linkedMessageId,
+          )
+        : null;
+    const runId = foldRunId !== null && !expandedTurnIds.has(foldRunId) ? foldRunId : null;
+    const target = presentedFeed[index];
+    const foldedRowId =
+      target?.type === "message" ? linkedMessageFoldRowId(target.message, expandedWorkRows) : null;
+    const ownLoad = linkedMessageLoad?.messageId === linkedMessageId ? linkedMessageLoad : null;
+    const step = resolveLinkedMessageStep({
+      presented: index >= 0,
+      inFeed,
+      foldedRunId: runId,
+      foldedRowId,
+      syncStatus: props.threadSyncStatus,
+      syncError: props.threadSyncError ?? null,
+      connectionPhase: props.connectionPhase,
+      historyLoading: props.historyControls?.loading === true || ownLoad?.inFlight === true,
+      // An error from before this link's own load is not about the linked message.
+      historyError: ownLoad === null ? null : (props.historyControls?.error ?? null),
+      hasMoreHistory: props.historyControls?.hasMoreHistory === true,
+      lastLoadChangedNothing: ownLoad?.feed === props.feed,
+    });
+    if (step === "wait") return;
+    if (step === "load") {
+      const load = { messageId: linkedMessageId, feed: props.feed, inFlight: true };
+      setLinkedMessageLoad(load);
+      void Promise.resolve(props.historyControls?.onLoadEarlier(linkedMessageId)).finally(() =>
+        setLinkedMessageLoad((current) =>
+          current === load ? { ...load, inFlight: false } : current,
+        ),
+      );
+      return;
+    }
+    setEndFollow(false);
+    if (step === "expand" && runId !== null) {
+      setInteractionState((current) => ({
+        ...current,
+        expandedTurnIds: new Set(current.expandedTurnIds).add(runId),
+      }));
+      return;
+    }
+    if (step === "expand-row" && foldedRowId !== null) {
+      setInteractionState((current) => ({
+        ...current,
+        expandedWorkRows: { ...current.expandedWorkRows, [foldedRowId]: true },
+      }));
+      return;
+    }
+    if (step === "missing") {
+      finishLinkedMessage();
+      Dialog.alert("Message not found", "It may have been deleted from this thread.");
+      return;
+    }
+    if (step === "failed") {
+      finishLinkedMessage();
+      Dialog.alert(
+        "Could not open the linked message",
+        props.threadSyncError ??
+          props.historyControls?.error ??
+          (props.threadSyncStatus === "cached" ||
+          props.threadSyncStatus === "empty" ||
+          props.threadSyncStatus === "synchronizing"
+            ? "Thread messages are unavailable. Reconnect and try the link again."
+            : "Earlier history did not load. Try the link again."),
+      );
+      return;
+    }
+    const listRef = props.listRef;
+    const viewOffset = anchorTopInset + CHAT_LIST_ANCHOR_OFFSET;
+    const frame = requestAnimationFrame(() => {
+      // A drag that began before this frame keeps the user's position.
+      if (userScrollSessionRef.current) return;
+      // Rows can change before the frame, so find the message again.
+      const latestIndex = presentedFeedRef.current.findIndex(
+        (entry) => entry.type === "message" && entry.id === linkedMessageId,
+      );
+      if (latestIndex < 0) return;
+      const list = listRef.current;
+      if (!list) return;
+      void list.scrollToIndex({
+        index: latestIndex,
+        viewPosition: 0,
+        viewOffset,
+        animated: false,
+      });
+      finishLinkedMessage();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    anchorTopInset,
+    expandedTurnIds,
+    expandedWorkRows,
+    linkedMessageId,
+    linkedMessageLoad,
+    finishLinkedMessage,
+    presentedFeed,
+    props.activeWorkStartedAt,
+    props.connectionPhase,
+    props.feed,
+    props.historyControls,
+    props.latestRun,
+    props.listRef,
+    props.runlessWorkActive,
+    props.threadSyncError,
+    props.threadSyncStatus,
+    setEndFollow,
+  ]);
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
   const terminalAssistantMessageIds = (() => {
     const terminalIdsByTurn = new Map<RunId, string>();
@@ -3189,7 +3395,7 @@ function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
             tone="secondary"
             accessibilityLabel="Load earlier activity"
             disabled={props.loading}
-            onPress={props.onLoadEarlier}
+            onPress={() => void props.onLoadEarlier()}
             icon="chevron.up"
             loading={props.loading}
           />
