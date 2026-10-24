@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
+import type { SnoozePreferences } from "@t3tools/contracts/settings";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 
@@ -172,7 +173,13 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId =
+  | "hour"
+  | "three-hours"
+  | "evening"
+  | "tomorrow"
+  | "next-week"
+  | `preset-${number}`;
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -200,7 +207,7 @@ function addSnoozeDays(base: Date, days: number): Date {
   return next;
 }
 
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+function resolveDefaultSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   const inAnHour = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + HOUR_MS));
   const inThreeHours = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + 3 * HOUR_MS));
   const presets: SnoozePreset[] = [
@@ -248,6 +255,77 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   }
 
   return presets;
+}
+
+const SNOOZE_WEEKDAYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+function snoozeAtDayAndTime(now: Date, days: number, time: string): Date {
+  const [hour, minute] = time.split(":").map(Number);
+  const wake = addSnoozeDays(now, days);
+  // Set the time on the destination day so today's DST gap cannot shift a later wake.
+  wake.setHours(hour!, minute!, 0, 0);
+  return wake;
+}
+
+export function resolveSnoozePresets(
+  now: Date,
+  preferences: SnoozePreferences = null,
+): ReadonlyArray<SnoozePreset> {
+  if (preferences === null) return resolveDefaultSnoozePresets(now);
+  return preferences.flatMap((slot, index): SnoozePreset[] => {
+    let wake: Date;
+    let label: string;
+    if (slot.mode === "relative") {
+      wake = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + slot.hours * HOUR_MS));
+      const days = slot.hours / 24;
+      label = Number.isInteger(days)
+        ? `In ${days} ${days === 1 ? "day" : "days"}`
+        : `In ${slot.hours} ${slot.hours === 1 ? "hour" : "hours"}`;
+    } else {
+      let days =
+        slot.day === "today"
+          ? 0
+          : slot.day === "tomorrow"
+            ? 1
+            : (SNOOZE_WEEKDAYS.indexOf(slot.day) - now.getDay() + 7) % 7;
+      wake = snoozeAtDayAndTime(now, days, slot.time);
+      if (slot.day !== "today" && slot.day !== "tomorrow" && wake.getTime() <= now.getTime()) {
+        days += 7;
+        wake = snoozeAtDayAndTime(now, days, slot.time);
+      }
+      if (days === 0) {
+        const hour = wake.getHours();
+        label =
+          hour < 12 ? "This morning" : hour < EVENING_HOUR ? "This afternoon" : "This evening";
+      } else if (days === 1) {
+        label = "Tomorrow";
+      } else if (((now.getDay() + 6) % 7) + days >= 7) {
+        label = "Next week";
+      } else {
+        label = slot.day.charAt(0).toUpperCase() + slot.day.slice(1);
+      }
+    }
+    if (wake.getTime() <= now.getTime()) return [];
+    return [
+      {
+        id: `preset-${index}`,
+        label,
+        whenLabel:
+          label === "Next week"
+            ? `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${snoozeTimeOfDayLabel(wake)}`
+            : snoozeTimeOfDayLabel(wake),
+        snoozedUntil: wake.toISOString(),
+      },
+    ];
+  });
 }
 
 export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {

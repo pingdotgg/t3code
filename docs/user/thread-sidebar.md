@@ -240,6 +240,18 @@ finishes; the call's own result shows its status.
 
 ## Snooze until later
 
+Open **Settings → General → Snooze** on web and desktop,
+or **Settings → Thread behavior → Snooze presets** on mobile, to configure five snooze slots in a fixed order.
+Each slot uses either a relative duration of 1–168 hours, or an absolute day and time.
+Choose Today, Tomorrow, or a weekday; weekdays use their next occurrence, including today
+if the chosen time is still ahead. A Today slot disappears from the menu after its time passes.
+
+For example, replace the one-hour slot with **Relative: 168 hours**, and set two other
+slots to **Absolute: Tomorrow at 06:00** and **Absolute: Monday at 06:00**. Relative hours add
+elapsed time, including across daylight saving changes.
+Preferences apply on this device. The existing presets stay unchanged until you save a custom
+set; **Restore defaults** brings them back.
+
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze

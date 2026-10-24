@@ -8,6 +8,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SNOOZE_PRESETS,
   globalIdleCompaction,
   idleCompactionPatch,
   requiredScopesForProjectMutation,
@@ -368,5 +369,42 @@ describe("server model preferences", () => {
     const input = { favorites: [], providerModelPreferences: {} };
     expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
     expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+});
+
+describe("ClientSettings snooze preferences", () => {
+  it("preserves legacy defaults until five custom slots are saved", () => {
+    expect(decodeClientSettings({}).snoozePreferences).toBeNull();
+    const snoozePreferences = [...DEFAULT_SNOOZE_PRESETS];
+    snoozePreferences[0] = { mode: "relative", hours: 168 };
+    snoozePreferences[3] = { mode: "absolute", day: "tomorrow", time: "06:00" };
+    snoozePreferences[4] = { mode: "absolute", day: "monday", time: "06:00" };
+    const settings = decodeClientSettings({ snoozePreferences });
+    expect(decodeClientSettings(encodeClientSettings(settings)).snoozePreferences).toEqual(
+      snoozePreferences,
+    );
+    expect(decodeClientSettingsPatch({ snoozePreferences })).toEqual({ snoozePreferences });
+    expect(decodeClientSettingsPatch({ snoozePreferences: null })).toEqual({
+      snoozePreferences: null,
+    });
+  });
+
+  it.each([
+    { mode: "relative", hours: 0 },
+    { mode: "relative", hours: -1 },
+    { mode: "relative", hours: 169 },
+    { mode: "relative", hours: 1.5 },
+    { mode: "absolute", day: "monday", time: "24:00" },
+    { mode: "absolute", day: "tomorrow", time: "18:60" },
+    { mode: "absolute", day: "unknown", time: "06:00" },
+  ])("rejects invalid snooze slots %j", (slot) => {
+    expect(() =>
+      decodeClientSettingsPatch({ snoozePreferences: [slot, ...DEFAULT_SNOOZE_PRESETS.slice(1)] }),
+    ).toThrow();
+  });
+
+  it.each([0, 4, 6])("rejects a custom set with %i slots", (length) => {
+    const slots = Array.from({ length }, () => DEFAULT_SNOOZE_PRESETS[0]);
+    expect(() => decodeClientSettingsPatch({ snoozePreferences: slots })).toThrow();
   });
 });

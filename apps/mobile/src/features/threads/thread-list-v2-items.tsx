@@ -1,3 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -715,9 +718,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
+  const snoozePreferences = useAtomValue(mobilePreferencesAtom, (result) =>
+    AsyncResult.isSuccess(result) ? (result.value.snoozePreferences ?? null) : null,
+  );
   const snoozePresets = useMemo(
-    () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
-    [props.snoozePresetMinute, swipeActions.secondary],
+    () =>
+      swipeActions.secondary === "snooze"
+        ? resolveSnoozePresets(new Date(), snoozePreferences)
+        : ([] as const),
+    [props.snoozePresetMinute, swipeActions.secondary, snoozePreferences],
   );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
@@ -888,6 +897,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
         event: nativeEvent.event,
         displayedPresets: snoozePresets,
+        preferences: snoozePreferences,
         now: new Date(),
       });
       if (snoozeSelection._tag === "selected") {
@@ -917,6 +927,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsnooze,
       setCustomSnoozeOpen,
       snoozePresets,
+      snoozePreferences,
     ],
   );
   const primaryAction = useMemo(() => {

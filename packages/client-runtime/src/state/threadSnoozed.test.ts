@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
 import { ThreadId } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
+import { DEFAULT_SNOOZE_PRESETS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -273,7 +274,170 @@ describe("threadWokeAt", () => {
 });
 
 describe("resolveSnoozePresets", () => {
-  it("drops the evening choice once evening is near or past", () => {
+  it("preserves the existing presets when no custom slots are saved", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 6, 5));
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "hour",
+      "three-hours",
+      "evening",
+      "tomorrow",
+      "next-week",
+    ]);
+    expect(presets.find((preset) => preset.id === "hour")?.snoozedUntil).toBe(
+      localDate(2026, 4, 6, 6).toISOString(),
+    );
+    expect(presets.find((preset) => preset.id === "tomorrow")?.snoozedUntil).toBe(
+      localDate(2026, 4, 7, 9).toISOString(),
+    );
+    expect(presets.find((preset) => preset.id === "next-week")?.snoozedUntil).toBe(
+      localDate(2026, 4, 13, 9).toISOString(),
+    );
+  });
+
+  it("resolves five relative and absolute slots in their fixed order", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), [
+      { mode: "relative", hours: 168 },
+      { mode: "relative", hours: 3 },
+      { mode: "absolute", day: "today", time: "18:00" },
+      { mode: "absolute", day: "tomorrow", time: "06:00" },
+      { mode: "absolute", day: "monday", time: "06:00" },
+    ]);
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "preset-0",
+      "preset-1",
+      "preset-2",
+      "preset-3",
+      "preset-4",
+    ]);
+    expect(presets.map((preset) => preset.snoozedUntil)).toEqual([
+      localDate(2026, 4, 15, 10).toISOString(),
+      localDate(2026, 4, 8, 13).toISOString(),
+      localDate(2026, 4, 8, 18).toISOString(),
+      localDate(2026, 4, 9, 6).toISOString(),
+      localDate(2026, 4, 13, 6).toISOString(),
+    ]);
+    expect(presets[0]?.label).toBe("In 7 days");
+    expect(presets[1]?.label).toBe("In 3 hours");
+    expect(presets[2]?.label).toBe("This evening");
+    expect(presets[3]?.label).toBe("Tomorrow");
+    expect(presets[4]?.label).toBe("Next week");
+  });
+
+  it("preserves the original menu labels after saving the default slots", () => {
+    const now = localDate(2026, 4, 8, 10);
+    const defaults = resolveSnoozePresets(now);
+    const configured = resolveSnoozePresets(now, DEFAULT_SNOOZE_PRESETS);
+    expect(configured.map((preset) => preset.label)).toEqual(
+      defaults.map((preset) => preset.label),
+    );
+    expect(configured.map((preset) => preset.whenLabel)).toEqual(
+      defaults.map((preset) => preset.whenLabel),
+    );
+  });
+
+  it.each([
+    [1, "In 1 hour"],
+    [3, "In 3 hours"],
+    [24, "In 1 day"],
+    [48, "In 2 days"],
+    [25, "In 25 hours"],
+    [168, "In 7 days"],
+  ])("labels a relative duration of %i hours as %s", (hours, expected) => {
+    const preferences = [...DEFAULT_SNOOZE_PRESETS];
+    preferences[0] = { mode: "relative", hours };
+    expect(resolveSnoozePresets(localDate(2026, 4, 8, 10), preferences)[0]?.label).toBe(expected);
+  });
+
+  it.each([
+    ["today", "11:00", "This morning"],
+    ["today", "12:00", "This afternoon"],
+    ["today", "17:59", "This afternoon"],
+    ["today", "18:00", "This evening"],
+    ["wednesday", "15:00", "This afternoon"],
+    ["tomorrow", "06:00", "Tomorrow"],
+    ["thursday", "06:00", "Tomorrow"],
+    ["friday", "06:00", "Friday"],
+    ["monday", "06:00", "Next week"],
+    ["wednesday", "09:00", "Next week"],
+  ] as const)("labels an absolute %s slot at %s as %s", (day, time, expected) => {
+    const preferences = [...DEFAULT_SNOOZE_PRESETS];
+    preferences[0] = { mode: "absolute", day, time };
+    expect(resolveSnoozePresets(localDate(2026, 4, 8, 10), preferences)[0]?.label).toBe(expected);
+  });
+
+  it.each([
+    [10, "sunday", "Sunday"],
+    [10, "saturday", "Tomorrow"],
+    [12, "monday", "Tomorrow"],
+    [12, "tuesday", "Next week"],
+    [12, "sunday", "Next week"],
+  ] as const)("uses Monday as the start of the week on April %i for %s", (date, day, expected) => {
+    const preferences = [...DEFAULT_SNOOZE_PRESETS];
+    preferences[0] = { mode: "absolute", day, time: "06:00" };
+    expect(resolveSnoozePresets(localDate(2026, 4, date, 10), preferences)[0]?.label).toBe(
+      expected,
+    );
+  });
+
+  it.each([
+    [5, 6],
+    [6, 13],
+    [7, 13],
+  ])("chooses the next weekday occurrence at %i:00", (hour, day) => {
+    const preferences = [...DEFAULT_SNOOZE_PRESETS];
+    preferences[0] = { mode: "absolute", day: "monday", time: "06:00" };
+    const presets = resolveSnoozePresets(localDate(2026, 4, 6, hour), preferences);
+    expect(presets.find((preset) => preset.id === "preset-0")?.snoozedUntil).toBe(
+      localDate(2026, 4, day!, 6).toISOString(),
+    );
+  });
+
+  it("keeps configured slots distinct when their wake times coincide", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7), DEFAULT_SNOOZE_PRESETS);
+    expect(presets.find((preset) => preset.id === "preset-3")?.snoozedUntil).toBe(
+      localDate(2026, 8, 31, 9).toISOString(),
+    );
+    expect(presets.find((preset) => preset.id === "preset-4")?.snoozedUntil).toBe(
+      localDate(2026, 8, 31, 9).toISOString(),
+    );
+  });
+
+  it("omits a Today slot after its time without changing the remaining slot identities", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 19), DEFAULT_SNOOZE_PRESETS);
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "preset-0",
+      "preset-1",
+      "preset-3",
+      "preset-4",
+    ]);
+  });
+
+  it.each([
+    ["2026-03-06T17:30:00-05:00", "2026-03-13T22:30:00.000Z"],
+    ["2026-10-30T17:30:00-04:00", "2026-11-06T21:30:00.000Z"],
+  ])("adds elapsed hours across daylight saving changes from %s", (timestamp, expectedWake) => {
+    const now = new Date(timestamp);
+    const preferences = [...DEFAULT_SNOOZE_PRESETS];
+    preferences[0] = { mode: "relative", hours: 168 };
+    const presets = resolveSnoozePresets(now, preferences);
+    expect(presets[0]?.snoozedUntil).toBe(expectedWake);
+    expect(presets[0]?.label).toBe("In 7 days");
+  });
+
+  it.each(["tomorrow", "sunday"] as const)(
+    "applies the absolute time on the target day for %s across daylight saving changes",
+    (day) => {
+      const preferences = [...DEFAULT_SNOOZE_PRESETS];
+      preferences[0] = { mode: "absolute", day, time: "02:30" };
+      const now = localDate(2026, 3, 8, day === "tomorrow" ? 1 : 4);
+      const presets = resolveSnoozePresets(now, preferences);
+      expect(presets[0]?.snoozedUntil).toBe(
+        localDate(2026, 3, day === "tomorrow" ? 9 : 15, 2, 30).toISOString(),
+      );
+    },
+  );
+
+  it("keeps the original evening visibility rule before customization", () => {
     expect(resolveSnoozePresets(localDate(2026, 4, 8, 17, 30)).map((preset) => preset.id)).toEqual([
       "hour",
       "three-hours",
@@ -282,7 +446,7 @@ describe("resolveSnoozePresets", () => {
     ]);
   });
 
-  it("drops next week on Sundays, when it lands on the same Monday as tomorrow", () => {
+  it("keeps the original Sunday deduplication before customization", () => {
     const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7, 1));
     expect(presets.map((preset) => preset.id)).toEqual([
       "hour",
@@ -290,8 +454,6 @@ describe("resolveSnoozePresets", () => {
       "evening",
       "tomorrow",
     ]);
-    const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
-    expect(tomorrow.getDay()).toBe(1);
   });
 });
 

@@ -1,3 +1,4 @@
+import { SnoozeSettingsSection } from "./SnoozeSettingsSection";
 import { Button } from "../../components/ui/Button";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -46,6 +47,7 @@ export function SettingsThreadsRouteScreen() {
           contentContainerClassName="gap-6 px-5 pt-4"
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
+          <SnoozeSettingsSection />
           <AutoSettleSettingsRows />
           <BetaSettingsSection />
           <LegacySettingsSection />

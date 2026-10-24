@@ -314,7 +314,47 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+export const SnoozeTime = Schema.String.check(Schema.isPattern(/^([01]\d|2[0-3]):[0-5]\d$/));
+export const SNOOZE_ABSOLUTE_DAYS = [
+  "today",
+  "tomorrow",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+export const SnoozeDay = Schema.Literals(SNOOZE_ABSOLUTE_DAYS);
+export const MAX_SNOOZE_HOURS = 168;
+export const SnoozePresetSetting = Schema.Union([
+  Schema.Struct({
+    mode: Schema.Literal("relative"),
+    hours: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_SNOOZE_HOURS })),
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("absolute"),
+    day: SnoozeDay,
+    time: SnoozeTime,
+  }),
+]);
+export type SnoozePresetSetting = typeof SnoozePresetSetting.Type;
+export const DEFAULT_SNOOZE_PRESETS: readonly SnoozePresetSetting[] = [
+  { mode: "relative", hours: 1 },
+  { mode: "relative", hours: 3 },
+  { mode: "absolute", day: "today", time: "18:00" },
+  { mode: "absolute", day: "tomorrow", time: "09:00" },
+  { mode: "absolute", day: "monday", time: "09:00" },
+];
+// Null preserves the existing contextual presets until the user saves a custom set.
+export const SnoozePreferences = Schema.NullOr(
+  Schema.Array(SnoozePresetSetting).check(Schema.isMinLength(5), Schema.isMaxLength(5)),
+);
+export type SnoozePreferences = typeof SnoozePreferences.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
+  snoozePreferences: SnoozePreferences.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1678,6 +1718,7 @@ export function requiredScopesForProjectMutation(
 }
 
 export const ClientSettingsPatch = Schema.Struct({
+  snoozePreferences: Schema.optionalKey(SnoozePreferences),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

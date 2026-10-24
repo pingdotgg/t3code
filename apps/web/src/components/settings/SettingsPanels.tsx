@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { SnoozeSettings } from "./SnoozeSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
@@ -416,6 +417,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
       ? ["Environment identification"]
       : []),
+    ...(!Equal.equals(settings.snoozePreferences, DEFAULT_UNIFIED_SETTINGS.snoozePreferences)
+      ? ["Snooze presets"]
+      : []),
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
       : []),
@@ -588,6 +592,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      snoozePreferences: DEFAULT_UNIFIED_SETTINGS.snoozePreferences,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -1051,106 +1056,108 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+      </SettingsSection>
 
-        {supportsAutoSettlement ? (
-          <>
-            <SettingsRow
-              serverScoped
-              settingKeys={["sidebarAutoSettleOnMerge"]}
-              {...searchableSetting("auto-settle-merged-threads")}
-              description="Settle a thread when its pull request merges. Closed pull requests still settle automatically."
-              resetAction={
-                settings.sidebarAutoSettleOnMerge !==
-                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
-                  <SettingResetButton
-                    label="auto-settle on merge"
-                    onClick={() =>
-                      updateSettings({
-                        sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
-                      })
-                    }
-                  />
-                ) : null
-              }
-              control={
-                <ScopedSwitch
-                  settingKeys={["sidebarAutoSettleOnMerge"]}
-                  checked={settings.sidebarAutoSettleOnMerge}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
+      {supportsAutoSettlement ? (
+        <SettingsSection id="auto-settle" title="Auto-settle">
+          <SettingsRow
+            serverScoped
+            settingKeys={["sidebarAutoSettleOnMerge"]}
+            {...searchableSetting("auto-settle-merged-threads")}
+            description="Settle a thread when its pull request merges. Closed pull requests still settle automatically."
+            resetAction={
+              settings.sidebarAutoSettleOnMerge !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
+                <SettingResetButton
+                  label="auto-settle on merge"
+                  onClick={() =>
+                    updateSettings({
+                      sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+                    })
                   }
-                  aria-label="Auto-settle merged threads"
                 />
-              }
-            />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["sidebarAutoSettleOnMerge"]}
+                checked={settings.sidebarAutoSettleOnMerge}
+                onCheckedChange={(checked) =>
+                  updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
+                }
+                aria-label="Auto-settle merged threads"
+              />
+            }
+          />
 
+          <SettingsRow
+            serverScoped
+            settingKeys={["sidebarAutoSettleAfterDays"]}
+            {...searchableSetting("auto-settle-inactive-threads")}
+            description="Sidebar threads with no activity for this long settle automatically."
+            resetAction={
+              settings.sidebarAutoSettleAfterDays !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
+                <SettingResetButton
+                  label="auto-settle"
+                  onClick={() =>
+                    updateSettings({
+                      sidebarAutoSettleAfterDays:
+                        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["sidebarAutoSettleAfterDays"]}
+                checked={settings.sidebarAutoSettleAfterDays !== null}
+                onCheckedChange={(checked) =>
+                  updateSettings({
+                    sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                  })
+                }
+                aria-label="Auto-settle inactive threads"
+              />
+            }
+          />
+          {settings.sidebarAutoSettleAfterDays !== null ? (
             <SettingsRow
               serverScoped
               settingKeys={["sidebarAutoSettleAfterDays"]}
-              {...searchableSetting("auto-settle-inactive-threads")}
-              description="Sidebar threads with no activity for this long settle automatically."
-              resetAction={
-                settings.sidebarAutoSettleAfterDays !==
-                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
-                  <SettingResetButton
-                    label="auto-settle"
-                    onClick={() =>
-                      updateSettings({
-                        sidebarAutoSettleAfterDays:
-                          DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-                      })
-                    }
-                  />
-                ) : null
-              }
+              {...searchableSetting("days-before-auto-settle")}
+              description="Any new activity un-settles a thread automatically."
               control={
-                <ScopedSwitch
-                  settingKeys={["sidebarAutoSettleAfterDays"]}
-                  checked={settings.sidebarAutoSettleAfterDays !== null}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
-                    })
-                  }
-                  aria-label="Auto-settle inactive threads"
+                <AutoSettleDaysInput
+                  value={settings.sidebarAutoSettleAfterDays}
+                  onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
                 />
               }
             />
-            {settings.sidebarAutoSettleAfterDays !== null ? (
-              <SettingsRow
-                serverScoped
-                settingKeys={["sidebarAutoSettleAfterDays"]}
-                title={searchableSetting("days-before-auto-settle").title}
-                description="Any new activity un-settles a thread automatically."
-                control={
-                  <AutoSettleDaysInput
-                    value={settings.sidebarAutoSettleAfterDays}
-                    onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
-                  />
-                }
-              />
-            ) : null}
-            {settings.sidebarAutoSettleAfterDays !== null && supportsAutoSettlementScope ? (
-              <SettingsRow
-                serverScoped
-                settingKeys={["sidebarAutoSettleKeepPullRequests"]}
-                title="Keep threads with a PR"
-                description="Inactivity does not settle threads with a pull request. Merge and close still do."
-                control={
-                  <ScopedSwitch
-                    settingKeys={["sidebarAutoSettleKeepPullRequests"]}
-                    checked={settings.sidebarAutoSettleKeepPullRequests}
-                    onCheckedChange={(checked) =>
-                      updateSettings({ sidebarAutoSettleKeepPullRequests: checked })
-                    }
-                    aria-label="Keep threads with a PR"
-                  />
-                }
-              />
-            ) : null}
-          </>
-        ) : null}
-      </SettingsSection>
+          ) : null}
+          {settings.sidebarAutoSettleAfterDays !== null && supportsAutoSettlementScope ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["sidebarAutoSettleKeepPullRequests"]}
+              title="Keep threads with a PR"
+              description="Inactivity does not settle threads with a pull request. Merge and close still do."
+              control={
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoSettleKeepPullRequests"]}
+                  checked={settings.sidebarAutoSettleKeepPullRequests}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ sidebarAutoSettleKeepPullRequests: checked })
+                  }
+                  aria-label="Keep threads with a PR"
+                />
+              }
+            />
+          ) : null}
+        </SettingsSection>
+      ) : null}
+
+      <SnoozeSettings />
 
       <SettingsSection id="behavior" title="Behavior">
         <NotificationSettings />

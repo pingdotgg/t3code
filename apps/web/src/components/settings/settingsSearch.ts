@@ -352,6 +352,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "snooze-presets",
+    title: "Snooze presets",
+    to: "/settings/general",
+    searchTerms: ["tomorrow next week Monday morning evening time hours seven days"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

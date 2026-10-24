@@ -13,6 +13,7 @@ import {
   type ThreadMoveAvailability,
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { DEFAULT_SNOOZE_PRESETS } from "@t3tools/contracts/settings";
 import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
@@ -57,6 +58,21 @@ function makeThread(
 const NOW = "2026-06-02T00:00:00.000Z";
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
+  it("uses the saved preferences when recomputing a selected snooze", () => {
+    const preferences = [...DEFAULT_SNOOZE_PRESETS];
+    preferences[0] = { mode: "relative", hours: 168 };
+    const now = new Date(2026, 4, 8, 10);
+    const selection = resolveThreadListV2SnoozeMenuSelection({
+      event: "snooze:preset-0",
+      displayedPresets: resolveSnoozePresets(now, preferences),
+      preferences,
+      now: new Date(2026, 4, 8, 11),
+    });
+    expect(selection._tag).toBe("selected");
+    if (selection._tag === "selected") {
+      expect(selection.preset.snoozedUntil).toBe(new Date(2026, 4, 15, 11).toISOString());
+    }
+  });
   it("recomputes presets that remain available instead of using old timestamps", () => {
     const displayedPresets = resolveSnoozePresets(new Date(2026, 4, 8, 10));
     const selectedAt = new Date(2026, 4, 8, 10, 30);
