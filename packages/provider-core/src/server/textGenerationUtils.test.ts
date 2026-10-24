@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sanitizeCommitSubject } from "./textGenerationUtils.ts";
+import { sanitizeCommitSubject, sanitizeThreadTitle } from "./textGenerationUtils.ts";
 
 describe("sanitizeCommitSubject", () => {
   // regression: #19181 truncation split grapheme clusters at the subject limit
@@ -12,5 +12,11 @@ describe("sanitizeCommitSubject", () => {
     const prefix = "a".repeat(prefixLength);
 
     expect(sanitizeCommitSubject(`${prefix}${character} more`)).toBe(prefix);
+  });
+});
+
+describe("sanitizeThreadTitle", () => {
+  it("normalizes generated titles", () => {
+    expect(sanitizeThreadTitle("  Implement issue #140  ")).toBe("Implement issue #140");
   });
 });

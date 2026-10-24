@@ -152,8 +152,15 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         instructions: input.instructions,
       }),
     });
+    const title = sanitizeThreadTitle(generated.title);
+    // Some models return the schema placeholder instead of generating a title.
+    // Preserve an existing useful title rather than replacing it with "title".
+    const sanitizedTitle =
+      title.toLocaleLowerCase() === "title" && input.previousTitle
+        ? sanitizeThreadTitle(input.previousTitle)
+        : title;
     return {
-      title: sanitizeThreadTitle(generated.title),
+      title: sanitizedTitle,
       ...(generated.needsRefinement ? { needsRefinement: true } : {}),
     };
   });
