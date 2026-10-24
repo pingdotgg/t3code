@@ -261,25 +261,33 @@ function NoticeText({
 }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
-  const [showDetails, setShowDetails] = useState(false);
+  const [detailsAtWidth, setDetailsAtWidth] = useState<number | null>(null);
+  const showDetails = detailsAtWidth !== null;
 
   useLayoutEffect(() => {
     const text = textRef.current;
     if (!text) return;
+    const banner = text.closest("[data-slot=composer-banner]") ?? text;
     const measure = () => {
       // Ignore the space taken by the details button itself so it cannot
       // sustain its own overflow after the text would otherwise fit.
       const recoveredWidth = detailsRef.current ? detailsRef.current.offsetWidth + 4 : 0;
       const hidden = getComputedStyle(text).position === "absolute";
-      setShowDetails(
+      const overflowing =
         hidden ||
-          [text, ...text.querySelectorAll("*")].some(
-            (element) => element.scrollWidth > element.clientWidth + recoveredWidth,
-          ),
+        [text, ...text.querySelectorAll("*")].some(
+          (element) => element.scrollWidth > element.clientWidth + recoveredWidth,
+        );
+      // The button's width can wrap the banner's actions onto a second row, which gives
+      // the text room and removes the button, which unwraps the row again. Once shown,
+      // the button stays until the banner itself gets wider than where it appeared.
+      const width = banner.clientWidth;
+      setDetailsAtWidth((shownAt) =>
+        overflowing ? (shownAt ?? width) : shownAt !== null && width <= shownAt ? shownAt : null,
       );
     };
     measure();
-    const stopObserving = observeResize(text, measure);
+    const stopObserving = observeResize([text, banner], measure);
     const mutations = new MutationObserver(measure);
     mutations.observe(text, { childList: true, subtree: true, characterData: true });
     return () => {
