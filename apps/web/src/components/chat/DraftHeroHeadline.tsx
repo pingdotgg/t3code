@@ -3,8 +3,9 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon } from "lucide-react";
+import { FolderPlusIcon, SettingsIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
@@ -39,7 +40,7 @@ import {
   useComboboxFilter,
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { InlineButton } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -77,6 +78,7 @@ export function DraftHeroHeadline({
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
+  const navigate = useNavigate();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
@@ -303,6 +305,27 @@ export function DraftHeroHeadline({
             );
           }}
         </ComboboxList>
+        {activeProjectGroup && !activeProjectGroup.isScratch ? (
+          <div className="grid shrink-0 border-t border-border/70 p-1">
+            <Button
+              variant="ghost-muted"
+              size="sm"
+              aria-label={`Project settings for ${activeProjectGroup.displayName}`}
+              onClick={() => {
+                setPickerOpen(false);
+                void navigate({
+                  to: "/projects/$projectKey",
+                  params: { projectKey: activeProjectGroup.projectKey },
+                });
+              }}
+            >
+              <SettingsIcon aria-hidden="true" />
+              <span className="min-w-0 truncate">
+                Settings for {activeProjectGroup.displayName}
+              </span>
+            </Button>
+          </div>
+        ) : null}
       </ComboboxPopup>
     </Combobox>
   ) : (
