@@ -1,0 +1,33 @@
+{
+  "projectName": "Proof Audit",
+  "initialIcon": { "kind": "monogram", "text": "KC", "color": "teal" },
+  "seedSteps": [
+    {
+      "tool": "preview_type",
+      "locator": "role=textbox[name=\"Project name\"]",
+      "text": "Proof Audit",
+      "clear": true
+    },
+    { "tool": "preview_press", "key": "Tab" },
+    { "tool": "preview_click", "locator": "role=button[name=\"Choose a project icon\" s]" },
+    { "tool": "preview_click", "locator": "role=button[name=\"Monogram\" s]" },
+    { "tool": "preview_click", "locator": "role=button[name=\"Teal\" s]" },
+    {
+      "tool": "preview_type",
+      "locator": "role=textbox[name=\"Letters\"]",
+      "text": "KC",
+      "clear": true
+    },
+    { "tool": "preview_click", "locator": "role=button[name=\"Save icon\" s]" }
+  ],
+  "cases": [
+    { "input": "ABC", "normalized": "ABC", "valid": false },
+    { "input": "B", "normalized": "B", "valid": true },
+    { "input": "e\u0301B", "normalized": "ÉB", "valid": true },
+    { "input": "", "valid": false },
+    { "input": "   ", "valid": false },
+    { "input": "A!", "valid": false },
+    { "input": " ab ", "normalized": "AB", "valid": true },
+    { "input": "Á́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́", "valid": false }
+  ]
+}
