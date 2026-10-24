@@ -629,6 +629,11 @@ resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.na
 The UI reports `deployment.environment.name` from its build: `development` under the Vite dev server
 and `production` otherwise.
 
+Attributes specific to T3 Code use the `t3code.` prefix. The UI runs as `t3code-web` in both a
+browser and the desktop window, since it is the same code, and `t3code.client.surface` is `desktop`
+or `web`. The server's `t3code.server.managed_by` is `desktop` when the desktop app launched it and
+`standalone` otherwise.
+
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.
 

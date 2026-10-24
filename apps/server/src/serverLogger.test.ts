@@ -152,6 +152,19 @@ const printThroughConsole = (fields: object) =>
   });
 
 describe("ServerLoggerLive", () => {
+  it.effect("exports a resource that names whether the desktop app launched the server", () =>
+    Effect.gen(function* () {
+      const { requests } = yield* logInSpanThrough({
+        otlpLogsUrl: "https://collector.example.com/v1/logs",
+        mode: "desktop",
+      });
+
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(body, '"key":"t3code.server.managed_by","value":{"stringValue":"desktop"}');
+      assert.notInclude(body, "service.mode");
+    }),
+  );
+
   it.effect("prints a cause passed as a log field instead of collapsing it", () =>
     Effect.gen(function* () {
       const output = yield* printThroughConsole({

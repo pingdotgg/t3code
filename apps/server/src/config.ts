@@ -111,7 +111,7 @@ export const otlpResource = (
   attributes: {
     "service.namespace": "t3code",
     "service.runtime": "t3-server",
-    "service.mode": config.mode,
+    "t3code.server.managed_by": config.mode === "desktop" ? "desktop" : "standalone",
     "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
   },
 });
