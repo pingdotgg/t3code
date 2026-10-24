@@ -1073,6 +1073,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLiteralPendingAnswer ? null : detectComposerTrigger(prompt, prompt.length),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const [composerDetail, setComposerDetail] = useState<{
+    itemId: string;
+    searchKey: string | null;
+  } | null>(null);
   const composerSuggestionId = useId();
   const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
   const promptHistoryPositionRef = useRef<{
@@ -1227,6 +1231,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const activeComposerMenuItem =
     composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
+  if (composerDetail && composerDetail.searchKey !== composerMenuSearchKey) {
+    setComposerDetail(null);
+  }
+  const composerDetailItem = composerDetail
+    ? (composerMenuItems.find((item) => item.id === composerDetail.itemId) ?? null)
+    : null;
 
   useLayoutEffect(() => {
     composerMenuOpenRef.current = composerMenuOpen;
@@ -1924,6 +1934,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onSelectComposerItem = (item: ComposerCommandItem) => {
     if (composerSelectLockRef.current) return;
     composerSelectLockRef.current = true;
+    setComposerDetail(null);
     window.requestAnimationFrame(() => {
       composerSelectLockRef.current = false;
     });
@@ -2065,6 +2076,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedSearchKey(composerMenuSearchKey);
   };
   const onComposerMenuItemHighlightedStable = useStableCallback(onComposerMenuItemHighlighted);
+
+  const onShowComposerMenuItemDetail = (itemId: string) => {
+    setComposerDetail({ itemId, searchKey: composerMenuSearchKey });
+  };
+  const onShowComposerMenuItemDetailStable = useStableCallback(onShowComposerMenuItemDetail);
+  const onCloseComposerMenuItemDetail = () => {
+    if (composerDetail) onComposerMenuItemHighlighted(composerDetail.itemId);
+    setComposerDetail(null);
+  };
+  const onCloseComposerMenuItemDetailStable = useStableCallback(onCloseComposerMenuItemDetail);
 
   const nudgeComposerMenuHighlight = (key: "ArrowDown" | "ArrowUp") => {
     if (composerMenuItems.length === 0) return;
@@ -2270,6 +2291,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerMenuOpenRef,
     composerMenuItemsRef,
     activeComposerMenuItemRef,
+    composerDetailItem,
     setComposerDraftPrompt,
     setComposerCursor,
     setComposerTrigger,
@@ -2278,6 +2300,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     nudgeComposerMenuHighlight,
     onSelectComposerItem,
+    onShowComposerMenuItemDetail,
+    onCloseComposerMenuItemDetail,
     resolveActiveComposerTrigger,
     readComposerSnapshot,
     applyPromptReplacement,
@@ -3721,13 +3745,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                   <ComposerCommandMenu
                     listId={composerSuggestionListId}
+                    environmentId={environmentId}
                     items={composerMenuItems}
                     resolvedTheme={resolvedTheme}
                     isLoading={isComposerMenuLoading}
                     triggerKind={composerTriggerKind}
                     emptyStateText={composerMenuEmptyState}
                     activeItemId={activeComposerMenuItem?.id ?? null}
+                    detailItem={composerDetailItem}
                     onHighlightedItemChange={onComposerMenuItemHighlightedStable}
+                    onShowDetail={onShowComposerMenuItemDetailStable}
+                    onCloseDetail={onCloseComposerMenuItemDetailStable}
                     onSelect={onSelectComposerItemStable}
                   />
                 </ComposerCommandMenuLayer>
