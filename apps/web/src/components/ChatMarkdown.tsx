@@ -325,16 +325,87 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
   return listItemStart + firstLine.indexOf(match[1]);
 }
 
-function orderedListGutterStyle(
-  itemCount: number,
-  start: unknown,
-): { "--list-gutter": string } | undefined {
+function orderedListGutterStyle(itemCount: number, start: unknown) {
   const parsedStart = Number.parseInt(String(start ?? 1), 10);
   const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
   const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
-  if (markerWidth <= 1) return undefined;
-  return { "--list-gutter": `${markerWidth + 2}ch` };
+  return markerWidth > 1 ? { "--list-gutter": `${markerWidth + 2}ch` } : undefined;
+}
+
+function MarkdownOrderedList({
+  node,
+  start,
+  style,
+  ...props
+}: ComponentProps<"ol"> & ReactMarkdownExtraProps) {
+  const ref = useRef<HTMLOListElement>(null);
+  const itemCount =
+    node?.children?.filter((child) => child.type === "element" && child.tagName === "li").length ??
+    0;
+  const gutterStyle = orderedListGutterStyle(itemCount, start);
+  const hasWideMarker = gutterStyle !== undefined;
+
+  useLayoutEffect(() => {
+    const list = ref.current;
+    if (!list || hasWideMarker) return;
+    const measure = () => {
+      const marker = getComputedStyle(list.querySelector("li") ?? list, "::marker");
+      const probe = document.createElement("span");
+      Object.assign(probe.style, {
+        position: "fixed",
+        top: "0",
+        left: "0",
+        visibility: "hidden",
+        whiteSpace: "pre",
+        fontFamily: marker.fontFamily,
+        fontSize: marker.fontSize,
+        fontWeight: marker.fontWeight,
+        fontStyle: marker.fontStyle,
+        fontStretch: marker.fontStretch,
+        fontVariantNumeric: "tabular-nums",
+        fontFeatureSettings: marker.fontFeatureSettings,
+        fontVariationSettings: marker.fontVariationSettings,
+        letterSpacing: marker.letterSpacing,
+        wordSpacing: marker.wordSpacing,
+      });
+      // `ch` overestimates punctuation in proportional fonts. Measure the actual
+      // marker so fonts whose numbers already fit keep their indent and wrapping.
+      const markers = Array.from({ length: 10 }, (_, digit) => {
+        const span = document.createElement("span");
+        span.textContent = `${digit}. `;
+        probe.append(span);
+        return span;
+      });
+      document.body.append(probe);
+      const width = Math.ceil(
+        Math.max(...markers.map((span) => span.getBoundingClientRect().width)),
+      );
+      probe.remove();
+      list.style.setProperty("--list-gutter", `max(1.25rem, ${width}px)`);
+    };
+    measure();
+    // Appearance settings apply inherited fonts to the root after React commits.
+    const observer = new MutationObserver(measure);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
+    document.fonts.addEventListener("loadingdone", measure);
+    return () => {
+      observer.disconnect();
+      document.fonts.removeEventListener("loadingdone", measure);
+    };
+  }, [hasWideMarker]);
+
+  return (
+    <ol
+      {...props}
+      ref={ref}
+      start={start}
+      style={gutterStyle ? { ...style, ...gutterStyle } : style}
+    />
+  );
 }
 
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -994,15 +1065,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       </div>
     );
   },
-  ol: function MarkdownOrderedList({ node, start, style, ...props }) {
-    const itemCount =
-      node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
-        .length ?? 0;
-    const gutterStyle = orderedListGutterStyle(itemCount, start);
-    return (
-      <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
-    );
-  },
+  ol: MarkdownOrderedList,
   li: function MarkdownListItem({ node, children, ...props }) {
     const { skills } = use(ChatMarkdownRendererContext);
     // The checkbox finds its marker from this offset when toggled, so list items

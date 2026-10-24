@@ -91,6 +91,95 @@ function buttonsLabelled(container: HTMLElement, label: string) {
   );
 }
 
+describe("ChatMarkdown ordered list layout", () => {
+  it("preserves default-font indentation and wrapping when the markers already fit", async () => {
+    setup();
+    const container = document.createElement("div");
+    Object.assign(container.style, { font: "14px system-ui", width: "240px" });
+    await using screen = await render(
+      <ChatMarkdown
+        cwd={undefined}
+        text={
+          "1. A long list item whose text wraps over several lines at this width.\n2. Another item."
+        }
+      />,
+      { container },
+    );
+    const list = screen.container.querySelector("ol")!;
+    const item = list.querySelector("li")!;
+    const padding = getComputedStyle(list).paddingInlineStart;
+    const bounds = item.getBoundingClientRect();
+    list.style.setProperty("--list-gutter", "1.25rem");
+    expect(padding).toBe(getComputedStyle(list).paddingInlineStart);
+    expect(item.getBoundingClientRect().toJSON()).toEqual(bounds.toJSON());
+  });
+
+  it("keeps wide monospace markers inside the clipping edge, including nested lists", async () => {
+    setup();
+    const container = document.createElement("div");
+    Object.assign(container.style, { font: "22px monospace", width: "300px", overflow: "hidden" });
+    await using screen = await render(
+      <ChatMarkdown cwd={undefined} text={"1. First\n2. Second\n   1. Nested\n   2. Last"} />,
+      { container },
+    );
+    const probe = document.createElement("span");
+    const listStyle = getComputedStyle(screen.container.querySelector("ol")!);
+    probe.style.fontFamily = listStyle.fontFamily;
+    probe.style.fontSize = listStyle.fontSize;
+    probe.style.whiteSpace = "pre";
+    probe.textContent = "2. ";
+    container.append(probe);
+    const markerWidth = probe.getBoundingClientRect().width;
+    probe.remove();
+    expect(markerWidth).toBeGreaterThan(20);
+    for (const list of screen.container.querySelectorAll("ol")) {
+      const item = list.querySelector("li")!;
+      expect(item.getBoundingClientRect().left - markerWidth).toBeGreaterThanOrEqual(
+        list.getBoundingClientRect().left,
+      );
+    }
+  });
+
+  it("remeasures existing lists when the inherited interface font changes", async () => {
+    setup();
+    const container = document.createElement("div");
+    Object.assign(container.style, {
+      font: "22px var(--test-ordered-list-font, system-ui)",
+      width: "300px",
+    });
+    await using screen = await render(<ChatMarkdown cwd={undefined} text="1. First" />, {
+      container,
+    });
+    const list = screen.container.querySelector("ol")!;
+    const originalPadding = Number.parseFloat(getComputedStyle(list).paddingInlineStart);
+    try {
+      document.documentElement.style.setProperty("--test-ordered-list-font", "monospace");
+      await expect
+        .poll(() => Number.parseFloat(getComputedStyle(list).paddingInlineStart))
+        .toBeGreaterThan(originalPadding);
+      document.documentElement.style.removeProperty("--test-ordered-list-font");
+      await expect
+        .poll(() => Number.parseFloat(getComputedStyle(list).paddingInlineStart))
+        .toBe(originalPadding);
+    } finally {
+      document.documentElement.style.removeProperty("--test-ordered-list-font");
+    }
+  });
+
+  it("restores the single-digit gutter after reusing a list with wider numbers", async () => {
+    setup();
+    const markdown = (text: string) => <ChatMarkdown cwd={undefined} text={text} />;
+    await using screen = await render(markdown("1. First"));
+    const padding = () =>
+      Number.parseFloat(getComputedStyle(screen.container.querySelector("ol")!).paddingInlineStart);
+    const originalPadding = padding();
+    await screen.rerender(markdown("99. First\n100. Second"));
+    expect(padding()).toBeGreaterThan(originalPadding);
+    await screen.rerender(markdown("1. First"));
+    expect(padding()).toBe(originalPadding);
+  });
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();

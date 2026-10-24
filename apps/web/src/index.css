@@ -1853,10 +1853,9 @@ code {
 }
 
 /* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
-   ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   widest marker has multiple characters so it isn't clipped by list-style-position:
-   outside painting the marker past the padding box. Reset it here too so a
-   nested ol without its own widened marker doesn't inherit the outer one. */
+   ChatMarkdown's `ol` renderer measures single-digit markers and widens it only
+   when needed. Multi-digit lists use a digit-count-based `ch` gutter. Reset it
+   here too so nested lists don't inherit their parent's widened gutter. */
 :is(.chat-markdown, .composer-tiptap) ol {
   --list-gutter: 1.25rem;
   padding-inline-start: var(--list-gutter, 1.25rem);
