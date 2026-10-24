@@ -38,6 +38,36 @@ export function shouldShowFileExplorer(input: {
   return input.explorerOpen || input.relativePath === null;
 }
 
+const isFrontmatterFence = (line: string, fence: string): boolean =>
+  line.startsWith(fence) && line.slice(fence.length).trim() === "";
+
+/**
+ * Blanks a leading YAML frontmatter block so it renders as nothing instead of
+ * a rule and a setext heading. Every masked character becomes a space and
+ * newlines stay put, so node offsets (task checkbox toggles) and line numbers
+ * still point into the original source.
+ */
+export function maskMarkdownFrontmatter(markdown: string): string {
+  const start = markdown.startsWith("\uFEFF") ? 1 : 0;
+  const line = /([^\r\n]*)(\r\n|\r|\n|$)/y;
+  line.lastIndex = start;
+  let match = line.exec(markdown);
+  if (!match?.[2] || !isFrontmatterFence(match[1] ?? "", "---")) return markdown;
+
+  while (line.lastIndex < markdown.length && (match = line.exec(markdown))) {
+    const text = match[1] ?? "";
+    if (isFrontmatterFence(text, "---") || isFrontmatterFence(text, "...")) {
+      const blockEnd = match.index + text.length;
+      return (
+        markdown.slice(0, start) +
+        markdown.slice(start, blockEnd).replace(/[^\r\n]/g, " ") +
+        markdown.slice(blockEnd)
+      );
+    }
+  }
+  return markdown;
+}
+
 export function setMarkdownTaskChecked(
   markdown: string,
   markerOffset: number,

@@ -29,6 +29,7 @@ import {
   FileSurfaceLoading,
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
+import { maskMarkdownFrontmatter } from "./filePreviewMode";
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 
@@ -214,7 +215,11 @@ export function AttachmentFilePreview(props: {
       <DelimitedTablePreview name={props.name} text={content.text} delimiter={delimiter} />
     ) : kind === "markdown" && rendered ? (
       <ScrollArea className="min-h-0 flex-1">
-        <ChatMarkdown text={content.text} cwd={undefined} className="mx-auto max-w-4xl px-6 py-5" />
+        <ChatMarkdown
+          text={maskMarkdownFrontmatter(content.text)}
+          cwd={undefined}
+          className="mx-auto max-w-4xl px-6 py-5"
+        />
       </ScrollArea>
     ) : (
       <ReadOnlySourcePreview name={props.name} text={content.text} />
