@@ -604,6 +604,16 @@ server_running() {
     *Z*) return 1 ;;
   esac
 }
+# A crash or reboot can hand the recorded PID to an unrelated process. Only a
+# process still running the serve command below is our server; without ps to
+# tell, trust server_running.
+managed_server_running() {
+  server_running "$1" || return 1
+  case "$(ps -ww -o args= -p "$1" 2>/dev/null || true)" in
+    "" | *" serve --host 127.0.0.1 --port "*) ;;
+    *) return 1 ;;
+  esac
+}
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
@@ -652,7 +662,7 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     ADOPTED_PID="$DEFAULT_RUNTIME_PID"
     if [ "$REMOTE_MANAGED" = "managed" ]; then
-      if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+      if managed_server_running "$REMOTE_PID"; then
         kill "$REMOTE_PID" 2>/dev/null || true
         wait_for_pid_exit "$REMOTE_PID"
       fi
@@ -684,7 +694,7 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   fi
-elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
+elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
   # server. A changed runner is the update path and still replaces it.
   if [ "$RUNNER_CHANGED" -eq 1 ]; then
@@ -753,7 +763,17 @@ PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+# A crash or reboot can hand the recorded PID to an unrelated process. Only
+# signal one still running the launcher's serve command; without ps to tell,
+# trust kill -0.
+managed_server_alive() {
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
+  case "$(ps -ww -o args= -p "$1" 2>/dev/null || true)" in
+    "" | *" serve --host 127.0.0.1 --port "*) ;;
+    *) return 1 ;;
+  esac
+}
+if [ "$REMOTE_MANAGED" != "external" ] && managed_server_alive "$REMOTE_PID"; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
@@ -858,7 +878,7 @@ function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOption
   });
 }
 
-function buildRemoteStopScript(stateKey: string): string {
+export function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     T3_STATE_KEY: stateKey,
   });

@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -361,6 +363,64 @@ describe("ssh tunnel scripts", () => {
           Effect.scoped,
         );
       }),
+  );
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("remote stop script", () => {
+  const isAlive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // After a crash or reboot the recorded PID can belong to any process of the user.
+  it.effect.each([
+    { owner: "an unrelated process", args: ["-e", "setInterval(() => {}, 60_000)"], stops: false },
+    {
+      owner: "the managed server",
+      args: [
+        "-e",
+        "setInterval(() => {}, 60_000)",
+        "serve",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "3773",
+      ],
+      stops: true,
+    },
+  ])("signals the recorded PID only when $owner holds it", ({ args, stops }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-stop-" });
+      const stateDir = `${home}/.t3/ssh-launch/test-state`;
+      const holder = yield* spawner.spawn(ChildProcess.make(process.execPath, args));
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.writeFileString(`${stateDir}/pid`, `${holder.pid}\n`);
+      yield* fs.writeFileString(`${stateDir}/port`, "3773\n");
+      yield* fs.writeFileString(`${stateDir}/managed`, "managed\n");
+
+      const stop = yield* spawner.spawn(
+        ChildProcess.make("sh", ["-c", SshTunnel.buildRemoteStopScript("test-state")], {
+          env: { PATH: process.env.PATH ?? "", HOME: home },
+          extendEnv: false,
+        }),
+      );
+      const [stdout, exitCode] = yield* Effect.all(
+        [stop.stdout.pipe(Stream.decodeText(), Stream.mkString), stop.exitCode],
+        { concurrency: "unbounded" },
+      );
+
+      assert.equal(exitCode, 0);
+      assert.equal(stdout, '{"stopped":true}\n');
+      // The script reports a stop only once kill -0 fails, so this read is settled.
+      assert.equal(isAlive(holder.pid), !stops);
+      assert.isFalse(yield* fs.exists(`${stateDir}/pid`));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
