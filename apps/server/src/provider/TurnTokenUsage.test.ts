@@ -130,4 +130,42 @@ describe("billable native turn usage", () => {
       ),
     ).toMatchObject({ usageStatus: "partial", inputTokens: 4, outputTokens: 2 });
   });
+
+  it.each(["failed", "interrupted"] as const)(
+    "retains partial Claude usage when the query exits %s after steering",
+    (status) => {
+      expect(
+        normalizeClaudeTurnTokenUsage(undefined, true, status, [
+          { input_tokens: 100, cache_read_input_tokens: 40, output_tokens: 20 },
+          { input_tokens: 5, cache_read_input_tokens: 2, output_tokens: 3 },
+        ]),
+      ).toEqual({
+        usageStatus: "partial",
+        usageScope: "main_agent",
+        hasSubagents: true,
+        inputTokens: 147,
+        cachedInputTokens: 42,
+        outputTokens: 23,
+      });
+    },
+  );
+
+  it("does not mark earlier Claude segments complete without final usage", () => {
+    expect(
+      normalizeClaudeTurnTokenUsage({ subtype: "success" }, false, "completed", [
+        { input_tokens: 4, output_tokens: 2 },
+      ]),
+    ).toMatchObject({ usageStatus: "partial", inputTokens: 4, outputTokens: 2 });
+  });
+
+  it("adds Claude steering segments to the final measured result once", () => {
+    expect(
+      normalizeClaudeTurnTokenUsage(
+        { subtype: "success", usage: { input_tokens: 5, output_tokens: 3 } },
+        false,
+        "completed",
+        [{ input_tokens: 4, output_tokens: 2 }],
+      ),
+    ).toMatchObject({ usageStatus: "complete", inputTokens: 9, outputTokens: 5 });
+  });
 });

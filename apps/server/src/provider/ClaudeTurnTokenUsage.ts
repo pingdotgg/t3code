@@ -60,8 +60,15 @@ export function normalizeClaudeTurnTokenUsage(
   terminalStatus: ProviderRuntimeTurnStatus,
   earlierSegmentUsage: ReadonlyArray<unknown> = [],
 ): TurnTokenUsage {
-  const finalUsage = result?.usage as Record<string, unknown> | undefined;
-  const usage = finalUsage && withEarlierSegmentUsage(finalUsage, earlierSegmentUsage);
+  const latestUsage = (result?.usage ?? earlierSegmentUsage.at(-1)) as
+    | Record<string, unknown>
+    | undefined;
+  const usage =
+    latestUsage &&
+    withEarlierSegmentUsage(
+      latestUsage,
+      result?.usage == null ? earlierSegmentUsage.slice(0, -1) : earlierSegmentUsage,
+    );
   if (!usage) {
     return {
       usageStatus: "unavailable",
@@ -117,6 +124,7 @@ export function normalizeClaudeTurnTokenUsage(
   if (
     terminalStatus === "completed" &&
     result?.subtype === "success" &&
+    result.usage != null &&
     inputTokens !== undefined &&
     rawOutputTokens !== undefined
   ) {
