@@ -1684,23 +1684,46 @@ export function presentThreadShellFromProjection(
   };
 }
 
-/** Background work the provider still runs after the latest run ended. */
+const UNSETTLED_RUN_STATUSES = new Set(["queued", "preparing", "starting", "running"]);
+
+/**
+ * Background work the provider still runs after the latest settled run ended. A follow-up turn
+ * keeps it listed; work the follow-up itself starts stays in the timeline until it ends.
+ */
 export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure | null) {
   if (projection === null) return [];
+  const unsettledRunIds = new Set(
+    projection.runs.filter((run) => UNSETTLED_RUN_STATUSES.has(run.status)).map((run) => run.id),
+  );
+  const runs = projection.runs.filter((run) => !unsettledRunIds.has(run.id));
+  const isUnsettledItem = (item: ThreadStructure["turnItems"][number]) =>
+    item.runId !== null && unsettledRunIds.has(item.runId);
+  const turnItems = projection.turnItems.filter((item) => !isUnsettledItem(item));
+  // Providers can list the follow-up's own work on the thread-wide roster too.
+  const unsettledTaskIds = new Set(
+    projection.turnItems
+      .filter(isUnsettledItem)
+      .map((item) => item.nativeItemRef?.nativeId ?? item.id),
+  );
+  const providerThreads = projection.providerThreads.map((thread) => ({
+    ...thread,
+    pendingBackgroundTasks: (thread.pendingBackgroundTasks ?? []).filter(
+      (task) => !unsettledTaskIds.has(task.taskId),
+    ),
+  }));
   const sessionError =
     projection.providerSessions.findLast(
       (session) => session.providerInstanceId === projection.thread.providerInstanceId,
     )?.lastError ?? null;
   const latestRun =
-    usageLimitRunPresentedAsLatest(projection.runs, projection.turnItems, sessionError) ??
-    latestUnheldRun(projection.runs);
+    usageLimitRunPresentedAsLatest(runs, turnItems, sessionError) ?? latestUnheldRun(runs);
   return [
     ...derivePendingBackgroundWork({
       latestRun,
-      providerThreads: projection.providerThreads,
-      turnItems: projection.turnItems,
+      providerThreads,
+      turnItems,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
-      runs: projection.runs,
+      runs,
       pullRequests: projection.thread.pullRequests,
     }),
   ];

@@ -94,6 +94,7 @@ export function goalBannerItem(input: {
 export function backgroundWorkBannerItem(input: {
   readonly threadId: ThreadId;
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
+  readonly isWorking: boolean;
   readonly stopDisabled: boolean;
   readonly stopping: boolean;
   readonly onStop: () => Promise<void>;
@@ -145,7 +146,8 @@ export function backgroundWorkBannerItem(input: {
               </Fragment>
             );
           }),
-    actions: (
+    // Stop interrupts the whole thread, so during a turn the composer's own Stop owns that.
+    actions: input.isWorking ? undefined : (
       <Button
         size="xs"
         variant="ghost"
