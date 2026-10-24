@@ -6,6 +6,7 @@ import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
+import * as ProviderUsage from "../../../provider/ProviderUsage.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
 const handlers = {
@@ -14,6 +15,12 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.capabilities(scope, input);
+    }),
+  ),
+  provider_usage: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const usage = yield* ProviderUsage.ProviderUsage;
+      return yield* usage.read(input);
     }),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
