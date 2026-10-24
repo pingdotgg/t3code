@@ -119,6 +119,8 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  /** The frame's height follows the page's reported height, so the page must not scroll in it. */
+  readonly fitted?: boolean;
   /** Reports the image viewer opening and closing, so a virtualized row can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
@@ -298,6 +300,10 @@ export function HtmlRenderDocument(props: {
         title={props.title}
         // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
         sandbox="allow-scripts allow-forms"
+        // Chromium latches a trackpad swipe to a frame the page can scroll even
+        // a few pixels, so a reversed swipe moves neither the page nor the
+        // thread. Only the frame element can stop a cross-origin page scrolling.
+        scrolling={props.fitted ? "no" : undefined}
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
