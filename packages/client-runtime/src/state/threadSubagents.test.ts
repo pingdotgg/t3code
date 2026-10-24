@@ -182,4 +182,126 @@ describe("deriveThreadTurnSubagents", () => {
     expect(turn?.settledCount).toBe(1);
     expect(turn?.subagents).toHaveLength(3);
   });
+
+  it("keeps earlier workflows alongside the active run's ordinary agents", () => {
+    const workflow = subagent({
+      id: "workflow",
+      runId: RunId.make("run-0"),
+      workflow: {
+        phases: [],
+        agents: [
+          {
+            index: 0,
+            label: "Worker",
+            state: "running",
+            childThreadId: ThreadId.make("member-thread"),
+          },
+        ],
+      },
+    });
+    const turn = deriveThreadTurnSubagents({
+      runs: [run("run-0", "completed"), activeRun],
+      subagents: [
+        workflow,
+        subagent({ id: "old", runId: RunId.make("run-0"), status: "completed" }),
+        subagent({ id: "current", startedAt: at("2026-06-20T00:00:02.000Z") }),
+      ],
+    });
+
+    expect(turn?.runId).toBe("run-1");
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["workflow", "current"]);
+    expect(turn?.subagents[0]).toBe(workflow);
+    expect(turn?.liveCount).toBe(2);
+  });
+});
+
+describe("resolveSubagentPillSegment", () => {
+  it("shows how many of the turn's agents are still working", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [activeRun],
+      subagents: [
+        subagent({ id: "a", status: "running" }),
+        subagent({ id: "b", status: "waiting" }),
+        subagent({ id: "c", status: "completed" }),
+      ],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: "2/3",
+      accessibilityLabel: "2 of 3 agents working",
+    });
+  });
+
+  it("reports the finished roster while the turn is still running", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [activeRun],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: "1 done",
+      accessibilityLabel: "1 agent done",
+    });
+  });
+
+  it("hides itself once the turn is over and nothing is working", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toBeNull();
+    expect(resolveSubagentPillSegment(null)).toBeNull();
+  });
+
+  it("stays visible after the turn ends while an agent is still working", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [subagent({ id: "a", status: "running" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1/1");
+  });
+
+  it("keeps settled workflows reachable after newer root runs finish", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [
+        subagent({ id: "workflow", status: "completed", workflow: { phases: [], agents: [] } }),
+        subagent({
+          id: "recent",
+          runId: RunId.make("run-2"),
+          status: "completed",
+          startedAt: at("2026-06-20T00:00:02.000Z"),
+          updatedAt: at("2026-06-20T00:00:09.000Z"),
+        }),
+      ],
+    });
+
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["workflow", "recent"]);
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: "2 done",
+      accessibilityLabel: "2 agents done",
+    });
+  });
+
+  it("does not count idle agents as done alongside settled workflows", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [
+        subagent({ id: "workflow", status: "completed", workflow: { phases: [], agents: [] } }),
+        subagent({
+          id: "idle",
+          runId: RunId.make("run-2"),
+          status: "idle",
+          updatedAt: at("2026-06-20T00:00:09.000Z"),
+        }),
+      ],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: "1 done",
+      accessibilityLabel: "1 agent done",
+    });
+  });
 });

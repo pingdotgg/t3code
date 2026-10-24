@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeClaudeWorkflowProgress } from "./claudeWorkflowProgress.ts";
+import {
+  mergeClaudeWorkflowProgress,
+  parseClaudeWorkflowRunHandles,
+} from "./claudeWorkflowProgress.ts";
 
 const snapshotFrame = (
   entries: ReadonlyArray<Record<string, unknown>>,
@@ -36,6 +39,7 @@ describe("mergeClaudeWorkflowProgress", () => {
           state: "done",
           agentId: "a1",
           model: "claude-opus-5[1m]",
+          fallbackModel: "claude-opus-4-8",
           attempt: 2,
           tokens: 71_141,
           toolCalls: 3,
@@ -58,7 +62,7 @@ describe("mergeClaudeWorkflowProgress", () => {
       state: "completed",
       phaseIndex: 1,
       phaseTitle: "Alpha",
-      model: "claude-opus-5[1m]",
+      model: "claude-opus-4-8",
       attempt: 2,
       totalTokens: 71_141,
       toolCalls: 3,
@@ -105,6 +109,82 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(second?.totalTokens).toBe(250);
   });
 
+  it("harvests run handles from the launch acknowledgement", () => {
+    const workflow = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      runHandles: parseClaudeWorkflowRunHandles({
+        status: "async_launched",
+        taskType: "local_workflow",
+        runId: "wf_abc",
+        transcriptDir: "/root/.claude/projects/p/s/subagents/workflows/wf_abc",
+        scriptPath: "/root/.claude/projects/p/s/workflows/scripts/x.js",
+      }),
+      message: snapshotFrame([]),
+    });
+    expect(workflow?.runHandles?.transcriptDir).toBe(
+      "/root/.claude/projects/p/s/subagents/workflows/wf_abc",
+    );
+    expect(workflow?.runHandles?.runId).toBe("wf_abc");
+  });
+
+  it("ignores a non-workflow tool acknowledgement", () => {
+    expect(
+      parseClaudeWorkflowRunHandles({ status: "async_launched", taskType: "local_agent" }),
+    ).toBeUndefined();
+  });
+
+  it("keeps a phase the plan reached at runtime even if a later frame omits it", () => {
+    const first = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: snapshotFrame([phase(1, "Alpha"), phase(2, "Beta"), phase(3, "Gamma")]),
+    });
+    const second = mergeClaudeWorkflowProgress({
+      previous: first,
+      message: snapshotFrame([phase(1, "Alpha")]),
+    });
+    expect(second?.phases.map((entry) => entry.title)).toEqual(["Alpha", "Beta", "Gamma"]);
+  });
+
+  it("resets run state when a coordinator starts a different run", () => {
+    const first = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      runHandles: {
+        runId: "first-run",
+        transcriptDir: "/workflows/first-run",
+        scriptPath: "/scripts/first-run.js",
+      },
+      message: snapshotFrame(
+        [
+          phase(1, "Alpha"),
+          phase(2, "Old phase"),
+          agent({ state: "done", resultPreview: "Old result", durationMs: 500 }),
+          agent({ index: 2, state: "done" }),
+        ],
+        { total_tokens: 500, tool_uses: 2, duration_ms: 900 },
+      ),
+    });
+    const second = mergeClaudeWorkflowProgress({
+      previous: first,
+      runHandles: { runId: "second-run" },
+      message: snapshotFrame([phase(1, "New phase"), agent({ phaseTitle: "New phase" })]),
+    });
+    expect(second?.phases).toEqual([{ index: 1, title: "New phase" }]);
+    expect(second?.agents).toEqual([
+      { index: 1, label: "alpha:one", state: "running", phaseIndex: 1, phaseTitle: "New phase" },
+    ]);
+    expect(second?.runHandles).toEqual({ runId: "second-run" });
+    expect(second?.totalTokens).toBeUndefined();
+    expect(second?.toolCalls).toBeUndefined();
+    expect(second?.durationMs).toBeUndefined();
+    const sparse = mergeClaudeWorkflowProgress({
+      previous: second,
+      runHandles: { runId: "second-run" },
+      message: snapshotFrame([]),
+    });
+    expect(sparse?.phases).toEqual(second?.phases);
+    expect(sparse?.agents).toEqual(second?.agents);
+  });
+
   it("keeps other members and phase links when a sparse frame starts a new attempt", () => {
     const first = mergeClaudeWorkflowProgress({
       previous: undefined,
@@ -113,6 +193,7 @@ describe("mergeClaudeWorkflowProgress", () => {
         agent({
           state: "error",
           attempt: 1,
+          model: "claude-opus-5[1m]",
           promptPreview: "First prompt",
           resultPreview: "First result",
           tokens: 100,
@@ -128,7 +209,10 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(first?.agents[0]?.completedAt).toBe(2010);
     expect(first?.agents[1]).not.toHaveProperty("completedAt");
     const second = mergeClaudeWorkflowProgress({
-      previous: first,
+      previous: first && {
+        ...first,
+        agents: first.agents.map((member) => ({ ...member, effort: "max", speed: "standard" })),
+      },
       message: snapshotFrame([
         { type: "workflow_agent", index: 1, label: "alpha:one", state: "start", attempt: 2 },
       ]),
@@ -142,7 +226,7 @@ describe("mergeClaudeWorkflowProgress", () => {
         phaseIndex: 1,
         phaseTitle: "Alpha",
       },
-      first?.agents[1],
+      { ...first?.agents[1], effort: "max", speed: "standard" },
     ]);
     expect(second?.phases).toEqual(first?.phases);
   });
@@ -177,6 +261,80 @@ describe("mergeClaudeWorkflowProgress", () => {
       ]),
     });
     expect(second?.agents).toEqual(first?.agents);
+  });
+
+  it("retains member fields omitted by a later frame in the same attempt", () => {
+    const first = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: snapshotFrame([
+        agent({
+          attempt: 2,
+          model: "claude-opus-5[1m]",
+          promptPreview: "Current prompt",
+          tokens: 100,
+        }),
+      ]),
+    });
+    const second = mergeClaudeWorkflowProgress({
+      previous: first && {
+        ...first,
+        agents: first.agents.map((member) => ({ ...member, effort: "xhigh", speed: "standard" })),
+      },
+      message: snapshotFrame([agent({ state: "done", resultPreview: "Current result" })]),
+    });
+    expect(second?.agents[0]).toMatchObject({
+      state: "completed",
+      attempt: 2,
+      prompt: "Current prompt",
+      result: "Current result",
+      totalTokens: 100,
+      model: "claude-opus-5[1m]",
+      effort: "xhigh",
+      speed: "standard",
+    });
+  });
+
+  it("keeps existing run handles when a later acknowledgement supplies only a script path", () => {
+    const first = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      runHandles: { runId: "wf_abc", transcriptDir: "/workflows/wf_abc" },
+      message: snapshotFrame([]),
+    });
+    const second = mergeClaudeWorkflowProgress({
+      previous: first,
+      runHandles: { scriptPath: "/scripts/workflow.js" },
+      message: snapshotFrame([]),
+    });
+    expect(second?.runHandles).toEqual({
+      runId: "wf_abc",
+      transcriptDir: "/workflows/wf_abc",
+      scriptPath: "/scripts/workflow.js",
+    });
+  });
+
+  it("preserves prompt and result whitespace", () => {
+    const workflow = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: snapshotFrame([
+        agent({ promptPreview: "  indented\n", resultPreview: "\n  answer\n" }),
+      ]),
+    });
+    expect(workflow?.agents[0]?.prompt).toBe("  indented\n");
+    expect(workflow?.agents[0]?.result).toBe("\n  answer\n");
+  });
+
+  it("drops timestamps outside the DateTime range", () => {
+    const workflow = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: snapshotFrame([
+        agent({ startedAt: 8_640_000_000_000_001, queuedAt: Number.MAX_SAFE_INTEGER }),
+        agent({ index: 2, startedAt: 8_640_000_000_000_000, queuedAt: 0 }),
+      ]),
+    });
+    expect(workflow?.agents[0]).not.toHaveProperty("startedAt");
+    expect(workflow?.agents[0]).not.toHaveProperty("queuedAt");
+    expect(workflow?.agents[1]?.startedAt).toBe(8_640_000_000_000_000);
+    expect(workflow?.agents[1]?.queuedAt).toBe(0);
   });
 
   it("drops malformed entries instead of failing the frame", () => {

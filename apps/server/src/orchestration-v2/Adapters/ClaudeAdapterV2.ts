@@ -6,6 +6,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { field, text } from "../unknownField.ts";
+import { mergeWorkflowAgentMetadata, type WorkflowAgentMetadata } from "../workflowAgentAnswers.ts";
 import {
   initialWorkflowAgentTranscriptCursor,
   readWorkflowAgentTranscript,
@@ -4062,6 +4063,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // line before it is already projected into the member's thread.
               readonly agentId: string | undefined;
               readonly transcriptCursor: WorkflowAgentTranscriptCursor;
+              readonly transcriptMetadata: WorkflowAgentMetadata;
               readonly nextItemOrdinal: number;
               readonly toolCalls: Map<string, ActiveClaudeToolCall>;
               readonly textShown: boolean;
@@ -5134,16 +5136,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const withWorkflowMemberThreadIds = (
           workflow: OrchestrationV2SubagentWorkflow,
           coordinatorChildThreadId: ThreadId,
-        ): OrchestrationV2SubagentWorkflow => ({
-          ...workflow,
-          agents: workflow.agents.map((member) => ({
-            ...member,
-            childThreadId: idAllocator.derive.threadFromProviderThread({
-              driver: CLAUDE_PROVIDER,
-              nativeThreadId: `${coordinatorChildThreadId}:agent:${member.index}`,
-            }),
-          })),
-        });
+          previous: OrchestrationV2SubagentWorkflow | undefined,
+        ): OrchestrationV2SubagentWorkflow => {
+          const runChanged =
+            previous?.runHandles?.runId !== undefined &&
+            workflow.runHandles?.runId !== undefined &&
+            previous.runHandles.runId !== workflow.runHandles.runId;
+          const previousThreads = new Map(
+            (runChanged ? [] : (previous?.agents ?? [])).map((member) => [
+              member.index,
+              member.childThreadId,
+            ]),
+          );
+          return {
+            ...workflow,
+            agents: workflow.agents.map((member) => ({
+              ...member,
+              childThreadId:
+                previousThreads.get(member.index) ??
+                idAllocator.derive.threadFromProviderThread({
+                  driver: CLAUDE_PROVIDER,
+                  nativeThreadId: `${coordinatorChildThreadId}${workflow.runHandles?.runId === undefined ? "" : `:run:${workflow.runHandles.runId}`}:agent:${member.index}`,
+                }),
+            })),
+          };
+        };
 
         const emitSubagentConversationMessage = Effect.fnUntraced(function* (input: {
           readonly nativeItemId: string;
@@ -5203,11 +5220,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const now = yield* DateTime.now;
           const seen = yield* Ref.get(workflowMemberStates);
           const transcriptDir = input.workflow.runHandles?.transcriptDir;
+          const membersWithMetadata = input.workflow.agents.slice();
 
-          for (const member of input.workflow.agents) {
+          for (const [memberIndex, member] of input.workflow.agents.entries()) {
             if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
               return;
-            const memberKey = `${input.coordinator.childThreadId}:agent:${member.index}`;
+            const childThreadId = member.childThreadId;
+            if (childThreadId === undefined) continue;
+            const memberKey = `${childThreadId}:agent:${member.index}`;
             const previous = seen.get(memberKey);
             const status =
               (member.state === "queued" || member.state === "running") &&
@@ -5265,9 +5285,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               driver: CLAUDE_PROVIDER,
               nativeItemId: `${memberKey}:thread-root`,
             });
-            const childThreadId = member.childThreadId;
-            if (childThreadId === undefined) continue;
-
             if (
               previous === undefined ||
               previous.label !== member.label ||
@@ -5393,6 +5410,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               previous === undefined || restarted || previous.agentId !== agentId
                 ? initialWorkflowAgentTranscriptCursor
                 : previous.transcriptCursor;
+            let transcriptMetadata =
+              previous === undefined || restarted || previous.agentId !== agentId
+                ? {}
+                : previous.transcriptMetadata;
             let textShown = !restarted && previous?.textShown === true;
             let resultShown = !restarted && previous?.resultShown === true;
             let turnEnded = !restarted && previous?.turnEnded === true;
@@ -5441,6 +5462,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   transcriptRead = true;
                   const advanced = read.value.cursor.offset !== transcriptCursor.offset;
                   transcriptCursor = read.value.cursor;
+                  transcriptMetadata = mergeWorkflowAgentMetadata(
+                    read.value.lines,
+                    transcriptMetadata,
+                  );
                   for (const line of read.value.lines) {
                     if (yield* projectSubagentTranscriptLine(target, line)) textShown = true;
                     // A later line (a retry, or a resumed member) reopens the turn.
@@ -5464,6 +5489,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Effect.sleep(waitLeft);
                 if (!(yield* drain())) return;
               }
+            }
+            if (
+              transcriptRead &&
+              (transcriptMetadata.effort !== member.effort ||
+                transcriptMetadata.speed !== member.speed)
+            ) {
+              const { effort: _effort, speed: _speed, ...memberWithoutMetadata } = member;
+              membersWithMetadata[memberIndex] = {
+                ...memberWithoutMetadata,
+                ...(transcriptMetadata.effort === undefined
+                  ? {}
+                  : { effort: transcriptMetadata.effort }),
+                ...(transcriptMetadata.speed === undefined
+                  ? {}
+                  : { speed: transcriptMetadata.speed }),
+              };
             }
             if (settled) {
               // As for an ordinary subagent, a call still open once the member
@@ -5510,6 +5551,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     textShown &&
                     input.coordinator.task.status !== "running"),
                 transcriptCursor,
+                transcriptMetadata,
                 nextItemOrdinal,
                 toolCalls,
                 textShown,
@@ -5520,6 +5562,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 completedAt,
               }),
             );
+          }
+          if (
+            membersWithMetadata.some((member, index) => member !== input.workflow.agents[index])
+          ) {
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
+              return;
+            input.coordinator.task = {
+              ...input.coordinator.task,
+              workflow: { ...input.workflow, agents: membersWithMetadata },
+            };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: input.coordinator.task,
+            });
           }
         });
 
@@ -5665,7 +5722,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const workflowWithThreads =
             workflow === undefined
               ? undefined
-              : withWorkflowMemberThreadIds(workflow, childThreadId);
+              : withWorkflowMemberThreadIds(workflow, childThreadId, priorTask?.workflow);
           const effort =
             existingSubagent === undefined
               ? (input.effort ??
@@ -7064,6 +7121,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const workflowWithThreads = withWorkflowMemberThreadIds(
             workflow,
             registered.childThreadId,
+            registered.task.workflow,
           );
           const task = {
             ...registered.task,
