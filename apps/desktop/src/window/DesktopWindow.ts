@@ -139,15 +139,21 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
+// Window snapping on scaled displays reports bounds that can overshoot a
+// display edge by one DIP after rounding.
+const DISPLAY_EDGE_TOLERANCE = 1;
+
 function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
   displayBounds: DisplayBounds,
 ): boolean {
   return (
-    windowBounds.x >= displayBounds.x &&
-    windowBounds.y >= displayBounds.y &&
-    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width &&
-    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height
+    windowBounds.x >= displayBounds.x - DISPLAY_EDGE_TOLERANCE &&
+    windowBounds.y >= displayBounds.y - DISPLAY_EDGE_TOLERANCE &&
+    windowBounds.x + windowBounds.width <=
+      displayBounds.x + displayBounds.width + DISPLAY_EDGE_TOLERANCE &&
+    windowBounds.y + windowBounds.height <=
+      displayBounds.y + displayBounds.height + DISPLAY_EDGE_TOLERANCE
   );
 }
 

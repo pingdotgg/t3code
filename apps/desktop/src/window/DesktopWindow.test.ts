@@ -472,6 +472,29 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("restores snapped bounds that overflow a display edge by a rounding pixel", () => {
+    const displays = [
+      { x: 0, y: 0, width: 1920, height: 1280 },
+      { x: 1920, y: 0, width: 1280, height: 1920 },
+    ];
+    const snappedBounds = { x: 1921, y: 30, width: 1280, height: 945 };
+    const overflowingBounds = { ...snappedBounds, x: 1922 };
+    const offscreenBounds = { ...snappedBounds, x: 2320 };
+
+    assert.strictEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(snappedBounds, displays),
+      snappedBounds,
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(overflowingBounds, displays),
+      DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(offscreenBounds, displays),
+      DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+  });
+
   it.effect(
     "opens and reopens the window without backend readiness when local execution is disabled",
     () =>
