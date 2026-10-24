@@ -21,7 +21,11 @@ import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 /** 24-hour "HH:MM" wall-clock time. Mirrors `parseTimeOfDay` on the server. */
 const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
-).annotate({ description: "Local wall-clock time in 24-hour HH:MM form, such as 09:30." });
+).pipe(
+  Schema.annotateEncoded({
+    description: "Local wall-clock time in 24-hour HH:MM form, such as 09:30.",
+  }),
+);
 
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
@@ -57,9 +61,11 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
 });
 
 const ScheduledTaskWebhookSignatureFields = {
-  header: TrimmedNonEmptyString.annotate({
-    description: "Request header carrying the signature, such as x-hub-signature-256.",
-  }),
+  header: TrimmedNonEmptyString.pipe(
+    Schema.annotateEncoded({
+      description: "Request header carrying the signature, such as x-hub-signature-256.",
+    }),
+  ),
   encoding: Schema.Literals(["hex", "base64"]).annotate({
     description: "How the HMAC-SHA256 digest is encoded in the header.",
   }),
@@ -107,10 +113,12 @@ export const MAX_WEBHOOK_FILTERS = 16;
 
 const WebhookFilterPath = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(body|headers|query)(\.|$)/),
-).annotate({
-  description:
-    "Request value to test, in placeholder syntax without braces: headers.x-github-event, body.action, query.source. A segment ending in [] fans out over an array, so body.issue.labels[].name tests every label's name.",
-});
+).pipe(
+  Schema.annotateEncoded({
+    description:
+      "Request value to test, in placeholder syntax without braces: headers.x-github-event, body.action, query.source. A segment ending in [] fans out over an array, so body.issue.labels[].name tests every label's name.",
+  }),
+);
 
 /**
  * Forms edit an `in` list as comma-separated text, so a value that has no

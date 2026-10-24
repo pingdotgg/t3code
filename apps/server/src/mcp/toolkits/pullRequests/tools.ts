@@ -35,34 +35,26 @@ const REGISTER_EVERY_PR =
   "Register every pull request you open for this thread, including each layer of a stack, right after creating it.";
 
 export const PullRequestTargetInput = Schema.Struct({
-  threadId: Schema.optional(
-    ThreadId.annotate({
-      description: "Thread to act on. Omit for this thread.",
-    }),
-  ),
-  url: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description:
-        "The pull request's web URL as its host shows it, for example https://git.example.com/owner/repo/pull/123 or https://git.example.com/group/project/-/merge_requests/123. Preferred when you have it; host, repository and number are read from it.",
-    }),
-  ),
-  repository: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description:
-        "Repository path below the host, for example owner/repo. Required with number when url is omitted.",
-    }),
-  ),
+  threadId: Schema.optional(ThreadId).annotate({
+    description: "Thread to act on. Omit for this thread.",
+  }),
+  url: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "The pull request's web URL as its host shows it, for example https://git.example.com/owner/repo/pull/123 or https://git.example.com/group/project/-/merge_requests/123. Preferred when you have it; host, repository and number are read from it.",
+  }),
+  repository: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "Repository path below the host, for example owner/repo. Required with number when url is omitted.",
+  }),
   number: Schema.optional(
     PositiveInt.annotate({
       description: "Pull request number. Required with repository when url is omitted.",
     }),
   ),
-  host: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description:
-        "Host the repository lives on, for example git.example.com. Defaults to the host of this thread's project.",
-    }),
-  ),
+  host: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "Host the repository lives on, for example git.example.com. Defaults to the host of this thread's project.",
+  }),
 });
 export type PullRequestTargetInput = typeof PullRequestTargetInput.Type;
 
@@ -310,9 +302,9 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   description: `List the pull requests linked to a thread (omit threadId for this thread) with their last known host state, and how they chain into stacks (bottom to top). ${REGISTER_EVERY_PR}`,
   parameters: Schema.Struct({
-    threadId: Schema.optional(
-      ThreadId.annotate({ description: "Thread to list. Omit for this thread." }),
-    ),
+    threadId: Schema.optional(ThreadId).annotate({
+      description: "Thread to list. Omit for this thread.",
+    }),
   }),
   success: ListThreadPullRequestsResult,
   failure: PullRequestToolError,

@@ -563,20 +563,18 @@ export const DeviceToolListResult = Schema.Struct({
 export type DeviceToolListResult = typeof DeviceToolListResult.Type;
 
 export const DeviceToolOpenInput = Schema.Struct({
-  deviceId: Schema.optional(
-    DeviceId.annotate({
-      description:
-        "Simulator udid or emulator serial from device_list. Omit to use the booted device for the platform, or the most recently used one.",
-    }),
-  ),
+  deviceId: Schema.optional(DeviceId).annotate({
+    description:
+      "Simulator udid or emulator serial from device_list. Omit to use the booted device for the platform, or the most recently used one.",
+  }),
   platform: Schema.optional(
     DevicePlatform.annotate({
       description: "Required when deviceId is omitted and both platforms are available.",
     }),
   ),
-  hostId: Schema.optional(
-    DeviceHostId.annotate({ description: "Device host from device_list. Defaults to local." }),
-  ),
+  hostId: Schema.optional(DeviceHostId).annotate({
+    description: "Device host from device_list. Defaults to local.",
+  }),
 }).annotate({
   description:
     "Boots the device if needed, starts its live stream, and opens the Device panel so the user can watch. Returns how to drive it with the agent-device CLI.",
@@ -594,12 +592,10 @@ export const DeviceToolOpenResult = Schema.Struct({
 export type DeviceToolOpenResult = typeof DeviceToolOpenResult.Type;
 
 export const DeviceToolTargetInput = Schema.Struct({
-  deviceId: Schema.optional(
-    DeviceId.annotate({
-      description:
-        "Device from device_list. Omit to use the device most recently opened in this thread.",
-    }),
-  ),
+  deviceId: Schema.optional(DeviceId).annotate({
+    description:
+      "Device from device_list. Omit to use the device most recently opened in this thread.",
+  }),
   hostId: Schema.optional(DeviceHostId),
 });
 export type DeviceToolTargetInput = typeof DeviceToolTargetInput.Type;
@@ -616,11 +612,9 @@ export const DeviceToolScreenshotResult = Schema.Struct({
 export type DeviceToolScreenshotResult = typeof DeviceToolScreenshotResult.Type;
 
 export const DeviceToolCloseInput = Schema.Struct({
-  deviceId: Schema.optional(
-    DeviceId.annotate({
-      description: "Device to close. Omit to close every device in this thread.",
-    }),
-  ),
+  deviceId: Schema.optional(DeviceId).annotate({
+    description: "Device to close. Omit to close every device in this thread.",
+  }),
   hostId: Schema.optional(DeviceHostId),
   shutdown: Schema.optional(
     Schema.Boolean.annotate({

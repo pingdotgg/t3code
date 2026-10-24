@@ -9,15 +9,15 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
  * continues inside the worktree on the thread's next run.
  */
 export const WorktreeMcpHandoffInput = Schema.Struct({
-  branch: TrimmedNonEmptyString.annotate({
-    description: "Branch name to create for the worktree (e.g. 'feature/my-change').",
-  }),
-  baseRef: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description:
-        "Branch or ref the worktree branch starts from. Defaults to the branch currently checked out in the project workspace.",
+  branch: TrimmedNonEmptyString.pipe(
+    Schema.annotateEncoded({
+      description: "Branch name to create for the worktree (e.g. 'feature/my-change').",
     }),
   ),
+  baseRef: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "Branch or ref the worktree branch starts from. Defaults to the branch currently checked out in the project workspace.",
+  }),
   startFromOrigin: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -31,11 +31,11 @@ export const WorktreeMcpHandoffInput = Schema.Struct({
     }),
   ),
   continuationPrompt: Schema.optional(
-    TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
-      description:
-        "Message queued as the thread's next turn after the handoff. The handoff detaches the current provider session, so pass the remaining work here to automatically resume inside the worktree; omit it to stop after the handoff and wait for the next message.",
-    }),
-  ),
+    TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)),
+  ).annotate({
+    description:
+      "Message queued as the thread's next turn after the handoff. The handoff detaches the current provider session, so pass the remaining work here to automatically resume inside the worktree; omit it to stop after the handoff and wait for the next message.",
+  }),
 });
 export type WorktreeMcpHandoffInput = typeof WorktreeMcpHandoffInput.Type;
 
