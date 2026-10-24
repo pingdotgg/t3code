@@ -61,7 +61,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
     </Toggle>
   );
   const threadPanelTooltip = (trigger: ReactElement) => (
-    <Tooltip>
+    <Tooltip key={threadPanelPresentation}>
       <TooltipTrigger
         render={trigger}
         {...(threadPanelPresentation === "popover" ? {} : { onClick: onToggleThreadPanel })}
