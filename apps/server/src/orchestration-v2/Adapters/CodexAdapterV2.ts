@@ -930,6 +930,28 @@ function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
   }
 }
 
+class CodexGoalObjectiveTooLongError extends Schema.TaggedError<CodexGoalObjectiveTooLongError>()(
+  "CodexGoalObjectiveTooLongError",
+  { length: Schema.Number, limit: Schema.Number },
+) {
+  override get message() {
+    return `The goal objective is ${this.length} characters; Codex supports at most ${this.limit}. Shorten it and send /goal again. The current goal was not changed.`;
+  }
+}
+
+function validateCodexGoalObjective(objective: string) {
+  let length = 0;
+  for (const _ of objective) length++;
+  return length > CodexSchema.MAX_THREAD_GOAL_OBJECTIVE_CHARS
+    ? Effect.fail(
+        new CodexGoalObjectiveTooLongError({
+          length,
+          limit: CodexSchema.MAX_THREAD_GOAL_OBJECTIVE_CHARS,
+        }),
+      )
+    : Effect.void;
+}
+
 type CodexThreadGoal = CodexSchema.V2ThreadGoalUpdatedNotification["goal"];
 
 const CODEX_GOAL_STATUSES = {
@@ -6458,6 +6480,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
             command: CodexGoalCommand,
           ) {
+            if (command.type === "set") yield* validateCodexGoalObjective(command.objective);
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             rootProviderThreads.set(threadId, turnInput.providerThread);
             const readGoal = client
