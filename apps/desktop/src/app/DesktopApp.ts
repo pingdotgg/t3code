@@ -1,5 +1,4 @@
 import * as Cause from "effect/Cause";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -19,7 +18,9 @@ import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopHomeOwnership from "./DesktopHomeOwnership.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
@@ -27,6 +28,8 @@ import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
+import * as DesktopServerOwnership from "../backend/DesktopServerOwnership.ts";
+import { recoverStrandedServer } from "../backend/DesktopServerRecovery.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -153,7 +156,11 @@ const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
     const instances = yield* pool.list;
     yield* Effect.forEach(
       instances,
-      (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+      // The stop budget must outlast the backend's own force-stop budget, so
+      // the escalation to SIGKILL always runs before the desktop gives up.
+      // A desktop that quits first leaves the backend holding the T3 home's
+      // ownership lock, and the next launch cannot start a server.
+      (instance) => instance.stop({ timeout: DesktopBackendManager.DEFAULT_BACKEND_STOP_TIMEOUT }),
       { concurrency: "unbounded" },
     );
   },
@@ -198,9 +205,51 @@ const bootstrap = Effect.gen(function* () {
   const primaryBackend = yield* pool.primary;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
+  const serverOwnership = yield* DesktopServerOwnership.DesktopServerOwnership;
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
+  }
+
+  // Before starting anything, find out who owns this T3 home. A leftover
+  // server from a previous desktop run holds the home's ownership lock and
+  // makes every later start fail with "This T3 home is unavailable".
+  const owner = yield* serverOwnership.inspect;
+  if (owner._tag === "stranded") {
+    const recovered = yield* recoverStrandedServer({ owner });
+    if (!recovered) {
+      // The stranded server still holds the lock, so starting our own backend
+      // would be refused with exit code 78. Report the owner and keep the app
+      // open instead of making a doomed start.
+      yield* logBootstrapWarning(
+        "bootstrap could not stop the stranded server owning this T3 home",
+      );
+      yield* DesktopHomeOwnership.openDesktopWithExistingOwner({ owner });
+      return;
+    }
+  } else if (owner._tag === "healthy" || owner._tag === "foreign" || owner._tag === "unknown") {
+    // The desktop cannot start a server for this home: either another server
+    // owns it, or its ownership record cannot be read. Starting a second one
+    // would fail on the same ownership lock, so the desktop does not try: it
+    // reports the state instead.
+    if (owner._tag === "unknown") {
+      const recordPath = yield* serverOwnership.runtimeStatePath;
+      yield* logBootstrapWarning("bootstrap could not establish who owns this T3 home", {
+        path: recordPath,
+      });
+      yield* DesktopHomeOwnership.openDesktopWithExistingOwner({
+        owner: { _tag: "unknown", recordPath },
+      });
+      return;
+    }
+    yield* logBootstrapInfo("bootstrap found a server already owning this T3 home", {
+      pid: owner.record.pid,
+      origin: owner.record.origin,
+      responding: owner._tag === "healthy",
+      ownedByThisDesktop: owner._tag === "healthy" && owner.ownedByThisDesktop,
+    });
+    yield* DesktopHomeOwnership.openDesktopWithExistingOwner({ owner });
+    return;
   }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);

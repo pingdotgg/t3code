@@ -27,6 +27,7 @@ import {
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopProcessTree from "./DesktopProcessTree.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
@@ -41,6 +42,17 @@ const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 // and a busy one needs a few seconds to stop every provider session.
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
+// The desktop waits for the backend to go away before the app exits. This
+// must outlast the backend's own force-stop budget: the spawner escalates
+// SIGTERM to SIGKILL after DEFAULT_BACKEND_TERMINATE_GRACE, so a shorter
+// outer budget would let the desktop give up and quit while the backend was
+// still alive, leaving it holding the T3 home's ownership lock.
+export const DEFAULT_BACKEND_STOP_TIMEOUT = Duration.seconds(20);
+// How long the desktop waits after SIGKILL before it stops caring. The
+// escalation itself is SIGKILL, so this only covers the wait for the OS to
+// reap the process.
+const DEFAULT_BACKEND_KILL_TIMEOUT = Duration.seconds(5);
+const DEFAULT_BACKEND_KILL_POLL_INTERVAL = Duration.millis(50);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-process");
@@ -289,6 +301,13 @@ const withActiveRun =
 const calculateRestartDelay = (attempt: number): Duration.Duration =>
   Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
 
+/**
+ * Close a run's scope, which is the graceful path: the scope close runs the
+ * spawner's finalizer, which signals the backend and escalates to SIGKILL
+ * after the backend's own force-stop budget.
+ *
+ * Returns true when the scope closed inside the budget.
+ */
 const closeRun = (
   run: ActiveBackendRun,
   parentScope: Scope.Scope,
@@ -311,6 +330,50 @@ const closeRun = (
     ),
   );
 };
+
+/**
+ * Stop a run and make sure the backend process is really gone.
+ *
+ * The scope close is the graceful path: it runs the spawner's finalizer,
+ * which sends SIGTERM to the backend's process group and escalates to SIGKILL
+ * after the backend's own force-stop budget. The outer wait can expire before
+ * that escalation has finished, so a run that outlives its budget is
+ * force-killed here by the pid the manager captured at spawn.
+ *
+ * Returns true when the backend and the process group it leads are gone.
+ */
+const stopRun = Effect.fn("desktop.backendManager.stopRun")(function* (
+  run: ActiveBackendRun,
+  parentScope: Scope.Scope,
+  options?: { readonly timeout?: Duration.Duration },
+): Effect.fn.Return<boolean> {
+  const closed = yield* closeRun(run, parentScope, options);
+  if (closed) {
+    // The scope closed inside the budget. The spawner's finalizer already
+    // waited for the process, so it is gone.
+    return true;
+  }
+
+  const pid = Option.getOrUndefined(run.pid);
+  if (pid === undefined) {
+    return false;
+  }
+  if (!(yield* DesktopProcessTree.isProcessTreeAlive(pid))) {
+    return true;
+  }
+
+  // The graceful path did not finish in time. SIGKILL is the same escalation
+  // the spawner would have made, so the backend cannot keep holding the T3
+  // home's ownership lock. The whole group is signalled, so a managed
+  // descendant cannot outlive the backend.
+  yield* DesktopProcessTree.signalProcessTree(pid, "SIGKILL");
+  const exited = yield* DesktopProcessTree.waitForProcessTreeExit(
+    pid,
+    DEFAULT_BACKEND_KILL_TIMEOUT,
+    DEFAULT_BACKEND_KILL_POLL_INTERVAL,
+  );
+  return exited;
+});
 
 const waitForHttpReady = (
   options: BackendProcessContext & { readonly timeout: Duration.Duration },
@@ -1061,8 +1124,11 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       onNone: () => Effect.void,
       onSome: (run) =>
         Effect.gen(function* () {
-          const closed = yield* closeRun(run, parentScope, options);
+          const closed = yield* stopRun(run, parentScope, options);
           if (!closed) {
+            yield* logInstanceError("backend process survived the stop budget", {
+              pid: Option.getOrUndefined(run.pid),
+            });
             return;
           }
           const cleanup = yield* mutex.withPermits(1)(

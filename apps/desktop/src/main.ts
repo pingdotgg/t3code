@@ -52,6 +52,8 @@ import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
+import * as DesktopOwnerIdentity from "./backend/DesktopOwnerIdentity.ts";
+import * as DesktopServerOwnership from "./backend/DesktopServerOwnership.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopSnapShot from "./snapShot/DesktopSnapShot.ts";
@@ -187,6 +189,7 @@ const layerDesktopAppActivation = DesktopAppActivation.layer.pipe(
 const layerDesktopBackend = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),
   Layer.provideMerge(DesktopBackendConfiguration.layer),
+  Layer.provideMerge(DesktopServerOwnership.layer),
   Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(DesktopWslEnvironment.layer),
   Layer.provideMerge(DesktopWslServerTree.layer),
@@ -227,6 +230,7 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
+  Layer.provideMerge(DesktopOwnerIdentity.layer),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provideMerge(NetService.layer),

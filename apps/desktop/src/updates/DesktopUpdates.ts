@@ -25,6 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -755,7 +756,12 @@ export const make = Effect.gen(function* () {
           yield* Ref.set(installRunningBackendsRef, runningInstances);
           yield* Effect.forEach(
             instances,
-            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+            // The update path quits the app right after this, so the budget
+            // must outlast the backend's own force-stop budget: a desktop
+            // that quits first leaves the backend holding the T3 home's
+            // ownership lock, and the next launch cannot start a server.
+            (instance) =>
+              instance.stop({ timeout: DesktopBackendManager.DEFAULT_BACKEND_STOP_TIMEOUT }),
             { concurrency: "unbounded" },
           );
           yield* electronUpdater.quitAndInstall({

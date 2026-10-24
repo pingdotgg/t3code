@@ -21,6 +21,9 @@ export const PersistedServerRuntimeState = Schema.Struct({
   startedAt: Schema.String,
   serviceManaged: Schema.optional(Schema.Boolean),
   serverVersion: Schema.optional(Schema.String),
+  // Set when a desktop app started the server, so a later desktop launch can
+  // tell its own leftover apart from a server the user started by hand.
+  desktopOwnerId: Schema.optional(Schema.String),
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
@@ -54,6 +57,7 @@ export const makePersistedServerRuntimeState = (input: {
   readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
   readonly port: number;
   readonly serviceManaged?: boolean;
+  readonly desktopOwnerId?: string | undefined;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
     version: 1,
@@ -64,6 +68,7 @@ export const makePersistedServerRuntimeState = (input: {
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
     startedAt: DateTime.formatIso(now),
     ...(input.serviceManaged ? { serviceManaged: true } : {}),
+    ...(input.desktopOwnerId === undefined ? {} : { desktopOwnerId: input.desktopOwnerId }),
     serverVersion: packageJson.version,
   }));
 

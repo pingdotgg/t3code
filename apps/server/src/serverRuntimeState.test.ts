@@ -233,6 +233,23 @@ describe("server ownership", () => {
     }).pipe(Effect.provide(layerOwnership)),
   );
 
+  it.effect("records the desktop that started the server", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-desktop-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 3773,
+        desktopOwnerId: "desktop-owner-id",
+      });
+      yield* ServerRuntimeState.persistServerRuntimeState({ path: statePath, state });
+      const persisted = yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath);
+      assert.equal(Option.getOrThrow(persisted).desktopOwnerId, "desktop-owner-id");
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
   describe("beside an installed boot service", () => {
     it.effect("refuses an old active or scheduled service even without its runtime record", () =>
       Effect.gen(function* () {

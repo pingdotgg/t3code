@@ -18,14 +18,21 @@ import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import * as DesktopOwnerIdentity from "./DesktopOwnerIdentity.ts";
 
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
     installIntoProcess: Effect.succeed(prepared),
   });
 
+const layerOwnerIdentity = Layer.succeed(DesktopOwnerIdentity.DesktopOwnerIdentity, {
+  ownerId: Effect.succeed("desktop-owner-id"),
+});
+
 const layerBackendConfiguration = (prepared = true) =>
-  DesktopBackendConfiguration.layer.pipe(Layer.provide(layerShellEnvironment(prepared)));
+  DesktopBackendConfiguration.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerShellEnvironment(prepared), layerOwnerIdentity)),
+  );
 
 const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
   getState: Effect.die("unexpected getState"),
@@ -264,6 +271,9 @@ describe("DesktopBackendConfiguration", () => {
           yield* configuration.currentBootstrapToken,
           first.bootstrap.desktopBootstrapToken,
         );
+        // The server persists the owner id, so a later launch can tell its
+        // own leftover apart from a server the user started by hand.
+        assert.equal(first.bootstrap.desktopOwnerId, "desktop-owner-id");
       }),
     ),
   );
