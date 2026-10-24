@@ -444,7 +444,6 @@ export function resolveTimelineMinimapHasPersistentGutter(
 
 const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
 const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
-const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
 
 export function resolveTimelineMinimapHitStripWidth(
   viewportWidth: number,
@@ -464,13 +463,6 @@ const TIMELINE_MINIMAP_NAVIGATION_REACH = 14;
 
 export function resolveTimelineMinimapNavigationInteractive(collapsedWidth: number): boolean {
   return collapsedWidth >= TIMELINE_MINIMAP_NAVIGATION_REACH;
-}
-
-export function resolveTimelineMinimapInteractiveWidth(
-  collapsedWidth: number,
-  expanded: boolean,
-): number | string {
-  return expanded ? TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH : collapsedWidth;
 }
 
 function computeElapsedMs(startIso: string, endIso: string): number | null {

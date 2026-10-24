@@ -5,17 +5,12 @@ import { Button } from "../ui/button";
 import {
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
-  resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
   TIMELINE_MINIMAP_MIN_ITEMS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
-
-function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
-  return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
-}
 
 // A release outside the window can skip `mouseup`, so the next button-free
 // `mousemove` also counts.
@@ -147,7 +142,7 @@ export function TimelineMinimap({
           }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
-            width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
+            width: hitStripWidth,
           }}
         >
           <TimelineMinimapNavigationButton
@@ -163,9 +158,6 @@ export function TimelineMinimap({
             className="absolute inset-y-0 left-0 w-full cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
             onBlur={() => setActiveIndex(null)}
             onClick={(event) => {
-              if (timelineMinimapEventTargetsPreview(event.target)) {
-                return;
-              }
               const nextIndex = resolveActiveIndexFromPointer(event);
               const selectedItem = nextIndex === null ? null : (items[nextIndex] ?? null);
               if (selectedItem) {
@@ -199,12 +191,7 @@ export function TimelineMinimap({
               if (event.buttons !== 0 && !pressedOnStripRef.current) return;
               updateActiveIndexFromPointer(event);
             }}
-            onMouseDown={(event) => {
-              if (timelineMinimapEventTargetsPreview(event.target)) {
-                return;
-              }
-              event.preventDefault();
-            }}
+            onMouseDown={(event) => event.preventDefault()}
             type="button"
           >
             <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
@@ -247,10 +234,10 @@ export function TimelineMinimap({
               );
             })}
             {activeItem ? (
+              // The preview is display-only: it overlaps the message column, so
+              // taking pointer events would block selecting the text beneath it.
               <span
-                className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
-                data-minimap-preview
-                onMouseMove={(event) => event.stopPropagation()}
+                className="pointer-events-none absolute left-8 w-80"
                 style={{
                   top: `${activeTopPercent}%`,
                   transform: `translateY(${activeTooltipTranslate})`,
