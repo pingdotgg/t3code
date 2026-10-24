@@ -6,12 +6,22 @@ import {
   type ClientSettings,
   type DesktopPreviewBridge,
   type PreviewSessionSnapshot,
+  type PreviewReportProfilesInput,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../test/render";
 
 const mocks = vi.hoisted(() => ({
+  configs: new Map<EnvironmentId, { environment: { capabilities: { serverBrowser: boolean } } }>(),
+  operable: new Set<EnvironmentId>(),
+  report:
+    vi.fn<
+      (request: {
+        environmentId: EnvironmentId;
+        input: PreviewReportProfilesInput;
+      }) => Promise<void>
+    >(),
   getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
   setClientSettings: vi.fn<(settings: ClientSettings) => Promise<void>>(),
   createTab: vi.fn<DesktopPreviewBridge["createTab"]>(),
@@ -21,10 +31,23 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
+vi.mock(import("~/state/entities"), async (original) => ({
+  ...(await original()),
+  useServerConfigs: (() => mocks.configs) as never,
+}));
+vi.mock(import("~/state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironments: (() => ({ environments: [] })) as never,
+}));
+vi.mock(import("~/state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => mocks.report) as never,
+}));
 
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   useEnvironmentScope: () => true,
+  useEnvironmentsWithScope: () => mocks.operable,
 }));
 
 vi.mock(import("~/localApi"), async (original) => {
@@ -54,9 +77,11 @@ vi.mock(import("~/components/preview/usePreviewBridge"), async (original) => ({
 import {
   __resetClientSettingsPersistenceForTests,
   ensureClientSettingsHydrated,
+  persistClientSettingsPatch,
 } from "~/hooks/useSettings";
 import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { BrowserProfileReporter } from "./BrowserProfileReporter";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
 
 const threadRef = scopeThreadRef(
@@ -74,6 +99,11 @@ const snapshot = (tabId: string, updatedAt: string): PreviewSessionSnapshot => (
 });
 
 function setup(): Disposable {
+  mocks.configs = new Map([
+    [threadRef.environmentId, { environment: { capabilities: { serverBrowser: true } } }],
+  ]);
+  mocks.operable = new Set([threadRef.environmentId]);
+  mocks.report.mockReset().mockResolvedValue(undefined);
   __resetClientSettingsPersistenceForTests();
   mocks.getClientSettings.mockReset().mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
   mocks.setClientSettings.mockReset().mockResolvedValue(undefined);
@@ -159,5 +189,43 @@ describe("ElectronBrowserHost", () => {
     const after = webviews();
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
+  });
+});
+
+describe("browser profile reporting", () => {
+  const report = (recordingFrameRate: 30 | 60) => ({
+    environmentId: threadRef.environmentId,
+    input: {
+      profiles: [],
+      defaultProfileId: "default",
+      recordingFrameRate,
+    },
+  });
+
+  it("waits for desktop settings hydration, then reports the saved rate and edits", async () => {
+    using _state = setup();
+    let resolveSettings!: (settings: ClientSettings) => void;
+    mocks.getClientSettings.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSettings = resolve;
+      }),
+    );
+    const hydrated = ensureClientSettingsHydrated();
+    await using _screen = await render(
+      <AppAtomRegistryProvider>
+        <BrowserProfileReporter />
+      </AppAtomRegistryProvider>,
+    );
+    expect(mocks.report).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSettings({ ...DEFAULT_CLIENT_SETTINGS, browserRecordingFrameRate: 60 });
+      await hydrated;
+    });
+    expect(mocks.report).toHaveBeenCalledExactlyOnceWith(report(60));
+
+    await act(() => persistClientSettingsPatch({ browserRecordingFrameRate: 30 }));
+    expect(mocks.report).toHaveBeenCalledTimes(2);
+    expect(mocks.report).toHaveBeenLastCalledWith(report(30));
   });
 });
