@@ -431,6 +431,46 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
+  it.effect("retires a thread log once a retention interval passes without writes", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const finishedPath = ownedLogPath(basePath, "finished");
+      const activePath = ownedLogPath(basePath, "active");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          maxTotalBytes: 1,
+          retentionCheckIntervalMs: 1,
+        });
+        const logger = store.logger("native");
+
+        yield* logger.write({ id: "finished-first" }, ThreadId.make("finished"));
+        yield* TestClock.adjust(1);
+        yield* logger.write({ id: "active-first" }, ThreadId.make("active"));
+        assert.equal(NodeFS.existsSync(finishedPath), true);
+
+        yield* TestClock.adjust(1);
+        yield* logger.write({ id: "active-second" }, ThreadId.make("active"));
+        assert.equal(NodeFS.existsSync(finishedPath), false);
+        assert.equal(NodeFS.existsSync(activePath), true);
+
+        yield* logger.write({ id: "finished-again" }, ThreadId.make("finished"));
+        yield* store.close();
+        assert.deepEqual(
+          NodeFS.readFileSync(finishedPath, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => parseLogLine(line).payload),
+          ['{"id":"finished-again"}'],
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("attributes batches that were written before a later chunk fails", () =>
     Effect.gen(function* () {
       const records: ReadonlyArray<PendingRecord> = [
