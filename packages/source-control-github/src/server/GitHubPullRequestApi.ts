@@ -1941,6 +1941,26 @@ export const make = Effect.gen(function* () {
             Effect.map((items) => ({ ...batch, items })),
           );
         }),
+        // GitHub answers a private repository the token cannot see as missing, so the reader is
+        // told which credential that was: a saved token quietly overrides GH_TOKEN and gh.
+        Effect.catchTags({
+          GitHubApiNotFoundError: (error) =>
+            api.credential(input.host).pipe(
+              Effect.map(({ source }) => source),
+              Effect.orElseSucceed(() => undefined),
+              Effect.flatMap((credential) =>
+                Effect.fail(
+                  credential === undefined
+                    ? error
+                    : new GitHubRequestPolicy.GitHubApiNotFoundError({
+                        host: error.host,
+                        operation: error.operation,
+                        credential,
+                      }),
+                ),
+              ),
+            ),
+        }),
       );
     },
 

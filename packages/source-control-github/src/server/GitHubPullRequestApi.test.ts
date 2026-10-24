@@ -1200,6 +1200,50 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("names the saved token when GitHub will not return a repository to it", () =>
+    Effect.gen(function* () {
+      mockedCredential.mockImplementation((host) =>
+        Effect.succeed({
+          token: Redacted.make("token"),
+          fingerprint: `${host}:token`,
+          source: "settings" as const,
+        }),
+      );
+      route(
+        ["PullRequestSearch", { data: { search: { pageInfo: lastPage, nodes: [] } } }],
+        [
+          "PullRequestList",
+          {
+            data: { repository: null },
+            errors: [
+              {
+                type: "NOT_FOUND",
+                path: ["repository"],
+                message: "Could not resolve to a Repository with the name 'acme/private'.",
+              },
+            ],
+          },
+        ],
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+
+      const error = yield* Effect.flip(
+        provider.listChangeRequests({
+          cwd: "/w",
+          repository: "acme/private",
+          host: "github.com",
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+        }),
+      );
+
+      assert.strictEqual(error.reason, "not-found");
+      expect(error.accessHint).toContain("token saved in Settings");
+    }),
+  );
+
   it.effect("carries every repository and every qualifier into one search", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(searchPage([])));

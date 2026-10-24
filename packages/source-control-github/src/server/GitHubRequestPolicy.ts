@@ -65,7 +65,12 @@ export class GitHubApiRateLimitError extends Schema.TaggedError<GitHubApiRateLim
 
 export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFoundError>()(
   "GitHubApiNotFoundError",
-  { host: Schema.String, operation: Schema.String },
+  {
+    host: Schema.String,
+    operation: Schema.String,
+    /** The credential GitHub could not find it with, when the reader looked. */
+    credential: Schema.optionalKey(GitHubCredentials.GitHubCredentialSource),
+  },
 ) {
   override get message(): string {
     return "GitHub could not find the requested resource, or the credential cannot see it.";
@@ -225,10 +230,13 @@ export class GitHubRequestPolicy extends Context.Service<
       send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
     ) => Effect.Effect<A, E | GitHubApiError, R>;
     /** The credential a request to `host` would carry right now. */
-    readonly credential: (
-      host: string,
-    ) => Effect.Effect<
-      { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
+    readonly credential: (host: string) => Effect.Effect<
+      {
+        readonly token: Redacted.Redacted<string>;
+        readonly fingerprint: string;
+        /** Absent for a pinned credential, which keeps no record of where it came from. */
+        readonly source?: GitHubCredentials.GitHubCredentialSource;
+      },
       GitHubApiError
     >;
   }
@@ -257,7 +265,7 @@ export const make = Effect.gen(function* () {
       return { token: pinned.token, fingerprint: pinned.credentialFingerprint };
     }
     const held = yield* credentials.get(normalized);
-    return { token: held.token, fingerprint: held.fingerprint };
+    return { token: held.token, fingerprint: held.fingerprint, source: held.source };
   });
 
   // The REST/GraphQL transport span owns request and quota metadata.
