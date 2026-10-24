@@ -289,7 +289,33 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       }
     }
   }
-  return [...accounts.values()];
+  return nameAccountsApart([...accounts.values()]);
+}
+
+/**
+ * Every default instance is named after its driver, so accounts that could not
+ * be merged (no email reported, or the same login on separate machines) would
+ * otherwise read as one account listed twice.
+ */
+function nameAccountsApart(accounts: readonly LimitAccount[]): readonly LimitAccount[] {
+  const nameKey = (account: LimitAccount) => `${account.driver}:${account.displayName}`;
+  const counts = new Map<string, number>();
+  for (const account of accounts) {
+    if (account.displayName === null) continue;
+    counts.set(nameKey(account), (counts.get(nameKey(account)) ?? 0) + 1);
+  }
+  return accounts.map((account) =>
+    account.displayName !== null &&
+    account.environments.length > 0 &&
+    (counts.get(nameKey(account)) ?? 0) > 1
+      ? {
+          ...account,
+          displayName: `${account.displayName} · ${account.environments
+            .map((environment) => environment.label)
+            .join(", ")}`,
+        }
+      : account,
+  );
 }
 
 export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {

@@ -133,6 +133,48 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("names the machine on accounts that would otherwise share a name", () => {
+    const codex = (overrides: Partial<ServerProvider>) =>
+      provider({
+        displayName: "Codex",
+        usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 40 }] },
+        ...overrides,
+      });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            // Without an email it cannot be matched to the same login on the desktop.
+            providers: [codex({ auth: { status: "unknown" } })],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [
+              codex({ auth: { status: "authenticated", email: "personal@example.com" } }),
+              codex({
+                instanceId: ProviderInstanceId.make("codexWork"),
+                displayName: "Codex (work)",
+                auth: { status: "authenticated", email: "work@example.com" },
+              }),
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.displayName)).toEqual([
+      "Codex · Laptop",
+      "Codex · Desktop",
+      "Codex (work)",
+    ]);
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
