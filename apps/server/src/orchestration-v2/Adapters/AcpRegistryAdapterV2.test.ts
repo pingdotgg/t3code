@@ -200,6 +200,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   entries: ReadonlyArray<unknown>,
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
+  agentId = "claude-acp",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -240,7 +241,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   const adapterOptions = {
     selfInvocation: yield* resolveSelfInvocation(),
     instanceId,
-    settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+    settings: yield* decodeAcpRegistryAdapterSettings({ agentId }),
     environment: {},
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
@@ -1720,6 +1721,60 @@ describe("AcpRegistryAdapterV2", () => {
             event.turnItem.type === "dynamic_tool" &&
             event.turnItem.status === "interrupted",
         ),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      detail: "with its error",
+      error: {
+        code: -32000,
+        message: "Missing Authentication header",
+        data: { kind: "auth", status: 401 },
+      },
+    },
+    { detail: "without an error", error: undefined },
+  ] as const)("fails a v2 agent's accepted prompt that goes idle $detail", ({ error }) =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open,
+          ...claudeFrames.prompt(1),
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "state_update",
+            state: "idle",
+            stopReason: "error",
+            ...(error === undefined ? {} : { error }),
+          }),
+          ...claudeFrames.prompt(2),
+          claudeFrames.idle("end_turn"),
+        ],
+        undefined,
+        false,
+        "acplause",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const terminal = yield* session.terminal;
+      assert.equal(terminal.status, "failed");
+      if (error === undefined) {
+        assert.isNotEmpty(terminal.failure?.message ?? "");
+      } else {
+        assert.equal(terminal.failure?.message, error.message);
+      }
+      yield* session.runtime.startTurn(session.turnInput(2));
+      const following = yield* session.until((event) => event.type === "turn.terminal");
+      const nextTerminal = following.at(-1)!;
+      if (nextTerminal.type !== "turn.terminal") throw new Error("Missing following terminal");
+      assert.equal(nextTerminal.status, "completed");
+      assert.notEqual(nextTerminal.providerTurnId, terminal.providerTurnId);
+      assert.lengthOf(
+        [terminal, ...following].filter(
+          (event) =>
+            event.type === "turn.terminal" && event.providerTurnId === terminal.providerTurnId,
+        ),
+        1,
+        "the failed turn terminalizes once through the following prompt's completion",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

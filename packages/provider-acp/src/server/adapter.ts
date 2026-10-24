@@ -1968,6 +1968,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           });
 
+        const idleFailure = (error: EffectAcpSchema.PromptResponse["error"]) =>
+          flavor.promptFailure?.(
+            new EffectAcpErrors.AcpRequestError({
+              code: error?.code ?? -32603,
+              errorMessage: error?.message ?? "Provider turn failed.",
+              ...(error?.data === undefined ? {} : { data: error.data }),
+            }),
+          ) ?? makeProviderFailure({ message: error?.message, class: "provider_error" });
+
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
@@ -4451,16 +4460,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (work.stopReason === "cancelled" && pendingStopCloseTurn === context) {
             context.interrupted = true;
           }
-          const failure =
-            work.stopReason === "error"
-              ? (flavor.promptFailure?.(
-                  new EffectAcpErrors.AcpRequestError({
-                    code: work.error?.code ?? -32603,
-                    errorMessage: work.error?.message ?? "Provider turn failed.",
-                    ...(work.error?.data === undefined ? {} : { data: work.error.data }),
-                  }),
-                ) ?? makeProviderFailure({ message: work.error?.message, class: "provider_error" }))
-              : undefined;
+          const failure = work.stopReason === "error" ? idleFailure(work.error) : undefined;
           yield* finalizeTurn(
             context,
             failure !== undefined
@@ -7571,6 +7571,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized || followsAgentWorkState) return;
+                    if (result.stopReason === "error") {
+                      yield* finalizeTurn(context, "failed", idleFailure(result.error));
+                      return;
+                    }
                     const status =
                       result.stopReason === "cancelled"
                         ? context.interrupted

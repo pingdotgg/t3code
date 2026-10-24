@@ -797,6 +797,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
                 return Deferred.succeed(completion, {
                   stopReason: idle.stopReason ?? "end_turn",
                   ...(idle.usage === undefined ? {} : { usage: idle.usage }),
+                  ...(idle.error === undefined ? {} : { error: idle.error }),
                   ...(idle._meta === undefined ? {} : { _meta: idle._meta }),
                 }).pipe(Effect.asVoid);
               })
