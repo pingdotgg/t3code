@@ -54,10 +54,12 @@ import {
   decodeJsonReply,
 } from "@t3tools/provider-core/server/textGenerationOperations";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
@@ -2695,7 +2697,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("applies a V2-native thread's project settings to generated commit text", () =>
+  it.effect.each([
+    {
+      name: "applies a V2-native thread's project settings to generated commit text",
+      withProjectId: false,
+    },
+    {
+      name: "prefers the thread's project settings over the stacked action's project ID",
+      withProjectId: true,
+    },
+  ])("$name", ({ withProjectId }) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -2782,6 +2793,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         cwd: repoDir,
         action: "commit",
         threadId,
+        ...(withProjectId ? { projectId: ProjectId.make("project:ignored-action-input") } : {}),
       });
 
       expect(generatedModelSelection).toEqual(projectModel);
@@ -4103,6 +4115,21 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               ...Context.get(registry, VcsDriverRegistry.VcsDriverRegistry),
               resolve: ({ cwd }) => Effect.succeed(cwd === repoDir ? handle : resolvedHandle),
             }),
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.mock(JjWorkflow.JjWorkflow)({}),
+                Layer.mock(JjVcsDriver.JjVcsDriver)({
+                  capabilities: {
+                    kind: "jj",
+                    supportsWorktrees: false,
+                    supportsBookmarks: true,
+                    supportsAtomicSnapshot: true,
+                    supportsPushDefaultRemote: false,
+                    ignoreClassifier: "git-compatible-fallback",
+                  },
+                }),
+              ),
+            ),
             Effect.provideService(GitVcsDriver.GitVcsDriver, {
               ...git,
               switchRef: (input) =>

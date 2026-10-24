@@ -38,6 +38,9 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerSettings from "../serverSettings.ts";
+import { resolveJjRepoPaths } from "../vcs/JjRepo.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -632,6 +635,7 @@ function sameTranscriptIdentity(left: TranscriptIdentity, right: TranscriptIdent
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
+  const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   // Different project imports can arrive concurrently from multiple clients.
   // Only one transcript may hold its selected-history budget at a time.
   const importReadLock = yield* Semaphore.make(1);
@@ -697,9 +701,21 @@ export const make = Effect.gen(function* () {
   > {
     const gitPath = path.join(directory, ".git");
     const gitStats = yield* statOption(gitPath);
-    if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
     let gitDir = gitPath;
-    if (gitStats.value.type !== "Directory") {
+    if (Option.isNone(gitStats)) {
+      const handle = yield* vcsRegistry
+        .detect({ cwd: directory, jjOnly: true })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (handle?.kind !== "jj") return { _tag: "NotGit" } as const;
+      // A registered secondary Jujutsu workspace can borrow its main repository's remote.
+      const jjPaths = yield* resolveJjRepoPaths(fileSystem, path, directory).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (jjPaths === null) {
+        return { _tag: "NotGit" } as const;
+      }
+      gitDir = path.join(jjPaths.mainWorkspaceRoot, ".git");
+    } else if (gitStats.value.type !== "Directory") {
       const pointer = yield* fileSystem
         .readFileString(gitPath)
         .pipe(Effect.orElseSucceed(() => ""));
@@ -708,7 +724,9 @@ export const make = Effect.gen(function* () {
       gitDir = path.resolve(directory, target);
     }
     const linkedWorktree =
-      gitStats.value.type !== "Directory" && /[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir);
+      Option.isSome(gitStats) &&
+      gitStats.value.type !== "Directory" &&
+      /[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir);
     if (linkedWorktree) {
       const commonDir = yield* fileSystem
         .readFileString(path.join(gitDir, "commondir"))
@@ -1474,4 +1492,6 @@ export const make = Effect.gen(function* () {
   return AgentSessionScanner.of({ scan, recentThreads });
 });
 
-export const layer = Layer.effect(AgentSessionScanner, make);
+export const layer = Layer.effect(AgentSessionScanner, make).pipe(
+  Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
+);

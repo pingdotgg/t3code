@@ -22,6 +22,8 @@ const DETECTION_CACHE_TTL = Duration.minutes(5);
 export interface VcsDriverResolveInput {
   readonly cwd: string;
   readonly requestedKind?: VcsDriverKind | "auto";
+  /** Only detect jj candidates; callers retain their original Git path otherwise. */
+  readonly jjOnly?: boolean;
 }
 
 export interface VcsDriverHandle {
@@ -123,16 +125,20 @@ export const make = Effect.gen(function* () {
   const foldersBelowRoot = (cwd: string, rootPath: string) => {
     const relative = path.relative(path.resolve(rootPath), path.resolve(cwd));
     if (relative.startsWith("..") || path.isAbsolute(relative)) return [cwd];
-    return Array.from({ length: relative.split(path.sep).length }, (_, levelsUp) =>
-      path.resolve(cwd, ...Array<string>(levelsUp).fill("..")),
+    return Array.from(
+      { length: relative === "" ? 1 : relative.split(path.sep).length + 1 },
+      (_, levelsUp) => path.resolve(cwd, ...Array<string>(levelsUp).fill("..")),
     );
   };
 
   const readDiskState = (cwd: string, repository: VcsRepositoryIdentity) =>
     Effect.all({
-      gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
-        fileSystem.exists(path.join(folder, ".git")),
-      ),
+      markerEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
+        Effect.all([
+          fileSystem.exists(path.join(folder, ".git")),
+          fileSystem.exists(path.join(folder, ".jj")),
+        ]),
+      ).pipe(Effect.map((entries) => entries.flat())),
       repositoryOnDisk: Effect.forEach(
         repository.metadataPath === null
           ? [cwd]
@@ -143,7 +149,7 @@ export const make = Effect.gen(function* () {
 
   const detectionCache = yield* Cache.makeWith<
     string,
-    { readonly handle: VcsDriverHandle; readonly gitEntries: ReadonlyArray<boolean> } | null,
+    { readonly handle: VcsDriverHandle; readonly markerEntries: ReadonlyArray<boolean> } | null,
     VcsError
   >(
     (key) =>
@@ -152,7 +158,7 @@ export const make = Effect.gen(function* () {
         const handle = yield* detectResolvedKind(input);
         if (handle === null) return null;
         const disk = yield* readDiskState(input.cwd, handle.repository);
-        return { handle, gitEntries: disk?.gitEntries ?? [] };
+        return { handle, markerEntries: disk?.markerEntries ?? [] };
       }),
     {
       capacity: DETECTION_CACHE_CAPACITY,
@@ -165,6 +171,7 @@ export const make = Effect.gen(function* () {
 
   const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
+      if (input.jjOnly) return null;
       const requestedKind = yield* projectConfig.resolveKind(input);
       const key = detectionCacheKey({ cwd: input.cwd, requestedKind });
       const cached = yield* Cache.get(detectionCache, key);
@@ -172,8 +179,8 @@ export const make = Effect.gen(function* () {
       const disk = yield* readDiskState(input.cwd, cached.handle.repository);
       if (
         disk?.repositoryOnDisk &&
-        disk.gitEntries.length === cached.gitEntries.length &&
-        disk.gitEntries.every((exists, index) => exists === cached.gitEntries[index])
+        disk.markerEntries.length === cached.markerEntries.length &&
+        disk.markerEntries.every((exists, index) => exists === cached.markerEntries[index])
       ) {
         return cached.handle;
       }

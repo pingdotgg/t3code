@@ -1,12 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
+  GitCommandError,
+  OrchestrationV2ThreadLaunchError,
   AuthSessionId,
   EnvironmentId,
   ProjectId,
   ThreadId,
   WS_METHODS,
   WsSubscribeServerConfigRpc,
+  VcsUnsupportedOperationError,
   type OrchestrationV2StoredEvent,
   type OrchestrationProjectShell,
   type ServerConfig,
@@ -17,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
@@ -100,6 +105,8 @@ import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import { ThreadLaunchError } from "./orchestration-v2/ThreadLaunchService.ts";
+import { jjFailure } from "./jj/JjFailure.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -107,12 +114,55 @@ import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
+  threadLaunchErrorForWire,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
   withLateEditorConfig,
 } from "./ws.ts";
 
+it.effect("preserves unsupported launch detail through the real error codec", () =>
+  Effect.gen(function* () {
+    const detail = "T3 Code requires colocated Jujutsu repositories. Run jj git colocation enable.";
+    const commandId = CommandId.make("unsupported-launch");
+    const projectId = ProjectId.make("unsupported-project");
+    const cause = new ThreadLaunchError({
+      operation: "provision-worktree",
+      commandId,
+      projectId,
+      cause: jjFailure(
+        "createWorktree",
+        "/repo",
+        "Could not create workspace.",
+        new VcsUnsupportedOperationError({ operation: "createWorktree", kind: "jj", detail }),
+      ),
+    });
+    const codec = Schema.toCodecJson(OrchestrationV2ThreadLaunchError);
+    const wire = yield* Schema.encodeEffect(codec)(threadLaunchErrorForWire(cause));
+    const decoded = yield* Schema.decodeUnknownEffect(codec)(JSON.parse(JSON.stringify(wire)));
+    assert.equal(decoded.message, detail);
+  }),
+);
+
+it.effect("keeps ordinary Git launch failures generic through the real error codec", () =>
+  Effect.gen(function* () {
+    const cause = new ThreadLaunchError({
+      operation: "provision-worktree",
+      commandId: CommandId.make("git-launch"),
+      projectId: ProjectId.make("git-project"),
+      cause: new GitCommandError({
+        operation: "createWorktree",
+        command: "git",
+        cwd: "/repo",
+        detail: "Could not create worktree.",
+      }),
+    });
+    const codec = Schema.toCodecJson(OrchestrationV2ThreadLaunchError);
+    const wire = yield* Schema.encodeEffect(codec)(threadLaunchErrorForWire(cause));
+    const decoded = yield* Schema.decodeUnknownEffect(codec)(JSON.parse(JSON.stringify(wire)));
+    assert.equal(decoded.message, "Failed to launch thread");
+  }),
+);
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
 

@@ -11,6 +11,7 @@ import {
   SourceControlProviderError,
   SourceControlRepositoryError,
   type GitCommandFailureReason,
+  VcsUnsupportedOperationError,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
@@ -31,6 +32,7 @@ import {
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
@@ -214,6 +216,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const path = yield* Path.Path;
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
 
   const ensureConcreteProvider = (input: {
     readonly operation: string;
@@ -486,6 +489,21 @@ export const make = Effect.gen(function* () {
         operation: "publishRepository",
         provider: input.provider,
       });
+      const detected = yield* vcsRegistry.detect({ cwd: input.cwd, jjOnly: true });
+      if (detected?.kind === "jj") {
+        return yield* Effect.fail(
+          new SourceControlRepositoryError({
+            operation: "publishRepository",
+            provider: providerKind,
+            detail: "Publishing Jujutsu repositories is not supported.",
+            cause: new VcsUnsupportedOperationError({
+              operation: "publishRepository",
+              kind: "jj",
+              detail: "Publishing Jujutsu repositories is not supported.",
+            }),
+          }),
+        );
+      }
       const provider = yield* providers.get(providerKind);
       const urls = yield* provider.createRepository({
         cwd: input.cwd,
@@ -493,9 +511,11 @@ export const make = Effect.gen(function* () {
         visibility: input.visibility,
       });
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
+      const preferredRemoteName = input.remoteName?.trim() || "origin";
+
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
-        preferredName: input.remoteName?.trim() || "origin",
+        preferredName: preferredRemoteName,
         url: remoteUrl,
       });
 

@@ -1,4 +1,8 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  VcsProcessSpawnError,
+  VcsUnsupportedOperationError,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -9,7 +13,6 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpClient } from "effect/http";
-import { VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -33,6 +36,17 @@ import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+
+const layerGitOnlyVcsDriverRegistry = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+  get: () =>
+    Effect.fail(
+      new VcsUnsupportedOperationError({
+        operation: "VcsDriverRegistry.get",
+        kind: "jj",
+        detail: "No jj VCS driver is registered.",
+      }),
+    ),
+});
 
 const layerSourceControlProviderRegistryTest = (input: {
   readonly bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>;
@@ -176,6 +190,7 @@ Logged in to gitlab.com as gitlab-user
       }),
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
+    Layer.provide(layerGitOnlyVcsDriverRegistry),
     Layer.provide(
       layerSourceControlProviderRegistryTest({
         process: processMock,

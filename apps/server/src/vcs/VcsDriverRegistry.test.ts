@@ -9,6 +9,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as VcsProcess from "./VcsProcess.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
+import { describeJj, seedJjRepo } from "./testing/JjTestSupport.ts";
 
 const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -22,6 +23,28 @@ const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
   args[0] === "-C" && args.length >= 2 ? args.slice(2) : args;
 
 describe("VcsDriverRegistry", () => {
+  it.effect("returns no jj facade handle without filesystem or process work", () => {
+    const unexpected = () => Effect.die("Dormant jj detection must not perform I/O.");
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+      Layer.provide(
+        FileSystem.layerNoop({
+          stat: unexpected,
+          exists: unexpected,
+          realPath: unexpected,
+        }),
+      ),
+      Layer.provide(Layer.mock(VcsProjectConfig.VcsProjectConfig)({ resolveKind: unexpected })),
+      Layer.provide(Layer.mock(VcsProcess.VcsProcess)({ run: unexpected })),
+      Layer.provide(NodeServices.layer),
+    );
+    return Effect.gen(function* () {
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+      assert.isNull(yield* registry.detect({ cwd: "/unused", jjOnly: true }));
+      const unavailable = yield* registry.get("jj").pipe(Effect.flip);
+      assert.strictEqual(unavailable._tag, "VcsUnsupportedOperationError");
+    }).pipe(Effect.provide(layer));
+  });
+
   const makeDiskBackedLayer = (rootDir: string, calls: string[]) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
       Layer.provide(NodeServices.layer),
@@ -59,6 +82,25 @@ describe("VcsDriverRegistry", () => {
         }),
       ),
     );
+
+  describeJj("dormant facade jj detection", () => {
+    it.effect("keeps a real colocated jj repository on Git", () =>
+      Effect.gen(function* () {
+        const { root } = yield* seedJjRepo({ prefix: "t3-vcs-facade-jj-" });
+        yield* Effect.gen(function* () {
+          const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+          assert.isNull(yield* registry.detect({ cwd: root, jjOnly: true }));
+          assert.equal((yield* registry.detect({ cwd: root }))?.kind, "git");
+          const unavailable = yield* registry.get("jj").pipe(Effect.flip);
+          assert.equal(unavailable._tag, "VcsUnsupportedOperationError");
+          const explicit = yield* registry
+            .detect({ cwd: root, requestedKind: "jj" })
+            .pipe(Effect.flip);
+          assert.equal(explicit._tag, "VcsUnsupportedOperationError");
+        }).pipe(Effect.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
 
   it.effect("detects again when a cached repository is removed from disk", () =>
     Effect.gen(function* () {

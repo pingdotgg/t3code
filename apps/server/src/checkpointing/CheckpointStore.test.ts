@@ -102,6 +102,71 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(layerTest)("CheckpointStore.layer", (it) => {
+  describe("supportsCheckpoints", () => {
+    it.effect("keeps the original Git probe after a jj-only miss with unknown config", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(NodePath.join(cwd, ".t3code"));
+        yield* writeTextFile(
+          NodePath.join(cwd, ".t3code", "vcs.json"),
+          '{"vcs":{"kind":"unknown"}}',
+        );
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        const detections: VcsDriverRegistry.VcsDriverResolveInput[] = [];
+        const store = yield* CheckpointStore.make.pipe(
+          Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
+            ...registry,
+            detect: (input) => {
+              detections.push(input);
+              return registry.detect(input);
+            },
+          }),
+        );
+        expect(yield* store.supportsCheckpoints(cwd)).toBe(true);
+        expect(detections).toEqual([
+          { cwd, jjOnly: true },
+          { cwd, requestedKind: "git" },
+        ]);
+      }),
+    );
+
+    it.effect("honors detected jj checkpoint usability instead of Git capabilities", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        const handle = yield* registry.resolve({ cwd, requestedKind: "git" });
+        const detections: VcsDriverRegistry.VcsDriverResolveInput[] = [];
+        const usabilityChecks: string[] = [];
+        const store = yield* CheckpointStore.make.pipe(
+          Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
+            ...registry,
+            detect: (input) => {
+              detections.push(input);
+              return Effect.succeed({
+                ...handle,
+                kind: "jj" as const,
+                repository: { ...handle.repository, kind: "jj" as const },
+                driver: {
+                  ...handle.driver,
+                  checkpointsUsable: (directory: string) => {
+                    usabilityChecks.push(directory);
+                    return Effect.succeed(false);
+                  },
+                },
+              });
+            },
+          }),
+        );
+        expect(yield* store.supportsCheckpoints(cwd)).toBe(false);
+        expect(usabilityChecks).toEqual([cwd]);
+        expect(detections).toEqual([{ cwd, jjOnly: true }]);
+      }),
+    );
+  });
+
   it.effect("detects a nested workspace without its own .git entry", () =>
     Effect.gen(function* () {
       const tmp = yield* makeTmpDir();
@@ -110,7 +175,29 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       const nested = NodePath.join(tmp, "packages", "nested");
       yield* fileSystem.makeDirectory(nested, { recursive: true });
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
-      expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
+      expect(yield* checkpointStore.supportsCheckpoints(nested)).toBe(true);
+    }),
+  );
+
+  it.effect("resolves checkpoint operations without overriding the registry selection", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+      const resolutions: VcsDriverRegistry.VcsDriverResolveInput[] = [];
+      const store = yield* CheckpointStore.make.pipe(
+        Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
+          ...registry,
+          resolve: (input) => {
+            resolutions.push(input);
+            return registry.resolve(input);
+          },
+        }),
+      );
+      const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("registry-selection"), 0);
+      yield* store.captureCheckpoint({ cwd, checkpointRef });
+      expect(resolutions).toEqual([{ cwd }]);
+      expect(yield* store.hasCheckpointRef({ cwd, checkpointRef })).toBe(true);
     }),
   );
   describe("diffCheckpoints", () => {

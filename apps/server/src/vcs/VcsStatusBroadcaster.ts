@@ -21,7 +21,7 @@ import type {
   VcsStatusStreamEvent,
   VcsStatusSubscriptionInput,
 } from "@t3tools/contracts";
-import { DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL } from "@t3tools/contracts";
+import { DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL, GitManagerError } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -31,6 +31,8 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { withStatusRefreshReads as scopeStatusRefreshReads } from "../jj/JjStatus.ts";
+import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -232,6 +234,27 @@ export const make = Effect.gen(function* () {
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
   const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
+  const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const detectStatusRepository = (cwd: string) =>
+    registry.detect({ cwd, jjOnly: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "VcsStatusBroadcaster.detect",
+            cwd,
+            detail: "Could not detect the repository for status refresh.",
+            cause,
+          }),
+      ),
+    );
+  const withStatusRefreshReads =
+    (cwd: string) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      detectStatusRepository(cwd).pipe(
+        Effect.flatMap((handle) =>
+          handle?.kind === "jj" ? scopeStatusRefreshReads(effect) : effect,
+        ),
+      );
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
   const changesPubSub = yield* Effect.acquireRelease(
@@ -400,7 +423,7 @@ export const make = Effect.gen(function* () {
           { concurrency: "unbounded" },
         );
         return yield* updateCachedStatus(cwd, local, remote);
-      }),
+      }).pipe(withStatusRefreshReads(cwd)),
     );
   });
 
@@ -439,9 +462,20 @@ export const make = Effect.gen(function* () {
         return null;
       }
 
+      if ((yield* detectStatusRepository(cwd))?.kind === "jj") {
+        return null;
+      }
+
       yield* workflow.invalidateLocalStatus(cwd);
       const local = yield* workflow.localStatus({ cwd });
-      if (!local.isRepo || !local.isDefaultRef || local.hasWorkingTreeChanges) return null;
+      if (
+        !local.isRepo ||
+        local.vcs?.kind === "jj" ||
+        !local.isDefaultRef ||
+        local.hasWorkingTreeChanges
+      ) {
+        return null;
+      }
 
       pullAttempted = true;
       yield* workflow.pullCurrentBranch(cwd);
@@ -449,7 +483,7 @@ export const make = Effect.gen(function* () {
       const [refreshedLocal, refreshedRemote] = yield* Effect.all(
         [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
         { concurrency: "unbounded" },
-      );
+      ).pipe(withStatusRefreshReads(cwd));
       yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
       return { local: refreshedLocal, remote: refreshedRemote };
     }).pipe(
@@ -501,7 +535,7 @@ export const make = Effect.gen(function* () {
           yield* refreshLocalStatusCore(cwd);
         }
         return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
-      }),
+      }).pipe(withStatusRefreshReads(cwd)),
     );
   });
 
@@ -523,7 +557,7 @@ export const make = Effect.gen(function* () {
         const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remote, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
         return yield* updateCachedStatus(cwd, local, remote, { publish: true });
-      }),
+      }).pipe(withStatusRefreshReads(cwd)),
     );
   });
 

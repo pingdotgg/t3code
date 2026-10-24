@@ -21,6 +21,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   OrchestrationV2ThreadProjectionJson,
+  OrchestrationV2ThreadLaunchError,
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
@@ -59,6 +60,12 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as GitManager from "../git/GitManager.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
+import { describeJj, runGit, runJj, withJjRepo } from "../vcs/testing/JjTestSupport.ts";
+import { threadLaunchErrorForWire } from "../ws.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -113,12 +120,14 @@ const claudeAdapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly workspaceRoot?: string;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
   readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
+  readonly validateWorkspace?: GitWorkflow.GitWorkflowService["Service"]["validateWorkspace"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
@@ -130,6 +139,10 @@ interface HarnessOptions {
 }
 
 function makeHarness(options: HarnessOptions = {}) {
+  const launchProject = {
+    ...project,
+    workspaceRoot: options.workspaceRoot ?? project.workspaceRoot,
+  };
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
@@ -181,7 +194,7 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some(launchProject)
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),
@@ -192,7 +205,9 @@ function makeHarness(options: HarnessOptions = {}) {
       listShells: () => Effect.die("unused"),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
+      providerCwd: (cwd) => Effect.succeed(cwd),
       createWorktree,
+      validateWorkspace: options.validateWorkspace ?? (() => Effect.succeed(true)),
       renameBranch,
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
@@ -263,6 +278,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerThreadManagement,
       layerTitleRegeneration,
       layerOutbox,
+      layerReceipts,
       layerDatabase,
       layerExternalServices,
     ),
@@ -304,6 +320,98 @@ function launchInput(input: {
     creationSource: "web" as const,
   };
 }
+
+describeJj("unsupported Jujutsu draft launches", () => {
+  it.effect.each(["root", "worktree"] as const)(
+    "refuses the first send in %s mode before creating a thread or workspace",
+    (mode) =>
+      withJjRepo({ prefix: "t3-jj-draft-refusal-", colocated: false }, (repo) =>
+        Effect.gen(function* () {
+          const directoriesBefore = yield* repo.fileSystem.readDirectory(repo.base);
+          const jjWorkspacesBefore = yield* runJj(repo.root, ["workspace", "list"]);
+          const gitWorktreesBefore = yield* runGit(repo.path.join(repo.base, "store.git"), [
+            "worktree",
+            "list",
+            "--porcelain",
+          ]);
+          const workflow = yield* GitWorkflow.GitWorkflowService.pipe(
+            Effect.provide(
+              GitWorkflow.layer.pipe(
+                Layer.provide(
+                  Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+                    detect: () =>
+                      repo.driver.detectRepository(repo.root).pipe(
+                        Effect.map((repository) =>
+                          repository === null
+                            ? null
+                            : {
+                                kind: "jj" as const,
+                                repository,
+                                driver: repo.driver,
+                              },
+                        ),
+                      ),
+                  }),
+                ),
+                Layer.provide(Layer.succeed(JjVcsDriver.JjVcsDriver, repo.driver)),
+                Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+                Layer.provide(Layer.mock(GitManager.GitManager)({})),
+                Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)({})),
+              ),
+            ),
+          );
+          const harness = makeHarness({
+            workspaceRoot: repo.root,
+            git: { providerCwd: workflow.providerCwd },
+          });
+          yield* Effect.gen(function* () {
+            const launches = yield* ThreadLaunch.ThreadLaunchService;
+            const threads = yield* ThreadManagement.ThreadManagementService;
+            const input = launchInput({
+              command: "unsupported-jj",
+              thread: "unsupported-jj",
+              message: "hello",
+              workspace:
+                mode === "root" ? { type: "root" } : { type: "worktree", baseRef: "root()" },
+            });
+            const result = yield* launches.launch(input).pipe(Effect.result);
+            assert.isTrue(Result.isFailure(result));
+            if (Result.isFailure(result)) {
+              assert.include(JSON.stringify(result.failure), "colocated Jujutsu repositories");
+              if (result.failure._tag === "ThreadLaunchError") {
+                const codec = Schema.toCodecJson(OrchestrationV2ThreadLaunchError);
+                const encoded = yield* Schema.encodeEffect(codec)(
+                  threadLaunchErrorForWire(result.failure),
+                );
+                const decoded = yield* Schema.decodeUnknownEffect(codec)(
+                  JSON.parse(JSON.stringify(encoded)),
+                );
+                assert.include(decoded.message, "colocated Jujutsu repositories");
+              }
+            }
+            assert.deepEqual(
+              yield* threads.listProjectThreads({ projectId, includeSubagents: true }),
+              [],
+            );
+            const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+            assert.isTrue(Option.isNone(yield* receipts.getByCommandId(input.commandId)));
+            assert.equal(harness.createWorktree.mock.calls.length, 0);
+            assert.equal(harness.generateBranchName.mock.calls.length, 0);
+            assert.deepEqual(yield* repo.fileSystem.readDirectory(repo.base), directoriesBefore);
+            assert.equal(yield* runJj(repo.root, ["workspace", "list"]), jjWorkspacesBefore);
+            assert.equal(
+              yield* runGit(repo.path.join(repo.base, "store.git"), [
+                "worktree",
+                "list",
+                "--porcelain",
+              ]),
+              gitWorktreesBefore,
+            );
+          }).pipe(Effect.provide(harness.layer));
+        }),
+      ),
+  );
+});
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
@@ -1336,6 +1444,111 @@ it.effect.each(["failed", "interrupted"] as const)(
   },
 );
 
+it.effect("removes a claimed workspace when workspace validation fails", () => {
+  const harness = makeHarness({
+    createWorktree: (input, options) =>
+      (
+        options?.progress?.onWorktreeClaimed?.("/repo-worktrees/verified-failure") ?? Effect.void
+      ).pipe(
+        Effect.as({
+          worktree: {
+            path: "/repo-worktrees/verified-failure",
+            refName: input.newRefName ?? input.refName,
+          },
+        }),
+      ),
+    validateWorkspace: () => Effect.fail(new Error("Workspace detection failed.") as never),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = launchInput({
+      command: "command:launch:validation-failure",
+      thread: "thread:launch:validation-failure",
+      message: "Validate workspace",
+      workspace: { type: "worktree", baseRef: "main" },
+    });
+    const launched = yield* launches.launch(input);
+    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.commandId === CommandId.make(`${input.commandId}:fail`) &&
+          stored.event.type === "run.updated",
+      ),
+      Stream.runHead,
+    );
+    assert.deepEqual(
+      harness.removeWorktree.mock.calls.map(([request]) => request.path),
+      ["/repo-worktrees/verified-failure"],
+    );
+    assert.equal((yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath, null);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([null, "", "/repo", "/repo/not-a-workspace"] as const)(
+  "fails jj isolation when provisioning returns %s instead of a native workspace",
+  (worktreePath) => {
+    const harness = makeHarness({
+      validateWorkspace: () => Effect.succeed(false),
+      createWorktree: (_input, options) =>
+        (options?.progress?.onWorktreeClaimed?.(worktreePath ?? "/repo") ?? Effect.void).pipe(
+          Effect.as({
+            worktree: { path: worktreePath, refName: "isolated" },
+          } as never),
+        ),
+    });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+          command: `command:launch:jj-missing-workspace:${worktreePath}`,
+          thread: `thread:launch:jj-missing-workspace:${worktreePath}`,
+          message: "Run in isolation",
+          workspace: { type: "worktree", baseRef: "main" },
+        });
+      const launched = yield* launches.launch(input);
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter((stored) => stored.commandId === CommandId.make(`${input.commandId}:fail`) && stored.event.type === "run.updated"),
+        Stream.runHead,
+      );
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.worktreePath, null);
+      assert.match(
+        projection.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
+        /Jujutsu isolation requires a separate native workspace/u,
+      );
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+      assert.equal(harness.removeWorktree.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("uses the provisioned native jj workspace for isolated setup", () => {
+  const harness = makeHarness({
+    validateWorkspace: (projectCwd, workspacePath) => {
+      assert.equal(projectCwd, "/repo");
+      assert.equal(workspacePath, "/repo-worktrees/feature");
+      return Effect.succeed(true);
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:jj-native-workspace",
+        thread: "thread:launch:jj-native-workspace",
+        message: "Run in isolation",
+        workspace: { type: "worktree", baseRef: "main", branch: "isolated" },
+      }),
+    );
+    yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(launched.threadId).pipe(Stream.filter((snapshot) => snapshot?.stages.some((stage) => stage.id === "agent" && stage.status === "done") === true), Stream.runHead);
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
+    assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/repo-worktrees/feature");
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("replays a server-allocated launch", () =>
   Effect.gen(function* () {
     const setupEntered = yield* Deferred.make<void>();
@@ -1420,6 +1633,39 @@ it.effect("replays an accepted launch after the project disables the instance", 
     if (fresh._tag !== "ThreadManagementProviderInstanceDisabledError") {
       assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${fresh._tag}`);
     }
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("replays an accepted launch after repository support changes", () => {
+  let supported = true;
+  const harness = makeHarness({
+    git: {
+      providerCwd: (cwd) =>
+        supported
+          ? Effect.succeed(cwd)
+          : Effect.fail(
+              new GitCommandError({
+                operation: "providerCwd",
+                command: "jj",
+                cwd,
+                detail: "Repository is unsupported.",
+              }),
+            ),
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const input = launchInput({
+      command: "command:launch:retry-after-unsupported",
+      thread: "thread:launch:retry-after-unsupported",
+      message: "Only once",
+    });
+    const first = yield* launches.launch(input);
+    supported = false;
+    const retry = yield* launches.launch(input);
+    assert.equal(retry.threadId, first.threadId);
+    assert.isTrue(retry.resumed);
+    assert.equal(retry.projection.messages.length, 1);
   }).pipe(Effect.provide(harness.layer));
 });
 

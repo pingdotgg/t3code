@@ -47,7 +47,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -535,8 +536,11 @@ function layerTest(input: {
         IdAllocator.layer,
         layerTestStores,
         ThreadCommandExecutor.layer,
-        Layer.mock(GitVcsDriver.GitVcsDriver)({
-          resolveBranchName: () => Effect.succeed(null),
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          detect: () => Effect.succeed(null),
+        }),
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          currentRefName: () => Effect.succeed(null),
         }),
       ),
     ),

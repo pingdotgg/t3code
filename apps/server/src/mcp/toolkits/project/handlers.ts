@@ -8,7 +8,7 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
-import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
@@ -34,12 +34,12 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   workspaceRoot: string,
   worktreePath: string,
 ) {
-  const git = yield* GitVcsDriver.GitVcsDriver;
+  const workflow = yield* GitWorkflowService.GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
   const real = (path: string) => fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path));
-  const worktrees = yield* git.listWorktreePaths(workspaceRoot).pipe(
-    Effect.flatMap((paths) => Effect.forEach(paths, real)),
+  const worktrees = yield* workflow.listWorkspacePaths(workspaceRoot).pipe(
     Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    Effect.flatMap((paths) => Effect.forEach(paths, real)),
   );
   if (!worktrees.includes(yield* real(worktreePath)))
     return yield* new OrchestratorMcpFailure({

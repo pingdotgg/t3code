@@ -20,6 +20,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
@@ -324,9 +325,19 @@ export function layerWithRegistry<Error>(
         layerEventSinkProvided,
         IdAllocator.layer,
         ThreadCommandExecutor.layer,
-        GitVcsDriver.layer.pipe(
-          Layer.provide(layerServerConfig),
-          Layer.provide(NodeServices.layer),
+        Layer.unwrap(
+          Effect.map(GitVcsDriver.GitVcsDriver, (git) =>
+            Layer.mock(GitWorkflowService.GitWorkflowService)({
+              currentRefName: (cwd) => git.resolveBranchName(cwd, "HEAD"),
+            }),
+          ),
+        ).pipe(
+          Layer.provide(
+            GitVcsDriver.layer.pipe(
+              Layer.provide(layerServerConfig),
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
         ),
       ),
     ),
@@ -514,7 +525,11 @@ export function layerWithRegistry<Error>(
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
-  ).pipe(Layer.provide(ProviderTurnStartServiceTestkit.layer), Layer.provide(NodeServices.layer));
+  ).pipe(
+    Layer.provide(ProviderTurnStartServiceTestkit.layer),
+    Layer.provide(layerVcsDriverRegistry),
+    Layer.provide(NodeServices.layer),
+  );
 
   if (options.runEffectWorker === false) {
     return layerReplayRuntime;
