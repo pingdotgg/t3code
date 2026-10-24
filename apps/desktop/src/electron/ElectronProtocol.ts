@@ -173,7 +173,11 @@ const proxyRequest = Effect.fn("desktop.protocol.proxyRequest")(function* (
     return new Response(null, { status: 404 });
   }
 
-  const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
+  // Copy the path onto the target instead of resolving it, so a path such as
+  // `//example.com/` cannot replace the configured host.
+  const targetUrl = new URL(targetOrigin);
+  targetUrl.pathname = requestUrl.pathname;
+  targetUrl.search = requestUrl.search;
   const headers = new Headers(request.headers);
   const headersToRemove: string[] = [];
   for (const name of headers.keys()) {
