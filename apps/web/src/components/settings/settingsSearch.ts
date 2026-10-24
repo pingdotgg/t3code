@@ -329,6 +329,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "bump-threads-on-status-change",
+    title: "Bump threads on status change",
+    to: "/settings/general",
+    searchTerms: ["sort order top move running working finished approval input sidebar inbox"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

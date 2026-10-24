@@ -11,7 +11,11 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
-import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  generateSpreadPinOrderKeys,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+} from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
   type ThreadSnoozeShell,
@@ -914,6 +918,111 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
+}
+
+export type SidebarStatusGroup = "busy" | "needs-you" | "done";
+
+// Working and waiting share a group, so waiting on background work is not a change.
+function resolveSidebarStatusGroup(thread: SidebarThreadStatusInput): SidebarStatusGroup {
+  const status = resolveSidebarThreadStatus(thread);
+  if (status === "working" || status === "waiting") return "busy";
+  return status === "approval" || status === "input" ? "needs-you" : "done";
+}
+
+/**
+ * Active threads whose status group changed since the last call. A thread seen
+ * for the first time only records its group, and the open thread finishing is
+ * not news, so neither moves.
+ */
+export function resolveSidebarStatusBumps(input: {
+  readonly previousGroups: ReadonlyMap<string, SidebarStatusGroup>;
+  readonly threads: ReadonlyArray<readonly [key: string, thread: SidebarThreadStatusInput]>;
+  readonly openThreadKey: string | null;
+}): { readonly groups: Map<string, SidebarStatusGroup>; readonly bumpedKeys: string[] } {
+  const groups = new Map<string, SidebarStatusGroup>();
+  const bumpedKeys: string[] = [];
+  for (const [key, thread] of input.threads) {
+    const group = resolveSidebarStatusGroup(thread);
+    const previous = input.previousGroups.get(key);
+    groups.set(key, group);
+    if (previous === undefined || previous === group) continue;
+    if (group === "done" && key === input.openThreadKey) continue;
+    bumpedKeys.push(key);
+  }
+  return { groups, bumpedKeys };
+}
+
+// Bumps insert above the head far more often than drags, and each insert
+// lengthens the head key, so past this length the list is respaced instead.
+const MAX_BUMP_ORDER_KEY_LENGTH = 32;
+
+/**
+ * Moves each bumped thread to the top of the active order. Threads without an
+ * order key always sort first, so the bump also keys the unarranged threads
+ * above the first arranged one, instead of rewriting every key as a drop would.
+ * Keys held by threads outside the list (pinned, snoozed, filtered out) are
+ * reserved so they never collide. Unarranged threads that cannot be written
+ * (older servers) stay on top, as they do for a drag.
+ */
+export function planSidebarStatusBumps(input: {
+  readonly bumpedKeys: readonly string[];
+  readonly activeOrder: readonly string[];
+  readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
+  readonly canWrite: (key: string) => boolean;
+}): {
+  readonly order: readonly string[];
+  readonly writes: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
+} {
+  const listed = new Set(input.activeOrder);
+  const fixedTop = input.activeOrder.filter(
+    (id) => input.activeKeysById.get(id) == null && !input.canWrite(id),
+  );
+  let order = input.activeOrder.filter((id) => !fixedTop.includes(id));
+  const reservedKeys = new Set(
+    [...input.activeKeysById].flatMap(([id, key]) => (!listed.has(id) && key != null ? [key] : [])),
+  );
+  const keysById = new Map(input.activeKeysById);
+  const writes = new Map<string, string>();
+  const assign = (ids: readonly string[], orderKeys: readonly string[]) => {
+    for (const [index, id] of ids.entries()) {
+      if (keysById.get(id) === orderKeys[index]) continue;
+      keysById.set(id, orderKeys[index]!);
+      writes.set(id, orderKeys[index]!);
+    }
+  };
+  for (const key of input.bumpedKeys) {
+    if (order[0] === key) continue;
+    const rest = order.filter((other) => other !== key);
+    const firstArranged = rest.findIndex((other) => keysById.get(other) != null);
+    const unarranged = firstArranged === -1 ? rest : rest.slice(0, firstArranged);
+    const arranged = firstArranged === -1 ? [] : rest.slice(firstArranged);
+    const moved = [key, ...unarranged];
+    const movedKeys: string[] = [];
+    let below = arranged[0] === undefined ? null : (keysById.get(arranged[0]) ?? null);
+    for (let index = moved.length - 1; index >= 0 && below !== null; index--) {
+      const upper = below;
+      below = pinOrderKeyBetween(null, upper);
+      while (below !== null && reservedKeys.has(below)) below = pinOrderKeyBetween(below, upper);
+      if (below !== null) movedKeys[index] = below;
+    }
+    const nextOrder = [...moved, ...arranged];
+    const canRespace = nextOrder.every(input.canWrite);
+    if (below !== null && (movedKeys[0]!.length <= MAX_BUMP_ORDER_KEY_LENGTH || !canRespace)) {
+      if (!moved.every(input.canWrite)) continue;
+      assign(moved, movedKeys);
+    } else {
+      if (!canRespace) continue;
+      const spread = generateSpreadPinOrderKeys(nextOrder.length + reservedKeys.size).filter(
+        (orderKey) => !reservedKeys.has(orderKey),
+      );
+      assign(nextOrder, spread);
+    }
+    order = nextOrder;
+  }
+  return {
+    order: [...fixedTop, ...order],
+    writes: [...writes].map(([id, orderKey]) => ({ id, orderKey })),
+  };
 }
 
 export type SidebarV2TopStatusKind =
