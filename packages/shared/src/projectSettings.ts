@@ -154,6 +154,17 @@ function resolveProjectOverrides(
     ) {
       continue;
     }
+    // Clients resolve a hidden model to the catalog's first visible one, so a
+    // hidden project default would silently pick a model nobody chose.
+    if (
+      key === "defaultModelSelection" &&
+      value !== null &&
+      settings.providerModelPreferences?.[
+        (value as ModelSelection).instanceId
+      ]?.hiddenModels.includes((value as ModelSelection).model)
+    ) {
+      continue;
+    }
     effective[key] = value;
     sources[key] = "project";
   }

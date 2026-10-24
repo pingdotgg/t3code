@@ -119,6 +119,27 @@ describe("resolveProjectSettings", () => {
     expect(resolved.sources.defaultModelSelection).toBe("environment");
   });
 
+  // regression: #17556 a hidden project default silently became the catalog's first model
+  it.each([
+    ["hidden", ["gpt-5.6-terra", "gpt-5.6-sol"], "gpt-6.1-sol", "environment"],
+    ["visible", ["gpt-5.6-terra"], "gpt-5.6-sol", "project"],
+  ] as const)(
+    "resolves a %s project default model against the environment default",
+    (_visibility, hiddenModels, expectedModel, expectedSource) => {
+      const codex = ProviderInstanceId.make("codex");
+      const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        defaultModelSelection: createModelSelection(codex, "gpt-6.1-sol"),
+        providerModelPreferences: { [codex]: { hiddenModels, modelOrder: [] } },
+        projectSettingsOverrides: {
+          [projectId]: { defaultModelSelection: createModelSelection(codex, "gpt-5.6-sol") },
+        },
+      });
+      const resolved = resolveProjectSettings(settings, projectId);
+      expect(resolved.settings.defaultModelSelection?.model).toBe(expectedModel);
+      expect(resolved.sources.defaultModelSelection).toBe(expectedSource);
+    },
+  );
+
   it("moves text generation off an instance the project turned off", () => {
     const codex = ProviderInstanceId.make("codex");
     const settings = {
