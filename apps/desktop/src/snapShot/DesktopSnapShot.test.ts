@@ -17,6 +17,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import type * as Electron from "electron";
+import * as NodeZlib from "node:zlib";
 import type { PortalShortcutState } from "./PortalCaptureShortcut.ts";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -43,6 +44,7 @@ const {
   accessibilityForegroundMock,
   accessibilityTrustedMock,
   allWindowsMock,
+  createFromBufferMock,
   flashWindows,
   focusedWindowMock,
   getFileIconMock,
@@ -98,6 +100,7 @@ const {
         isDestroyed: () => boolean;
       }>,
   ),
+  createFromBufferMock: vi.fn((_png: Buffer) => ({ getSize: () => ({ width: 0, height: 0 }) })),
   flashWindows: [] as Array<{
     bounds: Electron.Rectangle | null;
     destroyed: boolean;
@@ -395,7 +398,10 @@ vi.mock("electron", () => {
     BrowserWindow,
     app: { getFileIcon: getFileIconMock },
     desktopCapturer: { getSources: getSourcesMock },
-    nativeImage: { createThumbnailFromPath: thumbnailFromPathMock },
+    nativeImage: {
+      createFromBuffer: createFromBufferMock,
+      createThumbnailFromPath: thumbnailFromPathMock,
+    },
     globalShortcut: { register: registerShortcutMock, unregister: unregisterShortcutMock },
     screen: {
       getDisplayMatching: (bounds: Electron.Rectangle) =>
@@ -1046,6 +1052,93 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
         screenToDipRectMock.mockImplementation((_window, bounds) => bounds);
       }),
     ),
+  );
+});
+
+const grayscalePng = (width: number, height: number) => {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(NodeZlib.crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", NodeZlib.deflateSync(Buffer.alloc((width + 1) * height))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+};
+
+it.effect("sizes accessibility from the PNG header without decoding the capture", () => {
+  vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+  flashWindows.length = 0;
+  const png = grayscalePng(1_400, 1_040);
+  const window = {
+    title: "Editor",
+    appName: "Text Editor",
+    appIdentifier: "org.gnome.TextEditor.desktop",
+    processId: 123,
+    bounds: { x: 479, y: 342, width: 700, height: 520 },
+  };
+  linuxCaptureMock.mockResolvedValueOnce({ png, window });
+  accessibilityProcessReadMock.mockClear();
+  createFromBufferMock.mockClear().mockImplementationOnce(() => ({
+    getSize: () => ({ width: 1_400, height: 1_040 }),
+  }));
+  accessibilityByPidMock.mockReset().mockResolvedValue({
+    children: async () => [
+      {
+        role: "window",
+        name: "Editor",
+        bounds: { x: 0, y: 0, width: 700, height: 520 },
+        active: true,
+        children: async () => [],
+        tree: async () => ({ name: "Editor", value: "Verified text", children: [] }),
+      },
+    ],
+  });
+  const written: Array<Uint8Array> = [];
+  let metadata = "";
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      yield* service.configure(enabledSettings());
+      yield* service.capture;
+      assert.deepEqual(accessibilityProcessReadMock.mock.calls[0]?.[0].imageSize, {
+        width: 1_400,
+        height: 1_040,
+      });
+      const saved = yield* decodePendingMetadata(metadata);
+      assert.deepInclude(saved.source.accessibility, {
+        coordinateSpace: "captured-image",
+        imageSize: { width: 1_400, height: 1_040 },
+      });
+      assert.deepEqual(written, [png]);
+      assert.lengthOf(createFromBufferMock.mock.calls, 0);
+    }),
+  ).pipe(
+    Effect.provide(
+      layerTest("linux", {
+        makeDirectory: () => Effect.void,
+        rename: () => Effect.void,
+        writeFile: (_, bytes) =>
+          Effect.sync(() => {
+            written.push(bytes);
+          }),
+        writeFileString: (_, text) =>
+          Effect.sync(() => {
+            metadata = text;
+          }),
+      }),
+    ),
+    Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
   );
 });
 
