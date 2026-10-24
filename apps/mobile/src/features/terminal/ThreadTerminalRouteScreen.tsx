@@ -14,6 +14,7 @@ import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
@@ -25,6 +26,7 @@ import {
   KeyboardEvents,
   KeyboardStickyView,
   useKeyboardState,
+  useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
 
 import {
@@ -470,6 +472,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     terminal,
     size: lastGridSize,
     resize: resizeTerminal,
+    settleDelayMs: Platform.OS === "android" ? 120 : 0,
   });
   const bufferReplayKey = useMemo(
     () => getTerminalBufferReplayKey({ terminalKey, fontSize }),
@@ -595,14 +598,31 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const terminalBottomInset =
     (keyboardState.isVisible ? keyboardState.height : 0) +
     (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
+  const [androidBottomBarHeight, setAndroidBottomBarHeight] = useState(56);
+  const { height: keyboardHeight, progress: keyboardProgress } = useReanimatedKeyboardAnimation();
+  const androidViewportStyle = useAnimatedStyle(() => ({
+    paddingBottom:
+      -keyboardHeight.value +
+      keyboardProgress.value * (canOperateTerminal ? TERMINAL_ACCESSORY_HEIGHT : 0) +
+      (1 - keyboardProgress.value) * (androidBottomBarHeight + insets.bottom),
+  }));
+  const androidBottomBarStyle = useAnimatedStyle(() => ({
+    opacity: 1 - keyboardProgress.value,
+  }));
+  const androidAccessoryStyle = useAnimatedStyle(() => ({
+    opacity: keyboardProgress.value,
+  }));
 
   useEffect(() => {
     const keyboardWillShow = KeyboardEvents.addListener("keyboardWillShow", () => {
       setIsAccessoryDismissed(false);
     });
-    const keyboardWillHide = KeyboardEvents.addListener("keyboardWillHide", () => {
-      setIsAccessoryDismissed(true);
-    });
+    const keyboardWillHide = KeyboardEvents.addListener(
+      Platform.OS === "android" ? "keyboardDidHide" : "keyboardWillHide",
+      () => {
+        setIsAccessoryDismissed(true);
+      },
+    );
 
     return () => {
       keyboardWillShow.remove();
@@ -1173,8 +1193,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             // reservation is zero when UIKit has already inset the body or moved the bar.
             paddingTop:
               Platform.OS === "ios" ? (nativeColumnMetrics?.safeArea.top ?? insets.top) : 0,
-            paddingBottom:
-              Platform.OS === "android" && !keyboardState.isVisible ? insets.bottom : 0,
           }}
         >
           {!isEnvironmentReady ? (
@@ -1230,11 +1248,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             <EmptyState title="Terminal unavailable" detail={terminal.error} />
           ) : (
             <>
-              <View
-                style={{
-                  flex: 1,
-                  paddingBottom: terminalBottomInset,
-                }}
+              <Animated.View
+                style={[
+                  { flex: 1 },
+                  Platform.OS === "android"
+                    ? androidViewportStyle
+                    : { paddingBottom: terminalBottomInset },
+                ]}
               >
                 <View
                   pointerEvents="none"
@@ -1264,10 +1284,21 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   terminalKey={terminalKey}
                   theme={terminalTheme}
                 />
-              </View>
+              </Animated.View>
 
-              {Platform.OS === "android" && !keyboardState.isVisible ? (
-                <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
+              {Platform.OS === "android" ? (
+                <Animated.View
+                  className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2"
+                  onLayout={(event) => setAndroidBottomBarHeight(event.nativeEvent.layout.height)}
+                  pointerEvents={keyboardState.isVisible ? "none" : "auto"}
+                  importantForAccessibility={
+                    keyboardState.isVisible ? "no-hide-descendants" : "auto"
+                  }
+                  style={[
+                    { position: "absolute", bottom: insets.bottom, left: 0, right: 0 },
+                    androidBottomBarStyle,
+                  ]}
+                >
                   {selectedThread && hasNativeTerminalSurface() ? (
                     <Button label="Attach output" tone="text" onPress={requestCapture} />
                   ) : null}
@@ -1278,8 +1309,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                     icon="keyboard"
                     onPress={handleShowKeyboard}
                   />
-                </View>
-              ) : Platform.OS !== "android" && selectedThread && hasNativeTerminalSurface() ? (
+                </Animated.View>
+              ) : selectedThread && hasNativeTerminalSurface() ? (
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => {
@@ -1291,18 +1322,25 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
                 </Pressable>
               ) : null}
-              {isAccessoryVisible ? (
+              {(Platform.OS === "android" ? canOperateTerminal : isAccessoryVisible) ? (
                 <KeyboardStickyView
+                  pointerEvents={keyboardState.isVisible ? "auto" : "none"}
+                  importantForAccessibility={
+                    keyboardState.isVisible ? "auto" : "no-hide-descendants"
+                  }
                   style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
                   offset={{ closed: 0, opened: 0 }}
                 >
-                  <View
+                  <Animated.View
                     className="border-t"
-                    style={{
-                      backgroundColor: terminalTheme.background,
-                      borderTopColor: terminalTheme.border,
-                      minHeight: TERMINAL_ACCESSORY_HEIGHT,
-                    }}
+                    style={[
+                      {
+                        backgroundColor: terminalTheme.background,
+                        borderTopColor: terminalTheme.border,
+                        minHeight: TERMINAL_ACCESSORY_HEIGHT,
+                      },
+                      Platform.OS === "android" ? androidAccessoryStyle : undefined,
+                    ]}
                   >
                     <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
                       <ComposerToolbarScroller
@@ -1339,7 +1377,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                         showChevron={false}
                       />
                     </ComposerToolbarRow>
-                  </View>
+                  </Animated.View>
                 </KeyboardStickyView>
               ) : canOperateTerminal && !keyboardState.isVisible && Platform.OS !== "android" ? (
                 <Pressable
