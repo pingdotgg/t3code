@@ -392,6 +392,27 @@ export function launcherOwnsVersionsDir(
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+/**
+ * `t3 update` repoints the launcher it was started through, which may be on neither PATH nor the
+ * default bin dir. Unrecorded, the next prune would remove the runtime it now points at.
+ */
+export const recordPinnedRuntimeLauncher = Effect.fn("cloud.pinned_runtime.record_launcher")(
+  function* (input: { readonly baseDir: string; readonly launcher: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const launchersFile = path.join(
+      input.baseDir,
+      PINNED_RUNTIME_DIR,
+      PINNED_RUNTIME_LAUNCHERS_FILE,
+    );
+    // Prune may run in another process, such as the service, whose working directory differs.
+    const launcher = path.resolve(input.launcher);
+    const recorded = yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => ""));
+    if (recorded.split(/\r?\n/).includes(launcher)) return;
+    yield* fs.writeFileString(launchersFile, `${launcher}\n`, { flag: "a" });
+  },
+);
+
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
 
