@@ -133,6 +133,76 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("takes the plan and windows from the fresher account regardless of environment order", () => {
+    const stale = provider({
+      driver: claude,
+      auth: {
+        status: "authenticated",
+        email: "same@example.com",
+        label: "Claude Team Subscription",
+      },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
+    });
+    const fresh = {
+      ...stale,
+      auth: { ...stale.auth, label: "Claude Max Subscription" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 7 }],
+      },
+    };
+    for (const providers of [
+      [stale, fresh],
+      [fresh, stale],
+    ]) {
+      const input = new Map(
+        providers.map((entry, index) => [
+          EnvironmentId.make(`env-${index}`),
+          { ...laptop, serverConfig: { providers: [entry] } },
+        ]),
+      );
+      const [account] = collectLimitAccounts(input);
+      expect(account?.plan).toBe("Claude Max Subscription");
+      expect(account?.limits.windows[0]?.usedPercent).toBe(7);
+    }
+
+    const withoutPlan = { ...fresh, auth: { ...fresh.auth, label: undefined } };
+    for (const providers of [
+      [stale, withoutPlan],
+      [withoutPlan, stale],
+    ]) {
+      const input = new Map(
+        providers.map((entry, index) => [
+          EnvironmentId.make(`env-${index}`),
+          { ...laptop, serverConfig: { providers: [entry] } },
+        ]),
+      );
+      const [account] = collectLimitAccounts(input);
+      expect(account?.plan).toBe("Claude Team Subscription");
+      expect(account?.limits.windows[0]?.usedPercent).toBe(7);
+    }
+
+    const newestWithoutPlan = {
+      ...withoutPlan,
+      usageLimits: { ...withoutPlan.usageLimits, checkedAt: "2026-09-03T12:00:00.000Z" },
+    };
+    for (const providers of [
+      [stale, newestWithoutPlan, fresh],
+      [stale, fresh, newestWithoutPlan],
+      [newestWithoutPlan, stale, fresh],
+      [fresh, newestWithoutPlan, stale],
+    ]) {
+      const input = new Map(
+        providers.map((entry, index) => [
+          EnvironmentId.make(`env-${index}`),
+          { ...laptop, serverConfig: { providers: [entry] } },
+        ]),
+      );
+      const [account] = collectLimitAccounts(input);
+      expect(account?.plan).toBe("Claude Max Subscription");
+    }
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
