@@ -51,6 +51,7 @@ vi.mock("../state/entities", () => ({
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsSettlement: () => true,
   readEnvironmentSupportsSnooze: () => true,
+  readEnvironmentSupportsThreadProjectMove: () => true,
   readEnvironmentSupportsTitleRegeneration: () => true,
   readThreadShell: () => ({
     id: "thread",
@@ -61,6 +62,7 @@ vi.mock("../state/entities", () => ({
     worktreePath: null,
     runtime: null,
     latestRun: null,
+    lineage: { relationshipToParent: null },
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));

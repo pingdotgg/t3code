@@ -37,6 +37,19 @@ describe("ThreadMetadataMcpUpdateInput", () => {
       },
     );
 
+    assert.throws(() =>
+      decodeUpdate({
+        action: "move_project",
+        projectId: "project-1",
+        title: "also rename",
+      }),
+    );
+    assert.equal(
+      decodeUpdate({ action: "move_project", projectId: "project-1", keepWorktree: true })
+        .keepWorktree,
+      true,
+    );
+
     for (const url of ["not a URL", "javascript:alert(1)", "file:///tmp/pull-request"]) {
       assert.throws(() =>
         decodeUpdate({

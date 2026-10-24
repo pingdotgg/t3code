@@ -1,6 +1,11 @@
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  buildThreadMoveTargets,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -13,6 +18,8 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  canMoveProject: true,
+  moveTargets: [],
   supports: {
     settlement: true,
     autoSettleOptOut: true,
@@ -70,5 +77,42 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+
+  it("lists other projects and hides the picker while a move is refused", () => {
+    const moveTargets = [{ projectId: "project-b" as ProjectId, label: "Beta" }];
+    const open = buildThreadActionMenuItems({ ...baseState, moveTargets }).find(
+      (item) => item.id === "move-project",
+    );
+    expect(open?.children?.map((child) => child.label)).toEqual(["Beta"]);
+    const blocked = buildThreadActionMenuItems({
+      ...baseState,
+      moveTargets,
+      canMoveProject: false,
+    }).find((item) => item.id === "move-project");
+    expect(blocked?.disabled).toBe(true);
+    expect(blocked?.children).toBeUndefined();
+  });
+});
+
+describe("buildThreadMoveTargets", () => {
+  it("offers projects in the same environment except the current one", () => {
+    const environment = (id: string) => id as EnvironmentId;
+    const project = (id: string) => id as ProjectId;
+    const targets = buildThreadMoveTargets(
+      [
+        { environmentId: environment("env-1"), id: project("current"), title: "Here" },
+        { environmentId: environment("env-1"), id: project("other"), title: "Elsewhere" },
+        {
+          environmentId: environment("env-1"),
+          id: project("scratch"),
+          title: "scratch",
+          isScratch: true,
+        },
+        { environmentId: environment("env-2"), id: project("remote"), title: "Other environment" },
+      ],
+      { environmentId: environment("env-1"), projectId: project("current") },
+    );
+    expect(targets.map((target) => target.label)).toEqual(["Elsewhere", "No project"]);
   });
 });

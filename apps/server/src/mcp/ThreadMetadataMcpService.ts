@@ -105,7 +105,25 @@ function metadataCommand(input: {
         threadId: input.threadId,
         linkedPullRequest: null,
       };
+    case "move_project":
+      return {
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        projectId: input.update.projectId!,
+        ...(input.update.keepWorktree === undefined
+          ? {}
+          : { keepWorktree: input.update.keepWorktree }),
+      };
   }
+}
+
+function failureDetail(error: unknown): string {
+  if (typeof error === "object" && error !== null && "cause" in error) {
+    const cause = error.cause;
+    if (typeof cause === "string" && cause.trim().length > 0) return cause;
+  }
+  return errorMessage(error);
 }
 
 function resultFromThread(input: {
@@ -114,7 +132,13 @@ function resultFromThread(input: {
   readonly sequence: number;
   readonly thread: Pick<
     OrchestrationV2AppThread,
-    "id" | "title" | "titleRegeneration" | "linkedPullRequest" | "updatedAt"
+    | "id"
+    | "title"
+    | "titleRegeneration"
+    | "linkedPullRequest"
+    | "projectId"
+    | "worktreePath"
+    | "updatedAt"
   >;
 }): ThreadMetadataMcpUpdateResult {
   return {
@@ -123,6 +147,8 @@ function resultFromThread(input: {
     commandId: input.commandId,
     sequence: input.sequence,
     title: input.thread.title,
+    projectId: input.thread.projectId,
+    worktreePath: input.thread.worktreePath,
     titleRegeneration:
       input.thread.titleRegeneration === undefined || input.thread.titleRegeneration === null
         ? null
@@ -196,7 +222,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((error) =>
           failure(
             "orchestration_error",
-            `Unable to ${input.action} for thread ${threadId}: ${errorMessage(error)}`,
+            `Unable to ${input.action} for thread ${threadId}: ${failureDetail(error)}`,
           ),
         ),
       );

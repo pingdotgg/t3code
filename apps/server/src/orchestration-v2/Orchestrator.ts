@@ -2791,6 +2791,79 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    // A project move with no worktree runs the next turn in the destination
+    // project. That is a workspace change even though worktreePath stays null,
+    // so the live provider session has to detach. keepWorktree leaves the
+    // checkout, and the session, where they are.
+    let moveChangesWorkspace = false;
+    if (
+      command.type === "thread.metadata.update" &&
+      command.projectId !== undefined &&
+      command.projectId !== thread.projectId
+    ) {
+      if (thread.lineage.relationshipToParent === "subagent") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is a subagent. Move its parent thread instead.`,
+        });
+      }
+      const destination = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
+      if (Option.isNone(destination) || destination.value.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `No project ${command.projectId}.`,
+        });
+      }
+      const family = yield* projectionStore
+        .getShellSnapshot({ projectId: thread.projectId })
+        .pipe(mapDispatchError(command));
+      const child = [...family.threads, ...family.archivedThreads].find(
+        (candidate) =>
+          candidate.lineage.parentThreadId === thread.id &&
+          candidate.lineage.relationshipToParent === "subagent",
+      );
+      if (child !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has subagent ${child.id}. Move is refused while a child thread still belongs to this project.`,
+        });
+      }
+      const shell = yield* projectionStore
+        .getThreadShell(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (shell === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} could not be read.`,
+        });
+      }
+      const busy =
+        shell.activeRunId !== null ||
+        shell.status === "preparing" ||
+        shell.status === "queued" ||
+        shell.status === "starting" ||
+        shell.status === "running" ||
+        shell.status === "waiting";
+      if (busy) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is ${shell.status}. Stop it before moving it to another project.`,
+        });
+      }
+      if (thread.worktreePath !== null && command.keepWorktree !== true) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a worktree at ${thread.worktreePath}. Pass keepWorktree to move it without changing that checkout.`,
+        });
+      }
+      moveChangesWorkspace = thread.worktreePath === null;
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -2956,8 +3029,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.archive" ||
       command.type === "thread.settle" ||
       (command.type === "thread.metadata.update" &&
-        command.worktreePath !== undefined &&
-        command.worktreePath !== thread.worktreePath);
+        ((command.worktreePath !== undefined && command.worktreePath !== thread.worktreePath) ||
+          moveChangesWorkspace));
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
@@ -3241,6 +3314,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -3710,8 +3784,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
         : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+            ((command.worktreePath !== undefined && command.worktreePath !== thread.worktreePath) ||
+              moveChangesWorkspace)
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])

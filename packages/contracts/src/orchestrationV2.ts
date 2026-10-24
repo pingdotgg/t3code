@@ -2740,6 +2740,12 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    /**
+     * Move the thread to this project. Absent leaves membership unchanged.
+     * A worktree stays put only when keepWorktree is true; otherwise the move is rejected.
+     */
+    projectId: Schema.optional(ProjectId),
+    keepWorktree: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

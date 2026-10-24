@@ -99,10 +99,12 @@ import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesys
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { threadEnvironment } from "../state/threads";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useNewProject } from "../hooks/useNewProject";
@@ -204,6 +206,7 @@ import {
   sourceControlHostIcon,
 } from "./CommandPaletteAddProject";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
+import { buildThreadMoveTargets } from "./threadActionMenu.logic";
 import {
   APPEARANCE_OPTIONS,
   notifyThemeSaveFailure,
@@ -513,6 +516,9 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
+    reportFailure: false,
+  });
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -1399,6 +1405,57 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
+    const moveTargets =
+      activeThreadServerConfig?.environment.capabilities.threadProjectMove === true
+        ? buildThreadMoveTargets(projects, thread)
+        : [];
+    if (moveTargets.length > 0 && thread.lineage.relationshipToParent !== "subagent") {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:move-thread-project",
+        searchTerms: ["move", "project", "reassign", "no project"],
+        title: "Move to project…",
+        disabled:
+          !threadRuntimeCanArchive(thread.runtime) ||
+          !readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
+        icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "projects",
+            label: "Projects",
+            items: moveTargets.map((target) => ({
+              kind: "action" as const,
+              value: `action:move-thread-project:${target.projectId}`,
+              searchTerms: [target.label, "move", "project"],
+              title: target.label,
+              icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+              run: async () => {
+                const moved = await updateThreadMetadata({
+                  environmentId: thread.environmentId,
+                  input: {
+                    threadId: thread.id,
+                    projectId: target.projectId,
+                    ...(thread.worktreePath ? { keepWorktree: true } : {}),
+                  },
+                });
+                if (moved._tag === "Failure") {
+                  if (!isAtomCommandInterrupted(moved)) throw squashAtomCommandFailure(moved);
+                  return;
+                }
+                toastManager.add({
+                  type: "success",
+                  title: `Moved to ${target.label}`,
+                  description: thread.worktreePath
+                    ? "The checkout stays where it is."
+                    : "The next message starts in that project.",
+                });
+              },
+            })),
+          },
+        ],
+      });
+    }
   }
 
   actionItems.push({

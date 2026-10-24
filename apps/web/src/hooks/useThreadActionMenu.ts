@@ -17,6 +17,7 @@ import { useRouter } from "@tanstack/react-router";
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  buildThreadMoveTargets,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -29,6 +30,7 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsThreadProjectMove,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
   useProjects,
@@ -128,6 +130,13 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+      const moveTargets = readEnvironmentSupportsThreadProjectMove(threadRef.environmentId)
+        ? buildThreadMoveTargets(projects, thread)
+        : [];
+      const canMoveProject =
+        moveTargets.length > 0 &&
+        threadRuntimeCanArchive(thread.runtime) &&
+        thread.lineage.relationshipToParent !== "subagent";
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         branch: thread.branch ?? null,
@@ -139,6 +148,8 @@ export function useThreadActionMenu(input: {
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
+        canMoveProject,
+        moveTargets,
         supports,
         snoozePresets,
       });
@@ -153,6 +164,34 @@ export function useThreadActionMenu(input: {
           "Thread action unavailable",
           new Error("This connection cannot change threads."),
         );
+        return;
+      }
+      if (action.startsWith("move-project:")) {
+        const target = moveTargets.find(
+          (candidate) => `move-project:${candidate.projectId}` === action,
+        );
+        if (!target) return;
+        const moved = await updateThreadMetadata({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            projectId: target.projectId,
+            ...(thread.worktreePath ? { keepWorktree: true } : {}),
+          },
+        });
+        if (moved._tag === "Failure" && !isAtomCommandInterrupted(moved)) {
+          failureToast("Failed to move thread", squashAtomCommandFailure(moved));
+          return;
+        }
+        if (moved._tag === "Success") {
+          toastManager.add({
+            type: "success",
+            title: `Moved to ${target.label}`,
+            description: thread.worktreePath
+              ? "The checkout stays where it is."
+              : "The next message starts in that project.",
+          });
+        }
         return;
       }
       if (action.startsWith("snooze:")) {

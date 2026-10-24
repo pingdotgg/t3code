@@ -315,6 +315,13 @@ export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentI
   );
 }
 
+export function readEnvironmentSupportsThreadProjectMove(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadProjectMove === true
+  );
+}
+
 export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

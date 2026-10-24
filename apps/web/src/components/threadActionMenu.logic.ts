@@ -1,5 +1,33 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+
+export interface ThreadMoveTarget {
+  readonly projectId: ProjectId;
+  readonly label: string;
+}
+
+export function buildThreadMoveTargets<
+  TProject extends {
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+    readonly title: string;
+    readonly isScratch?: true;
+  },
+>(
+  projects: ReadonlyArray<TProject>,
+  thread: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+): ReadonlyArray<ThreadMoveTarget> {
+  return projects
+    .filter(
+      (project) =>
+        project.environmentId === thread.environmentId && project.id !== thread.projectId,
+    )
+    .map((project) => ({
+      projectId: project.id,
+      label: project.isScratch === true ? "No project" : project.title,
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
 
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
@@ -16,6 +44,8 @@ export type ThreadActionMenuId =
   | `snooze:${string}`
   | "unsnooze"
   | "rename"
+  | "move-project"
+  | `move-project:${string}`
   | "regenerate-title"
   | "mark-unread"
   | "copy"
@@ -78,6 +108,8 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  readonly canMoveProject: boolean;
+  readonly moveTargets: ReadonlyArray<ThreadMoveTarget>;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -204,6 +236,24 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
+    ...(state.moveTargets.length > 0
+      ? [
+          {
+            id: "move-project" as const,
+            label: "Move to project…",
+            icon: "folder-tree",
+            disabled: !state.canMoveProject,
+            ...(state.canMoveProject
+              ? {
+                  children: state.moveTargets.map((target) => ({
+                    id: `move-project:${target.projectId}` as const,
+                    label: target.label,
+                  })),
+                }
+              : {}),
+          },
+        ]
+      : []),
     { id: "project-settings", label: "Project settings", icon: "settings" },
     {
       id: "archive",

@@ -140,6 +140,7 @@ import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  buildThreadMoveTargets,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -2359,6 +2360,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const moveTargets =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadProjectMove ===
+          true
+            ? buildThreadMoveTargets(projects, thread)
+            : [];
+        const canMoveProject =
+          moveTargets.length > 0 &&
+          threadRuntimeCanArchive(thread.runtime) &&
+          thread.lineage.relationshipToParent !== "subagent";
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -2388,6 +2398,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
+              canMoveProject,
+              moveTargets,
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2402,6 +2414,41 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        if (clicked.value?.startsWith("move-project:")) {
+          const target = moveTargets.find(
+            (candidate) => `move-project:${candidate.projectId}` === clicked.value,
+          );
+          if (!target) return;
+          const result = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              projectId: target.projectId,
+              ...(thread.worktreePath ? { keepWorktree: true } : {}),
+            },
+          });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to move thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+            return;
+          }
+          if (result._tag === "Success") {
+            toastManager.add({
+              type: "success",
+              title: `Moved to ${target.label}`,
+              description: thread.worktreePath
+                ? "The checkout stays where it is."
+                : "The next message starts in that project.",
+            });
+          }
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"

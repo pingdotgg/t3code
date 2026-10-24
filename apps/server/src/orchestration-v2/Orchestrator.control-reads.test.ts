@@ -1367,3 +1367,378 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
   }).pipe(Effect.provide(layerTest)),
 );
+
+const createProject = (projectId: ProjectId, workspaceRoot: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      INSERT INTO projection_projects (
+        project_id, title, workspace_root, default_model_selection_json,
+        scripts_json, created_at, updated_at, deleted_at
+      ) VALUES (
+        ${projectId}, ${projectId}, ${workspaceRoot}, NULL,
+        '[]', ${now}, ${now}, NULL
+      )
+    `;
+  });
+
+const createThread = (input: {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly worktreePath?: string | null;
+}) =>
+  Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
+    orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create:${input.threadId}`),
+      threadId: input.threadId,
+      projectId: input.projectId,
+      title: "Movable",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: input.worktreePath ? "feature" : null,
+      worktreePath: input.worktreePath ?? null,
+      createdBy: "user",
+      creationSource: "web",
+    }),
+  );
+
+it.effect("moves an idle thread into another project and lists it there", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = ProjectId.make("project:move-source");
+    const destinationId = ProjectId.make("project:move-destination");
+    const threadId = ThreadId.make("thread:move");
+    yield* createProject(sourceId, "/work/move-source");
+    yield* createProject(destinationId, "/work/move-destination");
+    yield* createThread({ threadId, projectId: sourceId });
+
+    const missing = yield* orchestrator
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-missing-project"),
+        threadId,
+        projectId: ProjectId.make("project:missing"),
+      })
+      .pipe(Effect.flip);
+    assert.equal(missing.cause, "No project project:missing.");
+
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("move-busy-message"),
+      threadId,
+      messageId: MessageId.make("move-busy-message"),
+      text: "Still working",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const busy = yield* orchestrator
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-while-busy"),
+        threadId,
+        projectId: destinationId,
+      })
+      .pipe(Effect.flip);
+    assert.ok(
+      typeof busy.cause === "string" && busy.cause.includes("Stop it before moving"),
+      String(busy.cause),
+    );
+    const runId = (yield* projections.getThreadProjection(threadId)).runs[0]!.id;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("move-stop"),
+      threadId,
+      runId,
+    });
+
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("move-thread"),
+      threadId,
+      projectId: destinationId,
+    });
+    assert.equal((yield* projections.getThread(threadId)).projectId, destinationId);
+    assert.equal((yield* projections.getThreadShell(threadId))?.projectId, destinationId);
+    const destination = yield* orchestrator.getShellSnapshot({ projectId: destinationId });
+    const source = yield* orchestrator.getShellSnapshot({ projectId: sourceId });
+    assert.ok(destination.threads.some((thread) => thread.id === threadId));
+    assert.equal(
+      source.threads.some((thread) => thread.id === threadId),
+      false,
+    );
+
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("move-again"),
+      threadId,
+      projectId: destinationId,
+    });
+    assert.equal((yield* projections.getThread(threadId)).projectId, destinationId);
+
+    const removedId = ProjectId.make("project:move-removed");
+    yield* createProject(removedId, "/work/move-removed");
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE projection_projects SET deleted_at = ${DateTime.formatIso(yield* DateTime.now)} WHERE project_id = ${removedId}`;
+    const removed = yield* orchestrator
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-deleted-project"),
+        threadId,
+        projectId: removedId,
+      })
+      .pipe(Effect.flip);
+    assert.equal(removed.cause, `No project ${removedId}.`);
+    assert.equal((yield* projections.getThread(threadId)).projectId, destinationId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses to move a thread that still has a subagent in the same project", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = ProjectId.make("project:parent-source");
+    const destinationId = ProjectId.make("project:parent-destination");
+    const threadId = ThreadId.make("thread:parent-move");
+    const childId = ThreadId.make("thread:parent-move-child");
+    yield* createProject(sourceId, "/work/parent-source");
+    yield* createProject(destinationId, "/work/parent-destination");
+    yield* createThread({ threadId, projectId: sourceId });
+    yield* createThread({ threadId: childId, projectId: sourceId });
+    const child = yield* projections.getThread(childId);
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("mark-child-subagent"),
+      type: "thread.metadata-updated",
+      threadId: childId,
+      occurredAt: now,
+      payload: {
+        ...child,
+        lineage: {
+          parentThreadId: threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: threadId,
+        },
+        updatedAt: now,
+      },
+    });
+
+    const refused = yield* orchestrator
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-parent-with-child"),
+        threadId,
+        projectId: destinationId,
+      })
+      .pipe(Effect.flip);
+    assert.ok(
+      typeof refused.cause === "string" && refused.cause.includes(childId),
+      String(refused.cause),
+    );
+    assert.equal((yield* projections.getThread(threadId)).projectId, sourceId);
+    assert.equal((yield* projections.getThread(childId)).projectId, sourceId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses to move a worktree thread unless keepWorktree is set", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = ProjectId.make("project:worktree-source");
+    const destinationId = ProjectId.make("project:worktree-destination");
+    const threadId = ThreadId.make("thread:worktree-move");
+    yield* createProject(sourceId, "/work/worktree-source");
+    yield* createProject(destinationId, "/work/worktree-destination");
+    yield* createThread({
+      threadId,
+      projectId: sourceId,
+      worktreePath: "/work/worktree-source/wt",
+    });
+
+    const refused = yield* orchestrator
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-worktree-refused"),
+        threadId,
+        projectId: destinationId,
+      })
+      .pipe(Effect.flip);
+    assert.ok(
+      typeof refused.cause === "string" && refused.cause.includes("keepWorktree"),
+      String(refused.cause),
+    );
+    assert.equal((yield* projections.getThread(threadId)).projectId, sourceId);
+
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("move-worktree-kept"),
+      threadId,
+      projectId: destinationId,
+      keepWorktree: true,
+    });
+    const moved = yield* projections.getThread(threadId);
+    assert.equal(moved.projectId, destinationId);
+    assert.equal(moved.worktreePath, "/work/worktree-source/wt");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses to move a subagent thread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = ProjectId.make("project:subagent-source");
+    const destinationId = ProjectId.make("project:subagent-destination");
+    const threadId = ThreadId.make("thread:subagent-move");
+    const parentId = ThreadId.make("thread:subagent-parent");
+    yield* createProject(sourceId, "/work/subagent-source");
+    yield* createProject(destinationId, "/work/subagent-destination");
+    yield* createThread({ threadId, projectId: sourceId });
+    const thread = yield* projections.getThread(threadId);
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("mark-subagent"),
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...thread,
+        lineage: {
+          parentThreadId: parentId,
+          relationshipToParent: "subagent",
+          rootThreadId: parentId,
+        },
+        updatedAt: now,
+      },
+    });
+
+    const refused = yield* orchestrator
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-subagent"),
+        threadId,
+        projectId: destinationId,
+      })
+      .pipe(Effect.flip);
+    assert.ok(
+      typeof refused.cause === "string" && refused.cause.includes("subagent"),
+      String(refused.cause),
+    );
+    assert.equal((yield* projections.getThread(threadId)).projectId, sourceId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+const attachReadySession = (threadId: ThreadId, sessionId: string, cwd: string) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make(`attach:${sessionId}`),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderSessionId.make(sessionId),
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd,
+        model: "gpt-5.1-codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+  });
+
+const detachReasons = (commandId: CommandId) =>
+  Effect.gen(function* () {
+    const events = yield* EventSink.EventSinkV2;
+    const committed = yield* events.readByCommandId({ commandId }).pipe(Stream.runCollect);
+    return [...committed].flatMap((stored) =>
+      stored.event.type === "provider-session.detached" ? [stored.event.payload.reason] : [],
+    );
+  });
+
+it.effect("detaches the provider session only when a project move changes the workspace", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = ProjectId.make("project:session-source");
+    const destinationId = ProjectId.make("project:session-destination");
+    const threadId = ThreadId.make("thread:session-move");
+    yield* createProject(sourceId, "/work/session-source");
+    yield* createProject(destinationId, "/work/session-destination");
+    yield* createThread({ threadId, projectId: sourceId });
+    yield* attachReadySession(threadId, "session:move-workspace", "/work/session-source");
+
+    const moveId = CommandId.make("move-detaches-session");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: moveId,
+      threadId,
+      projectId: destinationId,
+    });
+    assert.deepEqual(yield* detachReasons(moveId), ["Workspace changed."]);
+    assert.equal(
+      (yield* projections.getThreadProviderContext(threadId)).providerSessions.length,
+      0,
+    );
+    assert.equal((yield* projections.getThread(threadId)).projectId, destinationId);
+
+    const keptSourceId = ProjectId.make("project:session-kept-source");
+    const keptDestinationId = ProjectId.make("project:session-kept-destination");
+    const keptThreadId = ThreadId.make("thread:session-keep-worktree");
+    yield* createProject(keptSourceId, "/work/session-kept-source");
+    yield* createProject(keptDestinationId, "/work/session-kept-destination");
+    yield* createThread({
+      threadId: keptThreadId,
+      projectId: keptSourceId,
+      worktreePath: "/work/session-kept-source/wt",
+    });
+    yield* attachReadySession(
+      keptThreadId,
+      "session:keep-worktree",
+      "/work/session-kept-source/wt",
+    );
+    const keptId = CommandId.make("move-keeps-session");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: keptId,
+      threadId: keptThreadId,
+      projectId: keptDestinationId,
+      keepWorktree: true,
+    });
+    assert.deepEqual(yield* detachReasons(keptId), []);
+    assert.equal(
+      (yield* projections.getThreadProviderContext(keptThreadId)).providerSessions.length,
+      1,
+    );
+
+    const sharedSourceId = ProjectId.make("project:session-shared-source");
+    const sharedDestinationId = ProjectId.make("project:session-shared-destination");
+    const sharedThreadId = ThreadId.make("thread:session-shared-root");
+    yield* createProject(sharedSourceId, "/work/session-shared");
+    yield* createProject(sharedDestinationId, "/work/session-shared");
+    yield* createThread({ threadId: sharedThreadId, projectId: sharedSourceId });
+    yield* attachReadySession(sharedThreadId, "session:shared-root", "/work/session-shared");
+    const sharedId = CommandId.make("move-same-workspace");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: sharedId,
+      threadId: sharedThreadId,
+      projectId: sharedDestinationId,
+    });
+    assert.deepEqual(yield* detachReasons(sharedId), ["Workspace changed."]);
+    assert.equal(
+      (yield* projections.getThreadProviderContext(sharedThreadId)).providerSessions.length,
+      0,
+    );
+    assert.equal((yield* projections.getThread(sharedThreadId)).projectId, sharedDestinationId);
+  }).pipe(Effect.provide(layerTest)),
+);

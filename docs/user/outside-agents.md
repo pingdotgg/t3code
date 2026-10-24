@@ -114,6 +114,17 @@ the message to read it from stdin.
 2 when the agent waits for an answer you give in the app. Add `--json` for a
 result that always includes the thread id.
 
+Move an idle thread into another project with `t3 thread move <thread-id> <project>`,
+or with **Move to project…** in the thread menu and the command palette. The
+project is an id or a path inside that project. Stop a running turn first. A
+thread that has its own worktree cannot be moved unless you pass
+`--keep-worktree`. With that option, the thread moves and the existing checkout
+stays in place, so the next turn still runs there. The menu and the command
+palette do the same. A move without a worktree ends the thread's provider
+session, so the next turn starts in the destination project. A subagent stays
+with its parent, and a thread that still has a subagent in the current project
+cannot be moved.
+
 ## Remove an agent
 
 Approved agents appear under **Settings → Connections** like other clients.

@@ -163,6 +163,12 @@ const ThreadLaunchResult = Schema.Struct({
   runId: Schema.NullOr(RunId),
 });
 
+const ThreadMoveResult = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  worktreePath: Schema.NullOr(Schema.String),
+});
+
 const toolFailureDetail = (result: typeof ToolResult.Type) => {
   const text = result.content?.find((part) => part.text !== undefined)?.text ?? "";
   return Option.match(decodeFailureText(text), {
@@ -699,12 +705,58 @@ const threadShowCommand = Command.make("show", {
   ),
 );
 
+const keepWorktreeFlag = Flag.Boolean("keep-worktree").pipe(
+  Flag.withDescription(
+    "Move a thread that has a worktree and leave that checkout in place. The next turn still runs there.",
+  ),
+  Flag.withDefault(false),
+);
+
+const threadMoveCommand = Command.make("move", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  project: Argument.String("project").pipe(
+    Argument.withDescription("Destination project id or a path inside that project."),
+  ),
+  keepWorktree: keepWorktreeFlag,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Move an idle thread into another project. Refuses a turn in progress, a subagent, a thread that still has a subagent, or a worktree unless --keep-worktree.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.move")(function* (tools) {
+          const project = yield* resolveProject(tools, flags.project);
+          const moved = yield* tools.call(
+            "t3_thread_update",
+            {
+              threadId,
+              action: "move_project",
+              projectId: project.id,
+              ...(flags.keepWorktree ? { keepWorktree: true } : {}),
+            },
+            ThreadMoveResult,
+          );
+          yield* flags.json
+            ? printJson(moved)
+            : Console.log(`${moved.threadId}  ${moved.projectId}`);
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 export const threadCommand = Command.make("thread").pipe(
-  Command.withDescription("Start, message, and read threads on the running server."),
+  Command.withDescription("Start, message, read, and move threads on the running server."),
   Command.withSubcommands([
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
     threadShowCommand,
+    threadMoveCommand,
   ]),
 );

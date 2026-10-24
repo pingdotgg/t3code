@@ -88,6 +88,7 @@ import { isMacPlatform } from "../lib/utils";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
+  readEnvironmentSupportsThreadProjectMove,
   readThreadShell,
   useProjects,
   useThreadShells,
@@ -130,6 +131,7 @@ import { projectEnvironment } from "../state/projects";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
+import { buildThreadMoveTargets } from "./threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { RelativeTime } from "./RelativeTime";
 import { Kbd } from "./ui/kbd";
@@ -1289,6 +1291,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const environmentProjects = useProjects();
   const router = useRouter();
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
@@ -2159,12 +2162,38 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         thread.environmentId,
         AuthOrchestrationOperateScope,
       );
+      const moveTargets = readEnvironmentSupportsThreadProjectMove(thread.environmentId)
+        ? buildThreadMoveTargets(environmentProjects, thread)
+        : [];
+      const canMoveProject =
+        moveTargets.length > 0 &&
+        canOperateThread &&
+        threadRuntimeCanArchive(thread.runtime) &&
+        thread.lineage.relationshipToParent !== "subagent";
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
+          ...(moveTargets.length > 0
+            ? [
+                {
+                  id: "move-project",
+                  label: "Move to project…",
+                  icon: "folder-tree" as const,
+                  disabled: !canMoveProject,
+                  ...(canMoveProject
+                    ? {
+                        children: moveTargets.map((target) => ({
+                          id: `move-project:${target.projectId}`,
+                          label: target.label,
+                        })),
+                      }
+                    : {}),
+                },
+              ]
+            : []),
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2213,6 +2242,42 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "rename") {
         startThreadRename(threadKey, thread.title);
+        return;
+      }
+
+      if (clicked?.startsWith("move-project:")) {
+        const target = moveTargets.find(
+          (candidate) => `move-project:${candidate.projectId}` === clicked,
+        );
+        if (!target) return;
+        const moved = await updateThreadMetadata({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            projectId: target.projectId,
+            ...(thread.worktreePath ? { keepWorktree: true } : {}),
+          },
+        });
+        if (moved._tag === "Failure" && !isAtomCommandInterrupted(moved)) {
+          const error = squashAtomCommandFailure(moved);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to move thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+          return;
+        }
+        if (moved._tag === "Success") {
+          toastManager.add({
+            type: "success",
+            title: `Moved to ${target.label}`,
+            description: thread.worktreePath
+              ? "The checkout stays where it is."
+              : "The next message starts in that project.",
+          });
+        }
         return;
       }
 
