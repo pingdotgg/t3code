@@ -88,6 +88,47 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("answers a call while a long call on the same connection is pending", () =>
+    Effect.gen(function* () {
+      const waitStarted = Promise.withResolvers<void>();
+      const waitResponse = Promise.withResolvers<Response>();
+      const reply = (id: unknown, result: unknown) =>
+        new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), {
+          headers: { "content-type": "application/json", "mcp-session-id": "session-42" },
+        });
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: (_url, init) => {
+          const request = JSON.parse(String(init?.body)) as {
+            readonly id?: unknown;
+            readonly method?: unknown;
+          };
+          if (request.method === "initialize") {
+            return Promise.resolve(reply(request.id, { protocolVersion: "2025-06-18" }));
+          }
+          if (request.method === "tools/call") {
+            waitStarted.resolve();
+            return waitResponse.promise;
+          }
+          return Promise.resolve(reply(request.id, { tools: [] }));
+        },
+      });
+      const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
+      yield* bridge.message({ connectionId, method: "initialize" });
+
+      const wait = yield* bridge
+        .message({ connectionId, method: "tools/call", params: { name: "t3_thread_wait" } })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => waitStarted.promise);
+      expect(yield* bridge.message({ connectionId, method: "tools/list" })).toEqual({ tools: [] });
+
+      waitResponse.resolve(reply(2, { content: [] }));
+      expect(yield* Fiber.join(wait)).toEqual({ content: [] });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("rejects unknown servers, connections, and oversized messages", () =>
     Effect.gen(function* () {
       const bridge = yield* makeAcpMcpOverAcpBridge({

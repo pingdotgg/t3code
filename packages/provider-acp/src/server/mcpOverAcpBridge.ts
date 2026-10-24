@@ -92,11 +92,20 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         : Effect.succeed(connection);
     });
 
+  // Messages wait for the initialize handshake, then run concurrently so a short
+  // call does not queue behind a long one such as t3_thread_wait.
+  const untilNegotiated =
+    (connection: Connection) =>
+    <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+      Effect.suspend(() =>
+        connection.protocolVersion === null ? connection.mutex.withPermits(1)(effect) : effect,
+      );
+
   const send = (
     connection: Connection,
     message: unknown,
   ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> =>
-    connection.mutex.withPermits(1)(
+    untilNegotiated(connection)(
       Effect.gen(function* () {
         const body = JSON.stringify(message);
         if (Buffer.byteLength(body) > MAX_MESSAGE_BYTES) {
