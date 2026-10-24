@@ -2544,6 +2544,135 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
   }),
 );
 
+it.effect("tells a reader shown a held detail when the refresh behind it finds a change", () =>
+  Effect.gen(function* () {
+    let title = "original title";
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.sync(() => ({
+              ...hostedChangeRequest("body"),
+              title,
+              updatedAt:
+                title === "original title" ? "2026-07-02T00:00:00Z" : "2026-07-02T00:01:00Z",
+            })),
+        }),
+      ],
+    });
+
+    assert.strictEqual((yield* service.detail(reference)).title, "original title");
+    title = "changed title";
+    yield* TestClock.adjust("61 seconds");
+    // A visible panel's live refresh is a display read: it is answered from the held copy.
+    const reread = yield* service.subscribeRefreshes.pipe(
+      Stream.take(1),
+      Stream.mapEffect(() => service.detail(reference)),
+      Stream.runHead,
+      Effect.timeoutOption("5 minutes"),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    assert.strictEqual((yield* service.detail(reference)).title, "original title");
+    yield* TestClock.adjust("5 minutes");
+    const reached = Option.flatten(yield* Fiber.join(reread));
+    // The server did learn the change; only the reader still showing the held copy never heard.
+    assert.strictEqual((yield* service.detail(reference)).title, "changed title");
+    assert.strictEqual(
+      Option.map(reached, (detail) => detail.title).pipe(Option.getOrUndefined),
+      "changed title",
+    );
+  }),
+);
+
+it.effect("tells a held detail reader about a check change only when the refresh finds one", () =>
+  Effect.gen(function* () {
+    let status: "pending" | "success" = "pending";
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          // Hosts do not always move `updatedAt` when CI finishes.
+          getChangeRequest: () =>
+            Effect.sync(() => ({
+              ...hostedChangeRequest("body"),
+              checks: [{ name: "ci", status, description: null, url: null }],
+            })),
+        }),
+      ],
+    });
+    const nextNotice = <A, E>(then: Effect.Effect<A, E>) =>
+      service.subscribeRefreshes.pipe(
+        Stream.take(1),
+        Stream.mapEffect(() => then),
+        Stream.runHead,
+        Effect.timeoutOption("1 minute"),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+    yield* service.detail(reference);
+    yield* TestClock.adjust("61 seconds");
+    const quiet = yield* nextNotice(Effect.void);
+    yield* service.detail(reference);
+    yield* TestClock.adjust("1 minute");
+    assert.isTrue(Option.isNone(Option.flatten(yield* Fiber.join(quiet))));
+
+    status = "success";
+    yield* TestClock.adjust("1 second");
+    const reread = yield* nextNotice(service.detail(reference));
+    yield* service.detail(reference);
+    yield* TestClock.adjust("1 minute");
+    assert.deepStrictEqual(
+      Option.flatten(yield* Fiber.join(reread)).pipe(
+        Option.map((detail) => detail.checks.map((check) => check.status)),
+      ),
+      Option.some(["success"]),
+    );
+  }),
+);
+
+it.effect("a held detail's change notice does not leave checks readers on the cached list", () =>
+  Effect.gen(function* () {
+    let status: "pending" | "success" = "pending";
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const checks = () => [{ name: "ci", status, description: null, url: null }];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.sync(() => ({ ...hostedChangeRequest("body"), checks: checks() })),
+          getChangeRequestChecks: () =>
+            Effect.sync(() => ({ state: "open" as const, checks: checks() })),
+        }),
+      ],
+    });
+
+    yield* service.detail(reference);
+    yield* TestClock.adjust("61 seconds");
+    yield* service.checks(reference);
+    status = "success";
+    // The panel refetches checks on the notice, well inside the checks cache's lifetime.
+    const reread = yield* service.subscribeRefreshes.pipe(
+      Stream.take(1),
+      Stream.mapEffect(() => service.checks(reference)),
+      Stream.runHead,
+      Effect.timeoutOption("1 second"),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* service.detail(reference);
+    yield* TestClock.adjust("1 second");
+    assert.deepStrictEqual(
+      Option.flatten(yield* Fiber.join(reread)).pipe(
+        Option.map((result) => result?.checks.map((check) => check.status).join()),
+      ),
+      Option.some("success"),
+    );
+  }),
+);
+
 it.effect("keeps routed reads separate when the GitHub account changes", () =>
   Effect.gen(function* () {
     for (const operation of ["summary", "detail", "checks", "diff", "filesViewed"] as const) {

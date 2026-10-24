@@ -2630,7 +2630,14 @@ export const make = Effect.gen(function* () {
     return { serve, dropExpired };
   })();
 
-  const makeLastGoodRead = <A>(capacity: number) => {
+  // `observedAt` moves on every fetch, so it alone is no change worth telling readers about.
+  const sameReading = <A extends { readonly observedAt?: number | undefined }>(a: A, b: A) =>
+    a === b ||
+    JSON.stringify({ ...a, observedAt: undefined }) ===
+      JSON.stringify({ ...b, observedAt: undefined });
+  const makeLastGoodRead = <A extends { readonly observedAt?: number | undefined }>(
+    capacity: number,
+  ) => {
     const held = new Map<string, { readonly at: number; readonly value: A }>();
     const record = (key: string, value: A) =>
       Effect.map(Clock.currentTimeMillis, (at) => {
@@ -2673,11 +2680,26 @@ export const make = Effect.gen(function* () {
       key: string,
       effect: Effect.Effect<A, PullRequestError>,
       mode: "reuse" | "revalidate",
+      beforeNotice: Effect.Effect<void> = Effect.void,
     ) => {
       const snapshot = held.get(key);
       if (snapshot === undefined) return read(key, effect);
       if (mode === "reuse") return Effect.succeed(snapshot.value);
-      return revalidate(read(key, effect)).pipe(Effect.as(snapshot.value));
+      // The reader was answered with the held copy, so only a notice brings it what the
+      // refresh found. An unchanged refresh stays quiet, or every re-read would trigger another.
+      return revalidate(
+        read(key, effect).pipe(
+          Effect.flatMap((fresh) =>
+            sameReading(snapshot.value, fresh)
+              ? Effect.void
+              : beforeNotice.pipe(
+                  Effect.andThen(
+                    Effect.suspend(() => SubscriptionRef.set(pullRequestRefreshes, ++epochCounter)),
+                  ),
+                ),
+          ),
+        ),
+      ).pipe(Effect.as(snapshot.value));
     };
     return { peek: (key: string) => held.get(key)?.value, read, record, serveHeld };
   };
@@ -3133,7 +3155,8 @@ export const make = Effect.gen(function* () {
     );
     return input.allowStale === false
       ? read.pipe(Effect.tap((value) => lastGoodDetail.record(key, value)))
-      : lastGoodDetail.serveHeld(key, read, "revalidate");
+      : // Readers refetch checks on the notice, so a cached list must not outlive the change.
+        lastGoodDetail.serveHeld(key, read, "revalidate", Cache.invalidate(checksCache, key));
   };
 
   const activityCache = yield* Cache.makeWith(

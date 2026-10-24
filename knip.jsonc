@@ -49,6 +49,8 @@
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
+        // Loaded by path as a fetch-stubbing preload, never imported.
+        "test/fixtures/issue-8640/provider.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
       ],

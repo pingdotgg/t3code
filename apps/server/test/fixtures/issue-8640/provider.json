@@ -1,0 +1,38 @@
+{
+  "id": "pr_8640_fixture",
+  "number": 23210,
+  "title": "Claude sessions — original held title",
+  "changedTitle": "Claude sessions — automatically updated held title with a deliberately long description to exercise narrow screen wrapping",
+  "state": "open",
+  "draft": false,
+  "sourceBranch": "fix/issue-23151",
+  "targetBranch": "main",
+  "headOid": "13b099304a955c5bcce782ebd818d31ed3d1dac1",
+  "author": {
+    "kind": "local",
+    "actorId": "act_fixture",
+    "handle": "juliusmarminge",
+    "displayName": "Julius Marminge",
+    "avatarUrl": null
+  },
+  "createdAt": "2026-10-21T00:00:00.000Z",
+  "updatedAt": "2026-10-22T00:00:00.000Z",
+  "changedUpdatedAt": "2026-10-22T00:01:00.000Z",
+  "version": 1,
+  "description": "Deterministic public fixture for automatic held pull request detail refresh. No public pull request is modified.",
+  "closedAt": null,
+  "mergedAt": null,
+  "sourceRepo": null,
+  "observedBaseOid": "ed9b7ca9c53843ea1e6b466bf7d52928d10e7db0",
+  "mergeRoute": "native",
+  "lockedAt": null,
+  "capabilities": {
+    "comment": true,
+    "review": true,
+    "merge": true,
+    "edit": true,
+    "moderate": true
+  },
+  "reviewers": [],
+  "labels": []
+}
