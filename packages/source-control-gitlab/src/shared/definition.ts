@@ -1,12 +1,12 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   changeRequestUrlBelow,
-  defineSourceControlClient,
+  defineSourceControl,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   projectChangeRequestHost,
-} from "@t3tools/source-control-core/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
@@ -18,7 +18,7 @@ const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:
 
 const KIND = SourceControlProviderKind.make("gitlab");
 
-export const definition = defineSourceControlClient({
+export const definition = defineSourceControl({
   kind: KIND,
   label: "GitLab",
   pickerLabel: "GitLab",

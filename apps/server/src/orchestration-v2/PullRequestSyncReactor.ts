@@ -14,7 +14,7 @@ import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
-import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -44,7 +44,7 @@ const QUIET_AFTER_MS = 30 * 60 * 1_000;
 const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 
 const isChangeRequestCloseCommand = (command: string) =>
-  sourceControlClients.definitions.some(
+  sourceControlDefinitions.definitions.some(
     (definition) => definition.changeRequestCloseCommand?.test(command) === true,
   );
 
@@ -60,7 +60,7 @@ interface LinkEntry {
 /** Another layer of the stack `url` belongs to, in its host's canonical shape. */
 function siblingChangeRequestUrl(url: string, number: number): string | null {
   if (!Number.isSafeInteger(number) || number < 1) return null;
-  const parsed = sourceControlClients.parseChangeRequestUrl(url);
+  const parsed = sourceControlDefinitions.parseChangeRequestUrl(url);
   if (parsed === null) return null;
   const { definition, link } = parsed;
   return definition.changeRequestUrl({

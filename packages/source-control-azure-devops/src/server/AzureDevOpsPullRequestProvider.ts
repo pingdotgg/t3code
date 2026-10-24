@@ -33,7 +33,7 @@ import type {
   AzureDevOpsPullRequest,
   AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
-import { definition } from "../client/definition.ts";
+import { definition } from "../shared/definition.ts";
 
 /**
  * Every file is two `az` invocations, each paying a Python interpreter's start-up, so reading them

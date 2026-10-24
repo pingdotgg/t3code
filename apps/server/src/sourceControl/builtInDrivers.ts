@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
-import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControlClients.ts";
+import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControlDefinitions.ts";
 
 export interface SourceControlDriverEntry {
   readonly driver: Pick<SourceControlDriver, "kind" | "definition">;

@@ -1,11 +1,11 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   changeRequestUrlBelow,
-  defineSourceControlClient,
+  defineSourceControl,
   isChangeRequestAuthorityOfProject,
   parseChangeRequestPath,
   remoteWebOrigin,
-} from "@t3tools/source-control-core/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
@@ -63,7 +63,7 @@ function checkoutCommandId(args: string): string | null {
 
 const KIND = SourceControlProviderKind.make("azure-devops");
 
-export const definition = defineSourceControlClient({
+export const definition = defineSourceControl({
   kind: KIND,
   label: "Azure DevOps",
   pickerLabel: "Azure DevOps",

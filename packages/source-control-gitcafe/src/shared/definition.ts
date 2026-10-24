@@ -8,12 +8,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   changeRequestUrlBelow,
-  defineSourceControlClient,
+  defineSourceControl,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   projectChangeRequestHost,
-} from "@t3tools/source-control-core/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
 /** GitCafe has no self-hosted installs: production and staging are its only hosts. */
@@ -38,7 +38,7 @@ export const settings = makeProviderSettingsSchema({
 });
 export type GitCafeSettings = typeof settings.Type;
 
-export const definition = defineSourceControlClient({
+export const definition = defineSourceControl({
   kind: KIND,
   label: "GitCafe",
   pickerLabel: "GitCafe",

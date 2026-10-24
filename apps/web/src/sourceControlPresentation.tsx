@@ -3,7 +3,7 @@ import type { SourceControlProviderInfo } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type {
   ChangeRequestTerminology,
-  SourceControlClientDefinition,
+  SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { SourceControlIconArtwork } from "./components/SourceControlIconArtwork";
@@ -12,10 +12,10 @@ export type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-co
 
 type SourceControlIcon = ElementType<{ className?: string }>;
 
-const SOURCE_CONTROL_ICONS = new WeakMap<SourceControlClientDefinition, SourceControlIcon>();
+const SOURCE_CONTROL_ICONS = new WeakMap<SourceControlDefinition, SourceControlIcon>();
 
 /** One component per definition, so a host's icon keeps its identity across renders. */
-export function sourceControlIcon(definition: SourceControlClientDefinition): SourceControlIcon {
+export function sourceControlIcon(definition: SourceControlDefinition): SourceControlIcon {
   const artwork = definition.icon;
   if (artwork === null) return PullRequestGlyph.pullRequest;
   let Icon = SOURCE_CONTROL_ICONS.get(definition);
@@ -29,14 +29,14 @@ export function sourceControlIcon(definition: SourceControlClientDefinition): So
 }
 
 export interface SourceControlPresentation {
-  readonly definition: SourceControlClientDefinition;
+  readonly definition: SourceControlDefinition;
   readonly providerName: string;
   readonly terminology: ChangeRequestTerminology;
   readonly Icon: SourceControlIcon;
 }
 
 function presentDefinition(
-  definition: SourceControlClientDefinition,
+  definition: SourceControlDefinition,
   providerName: string,
 ): SourceControlPresentation {
   return {

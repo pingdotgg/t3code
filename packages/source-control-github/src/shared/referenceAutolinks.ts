@@ -1,4 +1,4 @@
-import type { ReferenceAutolink } from "@t3tools/source-control-core/client/definition";
+import type { ReferenceAutolink } from "@t3tools/source-control-core/shared/definition";
 
 // GitHub's autolinked references: `#12`, `repo#12` and `owner/repo#12`; a SHA of 7 to 40
 // characters, optionally `repo@` or `owner/repo@` qualified; `@user` and `@org/team`.

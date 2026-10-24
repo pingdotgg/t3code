@@ -6,7 +6,7 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 import {
   parseGitRemoteHost,
   unknownRemoteProvider as unknownHostProvider,
-} from "@t3tools/source-control-core/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabChangeRequestTemplate from "./gitLabChangeRequestTemplate.ts";

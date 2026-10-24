@@ -194,7 +194,11 @@ export const hostCredentialSettingsFields = {
 export const HostCredentialSettings = Schema.Struct(hostCredentialSettingsFields);
 export type HostCredentialSettings = typeof HostCredentialSettings.Type;
 
-export interface SourceControlClientDefinition {
+/**
+ * What the server and every client know about a forge. It is plain data and pure functions so
+ * one copy serves both sides; a lint rule keeps UI runtimes out of `shared/`.
+ */
+export interface SourceControlDefinition {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
   readonly pickerLabel: string;
@@ -348,7 +352,7 @@ export function remoteWebOrigin(host: string, remoteUrl: string | undefined): st
   return `https://${host}`;
 }
 
-export function defineSourceControlClient<const Definition extends SourceControlClientDefinition>(
+export function defineSourceControl<const Definition extends SourceControlDefinition>(
   definition: Definition,
 ): Definition {
   return definition;
@@ -448,7 +452,7 @@ export function unknownRemoteProvider(remote: GitRemoteHost): SourceControlProvi
 
 /** What `definition` alone makes of a remote, for a host's own code that asks only about itself. */
 export function recognizeRemoteWith(
-  definition: Pick<SourceControlClientDefinition, "recognizeRemote">,
+  definition: Pick<SourceControlDefinition, "recognizeRemote">,
   remoteUrl: string,
 ): SourceControlProviderInfo | null {
   const remote = parseGitRemoteHost(remoteUrl);
@@ -463,7 +467,7 @@ function defaultRepositorySelector(
   return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
 }
 
-export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
+export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlDefinition = {
   kind: SourceControlProviderKind.make("unknown"),
   label: "source control",
   pickerLabel: "source control",
@@ -502,27 +506,27 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
 };
 
 export interface ParsedChangeRequest {
-  readonly definition: SourceControlClientDefinition;
+  readonly definition: SourceControlDefinition;
   readonly link: ParsedChangeRequestUrl;
 }
 
 export interface SourceControlMedia extends SourceControlMediaUrl {
-  readonly definition: SourceControlClientDefinition;
+  readonly definition: SourceControlDefinition;
 }
 
-export interface SourceControlClientRegistry {
-  readonly definitions: ReadonlyArray<SourceControlClientDefinition>;
-  readonly get: (kind: string | null | undefined) => SourceControlClientDefinition;
-  readonly find: (kind: string) => SourceControlClientDefinition | undefined;
-  readonly findByPublicHost: (hostname: string) => SourceControlClientDefinition | undefined;
+export interface SourceControlDefinitionRegistry {
+  readonly definitions: ReadonlyArray<SourceControlDefinition>;
+  readonly get: (kind: string | null | undefined) => SourceControlDefinition;
+  readonly find: (kind: string) => SourceControlDefinition | undefined;
+  readonly findByPublicHost: (hostname: string) => SourceControlDefinition | undefined;
   /**
    * The host whose `publicHost` is `hostname` or a parent domain of it, such as GitHub for
    * `gist.github.com`: which host a link is on, not one T3 can read from.
    */
-  readonly findByPublicDomain: (hostname: string) => SourceControlClientDefinition | undefined;
+  readonly findByPublicDomain: (hostname: string) => SourceControlDefinition | undefined;
   /** The first host, in registry order, that reads `url` as one of its change requests. */
   readonly parseChangeRequestUrl: (url: string) => ParsedChangeRequest | null;
-  readonly findByChangeRequestUrl: (url: string) => SourceControlClientDefinition | undefined;
+  readonly findByChangeRequestUrl: (url: string) => SourceControlDefinition | undefined;
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
   readonly isSameChangeRequest: (left: string, right: string) => boolean;
   readonly changeRequestUrlFromReferenceAutolink: (url: string) => string | null;
@@ -535,7 +539,7 @@ export interface SourceControlClientRegistry {
   readonly repositoryKeyFromRemote: (remoteUrl: string) => string;
   readonly canonicalRepositoryKey: (key: string) => string;
   /** The host that has more than one spelling of `key`, if any does. */
-  readonly findByRepositoryKey: (key: string) => SourceControlClientDefinition | undefined;
+  readonly findByRepositoryKey: (key: string) => SourceControlDefinition | undefined;
   readonly repositorySelector: (
     identity: RepositorySelectorIdentity | null | undefined,
   ) => string | null;
@@ -557,9 +561,9 @@ function httpUrl(value: string): URL | null {
 }
 
 function inOrder(
-  definitions: ReadonlyArray<SourceControlClientDefinition>,
+  definitions: ReadonlyArray<SourceControlDefinition>,
   firstKinds: ReadonlyArray<SourceControlProviderKind> | undefined,
-): ReadonlyArray<SourceControlClientDefinition> {
+): ReadonlyArray<SourceControlDefinition> {
   const first = (firstKinds ?? []).flatMap(
     (kind) => definitions.find((definition) => definition.kind === kind) ?? [],
   );
@@ -574,14 +578,14 @@ function inOrder(
  * goes to the first that recognises it, in `recognizeRemotesIn` order and then the rest, because
  * one hostname can carry several hosts' labels.
  */
-export function makeSourceControlClientRegistry(
-  definitions: ReadonlyArray<SourceControlClientDefinition>,
+export function makeSourceControlDefinitionRegistry(
+  definitions: ReadonlyArray<SourceControlDefinition>,
   options?: {
     readonly claimChangeRequestUrlsFirst?: ReadonlyArray<SourceControlProviderKind>;
     readonly recognizeRemotesIn?: ReadonlyArray<SourceControlProviderKind>;
   },
-): SourceControlClientRegistry {
-  const byKind = new Map<string, SourceControlClientDefinition>();
+): SourceControlDefinitionRegistry {
+  const byKind = new Map<string, SourceControlDefinition>();
   for (const definition of definitions) {
     if (byKind.has(definition.kind)) {
       throw new Error(`Source control host '${definition.kind}' is defined more than once.`);

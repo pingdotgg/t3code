@@ -7,12 +7,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   changeRequestUrlBelow,
-  defineSourceControlClient,
+  defineSourceControl,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   projectChangeRequestHost,
-} from "@t3tools/source-control-core/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
@@ -63,7 +63,7 @@ export const settings = makeProviderSettingsSchema(
 );
 export type BitbucketSettings = typeof settings.Type;
 
-export const definition = defineSourceControlClient({
+export const definition = defineSourceControl({
   kind: KIND,
   label: "Bitbucket",
   pickerLabel: "Bitbucket",

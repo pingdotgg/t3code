@@ -25,7 +25,7 @@ import {
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 import { sourceControlClients } from "../sourceControlClients.ts";
-import type { SourceControlClientDefinition } from "../sourceControlClients.ts";
+import type { SourceControlDefinition } from "../sourceControlClients.ts";
 
 export type AddProjectRemoteSource = SourceControlProviderKind | "url";
 
@@ -204,7 +204,7 @@ export function getNewProjectPathPreview(newProjectsRoot: string, name: string):
 }
 
 export interface NewProjectPublishTarget {
-  readonly definition: SourceControlClientDefinition;
+  readonly definition: SourceControlDefinition;
   readonly owner: string | null;
 }
 

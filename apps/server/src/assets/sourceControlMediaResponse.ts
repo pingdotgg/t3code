@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { HttpServerResponse } from "effect/http";
 
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
-import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 const FORWARDED_REQUEST_HEADERS = ["range", "if-range"] as const;
 const FORWARDED_RESPONSE_HEADERS = [
@@ -34,7 +34,7 @@ export const sourceControlMediaResponse = Effect.fn(
       remainingSeconds > 0 ? `private, max-age=${remainingSeconds}` : "private, no-store",
     "x-content-type-options": "nosniff",
   };
-  const media = sourceControlClients.mediaUrl(asset.url);
+  const media = sourceControlDefinitions.mediaUrl(asset.url);
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
   const fetchMedia = drivers.find(({ driver }) => driver.kind === media?.definition.kind)?.instance
     .fetchMedia;

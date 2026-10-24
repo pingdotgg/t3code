@@ -6,7 +6,7 @@ import type { HttpClient, HttpClientError, HttpClientResponse } from "effect/htt
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 
-import type { SourceControlClientDefinition } from "../client/definition.ts";
+import type { SourceControlDefinition } from "../shared/definition.ts";
 
 import type { SourceControlProviderDiscoverySpec } from "./discovery.ts";
 import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
@@ -49,7 +49,7 @@ export type SourceControlDriverServices =
 
 export interface SourceControlDriver {
   readonly kind: SourceControlProviderKind;
-  readonly definition: SourceControlClientDefinition;
+  readonly definition: SourceControlDefinition;
   /**
    * Run once per server, in a scope that lasts as long as the server. State a host shares across
    * everything that talks to it, such as GitHub's quota reserve and rate-limit pause, lives in

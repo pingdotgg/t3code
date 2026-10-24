@@ -4,7 +4,7 @@ import type {
   PullRequestRef,
   RepositoryIdentity,
 } from "@t3tools/contracts";
-import type { ChangeRequestLink } from "@t3tools/source-control-core/client/definition";
+import type { ChangeRequestLink } from "@t3tools/source-control-core/shared/definition";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 

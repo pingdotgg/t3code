@@ -1,10 +1,10 @@
-import * as AzureDevOps from "@t3tools/source-control-azure-devops/client/definition";
-import * as Bitbucket from "@t3tools/source-control-bitbucket/client/definition";
+import * as AzureDevOps from "@t3tools/source-control-azure-devops/shared/definition";
+import * as Bitbucket from "@t3tools/source-control-bitbucket/shared/definition";
 import {
   HostCredentialSettings,
-  makeSourceControlClientRegistry,
+  makeSourceControlDefinitionRegistry,
   readSourceControlHostSettings,
-} from "@t3tools/source-control-core/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
 import type { ServerSettings } from "@t3tools/contracts";
 
 export {
@@ -16,14 +16,14 @@ export {
   type HostCredentialSettings,
   type ParsedChangeRequestUrl,
   type ReferenceAutolink,
-  type SourceControlClientDefinition,
+  type SourceControlDefinition,
   type SourceControlHostCredentials,
   type SourceControlIcon,
-} from "@t3tools/source-control-core/client/definition";
-import * as Forgejo from "@t3tools/source-control-forgejo/client/definition";
-import * as GitCafe from "@t3tools/source-control-gitcafe/client/definition";
-import * as GitHub from "@t3tools/source-control-github/client/definition";
-import * as GitLab from "@t3tools/source-control-gitlab/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
+import * as Forgejo from "@t3tools/source-control-forgejo/shared/definition";
+import * as GitCafe from "@t3tools/source-control-gitcafe/shared/definition";
+import * as GitHub from "@t3tools/source-control-github/shared/definition";
+import * as GitLab from "@t3tools/source-control-gitlab/shared/definition";
 
 /**
  * GitHub comes first because a repository that has not reported its host yet reads as GitHub,
@@ -42,7 +42,7 @@ const BUILT_IN_SOURCE_CONTROL_CLIENTS = [
   AzureDevOps.definition,
 ];
 
-export const sourceControlClients = makeSourceControlClientRegistry(
+export const sourceControlClients = makeSourceControlDefinitionRegistry(
   BUILT_IN_SOURCE_CONTROL_CLIENTS,
   {
     claimChangeRequestUrlsFirst: [GitCafe.definition.kind],

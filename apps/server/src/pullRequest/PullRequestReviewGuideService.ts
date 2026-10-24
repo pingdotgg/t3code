@@ -24,7 +24,7 @@ import {
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
@@ -104,7 +104,7 @@ const make = Effect.gen(function* () {
               {
                 projectId: ProjectId.make("own"),
                 number: key.number,
-                repository: sourceControlClients.repositorySelector(identity) ?? "",
+                repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
               },
               identity,
             );
@@ -251,7 +251,7 @@ const make = Effect.gen(function* () {
         ),
       );
       const fetchAndResolve = (ref: string) => fetch([ref]).pipe(Effect.andThen(resolveHead));
-      const headRef = sourceControlClients.get(detail.provider).changeRequestHeadRef?.(number);
+      const headRef = sourceControlDefinitions.get(detail.provider).changeRequestHeadRef?.(number);
       const branchRef = `refs/heads/${branch}`;
       const checkBranch = git.execute({
         operation: "PullRequestReviewGuideService.checkHeadBranch",

@@ -34,7 +34,7 @@ import {
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
 import { ForgejoBranchStatusChecks, markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
-import { definition } from "../client/definition.ts";
+import { definition } from "../shared/definition.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 

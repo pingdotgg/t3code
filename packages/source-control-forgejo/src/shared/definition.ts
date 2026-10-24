@@ -3,14 +3,14 @@ import {
   changeRequestUrlBelow,
   type ChangeRequestHostIdentity,
   type ChangeRequestProjectIdentity,
-  defineSourceControlClient,
+  defineSourceControl,
   isChangeRequestAuthorityOfProject,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   projectChangeRequestHost,
   remoteWebOrigin,
-} from "@t3tools/source-control-core/client/definition";
+} from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
 const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
@@ -51,7 +51,7 @@ function changeRequestHost(identity: ChangeRequestHostIdentity): string {
   return projectChangeRequestHost(identity, KIND);
 }
 
-export const definition = defineSourceControlClient({
+export const definition = defineSourceControl({
   kind: KIND,
   label: "Forgejo",
   pickerLabel: "Forgejo / Gitea",

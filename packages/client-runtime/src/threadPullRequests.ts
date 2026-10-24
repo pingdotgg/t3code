@@ -1,4 +1,4 @@
-import { makeThreadPullRequests } from "@t3tools/source-control-core/client/threadPullRequests";
+import { makeThreadPullRequests } from "@t3tools/source-control-core/shared/threadPullRequests";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 
@@ -12,7 +12,7 @@ export {
   type ThreadCurrentPullRequest,
   type ThreadPullRequestBadge,
   type ThreadPullRequestChain,
-} from "@t3tools/source-control-core/client/threadPullRequests";
+} from "@t3tools/source-control-core/shared/threadPullRequests";
 
 export const {
   normalizeThreadPullRequestKey,

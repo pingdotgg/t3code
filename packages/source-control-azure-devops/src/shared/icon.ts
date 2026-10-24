@@ -1,4 +1,4 @@
-import type { SourceControlIcon } from "@t3tools/source-control-core/client/definition";
+import type { SourceControlIcon } from "@t3tools/source-control-core/shared/definition";
 
 // Microsoft Azure DevOps mark via selfhst/icons (CC BY 4.0): https://github.com/selfhst/icons/blob/main/svg/azure-devops.svg
 export const icon: SourceControlIcon = {

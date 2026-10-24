@@ -1,4 +1,4 @@
-import type { SourceControlIcon } from "@t3tools/source-control-core/client/definition";
+import type { SourceControlIcon } from "@t3tools/source-control-core/shared/definition";
 
 export const icon: SourceControlIcon = {
   viewBox: "8.4 14.39 2481.29 2231.21",

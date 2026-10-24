@@ -34,7 +34,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerSettings from "../serverSettings.ts";
-import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -723,7 +723,7 @@ export const make = Effect.gen(function* () {
       _tag: "Repository",
       git: {
         remoteKey:
-          originUrl === null ? null : sourceControlClients.repositoryKeyFromRemote(originUrl),
+          originUrl === null ? null : sourceControlDefinitions.repositoryKeyFromRemote(originUrl),
         repository: repositoryPathFromRemoteUrl(originUrl),
       },
     } as const;

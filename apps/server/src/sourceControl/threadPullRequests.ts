@@ -1,6 +1,6 @@
-import { makeThreadPullRequests } from "@t3tools/source-control-core/client/threadPullRequests";
+import { makeThreadPullRequests } from "@t3tools/source-control-core/shared/threadPullRequests";
 
-import { sourceControlClients } from "./sourceControlClients.ts";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 
 export { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -12,4 +12,4 @@ export const {
   resolveThreadPullRequestChains,
   threadPullRequestsOf,
   applyThreadPullRequestLinkUpdate,
-} = makeThreadPullRequests(sourceControlClients);
+} = makeThreadPullRequests(sourceControlDefinitions);

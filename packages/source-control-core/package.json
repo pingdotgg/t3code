@@ -3,13 +3,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client/definition": {
-      "types": "./src/client/definition.ts",
-      "import": "./src/client/definition.ts"
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
     },
-    "./client/threadPullRequests": {
-      "types": "./src/client/threadPullRequests.ts",
-      "import": "./src/client/threadPullRequests.ts"
+    "./shared/threadPullRequests": {
+      "types": "./src/shared/threadPullRequests.ts",
+      "import": "./src/shared/threadPullRequests.ts"
     },
     "./server/diffFileRevisions": {
       "types": "./src/server/diffFileRevisions.ts",

@@ -6,7 +6,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   sourceControlClients,
-  type SourceControlClientDefinition,
+  type SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
@@ -116,7 +116,7 @@ export function sourceControlHostSettingsSearchId(kind: string) {
 
 /** Each host's own settings: its accounts and token, or the fields of its settings form. */
 export function sourceControlHostSearchItems(
-  definitions: ReadonlyArray<SourceControlClientDefinition>,
+  definitions: ReadonlyArray<SourceControlDefinition>,
 ): ReadonlyArray<
   SettingsSearchItem & { readonly id: ReturnType<typeof sourceControlHostSettingsSearchId> }
 > {

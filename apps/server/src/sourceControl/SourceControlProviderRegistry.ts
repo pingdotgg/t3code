@@ -15,7 +15,7 @@ import {
 import type {} from "@t3tools/contracts";
 
 import * as BuiltInDrivers from "./builtInDrivers.ts";
-import { sourceControlClients } from "./sourceControlClients.ts";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   probeSourceControlProvider,
@@ -144,7 +144,7 @@ function selectProviderContext(
 ): SourceControlProvider.SourceControlProviderContext | null {
   const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
   for (const remote of remotes) {
-    const provider = sourceControlClients.recognizeRemote(remote.url);
+    const provider = sourceControlDefinitions.recognizeRemote(remote.url);
     if (provider) {
       candidates.push({
         provider,
@@ -337,7 +337,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         if (input.url.protocol !== "https:" || input.url.username || input.url.password) {
           return undefined;
         }
-        const kind = sourceControlClients.recognizeRemote(input.url.href)?.kind;
+        const kind = sourceControlDefinitions.recognizeRemote(input.url.href)?.kind;
         return kind ? providers.get(kind)?.resolveLink?.(input) : undefined;
       },
       get,
