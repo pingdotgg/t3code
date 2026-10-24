@@ -1,8 +1,9 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon } from "lucide-react";
+import { LogInIcon, RotateCwIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
+import { retryClerkLoad, useClerkLoadFailed } from "./clerkLoadFailure";
 import { T3_CONNECT_ACCOUNT_PAGES } from "./T3ConnectAccountPages";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
@@ -48,8 +49,21 @@ function ConfiguredT3ConnectSidebarAvatar() {
 
 function ConfiguredT3ConnectSidebarSignIn() {
   const { isLoaded, isSignedIn } = useAuth();
+  const loadFailed = useClerkLoadFailed();
   const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
 
+  if (loadFailed) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton onClick={retryClerkLoad}>
+            <RotateCwIcon />
+            <span>Retry T3 Connect</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
+  }
   if (!isLoaded || isSignedIn) return null;
 
   return (

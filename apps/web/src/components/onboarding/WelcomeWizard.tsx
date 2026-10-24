@@ -38,6 +38,7 @@ import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
+import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
@@ -472,6 +473,7 @@ function ConnectAccountOption({
 }) {
   const { environments } = useEnvironments();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const loadFailed = useClerkLoadFailed();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const [expanded, setExpanded] = useState(true);
   const [discoveryReady, setDiscoveryReady] = useState(false);
@@ -481,9 +483,12 @@ function ConnectAccountOption({
     <div className="rounded-lg border border-border bg-background">
       <Collapsible open={expanded && !!isSignedIn && discoveryReady} onOpenChange={setExpanded}>
         <CollapsibleTrigger
-          disabled={disabled || !isLoaded}
+          disabled={disabled || (!isLoaded && !loadFailed)}
           onClick={(event) => {
-            if (!isSignedIn) {
+            if (loadFailed) {
+              event.preventDefault();
+              retryClerkLoad();
+            } else if (!isSignedIn) {
               event.preventDefault();
               setExpanded(true);
               openAuthPrompt();
@@ -496,13 +501,15 @@ function ConnectAccountOption({
           <CloudIcon className="size-4 text-muted-foreground" />
           <span className="flex-1 text-left">T3 Connect</span>
           <span className="text-xs text-muted-foreground">
-            {!isLoaded
-              ? "Loading sign-in…"
-              : !isSignedIn
-                ? "Sign in"
-                : !discoveryReady
-                  ? "Loading computers…"
-                  : null}
+            {loadFailed
+              ? "Couldn't load. Retry"
+              : !isLoaded
+                ? "Loading sign-in…"
+                : !isSignedIn
+                  ? "Sign in"
+                  : !discoveryReady
+                    ? "Loading computers…"
+                    : null}
           </span>
           <ChevronRightIcon
             className={cn("size-4 text-muted-foreground", expanded && isSignedIn && "rotate-90")}
