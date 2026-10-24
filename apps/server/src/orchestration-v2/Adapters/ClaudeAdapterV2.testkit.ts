@@ -218,7 +218,6 @@ interface ClaudeSessionForkFrame {
   readonly type: "session.fork";
   readonly sessionId: string;
   readonly options: {
-    readonly dir?: string;
     readonly upToMessageId?: string;
     readonly title?: string;
   };
@@ -469,13 +468,11 @@ function makeClaudePromptOfferFrame(message: SDKUserMessage): ClaudePromptOfferF
 
 function makeClaudeSessionForkFrame(
   input: ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput,
-  scenario: string,
 ): ClaudeSessionForkFrame {
   return {
     type: "session.fork",
     sessionId: input.sessionId,
     options: {
-      ...(input.options.dir === undefined ? {} : { dir: sanitizedReplayCwd(scenario) }),
       ...(input.options.upToMessageId === undefined
         ? {}
         : { upToMessageId: input.options.upToMessageId }),
@@ -852,7 +849,7 @@ function makeReplayQueryRunner(
       };
     },
     forkSession: (input) => {
-      assertNextOutboundFrame(makeClaudeSessionForkFrame(input, transcript.scenario));
+      assertNextOutboundFrame(makeClaudeSessionForkFrame(input));
       return assertNextReplyFrame<ClaudeSessionForkedFrame>(
         "session.forked",
         (frame) => typeof Reflect.get(frame, "sessionId") === "string",
@@ -2206,16 +2203,10 @@ async function recordClaudeForkSessionQuery(input: {
         frame: {
           type: "session.fork",
           sessionId: input.sessionId,
-          options: {
-            dir: sanitizedReplayCwd(input.scenario),
-            upToMessageId,
-          },
+          options: { upToMessageId },
         },
       });
-      const forked = await forkSession(input.sessionId, {
-        dir: input.cwd,
-        upToMessageId,
-      });
+      const forked = await forkSession(input.sessionId, { upToMessageId });
       forkedNativeSessionIds.push(forked.sessionId);
       input.entries.push({
         type: "emit_inbound",

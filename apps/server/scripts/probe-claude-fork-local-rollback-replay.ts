@@ -266,13 +266,10 @@ try {
     frame: {
       type: "session.fork",
       sessionId,
-      options: {
-        dir: `/tmp/claude-replay-${SCENARIO}`,
-        upToMessageId: sourceCursor,
-      },
+      options: { upToMessageId: sourceCursor },
     },
   });
-  const forked = await forkSession(sessionId, { dir: cwd, upToMessageId: sourceCursor });
+  const forked = await forkSession(sessionId, { upToMessageId: sourceCursor });
   metadata.sourceAssistantMessageUuids = [sourceCursor];
   metadata.forkUpToMessageId = sourceCursor;
   metadata.forkedNativeSessionId = forked.sessionId;

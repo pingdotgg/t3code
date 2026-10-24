@@ -10417,10 +10417,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const sourceNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(sourceNativeThreadId);
               const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
-              const forkOptions: ForkSessionOptions = {
-                ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
-                ...(upToMessageId === undefined ? {} : { upToMessageId }),
-              };
+              // No `dir`: Claude files a transcript under the directory the session
+              // started in, which the thread's cwd stops matching once the project's
+              // workspace root changes. Without it, the SDK searches every project.
+              const forkOptions: ForkSessionOptions =
+                upToMessageId === undefined ? {} : { upToMessageId };
               const forked = yield* queryRunner.forkSession({
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,

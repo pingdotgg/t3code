@@ -1664,10 +1664,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         assert.deepEqual(forkCalls, [
           {
             sessionId: "source-native-session",
-            options: {
-              dir: "/workspace",
-              upToMessageId: "assistant-message-cursor",
-            },
+            options: { upToMessageId: "assistant-message-cursor" },
             environment: { CLAUDE_CONFIG_DIR: "/custom/claude-home" },
             threadId: targetThreadId,
             providerSessionId,
@@ -1738,6 +1735,104 @@ describe("ClaudeAdapterV2 native fork", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("forks a session recorded before the thread's working directory changed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-fork-moved-",
+        });
+        const sourceSessionId = "22222222-2222-4222-8222-222222222222";
+        // Claude stores the transcript under the directory the session started in.
+        const originalProjectDir = path.join(configDir, "projects", "-original-workspace");
+        const entry = (uuid: string, parentUuid: string | null, message: unknown) =>
+          JSON.stringify({
+            type: parentUuid === null ? "user" : "assistant",
+            uuid,
+            parentUuid,
+            sessionId: sourceSessionId,
+            cwd: "/original-workspace",
+            isSidechain: false,
+            timestamp: "2026-10-01T00:00:00.000Z",
+            message,
+          });
+        yield* fileSystem.makeDirectory(originalProjectDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(originalProjectDir, `${sourceSessionId}.jsonl`),
+          [
+            entry("bbbbbbbb-0000-4000-8000-000000000001", null, { role: "user", content: "hello" }),
+            entry("bbbbbbbb-0000-4000-8000-000000000002", "bbbbbbbb-0000-4000-8000-000000000001", {
+              role: "assistant",
+              content: [{ type: "text", text: "hi" }],
+            }),
+          ].join("\n"),
+        );
+        const queryRunner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-v2-fork-moved-attachments-",
+          }),
+          fileSystem,
+          path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: { ...queryRunner, allocateSessionId: Effect.succeed(sourceSessionId) },
+        });
+        const sourceThreadId = ThreadId.make("thread-claude-fork-moved-source");
+        // The project's workspace root has since moved.
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/moved-workspace",
+        });
+        const runtime = yield* adapter.openSession({
+          threadId: sourceThreadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-fork-moved"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const sourceProviderThread = yield* runtime.ensureThread({
+          threadId: sourceThreadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+
+        const forked = yield* runtime.forkThread({
+          sourceProviderThread,
+          targetThreadId: ThreadId.make("thread-claude-fork-moved-target"),
+        });
+
+        const forkedSessionId = forked.nativeThreadRef?.nativeId;
+        assert.isString(forkedSessionId);
+        assert.notEqual(forkedSessionId, sourceSessionId);
+        const transcript = yield* fileSystem.readFileString(
+          path.join(originalProjectDir, `${forkedSessionId}.jsonl`),
+        );
+        assert.include(transcript, '"content":"hello"');
+        assert.isString(forked.nativeMetadata?.forkHeadMessageId);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            ClaudeAdapterV2.layerQueryRunner.pipe(
+              Layer.provide(
+                Layer.succeed(
+                  ProviderEventLoggers.ProviderEventLoggers,
+                  ProviderEventLoggers.NoOpProviderEventLoggers,
+                ),
+              ),
+            ),
+          ).pipe(Layer.provideMerge(NodeServices.layer)),
         ),
       ),
     ),
