@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   RunId,
   ThreadId,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 
 it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
@@ -37,6 +39,7 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
               checkpoints: [],
             }),
         }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({}),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh: () =>
             Effect.gen(function* () {
@@ -135,5 +138,95 @@ it.effect.each(
     const observer = yield* RunFinalization.RunFinalizationObserver;
     yield* observer.refresh({ cwd: "/repo", threadId, runId });
     assert.deepEqual(refreshed, [...scenario.expected]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each(
+  (
+    [
+      {
+        label: "moves every thread in the worktree to the branch the agent renamed",
+        cwd: "/worktrees/rename",
+        activeRun: null,
+        expected: [
+          ["thread-rename", "feature/ABC-123"],
+          ["thread-subagent", "feature/ABC-123"],
+        ],
+      },
+      {
+        label: "leaves a thread outside its own worktree alone",
+        cwd: "/repo",
+        activeRun: null,
+        expected: [],
+      },
+      {
+        label: "leaves adoption to a newer active run",
+        cwd: "/worktrees/rename",
+        activeRun: "newer-run",
+        expected: [],
+      },
+    ] as const
+  ).map((scenario) => [scenario.label, scenario] as const),
+)("%s", ([, scenario]) => {
+  const threadId = ThreadId.make("thread-rename");
+  const runId = RunId.make("run-rename");
+  const scopeId = CheckpointScopeId.make("scope-rename");
+  const shell = (id: string, worktreePath: string, branch: string) =>
+    ({
+      id: ThreadId.make(id),
+      worktreePath,
+      branch,
+      activeRunId:
+        id === threadId && scenario.activeRun !== null ? RunId.make(scenario.activeRun) : null,
+    }) as OrchestrationV2ThreadShell;
+  const shells = [
+    shell("thread-rename", "/worktrees/rename", "t3code/list-tasks"),
+    shell("thread-subagent", "/worktrees/rename", "t3code/list-tasks"),
+    shell("thread-own-branch", "/worktrees/rename", "fix/other"),
+    shell("thread-elsewhere", "/worktrees/elsewhere", "t3code/list-tasks"),
+  ];
+  const dispatched: OrchestrationV2ServerCommand[] = [];
+  const layer = RunFinalization.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: () => Effect.void }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getCheckpointContext: () =>
+            Effect.succeed({
+              runs: [],
+              checkpointScopes: [
+                { id: scopeId, runId, kind: "root_run" as const, cwd: scenario.cwd },
+              ],
+              checkpoints: [],
+            }),
+          getThreadShell: (id) => Effect.succeed(shells.find((entry) => entry.id === id) ?? null),
+          getThreadWorktreePaths: () =>
+            Effect.succeed(
+              shells.map((entry) => ({ threadId: entry.id, worktreePath: entry.worktreePath! })),
+            ),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return { sequence: dispatched.length, storedEvents: [] };
+            }),
+        }),
+        Layer.succeed(RunFinalization.RunFinalizationObserver, {
+          refresh: () => Effect.succeed("feature/ABC-123"),
+          refreshAfterTurn: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    yield* service.finalize({ threadId, runId, scopeId });
+    assert.deepEqual(
+      dispatched.map((command) =>
+        command.type === "thread.metadata.update" ? [command.threadId, command.branch] : null,
+      ),
+      scenario.expected.map(([id, branch]) => [ThreadId.make(id), branch]),
+    );
   }).pipe(Effect.provide(layer));
 });
