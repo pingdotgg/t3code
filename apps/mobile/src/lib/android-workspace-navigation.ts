@@ -92,6 +92,27 @@ export function parentThreadIsBelow(
   );
 }
 
+/**
+ * How a thread link opened from inside a thread reaches its target. `navigate` would reuse the
+ * current Thread route, so Back would skip the thread the link was in and land on the list.
+ */
+export function linkedThreadStep(
+  state: NavigationState,
+  target: ReactNavigation.RootParamList["Thread"],
+): "stay" | "pop" | "push" {
+  const params = state.routes[state.index]?.params as
+    | ReactNavigation.RootParamList["Thread"]
+    | undefined;
+  if (
+    state.routes[state.index]?.name === "Thread" &&
+    params?.environmentId === target?.environmentId &&
+    params?.threadId === target?.threadId
+  ) {
+    return "stay";
+  }
+  return parentThreadIsBelow(state, target) ? "pop" : "push";
+}
+
 export function returnToAndroidWorkspaceList(
   navigation: WorkspaceNavigation & { readonly goBack: () => void },
   selectTab: () => void,

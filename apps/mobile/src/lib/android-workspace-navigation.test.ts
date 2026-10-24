@@ -7,6 +7,7 @@ import {
 } from "../features/workspace/android-workspace-tabs";
 import {
   androidWorkspaceNavigationState,
+  linkedThreadStep,
   parentThreadIsBelow,
   resetAndroidWorkspace,
   returnToAndroidWorkspaceList,
@@ -200,6 +201,30 @@ describe("Android workspace navigation", () => {
       index: 0,
       listSelected: true,
     });
+  });
+
+  it("opens a linked thread above the current one so Back returns to it", () => {
+    const parent = select(router.getInitialState(options), thread);
+    const child = { ...thread.params, threadId: "child-a" };
+    const open = (
+      state: ReturnType<typeof router.getInitialState>,
+      target: ReactNavigation.RootParamList["Thread"],
+    ) => {
+      const step = linkedThreadStep(state, target);
+      if (step === "stay") return state;
+      return apply(
+        state,
+        step === "pop" ? StackActions.pop() : StackActions.push("Thread", target),
+      );
+    };
+
+    const inChild = open(parent, child);
+    expect(inChild.routes.map((route) => route.params)).toEqual([undefined, thread.params, child]);
+    expect(open(inChild, child)).toBe(inChild);
+
+    const backInParent = open(inChild, thread.params);
+    expect(backInParent.routes).toEqual(parent.routes);
+    expect(backInParent.index).toBe(parent.index);
   });
 
   it("recognizes a parent only when its environment and thread are immediately below", () => {

@@ -147,7 +147,6 @@ import {
   pendingThreadMessageJump,
   subscribeThreadMessageJump,
 } from "./threadMessageJump";
-import { parentThreadIsBelow } from "../../lib/android-workspace-navigation";
 import {
   clearThreadComposerError,
   threadComposerErrorsAtom,
@@ -191,6 +190,7 @@ import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
 export interface ThreadDetailScreenProps {
@@ -513,6 +513,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const [composerOwnsKeyboard, setComposerOwnsKeyboard] = useState(false);
   if (sidebarSearchActive && composerOwnsKeyboard) setComposerOwnsKeyboard(false);
   const navigation = useNavigation();
+  const openLinkedThread = useOpenLinkedThread();
   const { session: voiceInputSession } = useGlobalVoiceInput();
   const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
   const deviceState = useEnvironmentQuery(
@@ -1747,17 +1748,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         onOpenParent={
                           props.selectedThread.lineage.parentThreadId === null
                             ? null
-                            : () => {
-                                const parent = {
+                            : () =>
+                                openLinkedThread({
                                   environmentId: String(props.environmentId),
                                   threadId: String(props.selectedThread.lineage.parentThreadId),
-                                };
-                                navigation.dispatch((state) =>
-                                  parentThreadIsBelow(state, parent)
-                                    ? StackActions.pop()
-                                    : StackActions.push("Thread", parent),
-                                );
-                              }
+                                })
                         }
                       />
                     </View>
