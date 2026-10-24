@@ -99,34 +99,57 @@ interface PendingPiRequest {
 const MAX_PI_RECORD_CHARS =
   2 * MAX_TOOL_OUTPUT_IMAGES * MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH + 8 * 1024 * 1024;
 
+interface PiJsonlFrames {
+  readonly lines: ReadonlyArray<string>;
+  readonly droppedLengths: ReadonlyArray<number>;
+}
+
 function makeJsonlFramer() {
   let buffer = "";
   let dropping = false;
-  return (chunk: string): ReadonlyArray<string> => {
+  let droppedLength = 0;
+  return (chunk: string): PiJsonlFrames => {
     const lines: string[] = [];
+    const droppedLengths: number[] = [];
     let start = 0;
     while (start < chunk.length) {
       const newline = chunk.indexOf("\n", start);
       const end = newline < 0 ? chunk.length : newline;
-      if (!dropping) {
-        if (buffer.length + end - start > MAX_PI_RECORD_CHARS) {
-          buffer = "";
-          dropping = true;
-        } else {
-          buffer += chunk.slice(start, end);
-        }
+      if (dropping) {
+        droppedLength += end - start;
+      } else if (buffer.length + end - start > MAX_PI_RECORD_CHARS) {
+        droppedLength = buffer.length + end - start;
+        buffer = "";
+        dropping = true;
+      } else {
+        buffer += chunk.slice(start, end);
       }
       if (newline < 0) break;
-      if (!dropping && buffer.length > 0) {
+      if (dropping) {
+        droppedLengths.push(droppedLength);
+      } else if (buffer.length > 0) {
         lines.push(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
       }
       buffer = "";
       dropping = false;
       start = newline + 1;
     }
-    return lines;
+    return { lines, droppedLengths };
   };
 }
+
+// A dropped `response` leaves its request to time out, so the drop must be
+// visible at the default log level. Lengths only: records carry prompt text.
+const logDroppedPiRecords = (droppedLengths: ReadonlyArray<number>) =>
+  Effect.forEach(
+    droppedLengths,
+    (recordLength) =>
+      Effect.logWarning("Dropping oversized pi stdout record.", {
+        recordLength,
+        maxRecordLength: MAX_PI_RECORD_CHARS,
+      }),
+    { discard: true },
+  );
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const decodeJsonLine = Schema.decodeSync(UnknownFromJsonString);
@@ -310,7 +333,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
         Effect.gen(function* () {
-          const lines = frame(chunk);
+          const { lines, droppedLengths } = frame(chunk);
+          yield* logDroppedPiRecords(droppedLengths);
           for (const line of lines) {
             const record = parsePiRecord(line);
             if (record === undefined) {
@@ -324,7 +348,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         }),
       ),
     );
-    for (const line of frame("\n")) {
+    const flushed = frame("\n");
+    yield* logDroppedPiRecords(flushed.droppedLengths);
+    for (const line of flushed.lines) {
       const trailing = parsePiRecord(line);
       if (trailing !== undefined) yield* routeRecord(trailing);
     }

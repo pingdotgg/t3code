@@ -26,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -4093,6 +4094,57 @@ describe("PiRpc framing", () => {
       assert.equal((yield* Queue.take(connection.events))["type"], "after_oversized");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("logs the length of an oversized record it drops", () => {
+    const warnings: Array<ReadonlyArray<unknown>> = [];
+    const logCapture = Logger.make<unknown, void>(({ logLevel, message }) => {
+      if (logLevel === "Warn" && Array.isArray(message)) warnings.push(message);
+    });
+    return Effect.gen(function* () {
+      const stdout = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(FAKE_PID),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.fromQueue(stdout),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+      const head = '{"type":"response","id":"t3-0","success":true,"data":"';
+      const tail = '"}\n{"type":"after_oversized"}\n';
+      const chunk = new TextEncoder().encode("x".repeat(8 * 1024 * 1024));
+      yield* Queue.offer(stdout, new TextEncoder().encode(head));
+      for (let index = 0; index < 32; index++) yield* Queue.offer(stdout, chunk);
+      yield* Queue.offer(stdout, new TextEncoder().encode(tail));
+
+      assert.equal((yield* Queue.take(connection.events))["type"], "after_oversized");
+      assert.lengthOf(warnings, 1);
+      const [text, annotations] = warnings[0] ?? [];
+      assert.equal(text, "Dropping oversized pi stdout record.");
+      assert.propertyVal(annotations, "recordLength", head.length + 32 * chunk.length + 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.merge(NodeServices.layer, Logger.layer([logCapture], { mergeWithExisting: false })),
+      ),
+    );
+  });
 });
 
 describe("PiRpc early process exit", () => {
