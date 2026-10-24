@@ -728,6 +728,24 @@ export const layer = Layer.effect(
         ),
     );
 
+    // Reads every run row but only the queued runs' messages, so the cost per
+    // due interval tracks the thread's run count, not its transcript.
+    const hasQueuedOccurrence = Effect.fn("ScheduledTaskService.hasQueuedOccurrence")(function* (
+      taskId: ScheduledTaskId,
+      threadId: ThreadId,
+    ) {
+      const { runs } = yield* threadManagement.getThreadRecords(threadId, ["runs"]);
+      const queued = runs.filter((run) => run.status === "queued");
+      if (queued.length === 0) return false;
+      const queuedMessageIds = new Set(queued.map((run) => run.userMessageId));
+      const { messages } = yield* threadManagement.getThreadRecords(threadId, ["messages"], {
+        messageIds: [...queuedMessageIds],
+      });
+      return messages.some(
+        (message) => queuedMessageIds.has(message.id) && message.scheduledTaskId === taskId,
+      );
+    });
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook",
@@ -784,6 +802,18 @@ export const layer = Layer.effect(
             Option.isNone(parsedNextRunAt) ||
             DateTime.toEpochMillis(parsedNextRunAt.value) > DateTime.toEpochMillis(startedAt))
         ) {
+          return { task: active, threadId: null };
+        }
+        // A thread that stays busy would otherwise collect one copy of the
+        // prompt per interval. A failed read falls through to the normal send.
+        if (
+          trigger === "scheduled" &&
+          active.threadId !== null &&
+          (yield* hasQueuedOccurrence(active.id, ThreadId.make(active.threadId)).pipe(
+            Effect.orElseSucceed(() => false),
+          ))
+        ) {
+          yield* rescheduleMissedRun(active, startedAt, "previous occurrence still queued");
           return { task: active, threadId: null };
         }
         // A queued delivery must not run a task that was paused, deleted and
@@ -941,10 +971,12 @@ export const layer = Layer.effect(
     const rescheduleMissedRun = Effect.fn("ScheduledTaskService.rescheduleMissedRun")(function* (
       task: ScheduledTask,
       now: DateTime.DateTime,
+      reason = "missed",
     ) {
       const next = nextRunAt(task, now);
-      yield* Effect.logInfo("Skipping missed schedule task run", {
+      yield* Effect.logInfo("Skipping schedule task run", {
         taskId: task.id,
+        reason,
         missedRunAt: task.nextRunAt,
         rescheduledTo: next,
       });
