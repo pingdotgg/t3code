@@ -4163,6 +4163,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const subagentToolCalls = new Map<string, ActiveClaudeToolCall>();
         const pendingSubagentLaunchesByToolUseId = new Map<string, PendingClaudeSubagentLaunch>();
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
+        // A running subagent stays with the run that launched it, and that run keeps ingesting
+        // its events after a later run settles, so its approvals need that run's context.
+        const settledTurnsByRunId = new Map<RunId, ActiveClaudeTurnContext>();
         const subagentStopOutcomes = new Map<
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
@@ -6428,6 +6431,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly prompt?: string;
           readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
           readonly questions?: ReadonlyArray<OrchestrationV2UserInputQuestion>;
+          readonly parentNodeId?: OrchestrationV2ExecutionNode["id"] | undefined;
         }) {
           const createdAt = yield* DateTime.now;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
@@ -6456,10 +6460,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             id: nodeId,
             threadId: input.context.input.threadId,
             runId: input.context.input.runId,
-            parentNodeId: idAllocator.derive.nodeFromProviderItem({
-              driver: CLAUDE_PROVIDER,
-              nativeItemId: input.nativeItemId,
-            }),
+            parentNodeId:
+              input.parentNodeId ??
+              idAllocator.derive.nodeFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: input.nativeItemId,
+              }),
             rootNodeId: input.context.input.rootNodeId,
             kind: input.questions === undefined ? "approval_request" : "user_input_request",
             status: "waiting",
@@ -6521,6 +6527,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
           };
           return { node, request, turnItem };
+        });
+
+        // After the root result no run is left for the orchestrator to interrupt, so an
+        // aborted settled-path request must be closed here or it stays pending forever.
+        const emitCancelledRuntimeRequest = Effect.fnUntraced(function* (
+          artifacts: Effect.Success<ReturnType<typeof buildApprovalRequestArtifacts>>,
+        ) {
+          const now = yield* DateTime.now;
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: { ...artifacts.node, status: "cancelled", completedAt: now },
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  status: "cancelled",
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              }),
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: {
+                  ...artifacts.request,
+                  status: "cancelled",
+                  responseCapability: {
+                    type: "not_resumable",
+                    reason: "Claude cancelled this request before it was resolved.",
+                  },
+                  resolvedAt: now,
+                },
+              }),
+            ],
+            { concurrency: 1 },
+          );
         });
 
         const ensureReasoningBlock = Effect.fnUntraced(function* (
@@ -6909,8 +6956,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
+          const runningSubagentRunIds = new Set(
+            [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].flatMap((subagent) =>
+              subagent.task.status === "running" ? [subagent.task.runId] : [],
+            ),
+          );
+          for (const [runId, settled] of settledTurnsByRunId) {
+            if (
+              settled.nativeThreadId === input.context.nativeThreadId &&
+              (runId === input.context.input.runId || !runningSubagentRunIds.has(runId))
+            ) {
+              settledTurnsByRunId.delete(runId);
+            }
+          }
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
+            settledTurnsByRunId.set(input.context.input.runId, input.context);
           } else {
             settledTurnByNativeThread.delete(input.context.nativeThreadId);
           }
@@ -8828,8 +8889,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
+          owningQueryClosed: Deferred.Deferred<void, never> | undefined,
         ) {
-          const context = yield* Ref.get(activeTurn);
+          let context = yield* Ref.get(activeTurn);
+          const settled = context === null;
+          if (settled && !callbackOptions.signal.aborted) {
+            const live = yield* Ref.get(queryContext);
+            if (live !== null && !live.stopping && live.closed === owningQueryClosed) {
+              const owners = [...(yield* Ref.get(sessionSubagentsByTaskId))].flatMap(
+                ([taskId, subagent]) => {
+                  const owner =
+                    subagent.task.runId === null
+                      ? undefined
+                      : settledTurnsByRunId.get(subagent.task.runId);
+                  return (callbackOptions.agentID === undefined ||
+                    callbackOptions.agentID === taskId) &&
+                    subagent.task.status === "running" &&
+                    !live.subagentsFromEarlierProcesses.has(subagent) &&
+                    owner?.nativeThreadId === live.nativeThreadId
+                    ? [owner]
+                    : [];
+                },
+              );
+              const latest = settledTurnByNativeThread.get(live.nativeThreadId);
+              context = owners.find((owner) => owner === latest) ?? owners[0] ?? null;
+            }
+          }
           if (context === null) {
             return {
               behavior: "deny",
@@ -8841,6 +8926,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
+          const parentNodeId =
+            settled && findToolCall(context, nativeRequestId) === undefined
+              ? context.input.rootNodeId
+              : undefined;
           if (toolName === "Agent") {
             rememberClaudeSubagentLaunch(
               subagentModelCatalog,
@@ -8850,7 +8939,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeToolInput,
               null,
             );
-          } else if (!heldForEcho) {
+          } else if (!heldForEcho && !settled) {
             yield* ensureToolCallStarted({
               context,
               nativeItemId: nativeRequestId,
@@ -8890,6 +8979,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeRequestId,
               requestKind: "user_input",
               questions,
+              parentNodeId,
             });
             const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -8933,6 +9023,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
+            if (settled && !(yield* Deferred.isDone(answers))) {
+              yield* emitCancelledRuntimeRequest(artifacts);
+            }
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",
@@ -9000,6 +9093,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeRequestId,
             requestKind,
             prompt,
+            parentNodeId,
             presentation: claudeApprovalPresentation({
               permissionMode: context.queryPolicy.permissionMode,
               prompt,
@@ -9050,6 +9144,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+          if (settled && !(yield* Deferred.isDone(decision))) {
+            yield* emitCancelledRuntimeRequest(artifacts);
+          }
 
           return permissionResultFromDecision({
             toolName,
@@ -9061,9 +9158,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { suggestions: callbackOptions.suggestions }),
           });
         });
-
-        const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
-          runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
 
         const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
           request,
@@ -9129,6 +9223,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestId: callbackOptions.requestId,
                   toolUseID: request.toolUseID ?? callbackOptions.requestId,
                 },
+                undefined,
               );
               if (result.behavior !== "allow") return { behavior: "cancelled" as const };
               const answers =
@@ -9297,6 +9392,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const closed = yield* Deferred.make<void, never>();
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -9325,7 +9421,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : {
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
-            canUseTool,
+            canUseTool: (toolName, toolInput, callbackOptions) =>
+              runPromise(canUseToolEffect(toolName, toolInput, callbackOptions, closed)),
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
@@ -9362,7 +9459,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
             status: "active",
           });
-          const closed = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
             queryPolicy,
             nativeThreadId,
