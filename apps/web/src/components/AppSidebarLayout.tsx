@@ -8,7 +8,8 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useCanGoBack, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
+import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
@@ -30,6 +31,7 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
+import { useCanGoForward } from "../navigationHistory";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import {
@@ -62,6 +64,7 @@ import {
   useSidebar,
   useSidebarVisibility,
 } from "./ui/sidebar";
+import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 
@@ -138,6 +141,9 @@ function SidebarControl() {
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
   });
+  // Over the stage artwork the controls sit on imagery, like the media viewer's
+  // arrows; that variant positions itself, so the layout is reset here.
+  const onStageBackdrop = isSidebarVisible && stageBackdropVariant !== null;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -190,10 +196,10 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+              variant={onStageBackdrop ? "media-navigation" : "ghost"}
               className={cn(
                 "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                onStageBackdrop && "relative top-auto translate-y-0",
               )}
               aria-label="Toggle main sidebar"
             />
@@ -203,6 +209,62 @@ function SidebarControl() {
           Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
+      {/* Browsers bring their own Back and Forward buttons; the desktop window has none. */}
+      {isElectron ? <NavigationHistoryControls onStageBackdrop={onStageBackdrop} /> : null}
+    </div>
+  );
+}
+
+// Titlebar Back and Forward buttons, the clickable form of navigation.back/forward.
+function NavigationHistoryControls({ onStageBackdrop }: { onStageBackdrop: boolean }) {
+  const { history } = useRouter();
+  const canGoBack = useCanGoBack();
+  const canGoForward = useCanGoForward();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const controls = [
+    {
+      label: "Back",
+      command: "navigation.back",
+      icon: <ArrowLeftIcon />,
+      enabled: canGoBack,
+      go: () => history.back(),
+    },
+    {
+      label: "Forward",
+      command: "navigation.forward",
+      icon: <ArrowRightIcon />,
+      enabled: canGoForward,
+      go: () => history.forward(),
+    },
+  ] as const;
+
+  return (
+    <div className="pointer-events-auto ml-0.5 flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+      {controls.map(({ label, command, icon, enabled, go }) => {
+        const shortcutLabel = shortcutLabelForCommand(keybindings, command);
+        return (
+          <Tooltip key={command}>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={label}
+                  className={onStageBackdrop ? "relative top-auto translate-y-0" : undefined}
+                  disabled={!enabled}
+                  onClick={go}
+                  size="icon-sm"
+                  variant={onStageBackdrop ? "media-navigation" : "ghost"}
+                >
+                  {icon}
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {label}
+              {shortcutLabel ? ` (${shortcutLabel})` : ""}
+            </TooltipPopup>
+          </Tooltip>
+        );
+      })}
     </div>
   );
 }
@@ -372,6 +434,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...windowControlsInsetStyle,
+    // Titlebar content clears the sidebar toggle plus the Back and Forward controls.
+    ...(isElectron
+      ? {
+          "--workspace-titlebar-content-left":
+            "calc(var(--workspace-controls-left) + 3 * var(--workspace-titlebar-control-size) + 2 * 0.125rem + var(--workspace-titlebar-control-gap))",
+        }
+      : {}),
   } as CSSProperties;
 
   useEffect(() => {
