@@ -905,10 +905,12 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         }),
       );
       let cleanupEntered = false;
+      const cleanupHolds = yield* Deferred.make<void>();
       const cleanupEffect = withWorkspaceLease(
         worktreePath,
         Effect.gen(function* () {
           cleanupEntered = true;
+          yield* Deferred.succeed(cleanupHolds, undefined);
           if (order === "cleanup-first") yield* Deferred.await(release);
           else {
             expect(harness.projection().providerSessions).toHaveLength(1);
@@ -921,6 +923,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         order === "cleanup-first"
           ? yield* cleanupEffect.pipe(Effect.forkChild({ startImmediately: true }))
           : undefined;
+      if (cleanup !== undefined) yield* Deferred.await(cleanupHolds);
       const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
       if (order === "cleanup-first") expect(harness.open).not.toHaveBeenCalled();
       if (order === "startup-first") yield* Deferred.await(openEntered);
@@ -988,8 +991,48 @@ effectIt.effect("reads current startup state after waiting for the workspace lea
     yield* Fiber.join(startup);
     expect(harness.open).not.toHaveBeenCalled();
     expect(harness.startRootRun).not.toHaveBeenCalled();
-  }),
+  }).pipe(Effect.provide([FileSystem.layerNoop({}), Path.layer])),
 );
+
+// regression: #12341 a thread started through another path to a restoring checkout wrote during the restore
+effectIt.effect.each([
+  { label: "a symlink alias", worktreePath: "/alias" },
+  { label: "a parent directory", worktreePath: "/repo" },
+  { label: "a child directory", worktreePath: "/repo/worktree/packages/app" },
+])("waits for a lease held on its checkout through $label", ({ worktreePath }) => {
+  const realPaths = new Map([
+    ["/repo", "/repo"],
+    ["/repo/worktree", "/repo/worktree"],
+    ["/alias", "/repo/worktree"],
+  ]);
+  const missing = FileSystem.makeNoop({});
+  const fileSystem = FileSystem.makeNoop({
+    exists: () => Effect.succeed(true),
+    realPath: (path) => {
+      const real = realPaths.get(path);
+      return real === undefined ? missing.realPath(path) : Effect.succeed(real);
+    },
+  });
+  return Effect.gen(function* () {
+    const release = yield* Deferred.make<void>();
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      fileSystem,
+      failReadsAfterRunning: true,
+    });
+    const restore = yield* withWorkspaceLease("/repo/worktree", Deferred.await(release)).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+    expect(harness.getTurnStartContext).not.toHaveBeenCalled();
+
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(restore);
+    yield* Fiber.join(startup);
+    expect(harness.open).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide([Layer.succeed(FileSystem.FileSystem, fileSystem), Path.layer]));
+});
 
 // regression: #15784 superseded provider startups kept running
 effectIt.effect.each([

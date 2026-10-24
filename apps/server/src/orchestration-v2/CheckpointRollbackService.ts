@@ -362,7 +362,10 @@ export const layer: Layer.Layer<
           const thread = yield* projections.getThread(input.threadId);
           yield* thread.worktreePath === null
             ? execute(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), execute(input));
+            : withWorkspaceLease(thread.worktreePath, execute(input)).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              );
         },
         (effect, input) =>
           effect.pipe(

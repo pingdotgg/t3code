@@ -166,7 +166,7 @@ it.effect.each(["initial", "waiting"])(
       assert.equal(resolveRuntimePolicy.mock.calls.length, 0);
       assert.equal(open.mock.calls.length, 0);
       assert.equal(restore.mock.calls.length, 0);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide([testLayer, NodeServices.layer]));
   },
 );
 
@@ -199,6 +199,7 @@ it.effect.each([
     const openEntered = Deferred.makeUnsafe<void>();
     const calls: string[] = [];
     let cleanupEntered = false;
+    const cleanupHolds = Deferred.makeUnsafe<void>();
     const providerThread = { id: providerThreadId, providerSessionId, providerInstanceId };
     const projection = {
       thread: {
@@ -305,6 +306,7 @@ it.effect.each([
         worktreePath,
         Effect.gen(function* () {
           cleanupEntered = true;
+          yield* Deferred.succeed(cleanupHolds, undefined);
           if (order === "cleanup-first") yield* Deferred.await(release);
           yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
           calls.push("cleanup");
@@ -314,6 +316,7 @@ it.effect.each([
         order === "cleanup-first"
           ? yield* cleanupEffect.pipe(Effect.forkChild({ startImmediately: true }))
           : undefined;
+      if (cleanup !== undefined) yield* Deferred.await(cleanupHolds);
       const rollback = yield* service
         .execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles })
         .pipe(Effect.forkChild({ startImmediately: true }));

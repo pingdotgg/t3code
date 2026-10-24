@@ -1051,6 +1051,8 @@ const make = Effect.gen(function* () {
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
         (effect) => withWorkspaceLease(worktreePath, effect),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
         Effect.catch((error) =>
           Effect.gen(function* () {
             entries.push({
