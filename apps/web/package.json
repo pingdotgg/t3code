@@ -62,7 +62,7 @@
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
-    "katex": "^0.16.47",
+    "katex": "^0.18.2",
     "lucide": "^0.564.0",
     "lucide-react": "^0.564.0",
     "morphicons": "^1.7.1",
