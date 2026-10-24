@@ -1,7 +1,9 @@
 import * as Mime from "effect/http/Mime";
 import { githubMediaFileName } from "@t3tools/shared/githubMedia";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import {
@@ -50,10 +52,33 @@ const SVG_CONTENT_TYPE = "image/svg+xml";
 // body cannot run script against this origin.
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-const githubToken = GitHubCredentials.GitHubCredentials.pipe(
+// Mint and serve read the credential through this one lookup, so the scope a URL was signed
+// under and the token a fetch uses cannot come from different sources.
+// A failure can be temporary, so only media bytes may be cached for the URL's lifetime.
+const ERROR_HEADERS = { "cache-control": "private, no-store", "x-content-type-options": "nosniff" };
+
+const githubCredential = GitHubCredentials.GitHubCredentials.pipe(
   Effect.flatMap((credentials) => credentials.get("github.com")),
-  Effect.map((credential) => credential.token),
-  Effect.orElseSucceed(() => null),
+  Effect.map((credential) => ({ token: credential.token, fingerprint: credential.fingerprint })),
+  Effect.orElseSucceed(() => ({ token: null, fingerprint: "anonymous" })),
+);
+
+const accessScopeOf = Effect.fn("GitHubMediaFetch.accessScopeOf")(function* (fingerprint: string) {
+  const crypto = yield* Crypto.Crypto;
+  const digest = yield* crypto.digest(
+    "SHA-256",
+    new TextEncoder().encode(`t3-github-media-scope:${fingerprint}`),
+  );
+  return Hex.encode(digest).slice(0, 16);
+});
+
+/**
+ * Two credentials can see different bytes behind one URL, so clients cache GitHub media per
+ * scope. It is a hash of the credential's fingerprint: equal for one credential, and it reveals
+ * nothing about the token.
+ */
+export const githubMediaAccessScope = githubCredential.pipe(
+  Effect.flatMap((credential) => accessScopeOf(credential.fingerprint)),
 );
 
 const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedirects")(function* (
@@ -88,30 +113,37 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
 });
 
 export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaResponse")(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
+  asset: {
+    readonly url: string;
+    readonly cwd: string;
+    readonly expiresAt: number;
+    readonly accessScope?: string;
+  },
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-  const token = yield* githubToken;
+  const { token, fingerprint } = yield* githubCredential;
+  // The client caches these bytes under the scope it was handed at mint. A sign-in or account
+  // switch since then would file another credential's bytes under that scope.
+  if (
+    asset.accessScope !== undefined &&
+    (yield* accessScopeOf(fingerprint)) !== asset.accessScope
+  ) {
+    return HttpServerResponse.empty({ status: 404, headers: ERROR_HEADERS });
+  }
   const forwarded: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
   const response = yield* fetchFollowingRedirects(asset.url, forwarded, token);
-  const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
-  const headers: Record<string, string> = {
-    "cache-control":
-      remainingSeconds > 0 ? `private, max-age=${remainingSeconds}` : "private, no-store",
-    "x-content-type-options": "nosniff",
-  };
-  if (response === null) return HttpServerResponse.empty({ status: 502, headers });
+  if (response === null) return HttpServerResponse.empty({ status: 502, headers: ERROR_HEADERS });
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
   // holds the connection open until the browser gives up on it.
   if (response.status >= 400) {
     return HttpServerResponse.empty({
       status: response.status >= 500 ? 502 : response.status,
-      headers,
+      headers: ERROR_HEADERS,
     });
   }
   const upstreamType =
@@ -120,8 +152,14 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     ? upstreamType
     : Option.getOrElse(Mime.getType(githubMediaFileName(asset.url)), () => "").toLowerCase();
   if (!MEDIA_CONTENT_TYPE_PATTERN.test(contentType)) {
-    return HttpServerResponse.empty({ status: 415, headers });
+    return HttpServerResponse.empty({ status: 415, headers: ERROR_HEADERS });
   }
+  const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
+  const headers: Record<string, string> = {
+    "cache-control":
+      remainingSeconds > 0 ? `private, max-age=${remainingSeconds}` : "private, no-store",
+    "x-content-type-options": "nosniff",
+  };
   for (const name of FORWARDED_RESPONSE_HEADERS) {
     const value = response.headers[name];
     if (value !== undefined) headers[name] = value;

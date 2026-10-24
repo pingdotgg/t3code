@@ -7,7 +7,8 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
-import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { useAssetImageLoadRetry, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
@@ -34,8 +35,13 @@ export function usePullRequestMediaUrl(url: string) {
   const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource);
   return {
     uri: asset._tag === "Success" ? asset.url : resource ? null : url,
+    cacheKey:
+      context && resource && asset._tag === "Success"
+        ? assetImageCacheKey(context.environmentId, resource, asset)
+        : undefined,
     unavailable: resource !== null && asset._tag === "Failure",
     source: pullRequestMediaSource(url, context),
+    refresh: resource ? refresh : undefined,
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
   };
 }
@@ -58,8 +64,10 @@ export function PullRequestMedia(props: {
         <ThreadMarkdownImageView
           uri={media.uri}
           sourceKey={props.url}
+          cacheKey={media.cacheKey}
           unavailable={media.unavailable}
           alt={name}
+          refreshUri={media.refresh}
           onPressPreview={(source) =>
             setImage(
               withGallery({
@@ -113,6 +121,7 @@ export function PullRequestImageAttachment(props: {
   readonly gallery: readonly FilePreviewItem[];
 }) {
   const media = usePullRequestMediaUrl(props.url);
+  const loadRetry = useAssetImageLoadRetry(media.uri, media.refresh);
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   return (
     <>
@@ -125,10 +134,12 @@ export function PullRequestImageAttachment(props: {
       >
         <View className="overflow-hidden rounded-2xl border border-border-subtle bg-grouped-card">
           <Image
-            source={media.uri ? { uri: media.uri } : null}
+            source={media.uri ? { uri: media.uri, cacheKey: media.cacheKey } : null}
             style={{ width: 174, height: 112 }}
             contentFit="contain"
             cachePolicy="memory-disk"
+            onLoad={loadRetry.onLoad}
+            onError={loadRetry.onError}
           />
         </View>
         <AppText numberOfLines={1} className="text-xs text-foreground-muted">

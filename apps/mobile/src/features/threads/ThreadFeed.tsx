@@ -122,7 +122,6 @@ import {
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
-import { assetImageSource } from "../../lib/assetImageSource";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { messageImageGallery } from "./messageImageGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -232,12 +231,7 @@ import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
-import {
-  assetEnvironment,
-  useAssetUrl,
-  useAssetUrlState,
-  useRefreshAssetUrl,
-} from "../../state/assets";
+import { assetEnvironment, useAssetImage, useAssetUrl, useAssetUrlState } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { projectEnvironment } from "../../state/projects";
@@ -502,12 +496,10 @@ function MessageAttachmentImage(props: {
     }),
     [props.attachmentId, props.name, props.mimeType],
   );
-  const uri = useAssetUrl(props.environmentId, resource);
-  const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
-  const retriedImage = useRef(false);
+  const image = useAssetImage(props.environmentId, resource);
   const imageStyle = useResolveClassNames(props.className);
 
-  if (uri === null) {
+  if (image.source === null) {
     return (
       <View className={`${props.className} items-center justify-center`}>
         <AppActivityIndicator />
@@ -539,18 +531,12 @@ function MessageAttachmentImage(props: {
         }
       >
         <ExpoImage
-          source={assetImageSource(props.environmentId, resource, uri)}
+          source={image.source}
           cachePolicy="memory-disk"
           style={imageStyle}
           contentFit="cover"
-          onLoad={() => {
-            retriedImage.current = false;
-          }}
-          onError={() => {
-            if (retriedImage.current) return;
-            retriedImage.current = true;
-            void refreshAssetUrl();
-          }}
+          onLoad={image.onLoad}
+          onError={image.onError}
         />
       </Pressable>
     </PresentationSource>

@@ -11,7 +11,7 @@ import { composerAttachmentInlineUri, isFileBackedComposerAttachment } from "../
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { downloadAndShareAttachment } from "../lib/attachmentDownload";
 import { assetImageSource } from "../lib/assetImageSource";
-import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
+import { useAssetImageLoadRetry, useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { AppText as Text } from "./ui/AppText";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { PresentationSource } from "./ui/NativePresentation";
@@ -60,6 +60,7 @@ export function ComposerContextAttachment(props: {
     };
   }, [local]);
   const uri = local ? localUri : (inlineUri ?? (asset._tag === "Success" ? asset.url : null));
+  const loadRetry = useAssetImageLoadRetry(uri, remoteEnvironmentId === null ? undefined : refresh);
   const share = async () => {
     if (sharing) return;
     setSharing(true);
@@ -103,10 +104,12 @@ export function ComposerContextAttachment(props: {
         >
           <Image
             source={
-              remoteEnvironmentId === null
+              remoteEnvironmentId === null || asset._tag !== "Success"
                 ? { uri }
-                : assetImageSource(remoteEnvironmentId, resource, uri)
+                : assetImageSource(remoteEnvironmentId, resource, asset)
             }
+            onLoad={loadRetry.onLoad}
+            onError={loadRetry.onError}
             style={{ width: "100%", height: 280 }}
             contentFit="contain"
             accessibilityLabel={record.name}

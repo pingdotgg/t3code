@@ -93,7 +93,10 @@ it("lets the server authorize an explicit refresh before the client grant loads"
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBe(
     "https://host.test/api/assets/image.png",
   );
-  expect(state.mint).toHaveBeenCalledWith({ environmentId, input: { resource } });
+  expect(state.mint).toHaveBeenCalledWith({
+    environmentId,
+    input: { resource, bindVersion: true },
+  });
 
   const denied = new EnvironmentAuthorizationError({
     message: "This connection cannot read host files.",

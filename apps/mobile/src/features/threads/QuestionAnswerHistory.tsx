@@ -7,8 +7,7 @@ import { Image } from "expo-image";
 import { Linking, Pressable, View } from "react-native";
 import { getQuestionAnswerText } from "@t3tools/client-runtime/work-log/user-input";
 import { AppText as Text } from "../../components/ui/AppText";
-import { assetImageSource } from "../../lib/assetImageSource";
-import { useAssetUrl } from "../../state/assets";
+import { useAssetImage, useAssetUrl } from "../../state/assets";
 
 function AnswerFile(props: {
   environmentId: EnvironmentId;
@@ -16,6 +15,10 @@ function AnswerFile(props: {
 }) {
   const resource = { _tag: "attachment", attachmentId: props.attachment.id } as const;
   const url = useAssetUrl(props.environmentId, resource);
+  const image = useAssetImage(
+    props.environmentId,
+    props.attachment.type === "image" ? resource : null,
+  );
   return (
     <Pressable
       accessibilityRole="link"
@@ -26,9 +29,11 @@ function AnswerFile(props: {
       }}
       className="gap-1"
     >
-      {props.attachment.type === "image" && url ? (
+      {image.source !== null ? (
         <Image
-          source={assetImageSource(props.environmentId, resource, url)}
+          source={image.source}
+          onLoad={image.onLoad}
+          onError={image.onError}
           cachePolicy="memory-disk"
           style={{ width: 160, height: 96 }}
           contentFit="contain"
