@@ -9,6 +9,7 @@ export interface ChangeRequestPresentation {
     | "azure-devops"
     | "bitbucket"
     | "gitcafe"
+    | "entire"
     | "change-request";
   readonly providerName: string;
   readonly shortName: string;
@@ -89,6 +90,16 @@ const GITCAFE_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://git.cafe/owner/repo/pulls/42",
 };
 
+const ENTIRE_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "entire",
+  providerName: "Entire",
+  shortName: "Trail",
+  longName: "trail",
+  pluralLongName: "trails",
+  providerLongName: "Entire trail",
+  urlExample: "https://entire.com/gh/owner/repo/trails/42",
+};
+
 const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "change-request",
   providerName: "source control",
@@ -116,6 +127,8 @@ function resolveChangeRequestPresentation(
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
     case "gitcafe":
       return GITCAFE_CHANGE_REQUEST_PRESENTATION;
+    case "entire":
+      return ENTIRE_CHANGE_REQUEST_PRESENTATION;
     default:
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
@@ -211,6 +224,15 @@ function isBitbucketHost(host: string): boolean {
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {
+  // An `entire://` remote names a cluster, not a forge: every cluster is Entire's, whatever its
+  // hostname, and Entire's https hosts are never claimed by name.
+  if (/^entire:\/\//iu.test(remoteUrl.trim())) {
+    return {
+      kind: SourceControlProviderKind.make("entire"),
+      name: "Entire",
+      baseUrl: "https://entire.com",
+    };
+  }
   const host = parseRemoteHost(remoteUrl);
   if (!host) {
     return null;

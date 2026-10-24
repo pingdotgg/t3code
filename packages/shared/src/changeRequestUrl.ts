@@ -13,6 +13,13 @@ export interface ChangeRequestLink {
   readonly authority?: string;
 }
 
+const ENTIRE_HOSTS = new Set(["entire.com", "entire.io"]);
+const ENTIRE_SEGMENT = String.raw`(?!(?:-|\.\.)\/)[\w.-]+`;
+export const ENTIRE_CHANGE_PATH = new RegExp(
+  String.raw`^\/(gh|et)\/(${ENTIRE_SEGMENT})\/(?:-\/trails\/[1-9]\d*\/changes\/(${ENTIRE_SEGMENT})|(${ENTIRE_SEGMENT})(?:\/-\/trails\/[1-9]\d*\/changes|\/trails))\/([1-9]\d*)(?:\/[^/]+)?\/?$`,
+  "u",
+);
+
 function isHostOf(hostname: string, apex: string, label?: string): boolean {
   if (hostname === apex || hostname.endsWith(`.${apex}`)) return true;
   return label !== undefined && hostname.split(".").includes(label);
@@ -32,6 +39,15 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     // GitCafe serves pull requests at `/pull/<n>` and redirects the older `/pulls/<n>` there.
     const match = /^\/([^/]+\/[^/]+)\/pulls?\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
+  } else if (ENTIRE_HOSTS.has(host)) {
+    const [, forge, owner, projectRepository, repository, digits] =
+      ENTIRE_CHANGE_PATH.exec(url.pathname) ?? [];
+    const number = Number(digits);
+    if (forge && Number.isSafeInteger(number)) {
+      // entire.io links name the same change as entire.com ones.
+      const path = `${forge}/${owner}/${projectRepository ?? repository}`;
+      return { host: "entire.com", repository: path.toLowerCase(), number };
+    }
   } else {
     if (isHostOf(host, "github.com", "github")) {
       const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
@@ -91,6 +107,8 @@ export function changeRequestUrlFor(
       return `https://${host}/${repository}/pull/${number}`;
     case "gitcafe":
       return `https://${host}/${repository}/pulls/${number}`;
+    case "entire":
+      return `https://${host}/${repository}/trails/${number}`;
     case "forgejo":
       return `${remoteWebOrigin(host, remoteUrl)}/${repository}/pulls/${number}`;
     case "gitlab":
@@ -188,6 +206,8 @@ export function matchesLinkedPullRequestUrl(
 export function changeRequestRepositoryUrl(targetUrl: string): string | null {
   const changeRequest = parseChangeRequestUrl(targetUrl);
   if (changeRequest === null) return null;
+  // A change linked through its project trail has no repository prefix to cut back to.
+  if (changeRequest.host === "entire.com") return `https://entire.com/${changeRequest.repository}`;
   const url = new URL(targetUrl);
   const repositoryPath =
     /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ??
@@ -205,7 +225,7 @@ export function siblingPullRequestUrl(url: string, number: number): string | nul
   const reference = parseChangeRequestUrl(url);
   if (reference === null || !Number.isSafeInteger(number) || number < 1) return null;
   const sibling = new URL(url);
-  const route = /^\/(-\/merge_requests|pulls?|pull-requests|pullrequest)\/\d+(?:\/|$)/u.exec(
+  const route = /^\/(-\/merge_requests|pulls?|pull-requests|pullrequest|trails)\/\d+(?:\/|$)/u.exec(
     sibling.pathname.slice(reference.repository.length + 1),
   )?.[1];
   if (route === undefined) return null;

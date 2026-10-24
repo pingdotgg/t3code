@@ -8,6 +8,7 @@ import type {
 import {
   AzureDevOpsIcon,
   BitbucketIcon,
+  EntireIcon,
   ForgejoIcon,
   GitCafeIcon,
   GitHubIcon,
@@ -26,6 +27,7 @@ const SOURCE_CONTROL_ICONS: Partial<Record<string, SourceControlIcon>> = {
   bitbucket: BitbucketIcon,
   "azure-devops": AzureDevOpsIcon,
   gitcafe: GitCafeIcon,
+  entire: EntireIcon,
 };
 
 export function sourceControlIcon(definition: SourceControlClientDefinition): SourceControlIcon {

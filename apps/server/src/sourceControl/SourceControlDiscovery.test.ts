@@ -27,6 +27,8 @@ import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
+import * as EntireApi from "@t3tools/source-control-entire/server/EntireApi";
+import * as EntireCli from "@t3tools/source-control-entire/server/EntireCli";
 import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
@@ -65,6 +67,8 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(GitCafeCredentials.GitCafeCredentials)({
           cliEnv: () => Effect.succeed({}),
         }),
+        Layer.mock(EntireApi.EntireApi)({}),
+        Layer.mock(EntireCli.EntireCli)({}),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
         ServerSourceControlHost.layer.pipe(
@@ -152,6 +156,16 @@ Logged in to gitlab.com as gitlab-user
       ) {
         return Effect.succeed(processOutput("azure-user@example.com\n"));
       }
+      if (input.command === "entire" && input.args.join(" ") === "version") {
+        return Effect.succeed(processOutput("entire version 0.12.0\n"));
+      }
+      if (input.command === "entire" && input.args.join(" ") === "auth status --json") {
+        // Discovery runs the CLI without telemetry, like every other Entire call.
+        assert.strictEqual(input.env?.ENTIRE_TELEMETRY_OPTOUT, "1");
+        return Effect.succeed(
+          processOutput(encodeJson({ logged_in: true, user: "github:entire-user" })),
+        );
+      }
       if (input.command === "cafe" && input.args.slice(-3).join(" ") === "auth status --json") {
         return Effect.succeed(
           processOutput(
@@ -238,6 +252,12 @@ Logged in to gitlab.com as gitlab-user
           kind: SourceControlProviderKind.make("gitcafe"),
           auth: "authenticated",
           account: Option.some("cafe-user"),
+          detail: Option.none(),
+        },
+        {
+          kind: SourceControlProviderKind.make("entire"),
+          auth: "authenticated",
+          account: Option.some("github:entire-user"),
           detail: Option.none(),
         },
       ],

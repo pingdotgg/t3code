@@ -148,6 +148,10 @@ export function normalizeGitRemoteUrl(value: string): string {
     .replace(/\.git$/i, "")
     .toLowerCase();
 
+  // Any cluster serves an Entire repository, so its key is the web path every trail URL shares.
+  const entire = /^entire:\/\/[^/@]+\/((?:gh|et)\/[^/]+\/[^/]+)$/.exec(normalized);
+  if (entire?.[1]) return `entire.com/${entire[1]}`;
+
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
       const url = new URL(normalized);

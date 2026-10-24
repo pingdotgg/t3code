@@ -24,6 +24,26 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     });
   });
 
+  it("detects Entire by its clone scheme alone, and never by an https host", () => {
+    for (const remote of [
+      "entire://aws-us-east-2.entire.io/gh/acme/web.git",
+      "entire://localhost:8443/et/project/repo",
+    ]) {
+      expect(detectSourceControlProviderFromRemoteUrl(remote)).toEqual({
+        kind: "entire",
+        name: "Entire",
+        baseUrl: "https://entire.com",
+      });
+    }
+    expect(detectSourceControlProviderFromRemoteUrl("https://github.entire.io/a/b.git")?.kind).toBe(
+      "github",
+    );
+    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("entire"))).toEqual({
+      shortLabel: "Trail",
+      singular: "trail",
+    });
+  });
+
   it("detects Azure DevOps SSH remotes", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@ssh.dev.azure.com:v3/org/project/repo")?.kind,

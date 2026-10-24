@@ -2,6 +2,7 @@ import { ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  changeRequestRepositoryUrl,
   changeRequestUrlFor,
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
@@ -31,6 +32,44 @@ describe("parseChangeRequestUrl", () => {
       repository: "team/repo",
       number: 7,
     });
+  });
+
+  it("reads an Entire change however Entire links it, on entire.com or entire.io", () => {
+    for (const url of [
+      "https://entire.com/gh/Acme/Web/trails/12",
+      "https://entire.com/gh/acme/web/trails/12/fix-the-thing",
+      "https://entire.io/gh/acme/web/trails/12",
+      "https://entire.com/gh/acme/-/trails/1070/changes/web/12",
+      "https://entire.com/gh/acme/web/-/trails/1070/changes/12",
+    ]) {
+      expect(parseChangeRequestUrl(url)).toEqual({
+        host: "entire.com",
+        repository: "gh/acme/web",
+        number: 12,
+      });
+    }
+    // A project trail spans repositories, so it is not one repository's change.
+    expect(parseChangeRequestUrl("https://entire.com/gh/acme/-/trails/1070")).toBeNull();
+    for (const url of [
+      "https://entire.com/gl/acme/web/trails/12",
+      "https://entire.com/gh/acme/web/trails/12/files/x",
+      "https://entire.com/gh/acme/web/trails/0",
+      "https://entire.com/gh/acme/-/trails/1070/changes/../12",
+    ])
+      expect(parseChangeRequestUrl(url)).toBeNull();
+    expect(changeRequestUrlFor("entire", "entire.com", "et/project/repo", 3)).toBe(
+      "https://entire.com/et/project/repo/trails/3",
+    );
+    expect(
+      changeRequestRepositoryUrl("https://entire.com/et/project/-/trails/9/changes/repo/3"),
+    ).toBe("https://entire.com/et/project/repo");
+    // Only Entire's hosts serve trails; elsewhere a `trails` segment is part of the path.
+    expect(
+      changeRequestRepositoryUrl("https://scm.example/tfs/trails/123/_git/repo/pullrequest/42"),
+    ).toBe("https://scm.example/tfs/trails/123/_git/repo");
+    expect(siblingPullRequestUrl("https://entire.com/gh/acme/web/trails/12/slug", 13)).toBe(
+      "https://entire.com/gh/acme/web/trails/13",
+    );
   });
 
   it("reads Forgejo URLs even when the hostname contains github", () => {

@@ -38,6 +38,8 @@ import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
+import * as EntireApi from "@t3tools/source-control-entire/server/EntireApi";
+import * as EntireCli from "@t3tools/source-control-entire/server/EntireCli";
 import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
@@ -158,6 +160,8 @@ function makeRegistry(input: {
         Layer.mock(GitCafeCredentials.GitCafeCredentials)({
           cliEnv: () => Effect.succeed({}),
         }),
+        Layer.mock(EntireApi.EntireApi)({}),
+        Layer.mock(EntireCli.EntireCli)({}),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -190,6 +194,19 @@ self-hosted.example.test
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "gitlab");
+  }),
+);
+
+it.effect("routes an entire:// remote to Entire on any cluster without asking a CLI", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "entire://aws-us-east-2.entire.io/gh/acme/web.git" }],
+      process: { run: () => Effect.die("no hosting CLI is needed to recognise Entire") },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "entire");
   }),
 );
 
