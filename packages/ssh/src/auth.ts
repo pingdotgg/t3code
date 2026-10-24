@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
 
 import { SshPasswordPromptError } from "./errors.ts";
 
@@ -99,15 +100,6 @@ if ($null -ne $env:T3_SSH_AUTH_SECRET) {\r
 exit 1\r
 `;
 
-const getDefaultSshAskpassDirectory = Effect.fn("ssh/auth.getDefaultSshAskpassDirectory")(
-  function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const parentDirectory = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" });
-    return path.join(parentDirectory, SSH_ASKPASS_DIR_NAME);
-  },
-);
-
 const buildSshAskpassHelperDescriptor = Effect.fn("ssh/auth.buildSshAskpassHelperDescriptor")(
   function* (input: {
     readonly directory: string;
@@ -170,6 +162,47 @@ const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(fu
   return descriptor.launcherPath;
 });
 
+// Nothing removes the runtime directory, so every interactive ssh command shares one per
+// process. A fresh one replaces it if a temp cleaner deleted it or another user owns the path.
+// The lock publishes a directory only after its helpers exist, so one command never rewrites
+// a helper that another command has already handed to ssh.
+let defaultSshAskpassRuntimeDirectory: string | undefined;
+const defaultSshAskpassLock = Semaphore.makeUnsafe(1);
+
+const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpassHelpers")(
+  function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const userId = yield* HostProcess.UserId;
+    const cached = defaultSshAskpassRuntimeDirectory;
+    if (cached !== undefined) {
+      const reusable = yield* Effect.all([fs.realPath(cached), fs.stat(cached)]).pipe(
+        Effect.map(
+          ([resolved, info]) =>
+            resolved === cached &&
+            info.type === "Directory" &&
+            (userId === undefined || Option.getOrUndefined(info.uid) === userId),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+      if (reusable) {
+        return yield* ensureSshAskpassHelpers({
+          directory: path.join(cached, SSH_ASKPASS_DIR_NAME),
+        });
+      }
+    }
+    const runtimeDirectory = yield* fs.realPath(
+      yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" }),
+    );
+    const launcherPath = yield* ensureSshAskpassHelpers({
+      directory: path.join(runtimeDirectory, SSH_ASKPASS_DIR_NAME),
+    });
+    defaultSshAskpassRuntimeDirectory = runtimeDirectory;
+    return launcherPath;
+  },
+  (effect) => defaultSshAskpassLock.withPermit(effect),
+);
+
 export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnvironment")(function* (
   input: SshChildEnvironmentOptions = {},
 ): Effect.fn.Return<
@@ -190,8 +223,10 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
         Effect.orElseSucceed(() => Option.none<string>()),
         Effect.map(Option.getOrUndefined),
       );
-  const directory = input.askpassDirectory ?? (yield* getDefaultSshAskpassDirectory());
-  const sshAskpass = yield* ensureSshAskpassHelpers({ directory });
+  const sshAskpass =
+    input.askpassDirectory === undefined
+      ? yield* ensureDefaultSshAskpassHelpers()
+      : yield* ensureSshAskpassHelpers({ directory: input.askpassDirectory });
 
   return {
     ...baseEnv,
