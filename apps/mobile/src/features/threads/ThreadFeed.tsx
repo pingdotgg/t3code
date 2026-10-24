@@ -2041,6 +2041,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const previousLatestTurnRef = useRef(props.latestRun);
+  const autoExpandedTurnIdRef = useRef<RunId | null>(null);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
@@ -2708,8 +2709,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
     if (props.latestRun.runId === previous.runId) {
-      if (previous.status === "running" && props.latestRun.status === "interrupted") {
+      if (
+        previous.status === "running" &&
+        props.latestRun.status === "interrupted" &&
+        !interactionState.expandedTurnIds.has(props.latestRun.runId)
+      ) {
         const interruptedTurnId = props.latestRun.runId;
+        autoExpandedTurnIdRef.current = interruptedTurnId;
         setInteractionState((current) => ({
           ...current,
           expandedTurnIds: new Set(current.expandedTurnIds).add(interruptedTurnId),
@@ -2717,6 +2723,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
       return;
     }
+    // An in-session interrupt expands its turn so the user keeps their place; the
+    // next turn folds only that expansion, never one the user opened.
+    if (autoExpandedTurnIdRef.current !== previous.runId) {
+      return;
+    }
+    autoExpandedTurnIdRef.current = null;
     setInteractionState((current) => {
       if (!current.expandedTurnIds.has(previous.runId)) {
         return current;
@@ -2725,7 +2737,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       next.delete(previous.runId);
       return { ...current, expandedTurnIds: next };
     });
-  }, [props.latestRun]);
+  }, [interactionState.expandedTurnIds, props.latestRun]);
 
   useEffect(() => {
     return () => {
@@ -2845,6 +2857,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const onToggleTurnFold = (runId: RunId) => {
     suspendEndScrollMaintenanceForDisclosure(`run-fold:${runId}`);
+    if (autoExpandedTurnIdRef.current === runId) {
+      autoExpandedTurnIdRef.current = null;
+    }
     setInteractionState((current) => {
       const next = new Set(current.expandedTurnIds);
       if (next.has(runId)) {

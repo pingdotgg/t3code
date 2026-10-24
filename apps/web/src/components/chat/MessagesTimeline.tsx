@@ -489,8 +489,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
 
+  const autoExpandedRunIdRef = useRef<RunId | null>(null);
   const onToggleTurnFold = (runId: RunId) => {
     suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
+    if (autoExpandedRunIdRef.current === runId) {
+      autoExpandedRunIdRef.current = null;
+    }
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -530,11 +534,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
   useEffect(() => {
     const { identity, run: previous } = previousLatestRunRef.current;
     previousLatestRunRef.current = { identity: listIdentityKey, run: latestRun };
-    if (identity !== listIdentityKey || !latestRun || previous?.runId === undefined) {
+    if (identity !== listIdentityKey) {
+      autoExpandedRunIdRef.current = null;
+      return;
+    }
+    if (!latestRun || previous?.runId === undefined) {
       return;
     }
     if (latestRun.runId === previous.runId) {
-      if (previous.status === "running" && latestRun.status === "interrupted") {
+      if (
+        previous.status === "running" &&
+        latestRun.status === "interrupted" &&
+        !expandedRunIds.has(latestRun.runId)
+      ) {
+        autoExpandedRunIdRef.current = latestRun.runId;
         setExpandedRunIds((existing) => {
           const next = new Set(existing);
           next.add(latestRun.runId);
@@ -543,6 +556,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       return;
     }
+    // An in-session interrupt expands its turn so the user keeps their place; the
+    // next turn folds only that expansion, never one the user, a citation, or find opened.
+    if (autoExpandedRunIdRef.current !== previous.runId) {
+      return;
+    }
+    autoExpandedRunIdRef.current = null;
     setExpandedRunIds((existing) => {
       if (!existing.has(previous.runId)) {
         return existing;
@@ -551,7 +570,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       next.delete(previous.runId);
       return next;
     });
-  }, [latestRun, listIdentityKey]);
+  }, [expandedRunIds, latestRun, listIdentityKey]);
 
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
