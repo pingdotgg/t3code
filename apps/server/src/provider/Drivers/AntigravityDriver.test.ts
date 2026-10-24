@@ -7,17 +7,20 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import * as AntigravityRuntimeTemp from "../AntigravityRuntimeTemp.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
@@ -52,7 +55,12 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
+  options: {
+    readonly config?: Partial<AntigravitySettings>;
+    readonly enabled?: boolean;
+    readonly fileSystem?: FileSystem.FileSystem;
+    readonly runtimeTemp?: AntigravityRuntimeTemp.AntigravityRuntimeTemp["Service"];
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -61,6 +69,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const nodePath = yield* HostProcess.ExecutablePath;
   const baseEnv = yield* HostProcess.Environment;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-driver-" });
+  const runtimeTemp =
+    options.runtimeTemp ??
+    (yield* AntigravityRuntimeTemp.make(path.join(root, "antigravity-gc")).pipe(
+      Effect.provideService(FileSystem.FileSystem, options.fileSystem ?? fs),
+    ));
   const instanceId = ProviderInstanceId.make(path.basename(root));
   const mockAgentPath = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -188,6 +201,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "PATH", value: instancePath },
       { name: "T3_ACP_ANTIGRAVITY", value: "1" },
       { name: "T3_ACP_REQUEST_LOG_PATH", value: requestLog },
+      { name: "T3_ACP_SESSION_ID", value: "047c62f6-607b-44db-bfbe-f83b67e9e8b1" },
+      { name: "T3_ACP_PROMPT_RESPONSE_TEXT", value: '{"title":"Repair login"}' },
       { name: "GEMINI_API_KEY", value: "must-not-be-used" },
       { name: "google_api_key", value: "must-not-be-used" },
       { name: "GOOGLE_APPLICATION_CREDENTIALS", value: "/must-not-be-used.json" },
@@ -198,6 +213,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     ].map((variable) => ({ ...variable, sensitive: false })),
   }).pipe(
     Effect.provide(layerInstallation),
+    Effect.provideService(FileSystem.FileSystem, options.fileSystem ?? fs),
+    Effect.provideService(AntigravityRuntimeTemp.AntigravityRuntimeTemp, runtimeTemp),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
   );
   const refresh = instance.refreshModels;
@@ -210,6 +227,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     );
   });
   const assertClosed = Effect.gen(function* () {
+    yield* runtimeTemp.drain;
     for (const launch of launches) {
       yield* launch.handle.exitCode.pipe(Effect.ignore);
       expect(yield* launch.handle.isRunning).toBe(false);
@@ -264,11 +282,57 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(McpProviderSessions.layer),
 );
 const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provideMerge(AntigravityRuntimeTemp.layer),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(layerDeps),
 );
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
+  it.effect.skipIf(windowsHost)("returns the title before runtime cleanup finishes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-title-cleanup-" });
+      const entered = yield* Deferred.make<void>();
+      const removals: string[] = [];
+      const trackedFs = FileSystem.FileSystem.of({
+        ...fs,
+        remove: (directory, options) => {
+          if (
+            (directory.startsWith(root) || directory.includes("antigravity-tmp")) &&
+            options?.recursive
+          ) {
+            removals.push(directory);
+            return fs
+              .remove(directory, options)
+              .pipe(Effect.andThen(TestClock.adjust("4 minutes")));
+          }
+          return fs.remove(directory, options);
+        },
+      });
+      const runtimeTemp = yield* AntigravityRuntimeTemp.make(root).pipe(
+        Effect.provideService(FileSystem.FileSystem, trackedFs),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+          ),
+        ),
+      );
+      const h = yield* makeHarness({ runtimeTemp, fileSystem: trackedFs });
+      const result = yield* h.instance.textGeneration.generateThreadTitle({
+        cwd: h.profileDirectory,
+        message: "Repair login",
+        modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-high" },
+      });
+      yield* Deferred.await(entered);
+      expect(result).toEqual({ title: "Repair login" });
+      expect(removals).toEqual([]);
+      expect(h.releases).toEqual([h.first.version]);
+      expect(h.launches.filter((launch) => launch.harnessPath !== undefined)).toHaveLength(1);
+      expect((yield* fs.readDirectory(root)).length).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "refreshes through the selected executable and personal Google ACP",
     () =>

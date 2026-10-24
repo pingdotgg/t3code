@@ -27,6 +27,7 @@ import {
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import * as AntigravityRuntimeTemp from "../AntigravityRuntimeTemp.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
@@ -44,10 +45,7 @@ import {
 } from "../acp/AntigravityAcpSupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
-import {
-  removeAntigravityRuntimeTempDirs,
-  removeAntigravitySessionFiles,
-} from "../acp/AntigravitySessionFiles.ts";
+import { removeAntigravitySessionFiles } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
@@ -72,6 +70,7 @@ const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
+  | AntigravityRuntimeTemp.AntigravityRuntimeTemp
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -109,6 +108,7 @@ export const AntigravityDriver: ProviderDriver<
     const host = yield* ProviderHost.ProviderHost;
     const selfInvocation = yield* resolveSelfInvocation();
     const installation = yield* AntigravityInstallation.AntigravityInstallation;
+    const runtimeTemp = yield* AntigravityRuntimeTemp.AntigravityRuntimeTemp;
     const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER);
@@ -149,9 +149,7 @@ export const AntigravityDriver: ProviderDriver<
       directories.runtimeTemp,
       path.join(profileDirectory, "antigravity-acp", "tmp"),
     ]) {
-      yield* removeAntigravityRuntimeTempDirs(directory).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-      );
+      yield* runtimeTemp.adopt(directory);
     }
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER,
@@ -194,12 +192,29 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      // Registered before ACP so release only hands off cleanup after the child exits.
+      const runtimeTempDirectory = yield* runtimeTemp.makeDirectory.pipe(
+        Effect.provideService(HostProcess.Environment, processEnvironment),
+        Effect.mapError(
+          (cause) =>
+            new ProviderSetupError({
+              instanceId,
+              operation: "start",
+              detail: isNodeRuntimeUnavailableError(cause)
+                ? nodeRuntimeUnavailableMessage("Antigravity sign-in")
+                : cause._tag === "AntigravityRuntimeTempBacklogFullError"
+                  ? AntigravityRuntimeTemp.BACKLOG_FULL_MESSAGE
+                  : "Could not create an Antigravity runtime temp directory.",
+              cause,
+            }),
+        ),
+      );
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: processEnvironment,
         auth,
         userHome,
-        tempDirectory: directories.runtimeTemp,
+        tempDirectory: runtimeTempDirectory,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -214,32 +229,6 @@ export const AntigravityDriver: ProviderDriver<
               })
             : cause,
         ),
-      );
-      // Each process unpacks into its own directory that dies with the
-      // runtime scope, after the child is killed. A shared directory would
-      // let one session's teardown delete files a sibling still reads.
-      // Removal is best effort: a handle can outlive the kill on Windows,
-      // and the sweep on the next driver start reclaims what is left.
-      const runtimeTempDirectory = yield* Effect.acquireRelease(
-        fileSystem.makeTempDirectory({ directory: profile.tempDirectory, prefix: "run-" }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderSetupError({
-                instanceId,
-                operation: "start",
-                detail: "Could not create an Antigravity runtime temp directory.",
-                cause,
-              }),
-          ),
-        ),
-        (directory) =>
-          fileSystem
-            .remove(directory, { recursive: true, force: true })
-            .pipe(
-              Effect.catch(() =>
-                Effect.logWarning("Could not remove an Antigravity runtime temp directory."),
-              ),
-            ),
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...input,
