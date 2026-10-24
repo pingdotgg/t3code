@@ -7,8 +7,11 @@ import {
 import {
   markdownWithHtml,
   markdownWithInlineFileLinks,
+  markdownWithMermaidDiagrams,
   markdownWithTableBreaks,
 } from "../lib/markdownDocument";
+import type { MermaidPalette } from "../lib/mermaidSvg";
+import { themeColorWithAlpha } from "../lib/mobileTheme";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, View } from "react-native";
 import {
@@ -21,6 +24,7 @@ import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
+import { MermaidDiagramView, renderMermaidDiagram } from "./MermaidDiagram";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
@@ -152,18 +156,40 @@ function enrichedStyle(
 }
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
-  const { renderImage, resolveImageSource } = props;
+  const { renderImage, resolveImageSource, textStyle } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const markdown = useMemo(
-    () =>
-      markdownWithTableBreaks(
+  const mermaidPalette = useMemo(
+    (): MermaidPalette => ({
+      background: textStyle.codeBlockBackgroundColor,
+      foreground: textStyle.color,
+      muted: textStyle.mutedColor,
+      surface: themeColorWithAlpha(textStyle.color, 0.08),
+      surfaceAlt: themeColorWithAlpha(textStyle.color, 0.16),
+      border: themeColorWithAlpha(textStyle.color, 0.28),
+      accent: textStyle.linkColor,
+      monoFontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    }),
+    [
+      textStyle.codeBlockBackgroundColor,
+      textStyle.color,
+      textStyle.mutedColor,
+      textStyle.linkColor,
+    ],
+  );
+  const { markdown, mermaidDiagrams } = useMemo(() => {
+    const withDiagrams = markdownWithMermaidDiagrams(props.markdown, (source) =>
+      renderMermaidDiagram(source, mermaidPalette),
+    );
+    return {
+      markdown: markdownWithTableBreaks(
         markdownWithInlineFileLinks(
-          markdownWithHtml(props.markdown),
+          markdownWithHtml(withDiagrams.markdown),
           ENRICHED_INLINE_FILE_LINK_REGEX,
         ),
       ),
-    [props.markdown],
-  );
+      mermaidDiagrams: withDiagrams.diagrams,
+    };
+  }, [props.markdown, mermaidPalette]);
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
   const onDocumentAssets = useCallback(({ assets }: DocumentAssetsEvent) => {
     setDocumentAssets((previous) =>
@@ -265,13 +291,25 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     [props.textStyle, themeAppearance, linkVariants],
   );
   const renderMedia = useCallback(
-    (asset: MarkdownMediaAsset) =>
-      renderImage?.({
-        href: asset.url,
-        alt: asset.altText || null,
-        title: asset.title || null,
-      }) ?? null,
-    [renderImage],
+    (asset: MarkdownMediaAsset) => {
+      const diagram = mermaidDiagrams.get(asset.url);
+      if (diagram)
+        return (
+          <MermaidDiagramView
+            diagram={diagram}
+            backgroundColor={mermaidPalette.background}
+            borderColor={textStyle.dividerColor}
+          />
+        );
+      return (
+        renderImage?.({
+          href: asset.url,
+          alt: asset.altText || null,
+          title: asset.title || null,
+        }) ?? null
+      );
+    },
+    [mermaidDiagrams, mermaidPalette.background, textStyle.dividerColor, renderImage],
   );
   const resolveNativeImageSource = useCallback(
     (asset: MarkdownMediaAsset) =>
@@ -311,7 +349,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           markdown={markdown}
           markdownStyle={markdownStyle}
           onDocumentAssets={onDocumentAssets}
-          renderMedia={renderImage ? renderMedia : undefined}
+          renderMedia={renderImage || mermaidDiagrams.size > 0 ? renderMedia : undefined}
           resolveImageSource={resolveImageSource ? resolveNativeImageSource : undefined}
           onImagePress={
             props.onImagePress || props.onLinkPress
