@@ -16,6 +16,8 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { filterTerminalContextsWithText } from "../../lib/terminalContext";
+import { restoreUnsentQueueMessages } from "./composerSend.logic";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
@@ -373,6 +375,16 @@ export function useComposerSend(input: ComposerSendInput) {
     persistThreadSettingsForNextTurn,
   });
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  // The queue of THIS route. A send holds the queue of the route it started
+  // on, so a send that finishes after the user changed routes still drains the
+  // route it began on rather than stranding its messages.
+  const composerSendQueue = draftSendState(routeThreadKey).queue;
+  // True while the queue is being drained, so a send started by the drain does
+  // not start another drain.
+  const composerSendQueueDrainingRef = useRef(false);
+  // Whether the last send attempt was accepted, so a drain can tell a send
+  // that went out from one the guards refused.
+  const sendOutcomeRef = useRef<"accepted" | "refused">("refused");
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
@@ -383,6 +395,97 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
 
+  /**
+   * Sends the messages the user typed while a send was in flight.
+   *
+   * The queue is drained in order, one message at a time: the composer can
+   * only have one send in flight, and a second message must not start before
+   * the first one has been accepted. A message whose send is refused goes back
+   * at the FRONT, so the ordering survives, and the drain stops there rather
+   * than sending a later message out of order.
+   *
+   * The whole draft is restored, not just its text, so a queued message keeps
+   * its attachments and contexts. A composer the user has since filled is not
+   * overwritten: the message stays queued instead.
+   */
+  const drainComposerSendQueue = async (
+    send: (message: QueuedComposerMessage<ComposerSendSnapshot>) => Promise<void>,
+  ) => {
+    // A drain is already running: sending a queued message goes through
+    // `onSend`, which drains again when it finishes.
+    if (composerSendQueueDrainingRef.current) return;
+    if (sendInFlightRef.current) return;
+    const pending = composerSendQueue.drain();
+    if (pending.length === 0) return;
+    composerSendQueueDrainingRef.current = true;
+    const runDrain = async () => {
+      for (const [index, message] of pending.entries()) {
+        if (sendInFlightRef.current || !activeThread) {
+          // Another send started, or the thread is gone. Put the unsent
+          // messages back, in the order the user typed them.
+          restoreUnsentQueueMessages({
+            queue: composerSendQueue,
+            pending,
+            stoppedAt: index,
+          });
+          return;
+        }
+        if (
+          composerDraftHasUserContent(
+            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+          )
+        ) {
+          // The composer has something the user typed since. Restoring the
+          // queued draft over it would lose what they just typed, so the
+          // message stays queued.
+          restoreUnsentQueueMessages({
+            queue: composerSendQueue,
+            pending,
+            stoppedAt: index,
+          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "A queued message is waiting",
+              description: "Clear the composer to send it.",
+            }),
+          );
+          return;
+        }
+        // Put the queued draft back in the composer and send it from there, so
+        // it goes out exactly like a typed one.
+        restoreComposerDraft(composerDraftTarget, message.payload);
+        promptRef.current = message.payload.messageText;
+        composerRef.current?.resetCursorState({
+          cursor: collapseExpandedComposerCursor(
+            message.payload.messageText,
+            message.payload.messageText.length,
+          ),
+          prompt: message.payload.messageText,
+          detectTrigger: true,
+        });
+        await send(message);
+        if (sendOutcomeRef.current !== "accepted") {
+          // The send was refused. Keep the message queued rather than losing
+          // it, and stop: the messages after it must not overtake it.
+          restoreUnsentQueueMessages({
+            queue: composerSendQueue,
+            pending,
+            stoppedAt: index,
+          });
+          return;
+        }
+      }
+    };
+    // A drain that fails must not take the composer down with it, and the
+    // guard must be released either way. The message stays queued, so the next
+    // send tries again.
+    await runDrain().catch((error) => {
+      console.error("[composer-send-queue] drain failed", error);
+    });
+    composerSendQueueDrainingRef.current = false;
+  };
+
   const onSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
@@ -392,6 +495,10 @@ export function useComposerSend(input: ComposerSendInput) {
       image: ComposerImageAttachment | null;
     },
   ) => {
+    // A send is refused until it is actually dispatched. A caller draining the
+    // local queue reads this to tell a send that went out from one the guards
+    // turned away.
+    sendOutcomeRef.current = "refused";
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
@@ -433,6 +540,41 @@ export function useComposerSend(input: ComposerSendInput) {
       sendInFlightRef.current ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
+      // A message typed while the previous send is still in flight used to be
+      // dropped here, silently: the text never left the composer, nothing was
+      // queued, and the only sign was a spinner that never resolved. Queue the
+      // WHOLE draft instead, so its attachments and contexts go with it, and
+      // tell the user it is waiting.
+      if (sendInFlightRef.current && !directAnnotation) {
+        // The draft store is the composer's source of truth, so the whole
+        // draft is available here: the text, the attachments, and the
+        // contexts that go with them.
+        const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+        const terminalContexts = draft?.terminalContexts ?? [];
+        const queued = snapshotComposerSend({
+          prompt: draft?.prompt ?? promptRef.current,
+          images: draft?.images ?? [],
+          files: draft?.files ?? [],
+          terminalContexts,
+          sendableTerminalContexts: filterTerminalContextsWithText(terminalContexts),
+          previewAnnotations: draft?.previewAnnotations ?? [],
+          reviewComments: draft?.reviewComments ?? [],
+          threadContexts: draft?.threadContexts ?? [],
+        });
+        if (queued.messageText.trim() !== "" || queued.attachments.length > 0) {
+          composerSendQueue.enqueue({ id: randomUUID(), payload: queued });
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "Message queued",
+              description: "It will be sent when the current send finishes.",
+            }),
+          );
+        }
+      }
       notifyDirectAnnotationAttached();
       return;
     }
@@ -1089,6 +1231,8 @@ export function useComposerSend(input: ComposerSendInput) {
       usesAttachmentUploads: turnUsesAttachmentUploads,
     });
     if (multipleModelSelections !== null) {
+      // This path dispatches the send itself, so it is accepted from here on.
+      sendOutcomeRef.current = "accepted";
       await sendToMultipleModels({
         threadId: threadIdForSend,
         project: activeProject,
@@ -1247,6 +1391,10 @@ export function useComposerSend(input: ComposerSendInput) {
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
+      // The turn is dispatched from here, so the send is accepted from here on.
+      // A send that gave up before this point - a blocked upload, a missing
+      // worktree base - was refused, and its message stays queued.
+      sendOutcomeRef.current = "accepted";
       const startPromise = startThreadTurn({
         environmentId,
         input: {
@@ -1419,6 +1567,15 @@ export function useComposerSend(input: ComposerSendInput) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       if (!sendQueuesBehindSetup) resetLocalDispatch();
+    }
+    // The send is done, so a message the user typed while it was in flight can
+    // go out now. A send that was refused keeps its message queued, and a
+    // failed send that restored its own draft is not overwritten by a queued
+    // one.
+    if (sendOutcomeRef.current === "accepted") {
+      void drainComposerSendQueue(async () => {
+        await onSend(undefined, "auto", "foreground");
+      });
     }
   };
 

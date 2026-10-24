@@ -5,6 +5,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -26,6 +27,11 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
+import {
+  COMMAND_STALL_DEADLINE,
+  makeCommandStallTracker,
+  type CommandStallSnapshot,
+} from "./commandStall.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -54,6 +60,25 @@ export interface RpcSession {
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
+  /**
+   * The command that has been outstanding the longest, if it has been
+   * outstanding longer than the stall deadline.
+   *
+   * The socket's own heartbeat cannot see a stalled command pipeline: a busy
+   * host keeps answering small requests, so the connection looks healthy while
+   * the command the user is waiting for never comes back. This is the signal
+   * that does see it.
+   */
+  readonly stalledCommand?: Effect.Effect<CommandStallSnapshot | null>;
+  /**
+   * Records that a command started, and gives back the function that records
+   * that THIS command finished. The client runtime calls this around every
+   * request, so the tracker knows what is in flight.
+   *
+   * Optional so a session built outside the live transport (a test, a
+   * recorded fixture) does not have to carry a tracker it never uses.
+   */
+  readonly trackCommand?: (method: string) => { readonly release: () => void };
 }
 
 export interface RpcSessionOptions {
@@ -124,6 +149,7 @@ function serverConfigReplayEvents(
 
 const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
 const PING_TIMEOUT_SECONDS = Duration.toSeconds(PING_TIMEOUT);
+const COMMAND_STALL_DEADLINE_MS = Duration.toMillis(COMMAND_STALL_DEADLINE);
 
 function mapSessionRpcError(
   error: InitialConfigError | ProbeError | ServerConfigSubscriptionError,
@@ -238,6 +264,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Effect.forkScoped,
     );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));
+    // The commands in flight, so a command that never comes back is visible
+    // even though the socket is still answering. The clock comes from Effect's
+    // own `Clock` service, so it is the same time the rest of the effect model
+    // uses.
+    const clock = yield* Clock.Clock;
+    const stallTracker = makeCommandStallTracker({
+      now: () => clock.currentTimeMillisUnsafe(),
+    });
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();
     const serverConfigExit = yield* Deferred.make<void, ServerConfigSubscriptionError>();
     const configSubscriptionClosed = yield* Deferred.make<never, ConnectionAttemptError>();
@@ -416,6 +450,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Deferred.await(disconnected),
         Deferred.await(configSubscriptionClosed),
       ),
+      stalledCommand: Effect.sync(() =>
+        stallTracker.stalled(clock.currentTimeMillisUnsafe(), COMMAND_STALL_DEADLINE_MS),
+      ),
+      trackCommand: (method: string) => stallTracker.begin(method),
     } satisfies RpcSession;
   });
 

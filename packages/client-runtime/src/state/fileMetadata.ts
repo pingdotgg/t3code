@@ -18,11 +18,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import {
-  request,
-  type EnvironmentRpcFailure,
-  EnvironmentRpcUnavailableError,
-} from "../rpc/client.ts";
+import { request, type EnvironmentRpcRequestFailure } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 
@@ -49,7 +45,7 @@ class FileMetadataRequest extends Request.Class<
     retained?: RetainedMetadata;
   },
   FilesystemEntryMetadata | null,
-  EnvironmentRpcFailure<typeof WS_METHODS.filesystemGetMetadata> | EnvironmentRpcUnavailableError
+  EnvironmentRpcRequestFailure<typeof WS_METHODS.filesystemGetMetadata>
 > {}
 
 export function createFileMetadataAtoms<R, E>(

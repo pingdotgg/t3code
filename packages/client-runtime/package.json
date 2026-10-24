@@ -167,6 +167,10 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/composer-send-queue": {
+      "types": "./src/state/composerSendQueue.ts",
+      "default": "./src/state/composerSendQueue.ts"
+    },
     "./state/command-output": {
       "types": "./src/state/commandOutput.ts",
       "default": "./src/state/commandOutput.ts"

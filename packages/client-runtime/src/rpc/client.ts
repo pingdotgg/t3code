@@ -20,11 +20,29 @@ import { RpcClientError } from "effect/rpc";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { REQUEST_TIMEOUT } from "./deadlines.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedError<EnvironmentRpcUnavailableError>()(
   "EnvironmentRpcUnavailableError",
   {
     environmentId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+/**
+ * A request outlived its deadline.
+ *
+ * The socket can be perfectly healthy while the host never answers this one
+ * request, so this is not a transport failure and it does not mean the
+ * connection dropped. It means the host is alive but not answering this call.
+ */
+export class EnvironmentRpcTimeoutError extends Schema.TaggedError<EnvironmentRpcTimeoutError>()(
+  "EnvironmentRpcTimeoutError",
+  {
+    environmentId: Schema.String,
+    method: Schema.String,
+    timeoutMs: Schema.Number,
     message: Schema.String,
   },
 ) {}
@@ -207,7 +225,32 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
     environmentLabel: supervisor.target.label,
     method: tag,
   });
-  return yield* method(input).pipe(Effect.ensuring(completeObservation));
+  // Record that this command is in flight, so a command the host never
+  // answers is visible even though the socket is still healthy. The release
+  // is per command, so two commands of the same method do not release each
+  // other.
+  const tracked = session.trackCommand?.(tag);
+  // A request deadline, so a host that is alive but never answers this call
+  // fails with a named error instead of leaving the caller waiting forever.
+  // The socket's own ping timeout cannot see this: a busy host keeps
+  // answering small requests, so the connection looks healthy while this one
+  // request hangs.
+  return yield* method(input).pipe(
+    Effect.timeout(REQUEST_TIMEOUT),
+    Effect.catchTags({
+      TimeoutError: () =>
+        Effect.fail(
+          new EnvironmentRpcTimeoutError({
+            environmentId: supervisor.target.environmentId,
+            method: tag,
+            timeoutMs: Duration.toMillis(REQUEST_TIMEOUT),
+            message: `${supervisor.target.label} did not answer ${tag} within ${Duration.toMillis(REQUEST_TIMEOUT)}ms. It may be busy or its command pipeline may be stalled.`,
+          }),
+        ),
+    }),
+    Effect.ensuring(Effect.sync(() => tracked?.release())),
+    Effect.ensuring(completeObservation),
+  );
 });
 
 export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
@@ -432,10 +475,28 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   return subscribeDynamic(tag, () => Effect.succeed(input), options);
 }
 
+/**
+ * The failure of a unary environment request: the error the server declared
+ * for the method, plus the client's own transport failures.
+ *
+ * A request can fail without the server ever answering - a host that is alive
+ * but whose command pipeline has stalled fails the request on the client side -
+ * so the timeout is part of the failure channel the callers have to handle.
+ */
+export type EnvironmentRpcRequestFailure<TTag extends EnvironmentUnaryRpcTag> =
+  | EnvironmentRpcFailure<TTag>
+  | EnvironmentAuthorizationError
+  | EnvironmentRpcUnavailableError
+  | EnvironmentRpcTimeoutError;
+
 export const request = <TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
-) => requestGuarded(tag, input);
+): Effect.Effect<
+  EnvironmentRpcSuccess<TTag>,
+  EnvironmentRpcRequestFailure<TTag>,
+  EnvironmentSupervisor.EnvironmentSupervisor
+> => requestGuarded(tag, input);
 
 export const runStream = <
   TTag extends Exclude<EnvironmentStreamCommandRpcTag, ClientGuardedRpcTag>,

@@ -21,6 +21,10 @@ import { getUploadedAttachments } from "../../lib/attachmentUploadQueue";
 import { findRevertCheckpoint } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { randomUUID } from "~/lib/utils";
+import {
+  makeComposerSendQueue,
+  type ComposerSendQueue,
+} from "@t3tools/client-runtime/state/composer-send-queue";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newThreadId } from "~/lib/utils";
 import {
@@ -56,12 +60,24 @@ const draftSendStateByRouteKey = new Map<
   {
     readonly sendInFlight: { current: boolean };
     readonly uncertainSubmissions: { current: Map<string, ThreadId> };
+    /**
+     * The messages the user typed while a send was in flight on THIS route.
+     *
+     * Per route, so a send that started on one route and finished on another
+     * does not strand the first route's queue: the send holds the queue of the
+     * route it started on.
+     */
+    readonly queue: ComposerSendQueue<ComposerSendSnapshot>;
   }
 >();
 export function draftSendState(routeKey: string) {
   let state = draftSendStateByRouteKey.get(routeKey);
   if (!state) {
-    state = { sendInFlight: { current: false }, uncertainSubmissions: { current: new Map() } };
+    state = {
+      sendInFlight: { current: false },
+      uncertainSubmissions: { current: new Map() },
+      queue: makeComposerSendQueue<ComposerSendSnapshot>(),
+    };
     draftSendStateByRouteKey.set(routeKey, state);
   }
   return state;

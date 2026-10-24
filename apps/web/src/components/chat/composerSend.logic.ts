@@ -79,3 +79,35 @@ export function approvalRedirectNotice(input: {
   }
   return null;
 }
+
+/**
+ * Puts the messages a drain did not send back into the queue.
+ *
+ * A drain stops for one of three reasons, and each one leaves the queue in a
+ * state the user can act on:
+ *
+ * - another send started, or the thread is gone: the unsent messages go back
+ *   to the queue, in the order they were typed;
+ * - the composer has something the user typed since: the queued message stays
+ *   queued, because restoring it over the newer draft would lose what they
+ *   just typed;
+ * - the send was refused: the message stays queued and the drain stops, so a
+ *   later message cannot overtake it.
+ *
+ * The restore order matters. A restore goes to the FRONT of the queue, so a
+ * remainder restored in the order it was drained would come out reversed. The
+ * remainder is restored from LAST to FIRST, which puts it back in the order
+ * the user typed it.
+ */
+export function restoreUnsentQueueMessages<T>(input: {
+  /** The queue the messages go back into. */
+  readonly queue: { readonly restore: (message: T) => void };
+  /** The messages the drain had taken, oldest first. */
+  readonly pending: ReadonlyArray<T>;
+  /** The index of the message the drain stopped on; it is restored too. */
+  readonly stoppedAt: number;
+}): void {
+  for (const message of input.pending.slice(input.stoppedAt).toReversed()) {
+    input.queue.restore(message);
+  }
+}

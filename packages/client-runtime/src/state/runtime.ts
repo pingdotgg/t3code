@@ -23,11 +23,13 @@ import {
   type EnvironmentRpcInput,
   type EnvironmentRpcSuccess,
   type EnvironmentRpcFailure,
+  type EnvironmentRpcRequestFailure,
   type EnvironmentRpcStreamFailure,
   type EnvironmentRpcStreamValue,
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
   EnvironmentRpcUnavailableError,
+  EnvironmentRpcTimeoutError,
   request,
   requestGuarded,
   RpcPermissionGuard,
@@ -590,6 +592,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         | ConnectionAttemptError
         | EnvironmentRegistry.EnvironmentNotRegisteredError
         | EnvironmentRpcUnavailableError
+        | EnvironmentRpcTimeoutError
       >((get) => {
         const connection = Option.getOrNull(
           AsyncResult.value(get(connectionAtom(target.environmentId))),
@@ -616,7 +619,8 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           | E
           | ConnectionAttemptError
           | EnvironmentRegistry.EnvironmentNotRegisteredError
-          | EnvironmentRpcUnavailableError,
+          | EnvironmentRpcUnavailableError
+          | EnvironmentRpcTimeoutError,
           | EnvironmentRegistry.EnvironmentRegistry
           | AtomRegistry.AtomRegistry
           | Exclude<R, EnvironmentSupervisor.EnvironmentSupervisor>
@@ -764,7 +768,7 @@ export function createEnvironmentRpcQueryAtomFamily<
       emit: (value: EnvironmentRpcSuccess<TTag>) => Effect.Effect<void>,
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
-      EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
+      EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError | EnvironmentRpcTimeoutError,
       EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
     >;
     readonly persistence?: QueryPersistence<EnvironmentRpcSuccess<TTag>>;
@@ -851,7 +855,7 @@ export function createEnvironmentRpcCommand<
       input: Input,
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
-      EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
+      EnvironmentRpcRequestFailure<TTag>,
       EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
     >;
     readonly scheduler?: AtomCommandScheduler;

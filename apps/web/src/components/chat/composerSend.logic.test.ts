@@ -8,6 +8,7 @@ import {
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
+  restoreUnsentQueueMessages,
 } from "./composerSend.logic";
 
 const local = EnvironmentId.make("local");
@@ -121,5 +122,47 @@ describe("approvalRedirectNotice", () => {
   it("stays quiet when the decline failed or the user left the thread", () => {
     expect(approvalRedirectNotice({ ...settled, declined: false })).toBeNull();
     expect(approvalRedirectNotice(settled)).toBeNull();
+  });
+});
+
+describe("restoreUnsentQueueMessages", () => {
+  /** A queue whose restore puts the message at the FRONT, like the real one. */
+  const makeQueue = () => {
+    const messages: string[] = [];
+    return {
+      messages,
+      restore: (message: { readonly id: string }) => {
+        messages.unshift(message.id);
+      },
+    };
+  };
+
+  it("restores the unsent messages in the order the user typed them", () => {
+    // A restore goes to the FRONT, so restoring the remainder in the order it
+    // was drained would come out reversed.
+    const queue = makeQueue();
+    const pending = [{ id: "first" }, { id: "second" }, { id: "third" }];
+
+    restoreUnsentQueueMessages({ queue, pending, stoppedAt: 1 });
+
+    expect(queue.messages).toEqual(["second", "third"]);
+  });
+
+  it("restores the message the drain stopped on", () => {
+    const queue = makeQueue();
+    const pending = [{ id: "first" }, { id: "second" }];
+
+    restoreUnsentQueueMessages({ queue, pending, stoppedAt: 0 });
+
+    expect(queue.messages).toEqual(["first", "second"]);
+  });
+
+  it("restores nothing when the drain sent everything", () => {
+    const queue = makeQueue();
+    const pending = [{ id: "first" }];
+
+    restoreUnsentQueueMessages({ queue, pending, stoppedAt: pending.length });
+
+    expect(queue.messages).toEqual([]);
   });
 });
