@@ -1,4 +1,8 @@
-import { AuthPreviewOperateScope, type BrowserProfile } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  type BrowserProfile,
+  type BrowserRecordingFrameRate,
+} from "@t3tools/contracts";
 import { useEffect } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "~/hooks/useSettings";
@@ -12,11 +16,15 @@ const selectProfiles = (settings: { readonly browserProfiles: ReadonlyArray<Brow
   settings.browserProfiles;
 const selectDefaultProfileId = (settings: { readonly browserDefaultProfileId: string }) =>
   settings.browserDefaultProfileId;
+const selectRecordingFrameRate = (settings: {
+  readonly browserRecordingFrameRate: BrowserRecordingFrameRate;
+}) => settings.browserRecordingFrameRate;
 
 export function BrowserProfileReporter() {
   const hydrated = useClientSettingsHydrated();
   const profiles = useClientSettings(selectProfiles);
   const defaultProfileId = useClientSettings(selectDefaultProfileId);
+  const recordingFrameRate = useClientSettings(selectRecordingFrameRate);
   const { environments } = useEnvironments();
   const serverConfigs = useServerConfigs();
   const operable = useEnvironmentsWithScope(environments, AuthPreviewOperateScope);
@@ -26,9 +34,9 @@ export function BrowserProfileReporter() {
     if (!hydrated) return;
     for (const [environmentId, config] of serverConfigs) {
       if (!config.environment.capabilities.serverBrowser || !operable.has(environmentId)) continue;
-      void report({ environmentId, input: { profiles, defaultProfileId } });
+      void report({ environmentId, input: { profiles, defaultProfileId, recordingFrameRate } });
     }
-  }, [defaultProfileId, hydrated, operable, profiles, report, serverConfigs]);
+  }, [defaultProfileId, hydrated, operable, profiles, recordingFrameRate, report, serverConfigs]);
 
   return null;
 }
