@@ -166,6 +166,9 @@ export function isAutoSettlementCandidate(
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
+  // A provider blocked by a permission denial still needs the user, however
+  // long it sits or whatever its pull request does.
+  if (thread.status === "failed" && thread.lastErrorCode === "permission_denied") return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);
 }

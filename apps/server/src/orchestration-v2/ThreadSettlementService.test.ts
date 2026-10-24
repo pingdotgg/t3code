@@ -6,6 +6,7 @@ import {
   ProjectId,
   EventId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
@@ -184,6 +185,38 @@ describe("resolveAutoSettlementAt", () => {
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
       }),
     ).toEqual(at(-4 * DAY_MS));
+  });
+
+  it("keeps a thread a permission denial failed until the user acts on it", () => {
+    const failed = shell({
+      status: "failed",
+      latestRunId: RunId.make("run-1"),
+      latestUserMessageAt: at(-4 * DAY_MS),
+      latestRunCompletedAt: at(-4 * DAY_MS),
+      lastErrorCode: "other_failure",
+    });
+    const input = {
+      thread: failed,
+      pullRequest: { state: "merged" as const, mergedAt: DateTime.formatIso(at(-1)) },
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 2,
+      autoSettleOnMerge: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, pullRequest: null }),
+    ).toEqual(at(-4 * DAY_MS));
+    const denied = { ...failed, lastErrorCode: "permission_denied" };
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: denied }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: denied,
+        pullRequest: null,
+      }),
+    ).toBeNull();
   });
 
   it("uses the latest activity time when the inactivity window elapses", () => {

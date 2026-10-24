@@ -4843,6 +4843,270 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #18386 a turn the CLI blocked with its own permission denial ended as plain "completed"
+  it.effect("surfaces Claude CLI permission denials but not ones T3 made", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("claude-cli-permission-denial-attempt"),
+          text: "Run exactly `printf T3_DENIAL_PROBE`, then stop if it is denied.",
+          attachments: [],
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: "/denial-probe",
+          }),
+        }),
+      );
+      const declinedInput = { command: "git push --force" };
+      const decision = yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!("Bash", declinedInput, {
+          signal: new AbortController().signal,
+          toolUseID: "tool-t3-declined",
+          requestId: "request-t3-declined",
+        }),
+      ).pipe(Effect.forkScoped);
+      const request = yield* Queue.take(harness.runtimeRequestReceipts);
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "decline",
+      });
+      assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+
+      // A settings deny rule (or the auto-mode classifier) rejects inside the
+      // CLI, so canUseTool never runs and only the result reports the denial.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          ...makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000308",
+            result: "The command was denied, so I stopped.",
+          }),
+          permission_denials: [
+            { tool_name: "Bash", tool_use_id: "tool-t3-declined", tool_input: declinedInput },
+            {
+              tool_name: "Bash",
+              tool_use_id: "tool-cli-denied",
+              tool_input: { command: "printf T3_DENIAL_PROBE" },
+            },
+          ],
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      const notices = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(notices, 1, "a CLI-side permission denial must leave a visible notice");
+      assert.include(notices[0]?.message, "printf T3_DENIAL_PROBE");
+      assert.notInclude(notices[0]?.message, "git push --force");
+      // A completed run would read as finished work and could settle; failing
+      // it keeps the thread in front of the user.
+      assert.equal(terminal.status, "failed");
+      assert.equal(terminal.failure?.class, "permission_error");
+      // Claude may work around a denial, so the reason states only the count.
+      assert.equal(terminal.failure?.message, "Claude Code denied 1 tool call this turn.");
+      assert.isUndefined(
+        harness.events.find(
+          (event) =>
+            event.type === "runtime_request.updated" &&
+            event.runtimeRequest.id !== request.runtimeRequest.id,
+        ),
+        "the CLI's denial must not become an actionable approval",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  describe("Claude CLI permission denials at the end of a turn", () => {
+    const runDeniedTurn = (input: {
+      readonly attemptId: string;
+      readonly beforeResult?: ReadonlyArray<SDKMessage>;
+      readonly result?: Partial<Parameters<typeof makeResultFrame>[0]>;
+      readonly denials: ReadonlyArray<{ readonly id: string; readonly command: string }>;
+      readonly t3DeniedId?: string;
+    }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(input.attemptId),
+            text: "Run the probe.",
+            attachments: [],
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: "/denial-probe",
+            }),
+          }),
+        );
+        if (input.t3DeniedId !== undefined) {
+          const decision = yield* Effect.promise(() =>
+            harness.getOpenedOptions()!.canUseTool!(
+              "Bash",
+              { command: "rm -rf build" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: input.t3DeniedId!,
+                requestId: `request-${input.t3DeniedId}`,
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const request = yield* Queue.take(harness.runtimeRequestReceipts);
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.runtimeRequest.id,
+            decision: "decline",
+          });
+          yield* Fiber.join(decision);
+        }
+        for (const frame of input.beforeResult ?? []) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000309",
+              result: "Stopped.",
+              ...input.result,
+            }),
+            permission_denials: input.denials.map((denial) => ({
+              tool_name: "Bash",
+              tool_use_id: denial.id,
+              tool_input: { command: denial.command },
+            })),
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        const notices = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem]
+            : [],
+        );
+        return { terminal, notices };
+      });
+    const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      );
+
+    const deniedToolResult = (toolUseId: string, text: string, uuid: string) =>
+      claudeSdkFrame({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: toolUseId, content: text, is_error: true }],
+        },
+        parent_tool_use_id: null,
+        uuid,
+        session_id: WAKE_NATIVE_SESSION,
+      });
+
+    it.effect("lists every CLI denial with the best reason available", () =>
+      provide(
+        Effect.gen(function* () {
+          const { terminal, notices } = yield* runDeniedTurn({
+            attemptId: "claude-cli-denials-multiple",
+            beforeResult: [
+              claudeSdkFrame({
+                type: "system",
+                subtype: "permission_denied",
+                tool_name: "Bash",
+                tool_use_id: "tool-denied-1",
+                decision_reason_type: "rule",
+                decision_reason: "Permission rule Bash(printf T3_DENIAL_PROBE*) denies this",
+                message: "Permission to use Bash has been denied.",
+                uuid: "00000000-0000-4000-8000-000000000310",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+              deniedToolResult(
+                "tool-denied-1",
+                "Permission to use Bash has been denied.",
+                "00000000-0000-4000-8000-000000000311",
+              ),
+              // Older CLIs and hook denials send no permission_denied frame.
+              deniedToolResult(
+                "tool-denied-2",
+                "\u001b[31mPreToolUse hook blocked curl\u001b[0m",
+                "00000000-0000-4000-8000-000000000312",
+              ),
+            ],
+            denials: [
+              { id: "tool-denied-1", command: "printf T3_DENIAL_PROBE" },
+              { id: "tool-denied-2", command: "curl example.com" },
+              { id: "tool-denied-3", command: "ls /secret" },
+            ],
+          });
+          assert.equal(terminal.status, "failed");
+          assert.equal(terminal.failure?.message, "Claude Code denied 3 tool calls this turn.");
+          assert.lengthOf(notices, 1);
+          const lines = notices[0]?.message.split("\n") ?? [];
+          assert.include(lines[1], "Bash(printf T3_DENIAL_PROBE*) denies this");
+          assert.include(lines[2], "curl example.com (PreToolUse hook blocked curl)");
+          assert.include(lines[3], "ls /secret (no reason given)");
+        }),
+      ),
+    );
+
+    it.effect("leaves a turn that only T3 denied completed and quiet", () =>
+      provide(
+        Effect.gen(function* () {
+          const { terminal, notices } = yield* runDeniedTurn({
+            attemptId: "claude-cli-denials-t3-only",
+            t3DeniedId: "tool-t3-only",
+            denials: [{ id: "tool-t3-only", command: "rm -rf build" }],
+          });
+          assert.equal(terminal.status, "completed");
+          assert.lengthOf(notices, 0);
+        }),
+      ),
+    );
+
+    it.effect("keeps an API failure's own status and reason", () =>
+      provide(
+        Effect.gen(function* () {
+          const { terminal, notices } = yield* runDeniedTurn({
+            attemptId: "claude-cli-denials-api-error",
+            result: { isError: true, apiErrorStatus: 529, result: "Overloaded" },
+            denials: [{ id: "tool-denied-api", command: "printf T3_DENIAL_PROBE" }],
+          });
+          assert.equal(terminal.status, "failed");
+          assert.equal(terminal.failure?.class, "provider_error");
+          assert.equal(terminal.failure?.code, "api_error_529");
+          assert.lengthOf(notices, 1);
+        }),
+      ),
+    );
+
+    it.effect("keeps an aborted turn interrupted", () =>
+      provide(
+        Effect.gen(function* () {
+          const { terminal } = yield* runDeniedTurn({
+            attemptId: "claude-cli-denials-aborted",
+            result: { terminalReason: "aborted_tools" },
+            denials: [{ id: "tool-denied-abort", command: "printf T3_DENIAL_PROBE" }],
+          });
+          assert.equal(terminal.status, "interrupted");
+          assert.isNull(terminal.failure);
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "runs native compaction and keeps its context watermark separate from billed usage",
     () =>
@@ -11532,6 +11796,54 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("keeps a running workflow alive when a CLI permission denial fails its turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stopped: Array<string> = [];
+        const harness = yield* makeWorkflowHarnessWithOptions({
+          stopTask: (taskId) => Effect.sync(() => void stopped.push(taskId)),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-workflow-cli-denial"),
+            text: "Run the workflow, then the probe.",
+            attachments: [],
+          }),
+        );
+        yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000001290" });
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000001291",
+              result: "Launched; the probe was denied.",
+            }),
+            permission_denials: [
+              {
+                tool_name: "Bash",
+                tool_use_id: "tool-workflow-denied",
+                tool_input: { command: "printf T3_DENIAL_PROBE" },
+              },
+            ],
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.failure?.class, "permission_error");
+        assert.deepEqual(stopped, []);
+        assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, "running");
+        assert.equal(workflowMemberEvents(harness.events, 1).at(-1)?.subagent.status, "running");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect("marks a workflow coordinator's script prompt and leaves a subagent brief plain", () =>
