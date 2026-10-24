@@ -4182,6 +4182,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             { readonly messages: ReadonlyArray<SDKMessage>; readonly detail: string | null }
           >(),
         );
+        // A root result ends whichever native turn is open, so a root frame
+        // buffered before a turn settles belongs to a native turn that has
+        // ended. Claude can fold a user prompt into a wake turn it already
+        // opened; that wake's continuation then has no result to wait for.
+        const answeredWakeFrames = new WeakSet<SDKMessage>();
         // Claude's wake result carries no task id, and its wake can run after a prompt the user
         // queued meanwhile, so reports survive one user turn and then expire: a notification
         // Claude folded into its own turn cannot name a later wake. One Ref holds both, so a
@@ -8610,6 +8615,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
+            const lastBufferedRootFrame = (yield* Ref.get(wakeBuffers))
+              .get(liveQuery.nativeThreadId)
+              ?.messages.findLast(isClaudeRootTurnFrame);
+            if (lastBufferedRootFrame !== undefined) answeredWakeFrames.add(lastBufferedRootFrame);
             yield* finalizeActiveTurn({
               context,
               status: interrupted
@@ -9704,7 +9713,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
                   return;
                 }
-                if (hasOpaqueTaskNotification && !context.nativeWakeStarted) {
+                const lastRootFrame = drained.findLast(isClaudeRootTurnFrame);
+                const wakeTurnAnswered =
+                  lastRootFrame !== undefined && answeredWakeFrames.has(lastRootFrame);
+                if (wakeTurnAnswered || (hasOpaqueTaskNotification && !context.nativeWakeStarted)) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                 } else if (!context.nativeWakeStarted) {
