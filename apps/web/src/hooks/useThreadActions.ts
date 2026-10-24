@@ -356,6 +356,7 @@ export function useThreadActions() {
       );
     }
 
+    const requestingRouteHref = router.state.location.href;
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToDraft =
       currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -382,7 +383,7 @@ export function useThreadActions() {
       failureTitle: "Failed to undo archive",
     });
 
-    if (shouldNavigateToDraft) {
+    if (shouldNavigateToDraft && router.state.location.href === requestingRouteHref) {
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
