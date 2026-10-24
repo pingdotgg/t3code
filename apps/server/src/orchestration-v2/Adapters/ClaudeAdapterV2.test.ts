@@ -85,6 +85,10 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  withClaudeReportedModels,
+} from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -231,6 +235,42 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it("sends the effort chosen for a model Claude Code reported", () => {
+    const modelSelection = {
+      ...CLAUDE_TEST_MODEL_SELECTION,
+      model: "anthropic/claude-gateway",
+      options: [],
+    };
+    const modelCatalog = withClaudeReportedModels(
+      BUNDLED_CLAUDE_MODEL_CATALOG,
+      [],
+      [
+        {
+          value: "anthropic/claude-gateway",
+          displayName: "Gateway Claude",
+          description: "",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "high", "max"],
+        },
+      ],
+    );
+    const base = { nativeThreadId: "gateway-thread", resume: false, cwd: "/workspace" };
+
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      modelSelection: { ...modelSelection, options: [{ id: "effort", value: "max" }] },
+      modelCatalog,
+    });
+    assert.equal(options.model, "anthropic/claude-gateway");
+    assert.equal(options.effort, "max");
+    // The reported levels supply the default the picker shows.
+    assert.equal(
+      ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, modelSelection, modelCatalog }).effort,
+      "high",
+    );
+    assert.isUndefined(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, modelSelection }).effort);
+  });
+
   it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
     ["--dangerously-skip-permissions", "bypassPermissions"],
