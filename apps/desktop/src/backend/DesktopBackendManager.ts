@@ -37,10 +37,19 @@ const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
-// Same as the service launcher. A killed backend leaves its agents running,
-// and a busy one needs a few seconds to stop every provider session.
-const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
+// A killed backend leaves its agents running, and a busy one needs time to
+// stop every provider session, so an interactive quit waits for that instead
+// of racing it. Longer than the service launcher's 5s because the desktop
+// quit/update path should not abandon in-flight provider work.
+const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(30);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
+// How long a caller of `stop` waits for an instance. It must outlast the
+// termination grace plus output drain, or quit and update give up while the
+// backend is still stopping its agents.
+export const BACKEND_STOP_TIMEOUT = Duration.sum(
+  Duration.sum(DEFAULT_BACKEND_TERMINATE_GRACE, DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
+  Duration.seconds(10),
+);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-process");

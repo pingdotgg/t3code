@@ -6,7 +6,7 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
-import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as DesktopRuntime from "./app/DesktopRuntime.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Version output must flush before Electron exits, without acquiring the runtime.
 import * as NodeFS from "node:fs";
@@ -242,4 +242,4 @@ const layerDesktopRuntime = layerDesktopClerk.pipe(
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
-DesktopApp.program.pipe(Effect.provide(layerDesktopRuntime), NodeRuntime.runMain);
+DesktopApp.program.pipe(Effect.provide(layerDesktopRuntime), DesktopRuntime.runMain);
