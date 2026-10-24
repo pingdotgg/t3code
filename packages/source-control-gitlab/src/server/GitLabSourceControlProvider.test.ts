@@ -234,13 +234,15 @@ it.effect.each(["merge_requests", "issues"])(
         title: "Pairing expiry",
         body: "Preserve remote access",
       });
-      assert.strictEqual(
-        provider.resolveLink?.({
-          cwd: "/unrelated",
-          url: new URL("https://gitlab.com/owner/repo"),
-        }),
-        undefined,
-      );
+      for (const url of [
+        "https://gitlab.com/owner/repo",
+        "https://gitlab.attacker.test/team/project/-/issues/1",
+      ]) {
+        assert.strictEqual(
+          provider.resolveLink?.({ cwd: "/unrelated", url: new URL(url) }),
+          undefined,
+        );
+      }
     }),
 );
 

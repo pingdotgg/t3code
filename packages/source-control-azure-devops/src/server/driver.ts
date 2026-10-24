@@ -14,8 +14,7 @@ import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlPro
 
 const services = AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer));
 
-/** Over this host's own services, which `driver` builds; tests stand in for them. */
-export const makeInstance = Effect.all({
+const makeInstance = Effect.all({
   sourceControl: AzureDevOpsSourceControlProvider.make,
   discovery: Effect.succeed(AzureDevOpsSourceControlProvider.discovery),
   pullRequests: AzureDevOpsPullRequestProvider.make,

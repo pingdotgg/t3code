@@ -283,6 +283,28 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("wakes once per edit of a remark seen at the watermark, never for the agent's own", () => {
+    const seen = remark("ci-bot", "2026-10-10T19:52:40.000Z");
+    const watching = watch({
+      headSha: "aaaaaaaaaa",
+      remarksThrough: seen.createdAt,
+      remarkIds: [seen.id],
+      wakes: 2,
+    });
+    assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [seen]).changes, []);
+    const edited = { ...seen, editedAt: "2026-10-10T20:04:50.000Z" };
+    const first = evaluatePullRequestWatch(watching, detail(), [edited]);
+    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [edited] }]);
+    assert.strictEqual(first.next.remarksThrough, edited.editedAt);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [edited]).changes, []);
+    const again = { ...seen, editedAt: "2026-10-10T20:05:50.000Z" };
+    const second = evaluatePullRequestWatch(first.next, detail(), [again]);
+    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [again] }]);
+    assert.deepEqual(evaluatePullRequestWatch(second.next, detail(), [again]).changes, []);
+    const own = { ...edited, author: { login: "agent-user", name: null, avatarUrl: null } };
+    assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);
+  });
+
   it("does not treat a failed check read as a rerun", () => {
     const failed = detail({ checks: [check("lint", "failure")] });
     const reported = evaluatePullRequestWatch(watch(), failed, noRemarks);

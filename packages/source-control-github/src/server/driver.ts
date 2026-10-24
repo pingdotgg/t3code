@@ -19,8 +19,7 @@ const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(GitHubRest.layerWithDependencies),
 );
 
-/** Over this host's own services, which `driver` builds; tests stand in for them. */
-export const makeInstance = Effect.all({
+const makeInstance = Effect.all({
   sourceControl: GitHubSourceControlProvider.make,
   discovery: GitHubSourceControlProvider.makeDiscovery,
   pullRequests: GitHubPullRequestProvider.make,

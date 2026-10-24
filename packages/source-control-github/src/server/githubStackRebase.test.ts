@@ -5,30 +5,22 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
-import { cascadeRebaseStack } from "@t3tools/source-control-github/server/githubStackRebase";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
-import * as ServerSettings from "../serverSettings.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import { cascadeRebaseStack } from "./githubStackRebase.ts";
 
 const layer = Layer.mergeAll(
   Layer.mock(GitHubRest.GitHubRest)({
     credential: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
   }),
-  ServerSourceControlHost.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-    Layer.provide(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
-    Layer.provideMerge(VcsProcess.layer),
-  ),
+  TestSourceControlHost.layerWithRealGit(),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const setup = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const process = yield* VcsProcess.VcsProcess;
+  const { process } = yield* SourceControlHost.SourceControlHost;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cascade-test-" });
   const remote = `${root}/remote.git`;
   const work = `${root}/work`;
@@ -122,7 +114,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
     Effect.gen(function* () {
       const repo = yield* setup;
       const fs = yield* FileSystem.FileSystem;
-      const process = yield* VcsProcess.VcsProcess;
+      const { process } = yield* SourceControlHost.SourceControlHost;
       const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cascade-conflict-" });
       const run = (...args: string[]) =>
         process.run({

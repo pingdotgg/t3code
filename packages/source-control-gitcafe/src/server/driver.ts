@@ -14,8 +14,7 @@ import * as GitCafeSourceControlProvider from "./GitCafeSourceControlProvider.ts
 
 const services = GitCafeApi.layer.pipe(Layer.provideMerge(GitCafeCredentials.layer));
 
-/** Over this host's own services, which `driver` builds; tests stand in for them. */
-export const makeInstance = Effect.all({
+const makeInstance = Effect.all({
   sourceControl: GitCafeSourceControlProvider.make,
   discovery: GitCafeSourceControlProvider.makeDiscovery,
   pullRequests: GitCafePullRequestProvider.make,

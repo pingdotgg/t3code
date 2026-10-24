@@ -12,8 +12,7 @@ import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts
 
 const services = ForgejoCli.layer;
 
-/** Over this host's own services, which `driver` builds; tests stand in for them. */
-export const makeInstance = Effect.all({
+const makeInstance = Effect.all({
   sourceControl: ForgejoSourceControlProvider.make,
   discovery: ForgejoSourceControlProvider.makeDiscovery,
   pullRequests: ForgejoPullRequestProvider.make,

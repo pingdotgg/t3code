@@ -6,11 +6,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import * as ServerConfig from "../config.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+
+import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
 
 const TEMPLATE_DIRECTORIES = [
   ".github/PULL_REQUEST_TEMPLATE",
@@ -18,19 +18,14 @@ const TEMPLATE_DIRECTORIES = [
   "docs/PULL_REQUEST_TEMPLATE",
 ] as const;
 
-const layerPrTemplateDetectionTest = GitVcsDriver.layer.pipe(
-  Layer.provide(
-    ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-pr-template-test-",
-    }),
-  ),
-  Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+const layerPrTemplateDetectionTest = Layer.merge(
+  TestSourceControlHost.layerWithRealGit(),
+  NodeServices.layer,
 );
 
 const runGit = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const git = yield* GitVcsDriver.GitVcsDriver;
+    const { git } = yield* SourceControlHost.SourceControlHost;
     return yield* git.execute({
       operation: "PrTemplateDetection.test.runGit",
       cwd,
@@ -70,7 +65,7 @@ const commitTemplates = (cwd: string) =>
 
 const detectTemplate = (cwd: string, treeish = "HEAD") =>
   Effect.gen(function* () {
-    const git = yield* GitVcsDriver.GitVcsDriver;
+    const { git } = yield* SourceControlHost.SourceControlHost;
     return yield* GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
   });
 

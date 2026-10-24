@@ -34,7 +34,7 @@ import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import type { SourceControlDriverInstance } from "@t3tools/source-control-core/server/driver";
+import { fakeSourceControlDriverInstance } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 import { sourceControlMediaResponse } from "./sourceControlMediaResponse.ts";
@@ -957,9 +957,7 @@ describe("AssetAccess", () => {
     const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
       {
         driver: { kind: media.definition.kind, definition: media.definition },
-        instance: {
-          sourceControl: {} as SourceControlDriverInstance["sourceControl"],
-          discovery: {} as SourceControlDriverInstance["discovery"],
+        instance: fakeSourceControlDriverInstance(media.definition.kind, {
           pullRequests: null,
           fetchMedia: (request) =>
             Effect.sync(() => {
@@ -969,7 +967,7 @@ describe("AssetAccess", () => {
                 new Response("bytes", { status: 206, headers: { "content-length": "5" } }),
               );
             }),
-        },
+        }),
       },
     ]);
     return Effect.gen(function* () {

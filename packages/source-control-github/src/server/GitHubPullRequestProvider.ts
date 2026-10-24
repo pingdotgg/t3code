@@ -101,7 +101,7 @@ export function gitHubViewerPermissions(
   };
 }
 
-export function gitHubProviderFailure(
+function gitHubProviderFailure(
   error: GitHubPullRequestApi.GitHubPullRequestApiError,
 ): PullRequestProviderFailure {
   switch (error._tag) {

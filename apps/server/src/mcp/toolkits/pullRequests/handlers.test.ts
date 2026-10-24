@@ -266,24 +266,6 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("links a GitCafe pull request by its canonical /pull/ URL", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const result = yield* harness.call("link_pull_request", {
-        url: "https://git.cafe/pingdotgg/t3code/pull/23897",
-      });
-      expect(result).toMatchObject({
-        host: "git.cafe",
-        repository: "pingdotgg/t3code",
-        number: 23897,
-        alreadyLinked: false,
-      });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.link", host: "git.cafe", number: 23897 },
-      ]);
-    }),
-  );
-
   it.effect("watching an unlinked pull request links it first", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

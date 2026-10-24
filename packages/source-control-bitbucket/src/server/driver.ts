@@ -18,8 +18,7 @@ const services = BitbucketPullRequestApi.layer.pipe(
   Layer.orDie,
 );
 
-/** Over this host's own services, which `driver` builds; tests stand in for them. */
-export const makeInstance = Effect.all({
+const makeInstance = Effect.all({
   sourceControl: BitbucketSourceControlProvider.make,
   discovery: BitbucketSourceControlProvider.makeDiscovery,
   pullRequests: BitbucketPullRequestProvider.make,

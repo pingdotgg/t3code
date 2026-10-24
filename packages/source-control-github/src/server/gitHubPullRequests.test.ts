@@ -25,3 +25,55 @@ it("names a fork's head repository from its owner when gh leaves nameWithOwner o
     headRepositoryOwnerLogin: "binbandit",
   });
 });
+
+it("skips rows that do not decode and trims the ones that do", () => {
+  const decoded = decodeGitHubPullRequestListJson(
+    JSON.stringify([
+      {
+        number: 0,
+        title: "invalid",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/0",
+        baseRefName: "main",
+        headRefName: "feature/invalid",
+      },
+      {
+        number: 15,
+        title: "  Valid PR title  ",
+        url: " https://github.com/pingdotgg/codething-mvp/pull/15 ",
+        baseRefName: " main ",
+        headRefName: "\tfeature/status-valid-pr-entry\t",
+        headRepository: { nameWithOwner: "   " },
+        headRepositoryOwner: { login: "   " },
+      },
+    ]),
+  );
+
+  const rows = Result.getOrThrow(decoded);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    number: 15,
+    title: "Valid PR title",
+    url: "https://github.com/pingdotgg/codething-mvp/pull/15",
+    baseRefName: "main",
+    headRefName: "feature/status-valid-pr-entry",
+    state: "open",
+  });
+  expect(rows[0]).not.toHaveProperty("headRepositoryNameWithOwner");
+  expect(rows[0]).not.toHaveProperty("headRepositoryOwnerLogin");
+});
+
+it("reads lowercase closed and merged states", () => {
+  const row = (number: number, state: string) => ({
+    number,
+    title: "PR",
+    url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+    baseRefName: "main",
+    headRefName: "feature/status-lowercase-state",
+    state,
+  });
+  const decoded = decodeGitHubPullRequestListJson(
+    JSON.stringify([row(16, "closed"), row(17, "merged"), row(18, "open")]),
+  );
+
+  expect(Result.getOrThrow(decoded).map((pr) => pr.state)).toEqual(["closed", "merged", "open"]);
+});

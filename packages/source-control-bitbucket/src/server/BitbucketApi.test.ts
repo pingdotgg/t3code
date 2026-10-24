@@ -14,14 +14,13 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as ServerSettings from "../serverSettings.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import type * as VcsDriver from "../vcs/VcsDriver.ts";
-import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+
+import * as BitbucketApi from "./BitbucketApi.ts";
+
+type HostGit = SourceControlHost.SourceControlHost["Service"]["git"];
 
 const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
@@ -71,7 +70,7 @@ function makeLayer(input: {
     request: HttpClientRequest.HttpClientRequest,
   ) => HttpClientError.HttpClientError;
   readonly stall?: boolean;
-  readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+  readonly git?: Partial<HostGit>;
   readonly env?: Record<string, string>;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
@@ -84,89 +83,54 @@ function makeLayer(input: {
           ),
   );
   const gitMock = {
-    readConfigValue: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"]>(() =>
+    readConfigValue: vi.fn<HostGit["readConfigValue"]>(() =>
       Effect.succeed<string | null>("git@bitbucket.org:pingdotgg/t3code.git"),
     ),
-    resolvePrimaryRemoteName: vi.fn<
-      GitVcsDriver.GitVcsDriver["Service"]["resolvePrimaryRemoteName"]
-    >(() => Effect.succeed("origin")),
-    ensureRemote: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["ensureRemote"]>(() =>
-      Effect.succeed("octocat"),
+    resolvePrimaryRemoteName: vi.fn<HostGit["resolvePrimaryRemoteName"]>(() =>
+      Effect.succeed("origin"),
     ),
-    fetchRemoteBranch: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"]>(
-      () => Effect.void,
-    ),
-    fetchRemoteTrackingBranch: vi.fn<
-      GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]
-    >(() => Effect.void),
-    setBranchUpstream: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"]>(
-      () => Effect.void,
-    ),
-    switchRef: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["switchRef"]>((request) =>
+    ensureRemote: vi.fn<HostGit["ensureRemote"]>(() => Effect.succeed("octocat")),
+    fetchRemoteBranch: vi.fn<HostGit["fetchRemoteBranch"]>(() => Effect.void),
+    fetchRemoteTrackingBranch: vi.fn<HostGit["fetchRemoteTrackingBranch"]>(() => Effect.void),
+    setBranchUpstream: vi.fn<HostGit["setBranchUpstream"]>(() => Effect.void),
+    switchRef: vi.fn<HostGit["switchRef"]>((request) =>
       Effect.succeed({ refName: request.refName }),
     ),
-    listLocalBranchNames: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["listLocalBranchNames"]>(() =>
-      Effect.succeed([]),
-    ),
+    listLocalBranchNames: vi.fn<HostGit["listLocalBranchNames"]>(() => Effect.succeed([])),
   };
   const git = {
     ...gitMock,
     ...input.git,
-  } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+  } satisfies Partial<HostGit>;
 
-  const driver = {
-    listRemotes: vi.fn(() =>
-      Effect.succeed({
-        remotes: [
-          {
-            name: "origin",
-            url: "git@bitbucket.org:pingdotgg/t3code.git",
-            pushUrl: Option.none(),
-            isPrimary: true,
-          },
-        ],
-        freshness: {
-          source: "live-local" as const,
-          observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
-          expiresAt: Option.none(),
-        },
-      }),
-    ),
-  } satisfies Partial<VcsDriver.VcsDriver["Service"]>;
-
-  const resolve = vi.fn(() =>
+  const listRemotes = vi.fn(() =>
     Effect.succeed({
-      kind: "git" as const,
-      repository: {
-        kind: "git" as const,
-        rootPath: "/repo",
-        metadataPath: null,
-        freshness: {
-          source: "live-local" as const,
-          observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
-          expiresAt: Option.none(),
+      remotes: [
+        {
+          name: "origin",
+          url: "git@bitbucket.org:pingdotgg/t3code.git",
+          pushUrl: Option.none(),
+          isPrimary: true,
         },
+      ],
+      freshness: {
+        source: "live-local" as const,
+        observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
+        expiresAt: Option.none(),
       },
-      driver: driver as unknown as VcsDriver.VcsDriver["Service"],
     }),
   );
+  // The outer effect resolves the repository; the inner one lists its remotes.
+  const resolve = vi.fn((_cwd: string) => Effect.succeed(Effect.suspend(listRemotes)));
 
   const layer = BitbucketApi.layer.pipe(
-    Layer.provide(ServerSourceControlHost.layer),
     Layer.provide(SourceControlRateLimit.layer),
-    Layer.provide(Layer.mock(VcsProcess.VcsProcess)({})),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) => execute(request)),
       ),
     ),
-    Layer.provide(
-      Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-        resolve,
-      }),
-    ),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -178,11 +142,11 @@ function makeLayer(input: {
         }),
       ),
     ),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(TestSourceControlHost.layer({ git: { ...git, remotes: resolve } })),
     Layer.provideMerge(NodeServices.layer),
   );
 
-  return { execute, git: gitMock, resolve, listRemotes: driver.listRemotes, layer };
+  return { execute, git: gitMock, resolve, listRemotes, layer };
 }
 
 it.effect("parses pull request responses from the Bitbucket REST API", () => {
@@ -476,6 +440,20 @@ it.effect("creates pull requests using the official REST payload shape", () => {
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
 
+it.effect("reports the account Bitbucket confirms for the configured credential", () => {
+  const { layer } = makeLayer({
+    response: () => Response.json({ username: "bitbucket-user" }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const auth = yield* bitbucket.probeAuth;
+    assert.strictEqual(auth.status, "authenticated");
+    assert.deepStrictEqual(auth.account, Option.some("bitbucket-user"));
+    assert.deepStrictEqual(auth.host, Option.some("bitbucket.org"));
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("prefers credentials saved in settings over the environment, without a restart", () => {
   const { execute, layer } = makeLayer({
     response: () => Response.json({ username: "bitbucket-user" }),
@@ -485,12 +463,12 @@ it.effect("prefers credentials saved in settings over the environment, without a
 
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const settings = yield* ServerSettings.ServerSettingsService;
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
 
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
 
-    yield* settings.updateSettings({
+    yield* settings.update({
       sourceControlHosts: {
         bitbucket: { email: "saved@example.com", apiToken: "saved-api-token" },
       },
@@ -498,13 +476,13 @@ it.effect("prefers credentials saved in settings over the environment, without a
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("saved@example.com", "saved-api-token"));
 
-    yield* settings.updateSettings({
+    yield* settings.update({
       sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
     });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), "Bearer saved-access-token");
 
-    yield* settings.updateSettings({
+    yield* settings.update({
       sourceControlHosts: { bitbucket: { accessToken: "", apiToken: "" } },
     });
     yield* bitbucket.probeAuth;
@@ -519,11 +497,11 @@ it.effect("never puts a saved token that is unsafe for an HTTP header on the wir
 
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const settings = yield* ServerSettings.ServerSettingsService;
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
 
     // Fetch would reject this header with an error quoting the token, and that error reaches
     // clients. The unusable token is ignored, so the environment credential is used instead.
-    yield* settings.updateSettings({
+    yield* settings.update({
       sourceControlHosts: { bitbucket: { accessToken: "saved\ntoken" } },
     });
     yield* bitbucket.probeAuth;
@@ -542,11 +520,11 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
 
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const settings = yield* ServerSettings.ServerSettingsService;
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
 
     assert.strictEqual((yield* bitbucket.probeAuth).status, "unauthenticated");
 
-    yield* settings.updateSettings({
+    yield* settings.update({
       sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
     });
     assert.deepStrictEqual(yield* bitbucket.probeAuth, {

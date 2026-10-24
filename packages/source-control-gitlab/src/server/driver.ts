@@ -14,8 +14,7 @@ import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
 const services = GitLabPullRequestCli.layer.pipe(Layer.provideMerge(GitLabCli.layer));
 
-/** Over this host's own services, which `driver` builds; tests stand in for them. */
-export const makeInstance = Effect.all({
+const makeInstance = Effect.all({
   sourceControl: GitLabSourceControlProvider.make,
   discovery: Effect.succeed(GitLabSourceControlProvider.discovery),
   pullRequests: GitLabPullRequestProvider.make,
