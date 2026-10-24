@@ -11,6 +11,7 @@ import {
 } from "@t3tools/shared/projectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { projectFaviconUrlAtom } from "../state/assets";
 import {
   countGlyphs,
@@ -20,6 +21,7 @@ import {
   resolveProjectIconSymbol,
   type ProjectIconGlyph,
 } from "../lib/projectIcon";
+import { resolveProjectFaviconColorScheme } from "../lib/projectFaviconColorScheme";
 
 import {
   beginProjectFaviconRequest,
@@ -179,6 +181,15 @@ function ProjectFaviconImage(props: {
       : "loading",
   );
 
+  const { themeAppearance } = useAppearancePreferences();
+  const inlineFaviconUrl = useMemo(
+    () =>
+      faviconRequest?.faviconUrl.startsWith("data:")
+        ? resolveProjectFaviconColorScheme(faviconRequest.faviconUrl, themeAppearance)
+        : null,
+    [faviconRequest, themeAppearance],
+  );
+
   const requestIsActive = faviconRequest !== null && activeFaviconRequest === faviconRequest;
   const showImage = requestIsActive && status === "loaded";
   const fallbackGlyph = showImage ? null : projectAutoMonogram(props.projectTitle);
@@ -207,11 +218,11 @@ function ProjectFaviconImage(props: {
         <Image
           key={faviconRequest.faviconUrl}
           source={
-            faviconRequest.faviconUrl.startsWith("data:")
-              ? { uri: faviconRequest.faviconUrl }
+            inlineFaviconUrl !== null
+              ? { uri: inlineFaviconUrl }
               : { uri: faviconRequest.faviconUrl, cacheKey: faviconRequest.cacheKey }
           }
-          cachePolicy={faviconRequest.faviconUrl.startsWith("data:") ? "memory" : "memory-disk"}
+          cachePolicy={inlineFaviconUrl !== null ? "memory" : "memory-disk"}
           recyclingKey={faviconRequest.cacheKey}
           accessibilityLabel={`${props.projectTitle} favicon`}
           style={{
