@@ -112,6 +112,30 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /**
+   * The REST detail carries no line counts, so they are read alongside it. A failed count read
+   * leaves them at zero, which the page already shows as no counts, rather than failing the
+   * read; an unusable CLI or account still fails it, as every optional read here does.
+   */
+  const mergeRequestWithStats = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    Effect.all(
+      [
+        cli.getMergeRequestDetail(input),
+        recoverRead(cli.listMergeRequestStats({ cwd: input.cwd, changeRequests: [input] }), []),
+      ],
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(([mergeRequest, [stat]]) =>
+        stat === undefined
+          ? mergeRequest
+          : { ...mergeRequest, additions: stat.additions, deletions: stat.deletions },
+      ),
+    );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
@@ -137,16 +161,44 @@ export const make = Effect.gen(function* () {
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
+    getFileStats: (input) =>
+      cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
+
+    listChangeRequestStats: (input) =>
+      cli
+        .listMergeRequestStats({ cwd: input.cwd, changeRequests: input.changeRequests })
+        .pipe(Effect.mapError(fail("listChangeRequestStats"))),
+
     getChangeRequestChecks: (input) =>
       cli.getMergeRequestDetail(input).pipe(
         Effect.map(({ state, checks }) => ({ state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 
+    // Hover cards need only the merge request itself, not its merge settings or line counts.
+    getChangeRequestPreview: (input) =>
+      cli.getMergeRequestDetail(input).pipe(
+        Effect.mapError(fail("getChangeRequestPreview")),
+        Effect.map(({ number, title, url, author, state, isDraft, createdAt }) => ({
+          number,
+          title,
+          url,
+          author,
+          state,
+          isDraft,
+          createdAt,
+        })),
+      ),
+
+    // Linked threads read this instead of the full detail, which would also ask for the
+    // project's merge settings they never show.
+    getChangeRequestSummary: (input) =>
+      mergeRequestWithStats(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+
     getChangeRequest: (input) =>
       Effect.all(
         [
-          cli.getMergeRequestDetail(input),
+          mergeRequestWithStats(input),
           cli.getProjectMergeCapabilities({ cwd: input.cwd, repository: input.repository }),
         ],
         { concurrency: 2 },
