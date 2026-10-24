@@ -66,7 +66,11 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
-import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironment,
+  useEnvironmentHttpBaseUrl,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
@@ -1013,6 +1017,7 @@ export default function FilePreviewPanel({
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
+  const environmentLabel = useEnvironment(environmentId)?.label;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const previewAvailable = usePreviewAvailable(environmentId);
@@ -1391,7 +1396,9 @@ export default function FilePreviewPanel({
                 </p>
                 {attemptedPath ? (
                   <p className="text-muted-foreground">
-                    Attempted path
+                    {remoteOpenState.mode !== "local-exec" && environmentLabel
+                      ? `Attempted path on ${environmentLabel}`
+                      : "Attempted path"}
                     <code className="block break-all font-mono text-foreground select-all">
                       {attemptedPath}
                     </code>

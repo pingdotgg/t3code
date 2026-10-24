@@ -6,7 +6,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import { isAbsolutePath, isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import {
@@ -146,6 +146,7 @@ import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
@@ -511,6 +512,18 @@ function useChatMarkdownState({
   const canUseShellActions =
     canOperateHost &&
     canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
+  // An agent on another machine can write to this one (over SSH or a shared
+  // mount), so a path missing on its host may be here instead.
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primaryOpen = useRemoteOpenResolution(primaryEnvironmentId);
+  const localEnvironmentId =
+    primaryEnvironmentId !== environmentId &&
+    remoteOpen.isResolved &&
+    remoteOpen.state.mode !== "local-exec" &&
+    primaryOpen.isResolved &&
+    primaryOpen.state.mode === "local-exec"
+      ? primaryEnvironmentId
+      : null;
   const openMarkdownMedia = (
     source: string,
     resolvedFilePath?: string,
@@ -583,6 +596,10 @@ function useChatMarkdownState({
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const { availableEditors: localEditors } = useAtomValue(
+    markdownServerConfigFieldsAtom(localEnvironmentId),
+  );
+  const openInLocalEditor = useOpenInPreferredEditor(localEnvironmentId, localEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -782,6 +799,35 @@ function useChatMarkdownState({
     });
     return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
   };
+  const isOnlyOnLocalMachine = async (path: string) => {
+    if (environmentId === null || localEnvironmentId === null) return false;
+    const input = { paths: [path] };
+    // Both start now, but a reconnecting local backend must not hold up a
+    // file the host has.
+    const local = getFilesystemMetadata({ environmentId: localEnvironmentId, input });
+    const host = await getFilesystemMetadata({ environmentId, input });
+    // A null entry also covers an unreadable path, which the host's panel
+    // could not show either. A failed lookup keeps the panel and its error.
+    if (host._tag !== "Success" || host.value.entries[0] !== null) return false;
+    const localResult = await local;
+    return localResult._tag === "Success" && (localResult.value.entries[0] ?? null) !== null;
+  };
+  const openOnLocalMachine = (targetPath: string) =>
+    openInLocalEditor(targetPath).then((result) => {
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+      reportMarkdownActionFailure(
+        { operation: "open-file-in-editor", target: targetPath },
+        result.cause,
+      );
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open file",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    });
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
     // Claimed on every open so a synchronous one supersedes a lookup already
@@ -789,19 +835,27 @@ function useChatMarkdownState({
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
       useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
-    if (
-      fileLinkMeta.workspaceLookupPath === null ||
-      !cwd ||
-      (!needsWorkspaceBasenameLookup(panelPath) &&
-        stripRepeatedWorkspacePrefix(panelPath, cwd) === null)
-    ) {
+    const needsWorkspaceLookup =
+      fileLinkMeta.workspaceLookupPath !== null &&
+      !!cwd &&
+      (needsWorkspaceBasenameLookup(panelPath) ||
+        stripRepeatedWorkspacePrefix(panelPath, cwd) !== null);
+    // `~` names a different home on each machine.
+    const mayBeLocal =
+      localEnvironmentId !== null &&
+      fileLinkMeta.workspaceRelativePath === null &&
+      isAbsolutePath(fileLinkMeta.filePath);
+    if (!needsWorkspaceLookup && !mayBeLocal) {
       openAt(panelPath);
       return;
     }
     void (async () => {
-      const match = await findWorkspaceFileMatch(fileLinkMeta);
+      const match = needsWorkspaceLookup ? await findWorkspaceFileMatch(fileLinkMeta) : null;
+      const isLocal =
+        match === null && mayBeLocal && (await isOnlyOnLocalMachine(fileLinkMeta.filePath));
       if (!isLatestLookup()) return;
-      openAt(match ?? panelPath);
+      if (isLocal) void openOnLocalMachine(fileLinkMeta.targetPath);
+      else openAt(match ?? panelPath);
     })();
   };
   const fileLinkChip = (

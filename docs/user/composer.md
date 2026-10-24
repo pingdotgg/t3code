@@ -329,14 +329,17 @@ touch and hold an image or video thumbnail and choose **Save or share**. On iOS,
 return to the thumbnail to open this menu after watching a full-screen video.
 
 File links refer to the environment's machine, including when you connect remotely.
+When the desktop app is connected to another computer and a linked file exists only
+on yours, it uses your copy instead.
 Previews use the original file, even outside the workspace. Moving or deleting it
 can break the preview, so save a copy if you need to keep it.
 
 ## Files outside the workspace
 
 Follow an agent's file link to read a report or other file outside the workspace.
-These files open read-only. An HTML file outside the workspace cannot load scripts,
-styles, or images from neighboring files.
+These files open read-only. If the agent runs on another computer and the file is
+only on the one you're using, it opens in your editor there. An HTML file outside
+the workspace cannot load scripts, styles, or images from neighboring files.
 
 ## HTML and PDF files in the file viewer
 

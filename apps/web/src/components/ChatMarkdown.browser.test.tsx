@@ -42,9 +42,31 @@ vi.mock(import("../state/session"), async (original) => {
     readEnvironmentScope: hasScope as never,
   };
 });
+const machines = vi.hoisted(() => ({
+  primaryEnvironmentId: null as string | null,
+  remoteEnvironmentIds: new Set<string>(),
+  openInEditor: vi.fn(),
+}));
 vi.mock(import("../remoteOpen"), async (original) => ({
   ...(await original()),
-  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
+  useRemoteOpenResolution: ((environmentId: string | null) => ({
+    state: {
+      mode:
+        environmentId !== null && machines.remoteEnvironmentIds.has(environmentId)
+          ? "remote-unavailable"
+          : "local-exec",
+    },
+    isResolved: true,
+  })) as never,
+}));
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  usePrimaryEnvironmentId: (() => machines.primaryEnvironmentId) as never,
+}));
+vi.mock(import("../editorPreferences"), async (original) => ({
+  ...(await original()),
+  useOpenInPreferredEditor: ((environmentId: string | null) => (path: string) =>
+    machines.openInEditor(environmentId, path)) as never,
 }));
 const { renderDiagram } = vi.hoisted(() => ({
   renderDiagram: vi.fn<(source: string) => Promise<string> | undefined>(),
@@ -79,6 +101,9 @@ function setup() {
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
+  machines.primaryEnvironmentId = null;
+  machines.remoteEnvironmentIds.clear();
+  machines.openInEditor.mockReset().mockResolvedValue(AsyncResult.success("vscode"));
 }
 
 function renderText(text: string, props: Partial<Parameters<typeof ChatMarkdown>[0]> = {}) {
@@ -227,6 +252,69 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ChatMarkdown remote thread file links", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("home-server"),
+    threadId: ThreadId.make("thread"),
+  };
+  const desktop = EnvironmentId.make("desktop");
+
+  it("opens a path that exists only on this computer in its editor", async () => {
+    setup();
+    machines.primaryEnvironmentId = desktop;
+    machines.remoteEnvironmentIds.add(threadRef.environmentId);
+    const desktopFiles = new Set(["/home/me/Desktop/notes.txt", "/srv/shared.md"]);
+    const files = {
+      [desktop]: desktopFiles,
+      [threadRef.environmentId]: new Set(["/srv/shared.md"]),
+    };
+    filesystemMetadata.mockImplementation(
+      (request: { environmentId: EnvironmentId; input: { paths: string[] } }) =>
+        // A reconnecting local backend never answers; the host's copy still opens.
+        request.environmentId === desktop && request.input.paths[0] === "/srv/shared.md"
+          ? new Promise(() => {})
+          : Promise.resolve(
+              AsyncResult.success({
+                entries: request.input.paths.map((path) =>
+                  files[request.environmentId]?.has(path) ? { kind: "file" } : null,
+                ),
+              }),
+            ),
+    );
+    await using screen = await renderText(
+      "[Notes](/home/me/Desktop/notes.txt:3), [Shared](/srv/shared.md), [Gone](/srv/gone.md) and [Home](~/notes.txt)",
+      { cwd: "/srv/project", threadRef },
+    );
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const [notes, shared, gone, home] = screen.container.querySelectorAll("a");
+
+    await act(async () => notes!.click());
+    await vi.waitFor(() =>
+      expect(machines.openInEditor).toHaveBeenCalledExactlyOnceWith(
+        desktop,
+        "/home/me/Desktop/notes.txt:3",
+      ),
+    );
+    expect(openFile).not.toHaveBeenCalled();
+
+    await act(async () => shared!.click());
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/srv/shared.md", undefined),
+    );
+    await act(async () => gone!.click());
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenLastCalledWith(threadRef, "/srv/gone.md", undefined),
+    );
+    // `~` is the host's home, so it never reaches the local lookup.
+    desktopFiles.add("~/notes.txt");
+    await act(async () => home!.click());
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, "~/notes.txt", undefined);
+    expect(machines.openInEditor).toHaveBeenCalledOnce();
   });
 });
 
