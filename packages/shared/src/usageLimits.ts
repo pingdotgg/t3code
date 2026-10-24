@@ -171,6 +171,14 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
+function hasLimitWindows(limits: ServerProviderUsageLimits): boolean {
+  return limits.windows.length > 0 && limits.unavailable?.reason !== "unsupported";
+}
+
+function withoutStaleCredits(limits: ServerProviderUsageLimits): ServerProviderUsageLimits {
+  return limits.unavailable ? { ...limits, resetCredits: undefined } : limits;
+}
+
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
@@ -202,7 +210,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accounts.set(key, next);
       return;
     }
-    const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+    const previousFailed = previous.limits.unavailable?.reason === "probeFailed";
+    const nextFailed = next.limits.unavailable?.reason === "probeFailed";
+    const fresher =
+      previousFailed !== nextFailed
+        ? !nextFailed
+        : Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
     const environments = [
       ...previous.environments,
       ...next.environments.filter(
@@ -241,7 +254,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
+      if (!provider.usageLimits || !hasLimitWindows(provider.usageLimits)) continue;
       merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
@@ -251,8 +264,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
         sourceLabel: null,
-        redeem: { environmentId, input: { instanceId: provider.instanceId } },
-        limits: provider.usageLimits,
+        redeem: provider.usageLimits.unavailable
+          ? null
+          : { environmentId, input: { instanceId: provider.instanceId } },
+        limits: withoutStaleCredits(provider.usageLimits),
       });
     }
   }
@@ -263,7 +278,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
-        if (limitsNotice(account.usageLimits) !== null) continue;
+        if (!hasLimitWindows(account.usageLimits)) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
         merge(resolveKey(account) ?? key, {
           key,
@@ -274,17 +289,18 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           accentColor: undefined,
           environments: [],
           sourceLabel,
-          redeem: account.usageLimits.resetCredits?.nextCreditId
-            ? {
-                environmentId,
-                input: {
-                  sourceId: source.id,
-                  accountId: account.id,
-                  creditId: account.usageLimits.resetCredits.nextCreditId,
-                },
-              }
-            : null,
-          limits: account.usageLimits,
+          redeem:
+            !account.usageLimits.unavailable && account.usageLimits.resetCredits?.nextCreditId
+              ? {
+                  environmentId,
+                  input: {
+                    sourceId: source.id,
+                    accountId: account.id,
+                    creditId: account.usageLimits.resetCredits.nextCreditId,
+                  },
+                }
+              : null,
+          limits: withoutStaleCredits(account.usageLimits),
         });
       }
     }
@@ -309,6 +325,14 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
       } else if (source.accounts.length === 0) {
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
+      }
+      for (const account of source.accounts) {
+        if (account.usageLimits.unavailable?.reason === "unsupported") continue;
+        const notice = limitsNotice(account.usageLimits);
+        if (notice)
+          notices.push(
+            `${label(environmentLabel, `${source.label} · ${account.email ?? account.id}`)}: ${notice}`,
+          );
       }
     }
   }
@@ -528,7 +552,10 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
     return limits.unavailable.message ?? "This account has no subscription limits.";
   }
   if (limits.unavailable?.reason === "probeFailed") {
-    return limits.unavailable.message ?? "Could not read limits.";
+    const failure = limits.unavailable.message ?? "Could not read limits.";
+    return limits.windows.length > 0
+      ? `${failure} Showing last known limits from ${limits.checkedAt} (stale).`
+      : failure;
   }
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
@@ -678,7 +705,7 @@ export function collectProviderUsageLimits(
   >();
   for (const provider of providersWithLimits(providers)) {
     if (provider.driver !== selected.driver || !provider.usageLimits) continue;
-    const snapshot = { provider, limits: provider.usageLimits };
+    const snapshot = { provider, limits: withoutStaleCredits(provider.usageLimits) };
     const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
     const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
@@ -742,14 +769,18 @@ export function collectProviderUsageLimits(
       label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
       ...(provider.auth.label ? { plan: provider.auth.label } : {}),
       instanceId: provider.instanceId,
-      resetCreditInput:
-        hubCreditId && hubCredits
-          ? {
-              sourceId: hubCredits.source.id,
-              accountId: hubCredits.account.id,
-              creditId: hubCreditId,
-            }
-          : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+      ...(!limits.unavailable || shownCredits
+        ? {
+            resetCreditInput:
+              hubCreditId && hubCredits
+                ? {
+                    sourceId: hubCredits.source.id,
+                    accountId: hubCredits.account.id,
+                    creditId: hubCreditId,
+                  }
+                : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+          }
+        : {}),
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
@@ -766,7 +797,7 @@ export function collectProviderUsageLimits(
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",
-        ...(account.usageLimits.resetCredits?.nextCreditId
+        ...(!account.usageLimits.unavailable && account.usageLimits.resetCredits?.nextCreditId
           ? {
               resetCreditInput: {
                 sourceId: source.id,
@@ -777,7 +808,7 @@ export function collectProviderUsageLimits(
           : {}),
         ...(account.plan ? { plan: account.plan } : {}),
         ...(account.email ? { email: account.email } : {}),
-        limits: account.usageLimits,
+        limits: withoutStaleCredits(account.usageLimits),
       });
     }
     if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
