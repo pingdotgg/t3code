@@ -1,4 +1,5 @@
 import { useAtomCommand } from "~/state/use-atom-command";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode, type RefObject } from "react";
@@ -18,25 +19,25 @@ import {
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
   readonly label: string;
-  readonly sent: string;
+  readonly sent: (term: string) => string;
   readonly icon: ReactNode;
 }> = [
   {
     value: "comment",
     label: "Comment",
-    sent: "Review submitted",
+    sent: () => "Review submitted",
     icon: <MessageSquareIcon className="size-3" />,
   },
   {
     value: "approve",
     label: "Approve",
-    sent: "Pull request approved",
+    sent: (term) => `${capitalizeTerm(term)} approved`,
     icon: <CheckIcon className="size-3" />,
   },
   {
     value: "request-changes",
     label: "Request changes",
-    sent: "Changes requested",
+    sent: () => "Changes requested",
     icon: <XCircleIcon className="size-3" />,
   },
 ];
@@ -44,6 +45,7 @@ const VERDICTS: ReadonlyArray<{
 export function PullRequestReviewForm({
   environmentId,
   reference,
+  term,
   verdicts,
   requestChangesSummaryRequired,
   textareaRef,
@@ -53,6 +55,8 @@ export function PullRequestReviewForm({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  /** The host's word for a change request, as in "pull request". */
+  term: string;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -104,7 +108,7 @@ export function PullRequestReviewForm({
       submittedComments.map((comment) => comment.id),
     );
     clearSummary(reviewKey, submittedBody);
-    toastManager.add({ type: "success", title: verdict.sent });
+    toastManager.add({ type: "success", title: verdict.sent(term) });
     onSubmitted();
   };
 

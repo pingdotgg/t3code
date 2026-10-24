@@ -1,3 +1,7 @@
+import {
+  capitalizeTerm,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
@@ -1327,8 +1331,9 @@ function PullRequestCodeTab({
     </div>
   );
 
+  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withToolbar(<DiffPanelLoadingState label="Loading pull request diff..." />);
+    return withToolbar(<DiffPanelLoadingState label={`Loading ${term} diff...`} />);
   }
 
   if (diffQuery.error && loadedSlices.length === 0) {
@@ -1349,9 +1354,7 @@ function PullRequestCodeTab({
   if (items.length === 0 && nextCursor === null) {
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {commit === null
-          ? "This pull request has no file changes."
-          : "This commit has no file changes."}
+        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
       </p>,
     );
   }
@@ -1477,7 +1480,7 @@ function PullRequestCodeTab({
         {fileTreeOpen ? (
           <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
             <DiffFileTree
-              ariaLabel={`Pull request #${detail.number} files`}
+              ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
               entries={fileTreeEntries}
               onSelectFile={revealFile}
               footer={

@@ -1,3 +1,4 @@
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import {
   EnvironmentId,
   ProjectId,
@@ -42,7 +43,10 @@ export function pullRequestTarget(params: PullRequestParams) {
 
 const NO_PAGES: readonly PullRequestDiffPage[] = [];
 
-export function usePullRequestDiff(params: PullRequestDiffParams) {
+export function usePullRequestDiff(
+  params: PullRequestDiffParams,
+  terminology: ChangeRequestTerminology,
+) {
   const reference = pullRequestTarget(params);
   const target = {
     ...reference,
@@ -72,8 +76,8 @@ export function usePullRequestDiff(params: PullRequestDiffParams) {
 
   const [parseCache] = useState(() => new WeakMap<PullRequestDiffResult, ReviewParsedDiff>());
   const parsed = useMemo(
-    () => combinePullRequestDiffPages(pages, parseCache, key),
-    [key, pages, parseCache],
+    () => combinePullRequestDiffPages(pages, parseCache, key, terminology),
+    [key, pages, parseCache, terminology],
   );
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;

@@ -10,6 +10,11 @@ import {
   UsersIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import {
+  capitalizeTerm,
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 
 import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
@@ -104,6 +109,7 @@ export function PullRequestDetailGhost({
         isDraft: summary.isDraft ?? entry?.isDraft,
       }
     : entry;
+  const terminology = sourceControlClients.get(seed?.provider).changeRequest;
   const statePresentation = seed
     ? resolvePullRequestState({
         state: seed.state,
@@ -123,7 +129,7 @@ export function PullRequestDetailGhost({
   return (
     <div
       role="status"
-      aria-label="Loading pull request"
+      aria-label={`Loading ${terminology.singular}`}
       className={cn(
         "flex h-full min-h-0 flex-col overflow-hidden bg-background",
         !seed && "motion-safe:animate-skeleton",
@@ -148,7 +154,7 @@ export function PullRequestDetailGhost({
                 <span className="min-w-0 truncate font-medium">{seed.repository}</span>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
-                  aria-label={`Open pull request #${seed.number} on host`}
+                  aria-label={`Open ${terminology.singular} #${seed.number} on host`}
                 >
                   <span className={statePresentation?.toneClassName}>#{seed.number}</span>
                   <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -164,14 +170,19 @@ export function PullRequestDetailGhost({
         </div>
         <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {actions ?? <GhostBar className="h-6 w-16 rounded-md" />}
-          <Button size="icon-xs" variant="ghost" disabled aria-label="Pull request actions loading">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            disabled
+            aria-label={`${capitalizeTerm(terminology.singular)} actions loading`}
+          >
             <EllipsisIcon aria-hidden className="size-4" />
           </Button>
           {onClose ? (
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label="Collapse pull request panel"
+              aria-label={`Collapse ${terminology.singular} panel`}
               onClick={onClose}
             >
               <PanelRightIcon aria-hidden className="size-3.5" />
@@ -215,7 +226,7 @@ export function PullRequestDetailGhost({
                   <PullRequestCopyableCode
                     key={checkout}
                     value={checkout}
-                    target="pull request checkout command"
+                    target={`${terminology.singular} checkout command`}
                     copyLabel="Copy checkout command"
                     copiedLabel="Checkout command copied"
                     className="ml-auto font-mono"
@@ -241,7 +252,7 @@ export function PullRequestDetailGhost({
                     key={seed.headBranch}
                     value={seed.headBranch}
                     target="branch name"
-                    copyLabel="Copy pull request branch"
+                    copyLabel={`Copy ${terminology.singular} branch`}
                     copiedLabel="Branch name copied"
                     className="min-w-0 font-mono"
                   />
@@ -397,11 +408,17 @@ export function PullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
   );
 }
 
-export function PullRequestConversationGhost({ rows = 3 }: { rows?: number }) {
+export function PullRequestConversationGhost({
+  rows = 3,
+  terminology,
+}: {
+  rows?: number;
+  terminology: ChangeRequestTerminology;
+}) {
   return (
     <div
       role="status"
-      aria-label="Loading pull request conversation"
+      aria-label={`Loading ${terminology.singular} conversation`}
       className="motion-safe:animate-skeleton space-y-4 py-2"
     >
       {Array.from({ length: rows }, (_, index) => (

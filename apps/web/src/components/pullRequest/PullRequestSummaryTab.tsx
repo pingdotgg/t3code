@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  capitalizeTerm,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -404,6 +407,7 @@ export function PullRequestSummaryTab({
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
+  const terminology = sourceControlClients.get(detail.provider).changeRequest;
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
   const shownConversations = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   const [commentFilter, setCommentFilter] = useLocalStorage(
@@ -769,8 +773,8 @@ export function PullRequestSummaryTab({
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
               threadRef={threadRef}
-              label="Pull request description"
-              placeholder="Describe this pull request"
+              label={`${capitalizeTerm(terminology.singular)} description`}
+              placeholder={`Describe this ${terminology.singular}`}
               saving={bodySaving}
               onSave={(body) => void saveBody(body)}
               onCancel={() => setBodyScope(null)}
@@ -900,9 +904,14 @@ export function PullRequestSummaryTab({
         }
       >
         {activityPending ? (
-          <PullRequestConversationGhost />
+          <PullRequestConversationGhost terminology={terminology} />
         ) : activityError ? (
-          <PullRequestActivityUnavailableState compact error={activityError} onRetry={onRefresh} />
+          <PullRequestActivityUnavailableState
+            compact
+            error={activityError}
+            term={terminology.singular}
+            onRetry={onRefresh}
+          />
         ) : (
           <>
             {detail.commentsTruncated ? (

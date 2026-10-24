@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
 import type { ReviewParsedDiff } from "../review/reviewModel";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { combinePullRequestDiffPages, retainPullRequestDiffPage } from "./pullRequestDiffPages";
+
+const GITHUB = sourceControlClients.get("github").changeRequest;
 
 function diff(path: string): PullRequestDiffResult {
   return {
@@ -25,7 +28,7 @@ describe("paged mobile pull request diffs", () => {
     const result = withheldDiff();
     const cache = new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
     const pages = [{ cursor: null, result }];
-    const parsed = combinePullRequestDiffPages(pages, cache, "pr");
+    const parsed = combinePullRequestDiffPages(pages, cache, "pr", GITHUB);
     if (parsed.kind !== "files") throw new Error("Expected structured diff");
     expect(parsed.files[0]).toMatchObject({
       path: "large.ts",
@@ -38,9 +41,21 @@ describe("paged mobile pull request diffs", () => {
     expect(parsed.notice).toBe(
       "Some file contents are unavailable. Open the pull request on its provider to see the full changes.",
     );
-    const cached = combinePullRequestDiffPages(pages, cache, "pr");
+    const cached = combinePullRequestDiffPages(pages, cache, "pr", GITHUB);
     if (cached.kind !== "files") throw new Error("Expected structured diff");
     expect(cached.files[0]).toBe(parsed.files[0]);
+  });
+
+  it("points a withheld merge request diff at the merge request", () => {
+    const parsed = combinePullRequestDiffPages(
+      [{ cursor: null, result: withheldDiff() }],
+      new WeakMap(),
+      "mr",
+      sourceControlClients.get("gitlab").changeRequest,
+    );
+    expect(parsed.kind === "files" ? parsed.notice : null).toBe(
+      "Some file contents are unavailable. Open the merge request on its provider to see the full changes.",
+    );
   });
 
   it("combines normal and withheld pages and refreshes counts with unchanged patch text", () => {
@@ -52,7 +67,7 @@ describe("paged mobile pull request diffs", () => {
       "second",
       withheld,
     );
-    const before = combinePullRequestDiffPages(pages, cache, "pr");
+    const before = combinePullRequestDiffPages(pages, cache, "pr", GITHUB);
     if (before.kind !== "files") throw new Error("Expected structured diff");
     expect(before.files.map((file) => [file.path, file.additions, file.deletions])).toEqual([
       ["first.ts", 1, 1],
@@ -65,7 +80,7 @@ describe("paged mobile pull request diffs", () => {
       ...withheld,
       omittedFileStats: [{ path: "large.ts", additions: 4000, deletions: 2000 }],
     });
-    const after = combinePullRequestDiffPages(refreshed, cache, "pr");
+    const after = combinePullRequestDiffPages(refreshed, cache, "pr", GITHUB);
     if (after.kind !== "files") throw new Error("Expected structured diff");
     expect(after.files[0]).toBe(before.files[0]);
     expect(after.files[1]?.id).toBe(before.files[1]?.id);

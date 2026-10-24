@@ -83,11 +83,14 @@ export function usePullRequestThreads(
   const [busy, setBusy] = useState(false);
   const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {
     if (!pr || !canAsk || pending.current) return;
+    const terminology = sourceControlClients.get(pr.provider).changeRequest;
     pending.current = true;
     setBusy(true);
     const result = await settlePromise(async () => {
       if (connected && !thread && !canCheckout)
-        throw new Error("Starting work from this PR requires source control write access.");
+        throw new Error(
+          `Starting work from this ${terminology.shortLabel} requires source control write access.`,
+        );
       await waitForComposerDraftsLoaded();
       const draftKey = thread
         ? scopedThreadKey(target.environmentId, ThreadId.make(thread.id))
@@ -141,9 +144,14 @@ export function usePullRequestThreads(
       const withContext = getComposerDraftSnapshot(draftKey);
       setComposerDraftText(
         draftKey,
-        appendPullRequestAgentPrompt(withContext.text, task, previousPrompts.current.get(draftKey)),
+        appendPullRequestAgentPrompt(
+          withContext.text,
+          task,
+          terminology,
+          previousPrompts.current.get(draftKey),
+        ),
       );
-      previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task));
+      previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task, terminology));
       if (thread) openThread(thread);
       else
         navigation.navigate("Thread", {

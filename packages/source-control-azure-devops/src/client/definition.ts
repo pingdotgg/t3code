@@ -68,7 +68,12 @@ export const definition = defineSourceControlClient({
   label: "Azure DevOps",
   pickerLabel: "Azure DevOps",
   icon,
-  changeRequest: { shortLabel: "PR", singular: "pull request" },
+  changeRequest: {
+    shortLabel: "PR",
+    shortLabelWithArticle: "a PR",
+    singular: "pull request",
+    plural: "pull requests",
+  },
   repositoryPathHint: "project/repository",
   // `az repos` reads need the checkout's organization and project, so a bare hostname names no
   // repository this client can act on.

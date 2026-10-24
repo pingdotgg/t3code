@@ -79,8 +79,8 @@ export function resolveNewTaskBranchLabel(input: {
   readonly pullRequestReference?: string;
 }): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
-    const pr = sourceControlClients.parseChangeRequestUrl(input.pullRequestReference)?.link;
-    if (pr) return `From PR #${pr.number}`;
+    const parsed = sourceControlClients.parseChangeRequestUrl(input.pullRequestReference);
+    if (parsed) return `From ${parsed.definition.changeRequest.shortLabel} #${parsed.link.number}`;
   }
   if (!input.branchName) {
     return "Choose branch";

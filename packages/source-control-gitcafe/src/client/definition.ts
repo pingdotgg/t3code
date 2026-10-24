@@ -43,7 +43,12 @@ export const definition = defineSourceControlClient({
   label: "GitCafe",
   pickerLabel: "GitCafe",
   icon,
-  changeRequest: { shortLabel: "PR", singular: "pull request" },
+  changeRequest: {
+    shortLabel: "PR",
+    shortLabelWithArticle: "a PR",
+    singular: "pull request",
+    plural: "pull requests",
+  },
   repositoryPathHint: "owner/repo",
   publicHost: null,
   publishDescription: "git.cafe",

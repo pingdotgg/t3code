@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   StackActions,
@@ -49,10 +50,13 @@ function fileDirectory(path: string) {
 }
 
 function useChangedFiles(params: PullRequestDiffParams) {
-  const diff = usePullRequestDiff(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
   // A commit's diff is part of the pull request, so the PR's file counts and viewed state don't apply.
   const pr = params.commit ? null : detail.data;
+  const terminology = sourceControlClients.get(
+    (detail.data ?? params.initialSummary)?.provider,
+  ).changeRequest;
+  const diff = usePullRequestDiff(params, terminology);
   const viewed = usePullRequestFilesViewed(params, pr);
   const filter = usePullRequestFileFilter(diff.parsed);
   const parsed = filter.parsed;
@@ -61,6 +65,7 @@ function useChangedFiles(params: PullRequestDiffParams) {
     filter,
     viewed,
     pr,
+    terminology,
     parsed,
     loading: diff.isPending && parsed.kind === "empty" && !diff.error,
   };
@@ -261,7 +266,7 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
     refresh: diff.refresh,
     header: (
       <>
-        <PullRequestReadStatus pending={false} error={diff.error} />
+        <PullRequestReadStatus pending={false} error={diff.error} terminology={files.terminology} />
         {loading ? (
           <View
             accessibilityLabel="Loading changed files"
@@ -474,7 +479,11 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
           estimatedItemSize={64}
           ListHeaderComponent={
             <>
-              <PullRequestReadStatus pending={false} error={diff.error} />
+              <PullRequestReadStatus
+                pending={false}
+                error={diff.error}
+                terminology={files.terminology}
+              />
               {parsed.kind === "files" ? (
                 <View className="flex-row items-center gap-2 py-2">
                   <Text textRole="caption" className="min-w-0 flex-1 text-foreground-muted">

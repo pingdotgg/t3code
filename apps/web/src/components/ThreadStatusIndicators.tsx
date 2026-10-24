@@ -127,6 +127,11 @@ function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
   return { ...fallback, ...(host === undefined ? {} : { host }) };
 }
 
+function changeRequestTerminologyForUrl(url: string | undefined) {
+  const host = url === undefined ? null : sourceControlClients.findByChangeRequestUrl(url);
+  return (host ?? sourceControlClients.get(undefined)).changeRequest;
+}
+
 export function linkedPullRequestSnapshotStatus(
   link: ThreadPullRequestLink,
 ): LinkedThreadPullRequestStatus | null {
@@ -173,18 +178,19 @@ function resolveThreadPullRequestBadgePresentation({
   readonly url?: string | undefined;
   readonly status: PrStatusIndicator | null;
 }): ThreadPullRequestBadgePresentation | null {
+  const terminology = changeRequestTerminologyForUrl(url);
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} pull requests, ${aggregate.label.toLowerCase()}`,
+      label: `Stack of ${badge.layers} ${terminology.plural}, ${aggregate.label.toLowerCase()}`,
       text: badge.layers,
     };
   }
   if (number === undefined || url === undefined) return null;
 
-  const tooltip = status?.tooltip ?? `PR #${number}, status pending`;
+  const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, status pending`;
   if (badge?.kind === "pull-request" && badge.others > 0) {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
@@ -949,7 +955,7 @@ export function ThreadRowLeadingStatus({
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={`PR #${pendingLink.number}, status pending`}
+          aria-label={`${changeRequestTerminologyForUrl(pendingLink.url).shortLabel} #${pendingLink.number}, status pending`}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}

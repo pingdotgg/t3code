@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  capitalizeTerm,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -36,6 +39,7 @@ export function PullRequestComposer({
   onReviewSubmitted: () => void;
   openReviewRequest?: number | undefined;
 }) {
+  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const [open, setOpen] = useState(false);
   const [reviewPending, setReviewPending] = useState(false);
   const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");
@@ -77,10 +81,10 @@ export function PullRequestComposer({
         render={<Button size="icon" variant="glass" />}
         aria-label={
           pendingComments.length > 0
-            ? `Review pull request, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
             : reviewStarted || !canComment
-              ? "Review pull request"
-              : "Comment on pull request"
+              ? `Review ${term}`
+              : `Comment on ${term}`
         }
       >
         <MessageSquareIcon className="size-4" />
@@ -100,7 +104,7 @@ export function PullRequestComposer({
         sideOffset={8}
         width="lg"
         initialFocus={mode === "review" ? reviewRef : commentRef}
-        aria-label="Pull request composer"
+        aria-label={`${capitalizeTerm(term)} composer`}
       >
         <div className="mb-3 flex items-center justify-between gap-2">
           {canComment && verdicts.length > 0 ? (
@@ -120,7 +124,7 @@ export function PullRequestComposer({
             </ToggleGroup>
           ) : (
             <PopoverTitle>
-              {mode === "review" ? "Review pull request" : "Comment on pull request"}
+              {mode === "review" ? `Review ${term}` : `Comment on ${term}`}
             </PopoverTitle>
           )}
           <div className="flex items-center gap-1">
@@ -151,6 +155,7 @@ export function PullRequestComposer({
             <PullRequestReviewForm
               environmentId={environmentId}
               reference={reference}
+              term={term}
               verdicts={verdicts}
               requestChangesSummaryRequired={sourceControlClients
                 .get(detail.provider)

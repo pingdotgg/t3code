@@ -32,7 +32,10 @@ export interface ParsedChangeRequestUrl extends ChangeRequestLink {
 
 export interface ChangeRequestTerminology {
   readonly shortLabel: string;
+  /** Spelled out because the article follows how the label is said: "an MR". */
+  readonly shortLabelWithArticle: string;
   readonly singular: string;
+  readonly plural: string;
 }
 
 export interface ChangeRequestUrlInput {
@@ -465,7 +468,12 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   label: "source control",
   pickerLabel: "source control",
   icon: null,
-  changeRequest: { shortLabel: "change request", singular: "change request" },
+  changeRequest: {
+    shortLabel: "change request",
+    shortLabelWithArticle: "a change request",
+    singular: "change request",
+    plural: "change requests",
+  },
   repositoryPathHint: "URL",
   publicHost: null,
   publishDescription: "Your signed-in server",

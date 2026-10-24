@@ -59,7 +59,12 @@ export const definition = defineSourceControlClient({
     tokenAccess: "read and write access to pull requests and contents",
     newTokenUrl: (host) => `https://${host}/settings/personal-access-tokens/new`,
   },
-  changeRequest: { shortLabel: "PR", singular: "pull request" },
+  changeRequest: {
+    shortLabel: "PR",
+    shortLabelWithArticle: "a PR",
+    singular: "pull request",
+    plural: "pull requests",
+  },
   repositoryPathHint: "owner/repo",
   publicHost: "github.com",
   publishDescription: "github.com",

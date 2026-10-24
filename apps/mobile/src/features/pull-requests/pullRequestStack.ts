@@ -1,6 +1,11 @@
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t3tools/contracts";
 
-export function pullRequestStackMerge(stack: PullRequestStack, number: number) {
+export function pullRequestStackMerge(
+  stack: PullRequestStack,
+  number: number,
+  terminology: ChangeRequestTerminology,
+) {
   const position = stack.layers.findIndex((layer) => layer.number === number);
   const layers = stack.layers.slice(0, position + 1).filter((layer) => layer.state !== "merged");
   const heads = layers.flatMap((layer) =>
@@ -8,9 +13,9 @@ export function pullRequestStackMerge(stack: PullRequestStack, number: number) {
   );
   const reason =
     position < 0
-      ? "This pull request is no longer in the stack. Refresh it."
+      ? `This ${terminology.singular} is no longer in the stack. Refresh it.`
       : stack.layers[position]?.state !== "open" || layers.length === 0
-        ? "There are no open layers to merge through this pull request."
+        ? `There are no open layers to merge through this ${terminology.singular}.`
         : layers.some((layer) => layer.state !== "open")
           ? "Reopen the closed layers before merging this stack."
           : layers.some((layer) => layer.isDraft)

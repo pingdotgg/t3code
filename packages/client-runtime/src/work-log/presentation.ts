@@ -185,17 +185,17 @@ function resolveT3McpToolPresentation(
   const input =
     asRecord(payload?.arguments) ?? asRecord(payload?.input) ?? asRecord(payload?.rawInput);
   const urlTarget =
-    typeof input?.url === "string"
-      ? sourceControlClients.parseChangeRequestUrl(input.url)?.link
-      : null;
-  const number = urlTarget?.number ?? input?.number;
+    typeof input?.url === "string" ? sourceControlClients.parseChangeRequestUrl(input.url) : null;
+  const number = urlTarget?.link.number ?? input?.number;
+  const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
+    .changeRequest;
   const target =
     actionKind !== undefined &&
     actionKind !== "list-prs" &&
     typeof number === "number" &&
     Number.isSafeInteger(number) &&
     number > 0
-      ? `PR #${number}`
+      ? `${shortLabel} #${number}`
       : detail;
   return {
     displayName: `${verb} ${target}`,

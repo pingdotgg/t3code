@@ -23,7 +23,12 @@ export const definition = defineSourceControlClient({
   label: "GitLab",
   pickerLabel: "GitLab",
   icon,
-  changeRequest: { shortLabel: "MR", singular: "merge request" },
+  changeRequest: {
+    shortLabel: "MR",
+    shortLabelWithArticle: "an MR",
+    singular: "merge request",
+    plural: "merge requests",
+  },
   repositoryPathHint: "group/project",
   publicHost: "gitlab.com",
   publishDescription: "gitlab.com",

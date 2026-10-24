@@ -1371,15 +1371,22 @@ export function PullRequestsPage() {
     event.stopPropagation();
     if (event.repeat) return;
     const url = openPanelPullRequestUrl;
-    void writeTextToClipboard(url, "pull request link").then(
+    const { shortLabel, singular } = (
+      sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
+    ).changeRequest;
+    void writeTextToClipboard(url, `${singular} link`).then(
       (didCopy) => {
         if (didCopy)
-          toastManager.add({ type: "success", title: "PR link copied", description: url });
+          toastManager.add({
+            type: "success",
+            title: `${shortLabel} link copied`,
+            description: url,
+          });
       },
       (error) => {
         toastManager.add({
           type: "error",
-          title: "Failed to copy PR link",
+          title: `Failed to copy ${shortLabel} link`,
           description: error instanceof Error ? error.message : "An error occurred.",
         });
       },

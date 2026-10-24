@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import type {
   PullRequestAction,
   PullRequestDetail,
@@ -32,19 +35,35 @@ export const MERGE_METHODS = {
   rebase: { title: "Rebase and merge", description: "Add the commits without a merge commit." },
 } as const satisfies Record<PullRequestMergeMethod, { title: string; description: string }>;
 
-export const PR_ACTION_LABELS = {
-  merge: "Merge pull request",
-  ready: "Mark ready for review",
-  draft: "Convert to draft",
-  close: "Close pull request",
-  reopen: "Reopen pull request",
-  "update-branch": "Update branch",
-  "enable-auto-merge": "Enable auto-merge",
-  "disable-auto-merge": "Disable auto-merge",
-  revert: "Create revert pull request",
-  "delete-branch": "Delete branch",
-  "approve-workflows": "Approve workflows",
-} as const satisfies Record<PullRequestAction, string>;
+export function pullRequestActionLabel(
+  action: PullRequestAction,
+  terminology: ChangeRequestTerminology,
+): string {
+  switch (action) {
+    case "merge":
+      return `Merge ${terminology.singular}`;
+    case "ready":
+      return "Mark ready for review";
+    case "draft":
+      return "Convert to draft";
+    case "close":
+      return `Close ${terminology.singular}`;
+    case "reopen":
+      return `Reopen ${terminology.singular}`;
+    case "update-branch":
+      return "Update branch";
+    case "enable-auto-merge":
+      return "Enable auto-merge";
+    case "disable-auto-merge":
+      return "Disable auto-merge";
+    case "revert":
+      return `Create revert ${terminology.singular}`;
+    case "delete-branch":
+      return "Delete branch";
+    case "approve-workflows":
+      return "Approve workflows";
+  }
+}
 
 export const PR_ACTION_ICONS = {
   merge: PullRequestGlyph.merged,
@@ -114,14 +133,18 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
 
 export const MERGE_CONFLICT_REASON = "Resolve the branch conflicts before merging.";
 
-export function mergeUnavailableReason(pr: ActionDetail, connectionAllowsWrites: boolean) {
-  if (pr.state === "merged") return "This pull request has been merged.";
-  if (pr.state === "closed") return "Reopen this pull request before merging.";
+export function mergeUnavailableReason(
+  pr: ActionDetail,
+  connectionAllowsWrites: boolean,
+  terminology: ChangeRequestTerminology,
+) {
+  if (pr.state === "merged") return `This ${terminology.singular} has been merged.`;
+  if (pr.state === "closed") return `Reopen this ${terminology.singular} before merging.`;
   if (!connectionAllowsWrites) return "This environment connection is read-only.";
   if (!pr.capabilities.actions.includes("merge"))
     return "This provider does not support merging here.";
   if (!pr.viewerPermissions.actions.includes("merge"))
-    return "Your account cannot merge this pull request.";
+    return `Your account cannot merge this ${terminology.singular}.`;
   if (pr.isDraft) return "Mark this draft ready for review before merging.";
   if (pr.mergeability === "conflicting") return MERGE_CONFLICT_REASON;
   if (!allowedMergeMethods(pr).length) return "This repository has no available merge methods.";
@@ -131,6 +154,7 @@ export function mergeUnavailableReason(pr: ActionDetail, connectionAllowsWrites:
 export function mergeSummary(
   pr: ActionDetail & Pick<PullRequestDetail, "autoMergeMethod">,
   connectionAllowsWrites: boolean,
+  terminology: ChangeRequestTerminology,
 ) {
   if (pr.state === "merged") return "Merged";
   if (pr.state === "closed") return "Closed";
@@ -141,7 +165,7 @@ export function mergeSummary(
   const method = pr.autoMergeMethod ?? (allowed.includes("squash") ? "squash" : allowed[0]);
   const methodLabel = method ? `${method[0]?.toUpperCase()}${method.slice(1)}` : "Merge";
   if (pr.autoMergeEnabled) return `${methodLabel} · auto-merge on`;
-  if (mergeUnavailableReason(pr, connectionAllowsWrites)) return "Unavailable";
+  if (mergeUnavailableReason(pr, connectionAllowsWrites, terminology)) return "Unavailable";
   return `${methodLabel}${pr.autoMergeEnabled === false ? " · auto-merge off" : ""}`;
 }
 

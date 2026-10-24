@@ -1545,7 +1545,7 @@ function OpenCommandPaletteDialog(props: {
           sourceControlClients.definitions.flatMap((definition) => {
             const shortLabel = definition.changeRequest.shortLabel.toLowerCase();
             return [
-              `${definition.changeRequest.singular}s`,
+              definition.changeRequest.plural,
               `${shortLabel}s`,
               shortLabel,
               ...definition.label.toLowerCase().split(/[^a-z0-9]+/u),

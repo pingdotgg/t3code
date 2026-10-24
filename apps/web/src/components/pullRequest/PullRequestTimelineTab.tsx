@@ -1,3 +1,7 @@
+import {
+  capitalizeTerm,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -505,21 +509,22 @@ function CommitEvent({
   );
 }
 
-function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
+function LifecycleEvent({ event, term }: { event: PullRequestTimelineEvent; term: string }) {
+  const title = capitalizeTerm(term);
   const presentation =
     event.kind === "opened"
       ? {
           icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
-          label: "Pull request opened",
+          label: `${title} opened`,
         }
       : event.kind === "merged"
         ? {
             icon: <PullRequestGlyph.merged className="size-3.5" />,
-            label: "Pull request merged",
+            label: `${title} merged`,
           }
         : {
             icon: <PullRequestGlyph.closed className="size-3.5" />,
-            label: "Pull request closed",
+            label: `${title} closed`,
           };
 
   return (
@@ -643,6 +648,7 @@ export function PullRequestTimelineTab({
   onRefresh: () => void;
 }) {
   const events = buildPullRequestTimeline(detail);
+  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,
@@ -713,7 +719,7 @@ export function PullRequestTimelineTab({
                 />
               );
             }
-            return <LifecycleEvent key={event.id} event={event} />;
+            return <LifecycleEvent key={event.id} event={event} term={term} />;
           })}
         </div>
 

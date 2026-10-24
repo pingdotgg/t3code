@@ -64,3 +64,8 @@ export function readHostCredentialSettings(
 ): HostCredentialSettings {
   return readSourceControlHostSettings(HostCredentialSettings, settings.sourceControlHosts[kind]);
 }
+
+/** A host's change request term where it opens a sentence: "Merge request merged". */
+export function capitalizeTerm(term: string): string {
+  return term.charAt(0).toUpperCase() + term.slice(1);
+}

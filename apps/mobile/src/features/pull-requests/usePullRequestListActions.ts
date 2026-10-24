@@ -16,8 +16,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   canPerformPullRequestAction,
   openOnProviderLabel,
-  PR_ACTION_LABELS,
+  pullRequestActionLabel,
 } from "./pullRequestActions";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
@@ -57,6 +58,7 @@ export function usePullRequestListActions(
     action: PullRequestAction | "request-review",
   ) => {
     const { environmentId } = entry;
+    const terminology = sourceControlClients.get(entry.provider).changeRequest;
     if (pending.current) return;
     pending.current = true;
     setBusyKey(scopedPullRequestListKey(entry));
@@ -76,7 +78,7 @@ export function usePullRequestListActions(
           !pr.capabilities.reviewers.request ||
           !pr.viewerPermissions.requestReviewers
         )
-          throw new Error("Review requests aren't available for this pull request.");
+          throw new Error(`Review requests aren't available for this ${terminology.singular}.`);
         if (Platform.OS === "android") {
           selectAndroidWorkspace({ name: "PullRequest", params: params(entry) }, params(entry));
         } else navigation.navigate("PullRequestReviewers", params(entry));
@@ -86,7 +88,7 @@ export function usePullRequestListActions(
         !registry.get(composerPullRequests.runAction.permissionAtom(environmentId)) ||
         !canPerformPullRequestAction(pr, action)
       )
-        throw new Error("This action isn't available for this pull request.");
+        throw new Error(`This action isn't available for this ${terminology.singular}.`);
       const result = await run({ ...target, input: { ...target.input, action } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       onChanged(
@@ -103,7 +105,7 @@ export function usePullRequestListActions(
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Couldn't update this pull request",
+        `Couldn't update this ${terminology.singular}`,
         cause instanceof Error ? cause.message : "Try again.",
       );
     }
@@ -135,60 +137,67 @@ export function usePullRequestListActions(
       (value) => value === action,
     );
     if (!supported) return;
-    Dialog.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
+    const label = pullRequestActionLabel(
+      supported,
+      sourceControlClients.get(entry.provider).changeRequest,
+    );
+    Dialog.alert(`${label}?`, `#${entry.number} · ${entry.title}`, [
       { text: "Cancel", style: "cancel" },
       {
-        text: PR_ACTION_LABELS[supported],
+        text: label,
         style: supported === "close" ? "destructive" : "default",
         onPress: () => void perform(entry, supported),
       },
     ]);
   };
-  const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => [
-    {
-      id: "open",
-      title: "Open pull request",
-      image: Platform.OS === "ios" ? "arrow.up.right" : "open_in_new",
-    },
-    ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
-      ? [
-          {
-            id: "request-review",
-            title: "Request review",
-            image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
-          },
-          {
-            id: entry.isDraft ? "ready" : "draft",
-            title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
-            image: Platform.OS === "ios" ? "pencil" : "edit",
-          },
-          {
-            id: "close",
-            title: "Close pull request",
-            image: Platform.OS === "ios" ? "xmark" : "close",
-            attributes: { destructive: true },
-          },
-        ]
-      : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+  const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => {
+    const terminology = sourceControlClients.get(entry.provider).changeRequest;
+    return [
+      {
+        id: "open",
+        title: `Open ${terminology.singular}`,
+        image: Platform.OS === "ios" ? "arrow.up.right" : "open_in_new",
+      },
+      ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
         ? [
             {
-              id: "reopen",
-              title: "Reopen pull request",
-              image: Platform.OS === "ios" ? "arrow.clockwise" : "refresh",
+              id: "request-review",
+              title: "Request review",
+              image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
+            },
+            {
+              id: entry.isDraft ? "ready" : "draft",
+              title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
+              image: Platform.OS === "ios" ? "pencil" : "edit",
+            },
+            {
+              id: "close",
+              title: pullRequestActionLabel("close", terminology),
+              image: Platform.OS === "ios" ? "xmark" : "close",
+              attributes: { destructive: true },
             },
           ]
-        : []),
-    {
-      id: "share",
-      title: "Share…",
-      image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
-    },
-    { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
-    {
-      id: "provider",
-      title: openOnProviderLabel(entry.provider),
-      image: Platform.OS === "ios" ? "safari" : "open_in_browser",
-    },
-  ];
+        : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+          ? [
+              {
+                id: "reopen",
+                title: pullRequestActionLabel("reopen", terminology),
+                image: Platform.OS === "ios" ? "arrow.clockwise" : "refresh",
+              },
+            ]
+          : []),
+      {
+        id: "share",
+        title: "Share…",
+        image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
+      },
+      { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
+      {
+        id: "provider",
+        title: openOnProviderLabel(entry.provider),
+        image: Platform.OS === "ios" ? "safari" : "open_in_browser",
+      },
+    ];
+  };
   return { actions, select, busyKey };
 }

@@ -21,7 +21,7 @@ import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useEnvironmentQuery } from "~/state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { vcsEnvironment } from "~/state/vcs";
-import { OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST } from "./pullRequest/pullRequestCheckoutToast";
+import { offHeadPullRequestCheckoutToast } from "./pullRequest/pullRequestCheckoutToast";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -174,7 +174,7 @@ export function PullRequestThreadDialog({
       worktreePath: result.value.worktreePath,
     });
     if (!result.value.isOnPullRequestHead) {
-      toastManager.add(OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST);
+      toastManager.add(offHeadPullRequestCheckoutToast(terminology));
     }
     onOpenChange(false);
   };

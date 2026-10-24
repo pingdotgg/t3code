@@ -42,6 +42,21 @@ describe("presentThreadLinkedPullRequests", () => {
       ]),
     ).toMatchObject({ kind: "stack", label: "2", number: 2, url: top.url });
   });
+
+  it("names a single link with its host's term", () => {
+    expect(presentThreadLinkedPullRequests([linkedPr(7)])?.accessibilityLabel).toBe(
+      "#7 pull request open",
+    );
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(7, {
+          host: "gitlab.com",
+          repository: "t3tools/t3code",
+          url: "https://gitlab.com/t3tools/t3code/-/merge_requests/7",
+        }),
+      ])?.accessibilityLabel,
+    ).toBe("#7 merge request open");
+  });
 });
 
 describe("resolveThreadPrSource compatibility", () => {

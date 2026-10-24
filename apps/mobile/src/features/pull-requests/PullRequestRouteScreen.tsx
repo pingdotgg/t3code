@@ -24,7 +24,7 @@ import {
   canPerformPullRequestAction,
   openOnProviderLabel,
   PR_ACTION_ICONS,
-  PR_ACTION_LABELS,
+  pullRequestActionLabel,
 } from "./pullRequestActions";
 import * as Clipboard from "expo-clipboard";
 import { Menu } from "../../components/ui/Menu";
@@ -113,6 +113,10 @@ import { PullRequestMergeControls } from "./PullRequestMergeControls";
 import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
+import {
+  capitalizeTerm,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 
 const EMPTY_IDS: readonly string[] = [];
 
@@ -342,6 +346,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const pr = result.data;
   const summary = params.initialSummary;
   const identity = pr ?? summary;
+  const terminology = sourceControlClients.get(identity?.provider).changeRequest;
   const permissions = usePullRequestPermissions(params, pr);
   const action = usePullRequestAction(params, pr);
   const showsDeleteBranch = pr !== null && canPerformPullRequestAction(pr, "delete-branch");
@@ -349,7 +354,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     pr &&
     action.confirm(
       "delete-branch",
-      PR_ACTION_LABELS["delete-branch"],
+      pullRequestActionLabel("delete-branch", terminology),
       `Delete ${pr.headBranch} from ${pr.headRepositoryNameWithOwner ?? pr.repository}? Local branches and worktrees are not changed.`,
     );
   const stack = usePullRequestStack(params, pr);
@@ -451,7 +456,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               ...(showsDeleteBranch
                 ? [
                     {
-                      accessibilityLabel: PR_ACTION_LABELS["delete-branch"],
+                      accessibilityLabel: pullRequestActionLabel("delete-branch", terminology),
                       icon: PR_ACTION_ICONS["delete-branch"],
                       disabled: !action.available("delete-branch"),
                       destructive: true,
@@ -465,8 +470,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         ) : null}
         <Toolbar placement="right">
           <Toolbar.Menu
-            title="Pull request"
-            accessibilityLabel="Pull request actions"
+            title={capitalizeTerm(terminology.singular)}
+            accessibilityLabel={`${capitalizeTerm(terminology.singular)} actions`}
             icon="ellipsis"
           >
             {permissions.verdicts.length ? (
@@ -524,7 +529,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 }
                 onPress={confirmDeleteBranch}
               >
-                <Toolbar.Label>{PR_ACTION_LABELS["delete-branch"]}</Toolbar.Label>
+                <Toolbar.Label>
+                  {pullRequestActionLabel("delete-branch", terminology)}
+                </Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
           </Toolbar.Menu>
@@ -656,6 +663,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                             <PullRequestReadStatus
                               pending={tabContent.pending}
                               error={tabContent.error}
+                              terminology={terminology}
                             />
                           ) : null}
                         </View>
@@ -705,6 +713,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                       <PullRequestReadStatus
                         pending={result.isPending && !identity}
                         error={result.error}
+                        terminology={terminology}
                       />
                       {identity ? (
                         <View
@@ -763,12 +772,15 @@ export function PullRequestFileRouteScreen({
   const insets = useSafeAreaInsets();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
-  const result = usePullRequestDiff(route.params);
+  const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(route.params)));
+  const terminology = sourceControlClients.get(
+    (detail.data ?? route.params.initialSummary)?.provider,
+  ).changeRequest;
+  const result = usePullRequestDiff(route.params, terminology);
   const filter = usePullRequestFileFilter(
     result.parsed,
     route.params.focus ? route.params.path : undefined,
   );
-  const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(route.params)));
   const { refresh: refreshDetail } = detail;
   useFocusEffect(() => refreshDetail());
   const { loadMore } = result;
@@ -1092,7 +1104,11 @@ export function PullRequestFileRouteScreen({
       >
         {loadingDiff || result.error ? (
           <View style={{ paddingTop: Platform.OS === "ios" && !staleDiff ? insets.top : 0 }}>
-            <PullRequestReadStatus pending={loadingDiff} error={result.error} />
+            <PullRequestReadStatus
+              pending={loadingDiff}
+              error={result.error}
+              terminology={terminology}
+            />
           </View>
         ) : null}
         {NativeDiffView && data.rows.length && !seekingFile ? (
@@ -1184,7 +1200,7 @@ export function PullRequestFileRouteScreen({
         ) : !result.isPending && !result.error && !seekingFile ? (
           <EmptyState
             title="Diff unavailable"
-            detail="Open this pull request on its provider to view the changes."
+            detail={`Open this ${terminology.singular} on its provider to view the changes.`}
             variant="plain"
           />
         ) : null}

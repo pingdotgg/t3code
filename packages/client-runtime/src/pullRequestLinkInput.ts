@@ -1,6 +1,6 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
 
-import { sourceControlClients } from "./sourceControlClients.ts";
+import { sourceControlClients, type ChangeRequestTerminology } from "./sourceControlClients.ts";
 
 const PULL_REQUEST_NUMBER_PATTERN = /^#?(\d+)$/;
 
@@ -46,6 +46,7 @@ export function pullRequestLinkProject(identity: RepositoryIdentity | null | und
   return {
     host,
     repository,
+    terminology: definition.changeRequest,
     webUrl: (number: number) =>
       definition.changeRequestUrl({
         host,
@@ -69,6 +70,7 @@ export function resolveLinkPullRequestInput(input: {
   readonly project: {
     readonly host: string;
     readonly repository: string;
+    readonly terminology: ChangeRequestTerminology;
     readonly webUrl: (number: number) => string | null;
   } | null;
   readonly hasProject: (reference: ResolvedLink) => boolean;
@@ -99,7 +101,9 @@ export function resolveLinkPullRequestInput(input: {
   const webReference =
     webUrl === null ? undefined : sourceControlClients.parseChangeRequestUrl(webUrl)?.link;
   if (webUrl === null || webReference === undefined) {
-    return { error: "Paste a full URL; this project's host has no known pull request URL." };
+    return {
+      error: `Paste a full URL; this project's host has no known ${input.project.terminology.singular} URL.`,
+    };
   }
   return {
     link: {

@@ -110,9 +110,9 @@ function LinkRowImpl({
   const snapshot = link.snapshot;
   const open = snapshot === null || snapshot.state === "open";
   const watching = link.watch !== undefined;
-  const linkHostActions = (
-    sourceControlClients.findByChangeRequestUrl(link.url) ?? UNKNOWN_SOURCE_CONTROL_CLIENT
-  ).changeRequestActions;
+  const linkHost =
+    sourceControlClients.findByChangeRequestUrl(link.url) ?? UNKNOWN_SOURCE_CONTROL_CLIENT;
+  const linkHostActions = linkHost.changeRequestActions;
   const actionEntry =
     projectId !== null && snapshot !== null && snapshot.state !== "merged"
       ? {
@@ -247,7 +247,7 @@ function LinkRowImpl({
                   <TooltipPopup>
                     {stack.kind === "native"
                       ? `${sourceControlClients.hostLabelForChangeRequestUrl(link.url)} stack of ${stack.size}: merging a layer lands the ones below it.`
-                      : `${stack.size} pull requests chained by base branch.`}
+                      : `${stack.size} ${linkHost.changeRequest.plural} chained by base branch.`}
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
@@ -279,7 +279,11 @@ function LinkRowImpl({
         />
       </a>
       {actionEntry !== null ? (
-        <PullRequestSpeedActions entry={actionEntry} hostActions={linkHostActions} />
+        <PullRequestSpeedActions
+          entry={actionEntry}
+          hostActions={linkHostActions}
+          terminology={linkHost.changeRequest}
+        />
       ) : null}
       <span
         className={cn(
