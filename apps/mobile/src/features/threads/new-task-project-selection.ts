@@ -1,5 +1,10 @@
+import {
+  derivePhysicalProjectKey,
+  resolveProjectGroup,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { repositoryGroupingKeyOf, type EnvironmentId } from "@t3tools/contracts";
+import { type EnvironmentId } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
@@ -43,49 +48,65 @@ function getOnlySelectableProject(
   return onlyScope?.representative ?? null;
 }
 
+/** Switch machines only within the selected logical project. */
 export function resolveEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
+  settings: ProjectGroupingSettings = {
+    sidebarProjectGroupingMode: "repository",
+    sidebarProjectGroupingOverrides: {},
+  },
+  allProjects: ReadonlyArray<EnvironmentProject> = projectsOnTarget,
 ): EnvironmentProject | null {
-  const repositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // `|| null` (not `??`): a pending-task placeholder project can have an empty
-  // workspaceRoot, and an "" basename would match nothing meaningful.
-  const workspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  // The weaker signals only apply where identity is unknown on at least one
-  // side; two known, different repositories never match on a shared basename
-  // or title (mirrors the environment list filter in the new-task flow).
-  const isKnownMismatch = (project: EnvironmentProject) => {
-    const projectKey = project.repositoryIdentity
-      ? repositoryGroupingKeyOf(project.repositoryIdentity)
-      : null;
-    return repositoryKey !== null && projectKey !== null && projectKey !== repositoryKey;
-  };
+  if (selectedProject === null) return projectsOnTarget[0] ?? null;
+  const targetKeys = new Set(projectsOnTarget.map(derivePhysicalProjectKey));
   return (
-    (repositoryKey !== null
-      ? projectsOnTarget.find(
-          (project) =>
-            (project.repositoryIdentity
-              ? repositoryGroupingKeyOf(project.repositoryIdentity)
-              : null) === repositoryKey,
-        )
-      : undefined) ??
-    (workspaceBasename !== null
-      ? projectsOnTarget.find(
-          (project) =>
-            !isKnownMismatch(project) &&
-            project.workspaceRoot.split("/").at(-1) === workspaceBasename,
-        )
-      : undefined) ??
-    (selectedProject !== null
-      ? projectsOnTarget.find(
-          (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
-        )
-      : undefined) ??
-    projectsOnTarget[0] ??
-    null
+    resolveProjectGroup(selectedProject, allProjects, settings)?.members.find((member) =>
+      targetKeys.has(member.physicalProjectKey),
+    )?.project ?? null
   );
+}
+
+export function resolveNewTaskEnvironmentProject(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly selectedProject: EnvironmentProject | null;
+  readonly pendingProject: EnvironmentProject | null;
+  readonly settings: ProjectGroupingSettings;
+}): EnvironmentProject | null {
+  return (
+    resolveEnvironmentProjectMatch(
+      input.projects.filter((project) => project.environmentId === input.environmentId),
+      input.selectedProject,
+      input.settings,
+      input.projects,
+    ) ?? (input.pendingProject?.environmentId === input.environmentId ? input.pendingProject : null)
+  );
+}
+
+/** Keep a queued task's host available even before its project shell loads. */
+export function resolveNewTaskEnvironments(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly selectedProject: EnvironmentProject | null;
+  readonly settings: ProjectGroupingSettings;
+  readonly savedConnectionsById: Readonly<
+    Record<string, { readonly environmentLabel: string } | undefined>
+  >;
+  readonly pendingTaskEnvironmentId: EnvironmentId | null;
+}): Array<{ readonly environmentId: EnvironmentId; readonly environmentLabel: string }> {
+  const matchingProjects = input.selectedProject
+    ? (resolveProjectGroup(input.selectedProject, input.projects, input.settings)?.members.map(
+        (member) => member.project,
+      ) ?? [])
+    : input.projects;
+  const candidates = matchingProjects.map((project) => project.environmentId);
+  if (input.pendingTaskEnvironmentId !== null) {
+    candidates.unshift(input.pendingTaskEnvironmentId);
+  }
+  return [...new Set(candidates)].flatMap((environmentId) => {
+    const environment = input.savedConnectionsById[environmentId];
+    return environment ? [{ environmentId, environmentLabel: environment.environmentLabel }] : [];
+  });
 }
 
 export function resolveDraftProjectSelection(

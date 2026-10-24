@@ -8,10 +8,8 @@ import {
 } from "@t3tools/contracts";
 
 import type { EnvironmentOption } from "../components/BranchToolbar.logic";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  selectProjectGroupingSettings,
-} from "../logicalProject";
+import { resolveProjectGroup } from "@t3tools/client-runtime/state/project-grouping";
+import { selectProjectGroupingSettings } from "../logicalProject";
 import { useProjects } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "./useSettings";
@@ -63,11 +61,10 @@ export function useLogicalProjectEnvironments(
       pushEnvironment(environment.environmentId, scratchProject?.id ?? null);
     }
   } else {
-    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
+    const group = resolveProjectGroup(activeProject, allProjects, projectGroupingSettings);
     const seen = new Set<string>();
-    for (const p of allProjects) {
+    for (const { project: p } of group?.members ?? []) {
       if (seen.has(p.environmentId)) continue;
-      if (deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey) continue;
       seen.add(p.environmentId);
       pushEnvironment(p.environmentId, p.id);
     }

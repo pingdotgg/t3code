@@ -79,7 +79,7 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
 const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app.",
+    "Update a registered project's settings. Omitted fields are preserved. Set groupingIdentity to a shared lowercase UUID v4 for copies of a non-Git project, or null to clear it; read/list exposes it. Git identity takes precedence. Uses the same project service as the app.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {

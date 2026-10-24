@@ -68,6 +68,7 @@ function makeHarness(
               projectId,
               title: "Project",
               workspaceRoot: "/repo",
+              groupingIdentity: null,
               defaultModelSelection: modelSelection,
               defaultThreadEnvMode: null,
               autoPull: false,

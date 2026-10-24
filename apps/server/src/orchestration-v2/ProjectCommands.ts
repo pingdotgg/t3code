@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type ProjectIconOverride,
   ProjectId,
+  ProjectGroupingIdentity,
   type ProjectScript,
   SCRIPT_RUN_COMMAND_PATTERN,
   type ThreadEnvMode,
@@ -22,6 +23,7 @@ export interface ProjectCreateCommand {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
+  readonly groupingIdentity?: string | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
@@ -36,6 +38,7 @@ export interface ProjectMetaUpdateCommand {
   readonly autoPull?: boolean;
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
+  readonly groupingIdentity?: string | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
@@ -102,6 +105,7 @@ export interface ProjectCommandState {
 }
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const isProjectGroupingIdentity = Schema.is(ProjectGroupingIdentity);
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
 /**
@@ -132,6 +136,13 @@ export function planProjectCommand(input: {
           workspaceRoot,
           conflictingProjectId: state.workspaceOwner.projectId,
         });
+  if (
+    command.type !== "project.delete" &&
+    command.groupingIdentity != null &&
+    !isProjectGroupingIdentity(command.groupingIdentity)
+  ) {
+    return invariant("Project grouping identity must be a lowercase UUID v4.");
+  }
   const occurredAt = DateTime.formatIso(input.now);
   const base = {
     eventId: input.eventId,
@@ -160,6 +171,7 @@ export function planProjectCommand(input: {
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
+          groupingIdentity: command.groupingIdentity ?? null,
           defaultModelSelection: null,
           faviconPath: null,
           projectIcon: null,
@@ -200,6 +212,9 @@ export function planProjectCommand(input: {
         type: "project.meta-updated",
         payload: {
           projectId: command.projectId,
+          ...(command.groupingIdentity === undefined
+            ? {}
+            : { groupingIdentity: command.groupingIdentity }),
           ...(command.title === undefined ? {} : { title: command.title }),
           ...(command.workspaceRoot === undefined ? {} : { workspaceRoot: command.workspaceRoot }),
           ...(command.defaultModelSelection === undefined

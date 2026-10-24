@@ -20,7 +20,6 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_SERVER_SETTINGS,
   MessageId,
-  repositoryGroupingKeyOf,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
@@ -122,7 +121,10 @@ import {
   resolveNewTaskLocalWorkspaceSelection,
   resolveNewTaskWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveNewTaskEnvironmentProject,
+  resolveNewTaskEnvironments,
+} from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
@@ -285,17 +287,18 @@ export function NewTaskFlowProvider(
   const [selectedEnvironmentIdOverride, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
-  const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
-      ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingPendingTask, setEditingPendingTask] = useState<QueuedThreadMessage | null>(null);
+  const selectedEnvironmentId =
+    selectedEnvironmentIdOverride !== null &&
+    (editingPendingTask?.environmentId === selectedEnvironmentIdOverride ||
+      projects.some((project) => project.environmentId === selectedEnvironmentIdOverride))
+      ? selectedEnvironmentIdOverride
+      : (projects[0]?.environmentId ?? null);
   const pendingLocalBranchSyncDraftKeysRef = useRef(new Set<string>());
   // Mirrors `editingPendingTask` synchronously so the unmount flush cannot act
   // on a task whose editing session already ended this render.
@@ -336,6 +339,7 @@ export function NewTaskFlowProvider(
       id: creation.projectId,
       title: creation.projectTitle ?? "Unknown project",
       workspaceRoot: creation.projectCwd ?? "",
+      groupingIdentity: creation.groupingIdentity ?? null,
       repositoryIdentity: null,
       defaultModelSelection: editingPendingTask.modelSelection ?? null,
       scripts: [],
@@ -373,13 +377,6 @@ export function NewTaskFlowProvider(
       ) !== null,
   );
 
-  const selectedRepositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // `|| null` (not `??`): a pending-task placeholder project can have an empty
-  // workspaceRoot, and an "" basename would reject every real host below.
-  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = (() => {
     if (isScratchDraft) {
       return scratchEnvironments.map((environment) => ({
@@ -387,44 +384,13 @@ export function NewTaskFlowProvider(
         environmentLabel: environment.environmentLabel,
       }));
     }
-    const seen = new Set<EnvironmentId>();
-    const result: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-    }> = [];
-    const hostsSelectedRepository = (project: EnvironmentProject) => {
-      if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
-        return true;
-      }
-      const projectKey = project.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
-        : null;
-      if (selectedRepositoryKey !== null && projectKey !== null) {
-        return projectKey === selectedRepositoryKey;
-      }
-      return (
-        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
-        (selectedProjectTitle !== null && project.title === selectedProjectTitle)
-      );
-    };
-    for (const project of projects) {
-      if (!hostsSelectedRepository(project)) {
-        continue;
-      }
-      if (seen.has(project.environmentId)) {
-        continue;
-      }
-      const environment = savedConnectionsById[project.environmentId];
-      if (!environment) {
-        continue;
-      }
-      seen.add(project.environmentId);
-      result.push({
-        environmentId: project.environmentId,
-        environmentLabel: environment.environmentLabel,
-      });
-    }
-    return result;
+    return resolveNewTaskEnvironments({
+      projects,
+      selectedProject,
+      settings: groupingSettings,
+      savedConnectionsById,
+      pendingTaskEnvironmentId: editingPendingTask?.environmentId ?? null,
+    });
   })();
 
   const selectedProjectDraftKey = editingPendingTask
@@ -753,15 +719,18 @@ export function NewTaskFlowProvider(
   };
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
-    const match = resolveEnvironmentProjectMatch(
-      projects.filter((project) => project.environmentId === environmentId),
+    const match = resolveNewTaskEnvironmentProject({
+      environmentId,
+      projects,
       selectedProject,
-    );
-    if (match) {
-      carryDraftContentTo(match);
-    }
+      pendingProject: editingPendingProject,
+      settings: groupingSettings,
+    });
+    if (!match) return false;
+    carryDraftContentTo(match);
     setSelectedEnvironmentId(environmentId);
-    setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
+    setSelectedProjectKey(scopedProjectKey(match.environmentId, match.id));
+    return true;
   };
 
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
@@ -776,8 +745,7 @@ export function NewTaskFlowProvider(
       return true;
     }
     if (!isScratchDraft) {
-      selectEnvironment(environmentId);
-      return true;
+      return selectEnvironment(environmentId);
     }
     const request = {};
     latestSwitchRef.current = request;
@@ -1053,6 +1021,9 @@ export function NewTaskFlowProvider(
         projectId: selectedProject.id,
         ...(projectTitle !== undefined ? { projectTitle } : {}),
         ...(projectCwd !== undefined ? { projectCwd } : {}),
+        ...(selectedProject.groupingIdentity !== undefined
+          ? { groupingIdentity: selectedProject.groupingIdentity }
+          : {}),
         workspaceMode: mode,
         ...(mode === "worktree" && workspaceSelection?.pullRequestReference
           ? { pullRequestReference: workspaceSelection.pullRequestReference }
