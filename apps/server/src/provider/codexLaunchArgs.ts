@@ -22,12 +22,17 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
     const arg = args[index];
     if (arg === undefined) continue;
 
+    // Feature enables override config assignments even when the assignments come later.
+    if (arg === "--enable=hooks" || arg === "--enable=codex_hooks") continue;
+
     if (arg === "--strict-config" || arg.startsWith("--config=") || arg.startsWith("-c=")) {
       execArgs.push(arg);
     } else if (arg === "--config" || arg === "-c" || arg === "--enable" || arg === "--disable") {
       const value = args[index + 1];
       if (value !== undefined && !value.startsWith("-")) {
-        execArgs.push(arg, value);
+        if (arg !== "--enable" || (value !== "hooks" && value !== "codex_hooks")) {
+          execArgs.push(arg, value);
+        }
         index++;
       }
     } else if (arg.startsWith("--enable=") || arg.startsWith("--disable=")) {
