@@ -254,7 +254,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
           shell: input.shell ?? false,
           stdin: "ignore",
           stdout: "pipe",
-          stderr: "pipe",
+          stderr: "ignore",
           killSignal: "SIGTERM",
           forceKillAfter: PROCESS_TERMINATE_GRACE,
         }),
