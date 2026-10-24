@@ -1911,6 +1911,137 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("projects a Copilot child's buffered reply before the task input settles it", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      let sessionEvent:
+        | ((event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+        | undefined;
+      const routing = makeCopilotSubagentRouting();
+      const instanceId = ProviderInstanceId.make("copilot-replay");
+      const reply = "`a.txt` says hello.";
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          registerExtensions: routing.registerExtensions,
+          normalizeSessionUpdate: routing.normalizeSessionUpdate,
+          extractSubagentUpdate: extractCopilotSubagentUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              handleExtNotification: (method, payload, next) =>
+                Effect.sync(() => {
+                  if (method === "github.com/copilot/sessionEvent") {
+                    sessionEvent = next as typeof sessionEvent;
+                  }
+                }).pipe(Effect.andThen(runtime.handleExtNotification(method, payload, next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  assert.isDefined(handler);
+                  assert.isDefined(sessionEvent);
+                  const sessionId = "mock-session-1";
+                  const update = (next: EffectAcpSchema.SessionUpdate) =>
+                    handler!({ sessionId, update: next });
+                  // The task's input arrives only with its completion, so the
+                  // adapter buffers the child's chunks until then.
+                  yield* update({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "task-a",
+                    title: "Describe a.txt",
+                    kind: "other",
+                    status: "pending",
+                  });
+                  for (const text of ["`a.txt` says", " hello."]) {
+                    yield* sessionEvent!({
+                      sessionId,
+                      type: "assistant.message_delta",
+                      data: { deltaContent: text, parentToolCallId: "task-a" },
+                    });
+                    yield* update({
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text },
+                    });
+                  }
+                  yield* update({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "task-a",
+                    status: "completed",
+                    rawInput: {
+                      description: "Describe a.txt",
+                      prompt: "Describe a.txt.",
+                      agent_type: "explore",
+                      mode: "sync",
+                    },
+                    rawOutput: { content: reply },
+                  });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("copilot-replay-parent");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("copilot-replay-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const settled = events.findIndex(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+      );
+      const fullText = events.findIndex(
+        (event) =>
+          event.type === "message.updated" &&
+          event.message.threadId !== threadId &&
+          event.message.text === reply,
+      );
+      assert.isAtLeast(fullText, 0, "the child's full reply is projected");
+      assert.isAbove(settled, fullText, "the full reply lands before the child settles");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("projects ACP v2 fidelity updates into first-class orchestration items", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

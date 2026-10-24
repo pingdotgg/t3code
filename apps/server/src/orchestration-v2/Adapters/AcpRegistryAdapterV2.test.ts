@@ -1212,6 +1212,55 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("coalesces a streamed child reply and settles the child with its full text", () =>
+    Effect.gen(function* () {
+      const { update, idle, prompt } = claudeFrames;
+      const chunks = Array.from({ length: 50 }, (_, index) => `part ${index} `);
+      const reply = chunks.join("");
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...prompt(1),
+        ...claudeChild,
+        ...chunks.map((text) =>
+          update("child-1", {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "child-reply",
+            content: { type: "text", text },
+          }),
+        ),
+        claudeFrames.childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+        claudeMarker("child settled"),
+        idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const seen = yield* session.throughMarker("child settled");
+      const rootThreadId = session.turnInput(1).threadId;
+      // No clock advances, so only the first chunk and the settle flush emit.
+      assert.deepEqual(
+        seen.flatMap((event) =>
+          event.type === "message.updated" &&
+          event.message.role === "assistant" &&
+          event.message.threadId !== rootThreadId
+            ? [event.message.text]
+            : [],
+        ),
+        [chunks[0], reply],
+      );
+      const settled = seen.findIndex(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+      );
+      const fullText = seen.findIndex(
+        (event) => event.type === "message.updated" && event.message.text === reply,
+      );
+      assert.isAbove(settled, fullText, "the full reply lands before the child settles");
+      const result = seen[settled];
+      if (result?.type !== "subagent.updated") throw new Error("Missing settled child");
+      assert.equal(result.subagent.result, reply);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each([
     { kind: "approval", stopReason: "end_turn", status: "completed" },
     { kind: "question", stopReason: "error", status: "failed" },
