@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -209,6 +211,9 @@ const diagnose = (
   LocalDeviceHost.__testing.platformReason("android").pipe(
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, platform),
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: () => Effect.die("Android diagnostics must not run commands"),
+    }),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
@@ -217,6 +222,225 @@ const diagnose = (
     ),
     Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
   );
+
+const diagnoseIos = (
+  outcome: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  applications: ReadonlyArray<string> = ["Xcode.app"],
+  platform: NodeJS.Platform = "darwin",
+  {
+    environment = {},
+    selectedDeveloperDirectory = "/Applications/Xcode.app/Contents/Developer",
+    developerDirectoryExists = true,
+  }: {
+    environment?: NodeJS.ProcessEnv;
+    selectedDeveloperDirectory?: string | null;
+    developerDirectoryExists?: boolean;
+  } = {},
+) => {
+  const developerDirectory = environment.DEVELOPER_DIR ?? selectedDeveloperDirectory;
+  return LocalDeviceHost.__testing.platformReason("ios").pipe(
+    Effect.provideService(HostProcess.Environment, { PATH: "", ...environment }),
+    Effect.provideService(HostProcess.Platform, platform),
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: (input) => {
+        expect(platform).toBe("darwin");
+        const timeoutMs = Duration.toMillis(input.timeout ?? Infinity);
+        expect(Number.isFinite(timeoutMs)).toBe(true);
+        expect(timeoutMs).toBeGreaterThan(0);
+        if (input.command === "xcode-select") {
+          expect(input.args).toEqual(["--print-path"]);
+          return Effect.succeed(
+            developerDirectory === null
+              ? processOutput(
+                  2,
+                  "",
+                  "xcode-select: error: unable to get active developer directory",
+                )
+              : processOutput(0, `${developerDirectory}\n`),
+          );
+        }
+        expect([input.command, ...input.args]).toEqual(["xcrun", "simctl", "help"]);
+        return outcome;
+      },
+    }),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        readDirectory: (path) => {
+          expect(path).toBe("/Applications");
+          return Effect.succeed([...applications]);
+        },
+        exists: (path) =>
+          Effect.succeed(
+            path === developerDirectory
+              ? developerDirectoryExists
+              : applications.some(
+                  (bundle) => path === `/Applications/${bundle}/Contents/Developer`,
+                ),
+          ),
+      }),
+    ),
+    Effect.provide(NodePath.layerPosix),
+  );
+};
+
+describe("iOS Simulator availability", () => {
+  it.effect("accepts working simctl on macOS and rejects other platforms without probing", () =>
+    Effect.gen(function* () {
+      for (const options of [
+        {},
+        { selectedDeveloperDirectory: "/Volumes/Tools/Xcode.app/Contents/Developer" },
+        { environment: { DEVELOPER_DIR: "/Volumes/Tools/Xcode-beta.app/Contents/Developer" } },
+      ]) {
+        expect(
+          yield* diagnoseIos(Effect.succeed(processOutput(0)), [], "darwin", options),
+        ).toBeNull();
+      }
+      for (const platform of ["linux", "win32"] as const) {
+        expect(yield* diagnoseIos(Effect.die("Only macOS can probe simctl"), [], platform)).toMatch(
+          /macOS.*Xcode/,
+        );
+      }
+    }),
+  );
+
+  it.effect("does not invoke the xcrun installer stub without a valid developer directory", () =>
+    Effect.gen(function* () {
+      let xcrunCalls = 0;
+      const stub = Effect.sync(() => {
+        xcrunCalls++;
+        return processOutput(
+          1,
+          "",
+          "xcode-select: note: No developer tools were found, requesting install.",
+        );
+      });
+      for (const options of [
+        { selectedDeveloperDirectory: null },
+        { selectedDeveloperDirectory: "/missing/Xcode.app/Contents/Developer" },
+        { environment: { DEVELOPER_DIR: "/missing/Developer" } },
+      ]) {
+        const reason = yield* diagnoseIos(stub, [], "darwin", {
+          ...options,
+          developerDirectoryExists: false,
+        });
+        expect(xcrunCalls).toBe(0);
+        expect(reason).toMatch(
+          /install.*Xcode|select.*developer|developer.*(missing|not found|invalid)/i,
+        );
+      }
+    }),
+  );
+
+  it.effect("offers usable Xcode selection guidance, including a DEVELOPER_DIR override", () =>
+    Effect.gen(function* () {
+      for (const bundle of ["Xcode.app", "Xcode-beta.app", "Xcode 26.app"]) {
+        for (const environment of [{}, { DEVELOPER_DIR: "/Library/Developer/CommandLineTools" }]) {
+          const reason = yield* diagnoseIos(
+            Effect.succeed(processOutput(72, "", 'xcrun: error: unable to find utility "simctl"')),
+            ["Safari.app", bundle],
+            "darwin",
+            { environment, selectedDeveloperDirectory: "/Library/Developer/CommandLineTools" },
+          );
+          const developerPath = `/Applications/${bundle}/Contents/Developer`;
+          expect(reason).toContain(developerPath);
+          if (environment.DEVELOPER_DIR) {
+            expect(reason).toContain("DEVELOPER_DIR");
+            expect(reason).toMatch(/unset|change|update|set .*DEVELOPER_DIR/i);
+            expect(reason).toMatch(/restart/i);
+          } else {
+            const command = reason?.match(/sudo xcode-select (?:-s|--switch) (.+)/)?.[1];
+            expect(command).toBeDefined();
+            const quoted =
+              command?.startsWith(`"${developerPath}"`) ||
+              command?.startsWith(`'${developerPath}'`);
+            expect(quoted || (!bundle.includes(" ") && command?.startsWith(developerPath))).toBe(
+              true,
+            );
+          }
+        }
+      }
+    }),
+  );
+
+  it.effect("offers installation or selection outside Applications when no Xcode is found", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnoseIos(
+        Effect.succeed(processOutput(72, "", 'xcrun: error: unable to find utility "simctl"')),
+        ["Safari.app"],
+      );
+      expect(reason).toMatch(/install Xcode/i);
+      expect(reason).toContain("outside /Applications");
+      expect(reason).toContain("xcode-select");
+      expect(reason).not.toContain("/Applications/Xcode.app");
+    }),
+  );
+
+  it.effect("reports missing tools only for a not-found spawn failure", () =>
+    Effect.gen(function* () {
+      for (const [cause, missing] of [
+        [
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            pathOrDescriptor: "xcrun",
+          }),
+          true,
+        ],
+        [
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "ChildProcess",
+            method: "spawn",
+            pathOrDescriptor: "xcrun",
+          }),
+          false,
+        ],
+        [new Error("unknown spawn failure"), false],
+      ] as const) {
+        const reason = yield* diagnoseIos(
+          Effect.fail(
+            new ProcessRunner.ProcessSpawnError({ command: "xcrun", argumentCount: 2, cause }),
+          ),
+        );
+        if (missing) {
+          expect(reason).toMatch(/command line tools.*not found/i);
+        } else {
+          expect(reason).toMatch(/could not run xcrun simctl/i);
+          expect(reason).not.toMatch(/not found|install Xcode|xcode-select/i);
+        }
+      }
+    }),
+  );
+
+  it.effect("preserves license and timeout diagnostics without suggesting missing tools", () =>
+    Effect.gen(function* () {
+      for (const [outcome, diagnostic] of [
+        [
+          Effect.succeed(
+            processOutput(69, "", "You have not agreed to the Xcode license agreements."),
+          ),
+          /license agreements/,
+        ],
+        [
+          Effect.fail(
+            new ProcessRunner.ProcessTimeoutError({
+              command: "xcrun",
+              argumentCount: 2,
+              timeoutMs: 15_000,
+            }),
+          ),
+          /timed out/i,
+        ],
+      ] as const) {
+        const reason = yield* diagnoseIos(outcome);
+        expect(reason).toMatch(diagnostic);
+        expect(reason).not.toMatch(/not found|install Xcode|xcode-select/i);
+      }
+    }),
+  );
+});
 
 describe("Android SDK availability", () => {
   it.effect("uses the standard Windows SDK without probing PATH", () =>
@@ -472,7 +696,13 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
         HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
       ),
       Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: () => Effect.die("Platform availability must not probe emulator video"),
+        // Only the Xcode preflight may run; anything else would be an emulator video probe.
+        run: (input) =>
+          input.command === "xcode-select"
+            ? Effect.succeed(processOutput(0, `${baseDir}\n`))
+            : input.command === "xcrun"
+              ? Effect.succeed(processOutput(0))
+              : Effect.die("Platform availability must not probe emulator video"),
       }),
     );
     expect((yield* onTestHost(host.summary)).platforms).toEqual([
