@@ -81,7 +81,7 @@ import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
-import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { presentAsChrome, ServerBrowserContexts, setPageHidden } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
@@ -322,6 +322,11 @@ interface ServerTab {
   recordingStart: Promise<Recording> | null;
   captureLock: Promise<void>;
   capturing: number;
+  operations: number;
+  hidden: boolean;
+  appliedHidden: boolean;
+  visibilitySync: Promise<void> | null;
+  hideTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface ServerDownload {
@@ -347,6 +352,7 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
 const AGENT_TAB_IDLE_MS = 30 * 60 * 1000;
+const UNWATCHED_TAB_HIDE_MS = 60 * 1000;
 const IDLE_SWEEP_INTERVAL = "1 minute";
 
 const DOWNLOAD_LIMIT = 20;
@@ -668,6 +674,7 @@ const make = Effect.gen(function* () {
     tabs.delete(key);
     tab.closing = true;
     clearAbortedNavigation(tab);
+    if (tab.hideTimer !== null) clearTimeout(tab.hideTimer);
     // A desktop page outlives the connection unless its session closed with it.
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
@@ -783,6 +790,11 @@ const make = Effect.gen(function* () {
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
+      operations: 0,
+      hidden: false,
+      appliedHidden: false,
+      visibilitySync: null,
+      hideTimer: null,
     };
     if (!desktop) {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
@@ -892,6 +904,7 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     reportLiveTabs();
+    hideWhenUnwatched(tab);
     // Existing desktop and popup PDFs can start loading before interception attaches.
     if (
       snapshot.navStatus._tag === "Loading" &&
@@ -1221,6 +1234,68 @@ const make = Effect.gen(function* () {
         await popup.close().catch(constVoid);
       },
     );
+  };
+
+  // A headless page paints every frame even when nobody sees it, and WebGL
+  // renders on the CPU here. Hidden like a background tab, it stops painting.
+  // The desktop renders its own pages, so only headless tabs hide.
+  const watched = (tab: ServerTab) =>
+    tab.viewers.size > 0 ||
+    tab.operations > 0 ||
+    tab.recording !== null ||
+    tab.recordingStart !== null;
+
+  // `hidden` is the desired state, set synchronously by show/hide. Each call
+  // appends "drive the window to the desired state" onto a per-tab chain and
+  // returns its tail, so callers serialize behind any change already in flight
+  // instead of racing Browser.setWindowBounds or an interaction ahead of it.
+  // `appliedHidden` is what actually reached the window; it only advances on
+  // success, so a failed change is left for the next call to retry.
+  const driveVisibility = async (tab: ServerTab) => {
+    if (tab.closing || tab.appliedHidden === tab.hidden) return;
+    const target = tab.hidden;
+    try {
+      await setPageHidden(tab.cdp, target);
+      tab.appliedHidden = target;
+    } catch {
+      // Leave appliedHidden unchanged; the next show/hide retries the change.
+    }
+  };
+
+  const syncVisibility = (tab: ServerTab): Promise<void> => {
+    tab.visibilitySync = (tab.visibilitySync ?? Promise.resolve()).then(() => driveVisibility(tab));
+    return tab.visibilitySync;
+  };
+
+  const hideWhenUnwatched = (tab: ServerTab) => {
+    if (tab.hideTimer !== null) clearTimeout(tab.hideTimer);
+    tab.hideTimer = null;
+    if (tab.desktop || tab.closing || tab.hidden || watched(tab)) return;
+    tab.hideTimer = setTimeout(() => {
+      tab.hideTimer = null;
+      if (tab.closing || watched(tab)) return;
+      tab.hidden = true;
+      void syncVisibility(tab);
+    }, UNWATCHED_TAB_HIDE_MS);
+  };
+
+  const show = async (tab: ServerTab) => {
+    if (tab.hideTimer !== null) clearTimeout(tab.hideTimer);
+    tab.hideTimer = null;
+    tab.hidden = false;
+    // Always await the chain: even when already shown, a hide may be in flight.
+    await syncVisibility(tab);
+  };
+
+  const whileShown = async <A>(tab: ServerTab, run: () => Promise<A>): Promise<A> => {
+    tab.operations += 1;
+    try {
+      await show(tab);
+      return await run();
+    } finally {
+      tab.operations -= 1;
+      hideWhenUnwatched(tab);
+    }
   };
 
   const ensureTab = (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
@@ -1809,34 +1884,35 @@ const make = Effect.gen(function* () {
           );
         return tab.control.agent(
           request.agentSessionId,
-          async () => {
-            if (tab.dialog)
-              throw new BrowserControlInterrupted(
-                "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-                "dialogPending",
-              );
-            if (existing) {
-              if (url) await navigate(tab, url, "load", navigationTimeout);
-            } else {
-              await tab.initialNavigation;
-            }
-            const reveal = open.open ?? open.show;
-            if (reveal !== false) {
-              await Effect.runPromise(
-                manager.requestReveal({
-                  threadId: tab.threadId,
-                  tabId: tab.tabId,
-                  force: reveal === true,
-                }),
-              );
-            }
-            if (!existing && url) {
-              await tab.page
-                .waitForLoadState("load", { timeout: navigationTimeout })
-                .catch(constVoid);
-            }
-            return statusWithTitle(tab, request.agentSessionId);
-          },
+          () =>
+            whileShown(tab, async () => {
+              if (tab.dialog)
+                throw new BrowserControlInterrupted(
+                  "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+                  "dialogPending",
+                );
+              if (existing) {
+                if (url) await navigate(tab, url, "load", navigationTimeout);
+              } else {
+                await tab.initialNavigation;
+              }
+              const reveal = open.open ?? open.show;
+              if (reveal !== false) {
+                await Effect.runPromise(
+                  manager.requestReveal({
+                    threadId: tab.threadId,
+                    tabId: tab.tabId,
+                    force: reveal === true,
+                  }),
+                );
+              }
+              if (!existing && url) {
+                await tab.page
+                  .waitForLoadState("load", { timeout: navigationTimeout })
+                  .catch(constVoid);
+              }
+              return statusWithTitle(tab, request.agentSessionId);
+            }),
           deadlineMs,
         );
       }
@@ -1872,7 +1948,9 @@ const make = Effect.gen(function* () {
         }
         // A stop cannot act twice (a retry finds no recording);
         // dropping a late one would leave capture running.
-        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab));
+        return tab.control.agent(request.agentSessionId ?? "", () =>
+          whileShown(tab, () => stopRecording(tab)),
+        );
       }
     }
     const tab = await requireTab(request);
@@ -1911,7 +1989,7 @@ const make = Effect.gen(function* () {
             "A browser dialog is pending. Read preview_status.",
             "dialogPending",
           );
-        return executeTabOperation(tab, request);
+        return whileShown(tab, () => executeTabOperation(tab, request));
       });
     }
     return tab.control.agent(
@@ -1926,7 +2004,7 @@ const make = Effect.gen(function* () {
         tab.agentOperating = !READ_OPERATIONS.has(request.operation);
         updateFileChooserInterception(tab);
         try {
-          return await executeTabOperation(tab, request);
+          return await whileShown(tab, () => executeTabOperation(tab, request));
         } finally {
           tab.agentOperating = false;
           updateFileChooserInterception(tab);
@@ -2338,10 +2416,12 @@ const make = Effect.gen(function* () {
         Effect.promise(async () => {
           await tab.control.disconnect(viewer.id, () => releaseViewerInput(viewer, session));
           tab.viewers.delete(viewer);
+          hideWhenUnwatched(tab);
           broadcastControl(tab);
           reportLiveTabs();
         }),
     );
+    yield* Effect.promise(() => show(tab));
     if (input.canOperate && tab.control.agentId === null && tab.control.controller === null) {
       yield* Effect.promise(() => tab.control.take(viewer.id));
     }

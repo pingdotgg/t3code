@@ -16,6 +16,7 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -23,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type { BrowserContext, Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
@@ -35,7 +37,9 @@ import * as Manager from "./Manager.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
-vi.mock("./ServerBrowserContexts.ts", () => ({
+vi.mock("./ServerBrowserContexts.ts", async (importOriginal) => ({
+  setPageHidden: (await importOriginal<typeof import("./ServerBrowserContexts.ts")>())
+    .setPageHidden,
   presentAsChrome: async () => {},
   ServerBrowserContexts: class {
     private readonly onClose: ((context: BrowserContext) => void) | undefined;
@@ -56,6 +60,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async connectDesktopPage(endpoint: string) {
       const context = makeContext();
       desktopConnections.push({ endpoint, context });
+      desktopConnected.resolve();
       return { browser: { close: async () => {} }, page: context.page as unknown as Page };
     }
     async close() {
@@ -277,6 +282,7 @@ const desktopRenders = (tabId: string) => {
 };
 const releasedDesktopTabs: Array<string> = [];
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
+let desktopConnected = Promise.withResolvers<void>();
 const testThread = {
   threadId: ThreadId.make("browser-test-thread"),
   providerSessionId: "agent-a",
@@ -363,6 +369,37 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
   quality: 70,
 });
 
+// Shared setup for the unwatched-tab hide/show tests below.
+const useFakeTimers = Effect.gen(function* () {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+});
+const settleMicrotasks = Effect.promise(
+  // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary that lets mocked CDP replies land, not a wait for time
+  () => new Promise<void>((resolve) => setImmediate(resolve)),
+);
+const advanceTime = (ms: number) =>
+  Effect.sync(() => vi.advanceTimersByTime(ms)).pipe(Effect.andThen(settleMicrotasks));
+// Record each window-state change and agent evaluation the tab's CDP session sees,
+// in order. `onNormal` lets a test hold a restore open to observe what races it.
+const recordWindowEvents = (
+  cdp: ReturnType<typeof makeSession>,
+  onNormal?: () => Promise<void>,
+) => {
+  const events: Array<string> = [];
+  const send = cdp.send.getMockImplementation()!;
+  cdp.send.mockImplementation(async (method, input) => {
+    if (method === "Browser.setWindowBounds") {
+      const state = (input as { bounds: { windowState: string } }).bounds.windowState;
+      events.push(state);
+      if (state === "normal") await onNormal?.();
+    }
+    if (method === "Runtime.evaluate") events.push("agent evaluated");
+    return send(method, input);
+  });
+  return events;
+};
+
 beforeEach(() => {
   contexts.length = 0;
   encoderStreams.length = 0;
@@ -377,6 +414,7 @@ beforeEach(() => {
   desktopRendersNext = false;
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
+  desktopConnected = Promise.withResolvers<void>();
 });
 
 it.live.each(["desktop" as const, undefined])(
@@ -1223,4 +1261,92 @@ it.live(
         });
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.live("a headless tab nobody watches hides until a viewer or an agent action needs it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* useFakeTimers;
+      const { browser, broker, tabId } = yield* ready;
+      const events = recordWindowEvents(contexts[0]!.sessions[0]!);
+
+      yield* advanceTime(59_999);
+      expect(events).toEqual([]);
+      yield* advanceTime(1);
+      expect(events).toEqual(["minimized"]);
+
+      // An agent action shows the tab before it runs, then it hides again when idle.
+      yield* broker.invoke({ scope, tabId, operation: "evaluate", input: { expression: "1" } });
+      expect(events).toEqual(["minimized", "normal", "agent evaluated"]);
+      yield* advanceTime(60_000);
+      expect(events.at(-1)).toBe("minimized");
+
+      // A viewer keeps it shown, and it hides once more after the viewer leaves.
+      events.length = 0;
+      const viewerScope = yield* Scope.make();
+      yield* browser
+        .attachViewer(viewerInput(tabId, false))
+        .pipe(Effect.provideService(Scope.Scope, viewerScope));
+      yield* advanceTime(5 * 60_000);
+      expect(events).toEqual(["normal"]);
+      yield* Scope.close(viewerScope, Exit.void);
+      yield* advanceTime(60_000);
+      expect(events).toEqual(["normal", "minimized"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("an agent action waits for an in-flight restore instead of racing ahead", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* useFakeTimers;
+      const { browser, broker, tabId } = yield* ready;
+      let releaseRestore = () => {};
+      const restoreGate = new Promise<void>((resolve) => (releaseRestore = resolve));
+      const events = recordWindowEvents(contexts[0]!.sessions[0]!, () => restoreGate);
+
+      yield* advanceTime(60_000);
+      expect(events).toEqual(["minimized"]);
+
+      // A viewer attaching starts the restore; an agent action races it on another fiber.
+      const viewerScope = yield* Scope.make();
+      yield* Effect.forkChild(
+        browser
+          .attachViewer(viewerInput(tabId, false))
+          .pipe(Effect.provideService(Scope.Scope, viewerScope)),
+      );
+      const evaluate = yield* Effect.forkChild(
+        broker.invoke({ scope, tabId, operation: "evaluate", input: { expression: "1" } }),
+      );
+      // Give both fibers room to run; the restore stays gated, so a correct
+      // implementation keeps the agent action parked no matter how long we wait.
+      for (let turn = 0; turn < 10; turn += 1) yield* settleMicrotasks;
+
+      // The restore is still in flight, so the agent action must not have touched the page.
+      expect(events).toEqual(["minimized", "normal"]);
+
+      releaseRestore();
+      yield* Fiber.join(evaluate);
+      expect(events).toEqual(["minimized", "normal", "agent evaluated"]);
+      yield* Scope.close(viewerScope, Exit.void);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a tab the desktop renders is never hidden", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* useFakeTimers;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* Effect.promise(() => desktopConnected.promise);
+      yield* advanceTime(5 * 60_000);
+      const methods = desktopConnections[0]!.context.sessions.flatMap((session) =>
+        session.send.mock.calls.map(([method]) => method),
+      );
+      expect(methods).not.toContain("Browser.setWindowBounds");
+    }),
+  ).pipe(Effect.provide(layer)),
 );
