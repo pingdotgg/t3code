@@ -18,7 +18,7 @@ import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
 } from "./gitLabMergeRequests.ts";
-import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -225,6 +225,44 @@ export class GitLabNamespaceDecodeError extends Schema.TaggedError<GitLabNamespa
   }
 }
 
+export class GitLabRepositoryHostMismatchError extends Schema.TaggedError<GitLabRepositoryHostMismatchError>()(
+  "GitLabRepositoryHostMismatchError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    operation: Schema.Literal("getRepositoryCloneUrls"),
+    requestedHost: Schema.String,
+    resolvedHost: Schema.String,
+  },
+) {
+  get detail(): string {
+    return `This URL names ${this.requestedHost}, but GitLab CLI resolved the project on ${this.resolvedHost}. Run \`glab config set host ${this.requestedHost}\` and retry, or enter the project path to use ${this.resolvedHost}.`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+export class GitLabRepositoryPathMismatchError extends Schema.TaggedError<GitLabRepositoryPathMismatchError>()(
+  "GitLabRepositoryPathMismatchError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    operation: Schema.Literal("getRepositoryCloneUrls"),
+    requestedPath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  get detail(): string {
+    return `This URL names /${this.requestedPath}, but GitLab CLI resolved /${this.resolvedPath} on the same server. Check the configured install root, or enter the project path to use the selected installation.`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export const GitLabCliError = Schema.Union([
   GitLabCliUnavailableError,
   GitLabCliAuthenticationError,
@@ -235,6 +273,8 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
   GitLabNamespaceDecodeError,
+  GitLabRepositoryHostMismatchError,
+  GitLabRepositoryPathMismatchError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
 
@@ -350,6 +390,14 @@ function normalizeRepositoryCloneUrls(
     url: raw.web_url,
     sshUrl: raw.ssh_url_to_repo,
   };
+}
+
+function remoteHost(remote: string): string | undefined {
+  return (URL.parse(remote)?.hostname ?? /^[^@/\s]+@([^:/\s]+):/u.exec(remote)?.[1])?.toLowerCase();
+}
+
+function webServerIdentity(url: URL): string {
+  return `${url.hostname}:${url.port || (url.protocol === "http:" ? "80" : "443")}`;
 }
 
 function stateArgs(state: "open" | "closed" | "merged" | "all"): ReadonlyArray<string> {
@@ -520,28 +568,78 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-    getRepositoryCloneUrls: (input) =>
-      execute({
+    getRepositoryCloneUrls: Effect.fn("GitLabCli.getRepositoryCloneUrls")(function* (input) {
+      const pastedUrl = URL.parse(input.repository.trim());
+      const webUrl =
+        pastedUrl?.protocol === "http:" || pastedUrl?.protocol === "https:" ? pastedUrl : null;
+      const requestedHost = webUrl
+        ? webServerIdentity(webUrl)
+        : remoteHost(input.repository.trim());
+      const urlPath = SourceControlProvider.repositoryPathFromRemoteUrl(input.repository);
+      let projectPath = urlPath ?? input.repository;
+
+      if (webUrl && urlPath !== null) {
+        const glabHost = yield* execute({ cwd: input.cwd, args: ["config", "get", "host"] }).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.orElseSucceed(() => ""),
+        );
+        const configuredUrl = URL.parse(
+          glabHost.includes("://") ? glabHost : `${webUrl.protocol}//${glabHost}`,
+        );
+        if (configuredUrl && webServerIdentity(configuredUrl) === requestedHost) {
+          // Install roots belong to web URLs; SSH paths already name the full namespace.
+          const root = configuredUrl.pathname.replace(/^\/+|\/+$/gu, "");
+          if (root && projectPath.startsWith(`${root}/`)) {
+            projectPath = projectPath.slice(root.length + 1);
+          }
+        }
+      }
+
+      const result = yield* execute({
         cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          decodeGitLabRepositoryCloneUrls(raw).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitLabRepositoryDecodeError({
-                  operation: "getRepositoryCloneUrls",
-                  command: "glab",
-                  cwd: input.cwd,
-                  repository: input.repository,
-                  cause,
-                }),
-            ),
-          ),
+        args: ["api", `projects/${encodeURIComponent(projectPath)}`],
+      });
+      const raw = yield* decodeGitLabRepositoryCloneUrls(result.stdout.trim()).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitLabRepositoryDecodeError({
+              operation: "getRepositoryCloneUrls",
+              command: "glab",
+              cwd: input.cwd,
+              repository: input.repository,
+              cause,
+            }),
         ),
-        Effect.map(normalizeRepositoryCloneUrls),
-      ),
+      );
+      const urls = normalizeRepositoryCloneUrls(raw);
+      const resolvedUrl = URL.parse(urls.url);
+      // GitLab can serve SSH from a different host than its web UI.
+      const resolvedHost = webUrl
+        ? resolvedUrl
+          ? webServerIdentity(resolvedUrl)
+          : urls.url
+        : (remoteHost(urls.sshUrl) ?? urls.sshUrl);
+      if (requestedHost && requestedHost !== resolvedHost) {
+        return yield* new GitLabRepositoryHostMismatchError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "getRepositoryCloneUrls",
+          requestedHost,
+          resolvedHost,
+        });
+      }
+      const resolvedPath = SourceControlProvider.repositoryPathFromRemoteUrl(urls.url) ?? "";
+      if (webUrl && urlPath !== null && urlPath.toLowerCase() !== resolvedPath.toLowerCase()) {
+        return yield* new GitLabRepositoryPathMismatchError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "getRepositoryCloneUrls",
+          requestedPath: urlPath,
+          resolvedPath,
+        });
+      }
+      return urls;
+    }),
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath
