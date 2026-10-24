@@ -1375,6 +1375,117 @@ describe("ClaudeAdapterV2 resume compaction", () => {
   );
 });
 
+describe("ClaudeAdapterV2 abandoned questions", () => {
+  it.effect("closes a question Claude stopped waiting on", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-abandoned-question-",
+        });
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-abandoned-question"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-abandoned-question");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-abandoned-question"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-abandoned-question"),
+            text: "ask me",
+            attachments: [],
+          }),
+        );
+        const canUseTool = openedOptions?.canUseTool;
+        assert.isFunction(canUseTool);
+        const controller = new AbortController();
+        const requestUpdates = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "runtime_request.updated"),
+          Stream.tap(() => Effect.sync(() => controller.abort())),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const result = yield* Effect.promise(() =>
+          canUseTool!(
+            "AskUserQuestion",
+            {
+              questions: [
+                {
+                  header: "Color",
+                  question: "Which color?",
+                  options: [
+                    { label: "Red", description: "Pick red." },
+                    { label: "Blue", description: "Pick blue." },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+            {
+              signal: controller.signal,
+              toolUseID: "tool-abandoned-question",
+              requestId: "request-abandoned-question",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+
+        assert.equal((yield* Fiber.join(result))?.behavior, "deny");
+        const statuses = Array.from(yield* Fiber.join(requestUpdates), (event) =>
+          event.type === "runtime_request.updated" ? event.runtimeRequest.status : null,
+        );
+        assert.deepEqual(statuses, ["pending", "cancelled"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 attachments", () => {
   it.effect.each([
     {
