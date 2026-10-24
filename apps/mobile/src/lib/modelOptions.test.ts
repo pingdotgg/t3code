@@ -15,6 +15,7 @@ import {
   describeUnavailableModelSelection,
   groupByProvider,
   isModelSelectionUnavailable,
+  isNewTaskModelSelectionBlocked,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -357,6 +358,37 @@ describe("mobile model options", () => {
     expect(isModelSelectionUnavailable(config, disabled, null)).toBe(true);
     expect(isModelSelectionUnavailable(config, removed, null)).toBe(false);
     expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
+  });
+
+  it("blocks a new task on a machine whose provider needs an update for the model", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false }],
+          updateRequiredModels: [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", minVersion: "1.0.0" }],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const listed = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" };
+    const gated = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+
+    expect(isModelSelectionUnavailable(config, gated, null)).toBe(false);
+    expect(isNewTaskModelSelectionBlocked(config, gated, null)).toBe(true);
+    expect(isNewTaskModelSelectionBlocked(config, listed, null)).toBe(false);
+    expect(isNewTaskModelSelectionBlocked(config, null, null)).toBe(false);
+    const hidingGated = {
+      ...config,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerModelPreferences: { codex: { hiddenModels: [gated.model], modelOrder: [] } },
+      },
+    } as unknown as ServerConfig;
+    expect(isNewTaskModelSelectionBlocked(hidingGated, gated, null)).toBe(true);
   });
 
   describe("Antigravity selections", () => {
