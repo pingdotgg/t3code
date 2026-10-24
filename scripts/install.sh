@@ -134,10 +134,11 @@ case "$(uname -m)" in
   *) fail "unsupported architecture $(uname -m)" ;;
 esac
 command -v tar >/dev/null 2>&1 || fail "tar is required"
+# Hash stdin so filename escaping cannot add a backslash before the digest.
 if command -v sha256sum >/dev/null 2>&1; then
-  checksum() { sha256sum "$1" | cut -d' ' -f1; }
+  checksum() { sha256sum < "$1" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null 2>&1; then
-  checksum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+  checksum() { shasum -a 256 < "$1" | cut -d' ' -f1; }
 else
   fail "sha256sum or shasum is required"
 fi
