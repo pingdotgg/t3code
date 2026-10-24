@@ -337,6 +337,12 @@ export const PreviewAutomationResizeResult = Schema.Struct({
   tabId: PreviewTabId,
   setting: PreviewViewportSetting,
   viewport: PreviewRenderedViewportSize,
+  confirmed: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Whether the measured viewport matches the requested fixed size; omitted for fill mode or hosts without confirmation support.",
+    }),
+  ),
 });
 export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
 

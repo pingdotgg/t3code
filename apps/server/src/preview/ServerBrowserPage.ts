@@ -434,7 +434,7 @@ type Viewport = { readonly width: number; readonly height: number };
  * A page's display ratio and CSS viewport, read in an isolated world since page script can
  * reassign `devicePixelRatio`, `innerWidth`, and `innerHeight` in its own, and its page zoom.
  */
-const readPageMetrics = async (cdp: CDPSession) => {
+export const readPageMetrics = async (cdp: CDPSession) => {
   const { frameTree } = await cdp.send("Page.getFrameTree");
   const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
     frameId: frameTree.frame.id,

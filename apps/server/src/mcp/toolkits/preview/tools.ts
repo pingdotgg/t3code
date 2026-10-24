@@ -109,7 +109,7 @@ const PreviewNavigateTool = safeBrowserTool(
 const PreviewResizeTool = safeBrowserTool(
   Tool.make("preview_resize", {
     description:
-      "Resize a collaborative browser tab, optionally selected by tabId. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
+      "Resize a collaborative browser tab, optionally selected by tabId. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent. The returned viewport is measured at response time. Desktop sizing applies asynchronously; confirmed:false means the requested fixed size was not observed yet, which can reflect pending application or a size that could not be applied. Call preview_status to recheck the measured viewport rather than repeating resize.",
     parameters: PreviewAutomationResizeInput,
     success: Schema.Struct({ ...PreviewAutomationResizeResult.fields, ...presentationFields }),
     failure: PreviewToolFailure,

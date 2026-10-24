@@ -12,6 +12,7 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationResizeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type { BrowserContext, Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
@@ -54,7 +56,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return makeEncoderPage() as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
-      const context = makeContext();
+      const context = makeContext(undefined, true);
       desktopConnections.push({ endpoint, context });
       return { browser: { close: async () => {} }, page: context.page as unknown as Page };
     }
@@ -82,7 +84,10 @@ const PNG_HEADER = (() => {
   return header.toString("base64");
 })();
 
-function makeSession(frame?: ReturnType<typeof makeFrame>) {
+function makeSession(
+  frame?: ReturnType<typeof makeFrame>,
+  readMetrics?: () => Promise<{ ratio: number; width: number; height: number }>,
+) {
   const events = new NodeEvents.EventEmitter();
   return {
     on: vi.fn((name: string, listener: () => void) => events.on(name, listener)),
@@ -99,8 +104,16 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
       // Snapshots read password fields from their own isolated world in each frame.
       if (method === "Page.createIsolatedWorld") {
         return {
-          executionContextId: (input as { worldName?: string }).worldName === "t3-preview" ? 1 : 7,
+          executionContextId:
+            (input as { worldName?: string }).worldName === "t3-preview-metrics"
+              ? 8
+              : (input as { worldName?: string }).worldName === "t3-preview"
+                ? 1
+                : 7,
         };
+      }
+      if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 8) {
+        return { result: { value: await readMetrics?.() } };
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 1) {
         return { result: { value: [] } };
@@ -121,13 +134,16 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
   };
 }
 
-function makeContext(onClose?: (context: BrowserContext) => void) {
+function makeContext(onClose?: (context: BrowserContext) => void, desktop = false) {
   const events = new NodeEvents.EventEmitter();
   const nativeFileChooser = vi.fn();
   const setChooserFiles = vi.fn(async (_files: unknown) => {});
   const sessions: ReturnType<typeof makeSession>[] = [];
   let url = "about:blank";
-  let viewport = { width: 1280, height: 800 };
+  let viewport: { width: number; height: number } | null = desktop
+    ? null
+    : { width: 1280, height: 800 };
+  const readMetrics = vi.fn(async () => ({ ratio: 1, width: 1280, height: 800 }));
   let closed = false;
   let contextClosed = false;
   const page = {
@@ -158,7 +174,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     url: () => url,
     title: vi.fn(async () => "test page"),
     viewportSize: () => viewport,
-    setViewportSize: vi.fn(async (size: typeof viewport) => {
+    setViewportSize: vi.fn(async (size: { width: number; height: number }) => {
       viewport = size;
     }),
     goto: vi.fn(async (next: string) => {
@@ -194,12 +210,14 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
   };
   const context = {
     page,
+    readMetrics,
     sessions,
     newPage: async () => page as unknown as Page,
     grantPermissions: vi.fn(async () => {}),
     newCDPSession: async (target: unknown) => {
       const session = makeSession(
         target === page ? undefined : (target as ReturnType<typeof makeFrame>),
+        readMetrics,
       );
       sessions.push(session);
       return session;
@@ -378,6 +396,291 @@ beforeEach(() => {
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
 });
+
+const resizeCases = [
+  {
+    input: { mode: "freeform" as const, width: 1920, height: 1200 },
+    setting: { _tag: "freeform" as const, width: 1920, height: 1200 },
+  },
+  {
+    input: { mode: "freeform" as const, width: 560, height: 760 },
+    setting: { _tag: "freeform" as const, width: 560, height: 760 },
+  },
+  {
+    input: { mode: "preset" as const, preset: "iphone-12-pro" as const },
+    setting: {
+      _tag: "preset" as const,
+      presetId: "iphone-12-pro" as const,
+      width: 390,
+      height: 844,
+    },
+  },
+];
+
+it.effect.each(resizeCases)(
+  "desktop-backed $input.mode $setting.width×$setting.height resize returns the measured CDP viewport",
+  ({ input, setting }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        desktopRendersNext = true;
+        const { broker, tabId } = yield* ready;
+        const context = desktopConnections[0]!.context;
+        context.readMetrics.mockResolvedValue({
+          ratio: 1,
+          width: setting.width,
+          height: setting.height,
+        });
+        const resized = yield* broker.invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input,
+        });
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect.soft(resized).toMatchObject({
+          tabId,
+          setting,
+          viewport: { width: setting.width, height: setting.height },
+          confirmed: true,
+        });
+        expect.soft(status).toMatchObject({
+          viewportSetting: setting,
+          viewport: { width: setting.width, height: setting.height },
+        });
+        expect(context.page.setViewportSize).not.toHaveBeenCalled();
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect("desktop resize reports a mismatched measured viewport as unconfirmed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { broker, tabId } = yield* ready;
+      const context = desktopConnections[0]!.context;
+      context.readMetrics.mockResolvedValue({ ratio: 1, width: 963, height: 611 });
+      const resized = yield* broker.invoke<PreviewAutomationResizeResult>({
+        scope,
+        tabId,
+        operation: "resize",
+        input: resizeCases[0]!.input,
+      });
+      expect(resized).toMatchObject({
+        setting: resizeCases[0]!.setting,
+        viewport: { width: 963, height: 611 },
+        confirmed: false,
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("desktop resize reports unconfirmed until the UI applies the requested viewport", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { broker, tabId } = yield* ready;
+      const context = desktopConnections[0]!.context;
+      context.readMetrics
+        .mockResolvedValueOnce({ ratio: 1, width: 1280, height: 800 })
+        .mockResolvedValue({ ratio: 1, width: 560, height: 760 });
+      const resized = yield* broker.invoke<PreviewAutomationResizeResult>({
+        scope,
+        tabId,
+        operation: "resize",
+        input: resizeCases[1]!.input,
+      });
+      expect(resized).toMatchObject({ viewport: { width: 1280, height: 800 }, confirmed: false });
+      const applied = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(applied).toMatchObject({ viewport: { width: 560, height: 760 } });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("desktop status omits the viewport when live measurement is unavailable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { broker, tabId } = yield* ready;
+      desktopConnections[0]!.context.readMetrics.mockRejectedValue(
+        new Error("Execution context was destroyed"),
+      );
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        available: true,
+        tabId,
+        viewportSetting: { _tag: "fill" },
+        dialog: null,
+      });
+      expect(status).not.toHaveProperty("viewport");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("desktop resize times out when the CDP measurement never responds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { broker, tabId } = yield* ready;
+      const started = Promise.withResolvers<void>();
+      const measurement = Promise.withResolvers<{ ratio: number; width: number; height: number }>();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => measurement.reject(new Error("Test measurement cancelled"))),
+      );
+      desktopConnections[0]!.context.readMetrics.mockImplementation(async () => {
+        started.resolve();
+        return measurement.promise;
+      });
+      const resizing = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: resizeCases[0]!.input,
+          timeoutMs: 100,
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      expect(resizing.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust(1_100);
+      expect(yield* Fiber.join(resizing)).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PreviewAutomationTimeoutError", operation: "resize" },
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["delayed", "rejected"] as const)(
+  "desktop resize waits for a $0 CDP measurement receipt",
+  (receipt) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        desktopRendersNext = true;
+        const { broker, tabId } = yield* ready;
+        const context = desktopConnections[0]!.context;
+        const measured = { ratio: 1, width: 560, height: 760 };
+        const started = Promise.withResolvers<"measurement">();
+        const completed = Promise.withResolvers<"completed">();
+        const measurement = Promise.withResolvers<typeof measured>();
+        context.readMetrics.mockResolvedValue(measured).mockImplementationOnce(async () => {
+          started.resolve("measurement");
+          return measurement.promise;
+        });
+        yield* Effect.gen(function* () {
+          const resizing = yield* broker
+            .invoke<PreviewAutomationResizeResult>({
+              scope,
+              tabId,
+              operation: "resize",
+              input: { mode: "freeform", width: 560, height: 760 },
+            })
+            .pipe(
+              Effect.result,
+              Effect.tap(() => Effect.sync(() => completed.resolve("completed"))),
+              Effect.forkScoped,
+            );
+          const first = yield* Effect.promise(() =>
+            Promise.race([started.promise, completed.promise]),
+          );
+          expect(first).toBe("measurement");
+          expect(resizing.pollUnsafe()).toBeUndefined();
+          if (receipt === "rejected") measurement.reject(new Error("CDP measurement unavailable"));
+          else measurement.resolve(measured);
+          const result = yield* Fiber.join(resizing);
+          if (receipt === "rejected") {
+            expect(result).toMatchObject({
+              _tag: "Failure",
+              failure: { _tag: "PreviewAutomationExecutionError" },
+            });
+          } else {
+            expect(result).toMatchObject({
+              _tag: "Success",
+              success: { tabId, viewport: { width: 560, height: 760 } },
+            });
+          }
+        }).pipe(Effect.ensuring(Effect.sync(() => measurement.resolve(measured))));
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect("desktop fill resize and status report a measured viewport without confirmation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { broker, tabId } = yield* ready;
+      desktopConnections[0]!.context.readMetrics.mockResolvedValue({
+        ratio: 1,
+        width: 963,
+        height: 611,
+      });
+      const resized = yield* broker.invoke<PreviewAutomationResizeResult>({
+        scope,
+        tabId,
+        operation: "resize",
+        input: { mode: "fill" },
+      });
+      expect(resized).toEqual({
+        tabId,
+        setting: { _tag: "fill" },
+        viewport: { width: 963, height: 611 },
+      });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        viewportSetting: { _tag: "fill" },
+        viewport: { width: 963, height: 611 },
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(resizeCases)(
+  "headless $input.mode $setting.width×$setting.height resize keeps its viewport behavior",
+  ({ input, setting }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const resized = yield* broker.invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input,
+        });
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(resized).toEqual({
+          tabId,
+          setting,
+          viewport: { width: setting.width, height: setting.height },
+        });
+        expect(status).toMatchObject({ viewportSetting: setting, viewport: resized.viewport });
+        expect(desktopConnections).toHaveLength(0);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
 
 it.live.each(["desktop" as const, undefined])(
   "explicit desktop targets ($0 runtime) fail without creating a server tab",
@@ -670,83 +973,104 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
-it.live("reports a pending dialog without evaluating the page and resolves it explicitly", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      yield* broker.invoke({
-        scope,
-        tabId,
-        operation: "navigate",
-        input: { url: "http://localhost:5173" },
-      });
-      const started = Promise.withResolvers<void>();
-      const resolvedEvaluation = Promise.withResolvers<Record<string, unknown>>();
-      const session = contexts[0]!.sessions[0]!;
-      const send = session.send.getMockImplementation()!;
-      session.send.mockImplementation(async (method, input) => {
-        if (method !== "Runtime.evaluate") return send(method, input);
-        started.resolve();
-        return resolvedEvaluation.promise;
-      });
-      const blockedAction = yield* broker
-        .invoke({
+it.live.each(["headless", "desktop"])(
+  "$0 reports a pending dialog without evaluating the page and resolves it explicitly",
+  (runtime) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        desktopRendersNext = runtime === "desktop";
+        const { broker, tabId } = yield* ready;
+        const context = runtime === "desktop" ? desktopConnections[0]!.context : contexts[0]!;
+        const page = context.page;
+        yield* broker.invoke({
           scope,
           tabId,
-          operation: "evaluate",
-          input: { expression: 'confirm("Delete row?")' },
-        })
-        .pipe(Effect.forkScoped);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => resolvedEvaluation.resolve({ result: { value: true } })),
-      );
-      yield* Effect.promise(() => started.promise);
-      const dialog = {
-        type: () => "confirm",
-        message: () => "Delete row?",
-        defaultValue: () => "",
-        accept: vi.fn(async () => {
-          resolvedEvaluation.resolve({ result: { value: true } });
-        }),
-        dismiss: vi.fn(async () => {}),
-      };
-      page.emit("dialog", dialog);
-      page.title.mockClear();
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(status.dialog).toMatchObject({ type: "confirm", message: "Delete row?" });
-      expect(page.title).not.toHaveBeenCalled();
-      expect(dialog.dismiss).not.toHaveBeenCalled();
-      const reuse = yield* broker
-        .invoke<void>({
+          operation: "navigate",
+          input: { url: "http://localhost:5173" },
+        });
+        const started = Promise.withResolvers<void>();
+        const resolvedEvaluation = Promise.withResolvers<Record<string, unknown>>();
+        const session = context.sessions[0]!;
+        let dialogPending = false;
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation(async (method, input) => {
+          if (method !== "Runtime.evaluate") return send(method, input);
+          if ((input as { contextId?: number }).contextId === 8) {
+            if (dialogPending) throw new Error("Metrics evaluation blocks behind the dialog");
+            return send(method, input);
+          }
+          started.resolve();
+          return resolvedEvaluation.promise;
+        });
+        const blockedAction = yield* broker
+          .invoke({
+            scope,
+            tabId,
+            operation: "evaluate",
+            input: { expression: 'confirm("Delete row?")' },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => resolvedEvaluation.resolve({ result: { value: true } })),
+        );
+        yield* Effect.promise(() => started.promise);
+        const dialog = {
+          type: () => "confirm",
+          message: () => "Delete row?",
+          defaultValue: () => "",
+          accept: vi.fn(async () => {
+            dialogPending = false;
+            resolvedEvaluation.resolve({ result: { value: true } });
+          }),
+          dismiss: vi.fn(async () => {}),
+        };
+        dialogPending = true;
+        page.emit("dialog", dialog);
+        page.title.mockClear();
+        context.readMetrics.mockClear();
+        session.send.mockClear();
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
           tabId,
-          operation: "open",
-          input: { url: "http://localhost:5173/other" },
-        })
-        .pipe(Effect.flip);
-      expect(reuse).toMatchObject({
-        _tag: "PreviewAutomationControlInterruptedError",
-        reason: "dialogPending",
-      });
-      expect(page.goto).toHaveBeenCalledTimes(1);
-      yield* broker.invoke({ scope, tabId, operation: "dialog", input: { accept: true } });
-      expect(yield* Fiber.join(blockedAction)).toBe(true);
-      expect(dialog.accept).toHaveBeenCalledTimes(1);
-      const resolved = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(resolved.dialog).toBeNull();
-    }),
-  ).pipe(Effect.provide(layer)),
+          operation: "status",
+          input: {},
+        });
+        expect(status.dialog).toMatchObject({ type: "confirm", message: "Delete row?" });
+        expect(page.title).not.toHaveBeenCalled();
+        expect(context.readMetrics).not.toHaveBeenCalled();
+        expect(session.send).not.toHaveBeenCalledWith(
+          "Runtime.evaluate",
+          expect.objectContaining({ contextId: 8 }),
+        );
+        if (runtime === "desktop") expect(status).not.toHaveProperty("viewport");
+        else expect(status.viewport).toEqual({ width: 1280, height: 800 });
+        expect(dialog.dismiss).not.toHaveBeenCalled();
+        const reuse = yield* broker
+          .invoke<void>({
+            scope,
+            tabId,
+            operation: "open",
+            input: { url: "http://localhost:5173/other" },
+          })
+          .pipe(Effect.flip);
+        expect(reuse).toMatchObject({
+          _tag: "PreviewAutomationControlInterruptedError",
+          reason: "dialogPending",
+        });
+        expect(page.goto).toHaveBeenCalledTimes(1);
+        yield* broker.invoke({ scope, tabId, operation: "dialog", input: { accept: true } });
+        expect(yield* Fiber.join(blockedAction)).toBe(true);
+        expect(dialog.accept).toHaveBeenCalledTimes(1);
+        const resolved = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(resolved.dialog).toBeNull();
+        expect(resolved.viewport).toEqual({ width: 1280, height: 800 });
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
