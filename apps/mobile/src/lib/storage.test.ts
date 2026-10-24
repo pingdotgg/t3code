@@ -131,6 +131,34 @@ describe("mobile connection storage", () => {
     });
   });
 
+  it("persists tab order locally and retains it when another preference changes", async () => {
+    const navigationTabOrder = ["usage", "threads", "pullRequests"];
+    const hiddenNavigationTabs = ["issues", "home"];
+    await savePreferencesPatch({ navigationTabOrder, hiddenNavigationTabs });
+    await savePreferencesPatch({ baseFontSize: 19 });
+    await expect(loadPreferences()).resolves.toEqual({
+      navigationTabOrder,
+      hiddenNavigationTabs,
+      baseFontSize: 19,
+    });
+  });
+
+  it("ignores invalid tab-order entries without dropping other saved preferences", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        navigationTabOrder: ["usage", null, 4, "threads"],
+        hiddenNavigationTabs: ["home", null],
+        baseFontSize: 18,
+      }),
+      1,
+    );
+    await expect(loadPreferences()).resolves.toEqual({
+      navigationTabOrder: ["usage", "threads"],
+      hiddenNavigationTabs: ["home"],
+      baseFontSize: 18,
+    });
+  });
+
   it("loads legacy preferences when SQLite is unavailable", async () => {
     mocks.setDatabaseFailures(true, true);
     await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));

@@ -4,6 +4,7 @@ import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullR
 import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
 import { PullRequestDiscussionScreen } from "./features/pull-requests/PullRequestDiscussionScreen";
 import { createV5SheetStackNavigator } from "./native/createV5StackNavigator";
+import { createSettingsStackNavigator } from "./features/settings/createSettingsStackNavigator";
 import { createWorkspaceStackNavigator } from "./features/layout/createWorkspaceStackNavigator";
 import {
   createPathConfigForStaticNavigation,
@@ -85,6 +86,7 @@ import {
 } from "./features/threads/ThreadSettingsSheet";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
+import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
@@ -222,7 +224,7 @@ const THREAD_SETTINGS_SHEET_OPTIONS = {
   nativeContentInsetHorizontally: false,
 };
 
-const SettingsContentStack = createV5SheetStackNavigator({
+const SettingsContentStack = createSettingsStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
     ...GLASS_HEADER_OPTIONS,
@@ -237,6 +239,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
         // Android draws its own app bar here. Hidden only from inside the screen, the native one
         // showed for the first frame of the Settings tab and pushed the page down.
         headerShown: Platform.OS !== "android",
+        headerBackVisible: false,
       },
     }),
     SettingsEnvironments: createNativeStackScreen({
@@ -304,6 +307,11 @@ const SettingsContentStack = createV5SheetStackNavigator({
       options: {
         title: "Archived Threads",
       },
+    }),
+    SettingsNavigation: createNativeStackScreen({
+      screen: SettingsNavigationRouteScreen,
+      linking: "navigation-tabs",
+      options: { title: "Navigation tabs" },
     }),
     SettingsAppearance: createNativeStackScreen({
       screen: SettingsAppearanceRouteScreen,
@@ -975,8 +983,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...NESTED_NAVIGATOR_OPTIONS,
         gestureEnabled: true,
         headerShown: false,
-        // Android opens Settings as a top-level tab, so it swaps like the other tabs.
-        ...(Platform.OS === "android" ? { animation: "none" as const } : null),
+        presentation: "card",
+        animation: "none",
       },
     }),
     SettingsLegal: createNativeStackScreen({
@@ -1066,42 +1074,15 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   const { width, height } = useWindowDimensions();
   const nativeMetrics = useNativeLayoutMetrics();
   const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
-  const usesWorkspaceFlowScreens = Platform.OS === "android" || usesSplitView;
-  const flowPresentations = useRef(new Map<string, boolean>());
 
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
-      screenListeners={{
-        state: ({ data }) => {
-          const keys = new Set(data.state.routes.map((route) => route.key));
-          for (const key of flowPresentations.current.keys()) {
-            if (!keys.has(key)) flowPresentations.current.delete(key);
-          }
-        },
-      }}
-      screenOptions={({ route }) => {
-        if (route.name !== "SettingsSheet") {
-          return Platform.OS === "android"
-            ? { animation: androidWorkspaceDestinationAnimation(route.name, usesSplitView) }
-            : {};
-        }
-
-        // Moving an open flow between a sheet and a split column remounts its nested
-        // navigator. Keep its presentation until dismissal so folding preserves the settings flow.
-        let usesCard = flowPresentations.current.get(route.key);
-        if (usesCard === undefined) {
-          usesCard = usesWorkspaceFlowScreens;
-          flowPresentations.current.set(route.key, usesCard);
-        }
-        return usesCard
-          ? { presentation: "card" }
-          : {
-              presentation: "formSheet",
-              sheetAllowedDetents: [1],
-              sheetGrabberVisible: true,
-            };
-      }}
+      screenOptions={({ route }) =>
+        Platform.OS === "android" && route.name !== "SettingsSheet"
+          ? { animation: androidWorkspaceDestinationAnimation(route.name, usesSplitView) }
+          : {}
+      }
     />
   );
 });

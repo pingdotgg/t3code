@@ -18,7 +18,7 @@ export type AppNativeStackNavigationOptions = Omit<
   NativeStackNavigationOptions,
   "headerTintColor" | "unstable_headerLeftItems" | "unstable_headerRightItems"
 > & {
-  readonly nativeContentInsetHorizontally?: boolean;
+  readonly nativeContentInsetHorizontally?: boolean | "left" | "right";
   readonly headerTintColor?: string | ColorValue;
   readonly unstable_headerCenterItems?: unknown;
   readonly unstable_headerLeftItems?: unknown;
