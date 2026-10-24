@@ -33,7 +33,13 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRender } from "@base-ui/react/use-render";
-import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
+import {
+  type ReactNode,
+  type AnimationEvent,
+  type DragEvent,
+  type MouseEvent,
+  type ReactElement,
+} from "react";
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
@@ -60,6 +66,10 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import {
+  COMPOSER_PULL_REQUEST_DRAG_TYPE,
+  encodePullRequestDragPayload,
+} from "./chat/composerMentionDrag";
 
 export interface PrStatusIndicator {
   label: string;
@@ -399,6 +409,7 @@ export function ThreadPullRequestBadgeControl({
   pullRequests,
   number,
   url,
+  pr,
   status,
   onOpenList,
   onOpenPullRequest,
@@ -408,6 +419,7 @@ export function ThreadPullRequestBadgeControl({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   number?: number | undefined;
   url?: string | undefined;
+  pr?: ThreadPr | undefined;
   status: PrStatusIndicator | null;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
@@ -422,6 +434,7 @@ export function ThreadPullRequestBadgeControl({
       opensList={badge !== null && (badge.kind === "stack" || badge.others > 0)}
       url={url}
       number={number}
+      pr={pr}
       status={status}
       pullRequests={pullRequests}
       onOpenList={onOpenList}
@@ -436,6 +449,7 @@ function PullRequestBadge({
   opensList,
   url,
   number,
+  pr,
   status,
   pullRequests,
   onOpenList,
@@ -446,6 +460,7 @@ function PullRequestBadge({
   opensList: boolean;
   url: string | undefined;
   number: number | undefined;
+  pr: ThreadPr | undefined;
   status: PrStatusIndicator | null;
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenList: () => void;
@@ -469,6 +484,27 @@ function PullRequestBadge({
       render: element,
       "aria-label": presentation.label,
       onPointerDown: (event: MouseEvent<HTMLElement>) => event.stopPropagation(),
+      onDragStart: (event: DragEvent<HTMLElement>) => {
+        if (opensList || number === undefined || url === undefined) return;
+        event.stopPropagation();
+        event.dataTransfer.clearData();
+        event.dataTransfer.setData("text/plain", `#${number}`);
+        event.dataTransfer.setData("text/uri-list", url);
+        if (pr) {
+          event.dataTransfer.setData(
+            COMPOSER_PULL_REQUEST_DRAG_TYPE,
+            encodePullRequestDragPayload({
+              number,
+              url,
+              title: pr.title,
+              headBranch: pr.headRef,
+              baseBranch: pr.baseRef,
+              state: pr.state,
+              isDraft: pr.isDraft === true,
+            }),
+          );
+        }
+      },
       onClick,
     },
   });

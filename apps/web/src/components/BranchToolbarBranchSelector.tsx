@@ -728,6 +728,7 @@ export function BranchToolbarBranchSelector({
     number: prNumber,
     url: prUrl,
     status: prStatus,
+    pr: prDisplayed,
   } = useThreadDisplayedPullRequest(
     environmentId,
     serverThread,
@@ -875,6 +876,7 @@ export function BranchToolbarBranchSelector({
             pullRequests={serverThread?.pullRequests ?? []}
             number={prNumber}
             url={prUrl}
+            pr={prDisplayed}
             status={prStatus}
             onOpenList={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
             onOpenPullRequest={(event, targetUrl = prUrl) => {
