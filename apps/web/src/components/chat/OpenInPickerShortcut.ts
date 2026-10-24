@@ -2,7 +2,9 @@ import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@t3tool
 import { useEffect } from "react";
 
 import { usePreferredEditor } from "../../editorPreferences";
+import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
+import { announce } from "../../lib/announce";
 import { useRemoteOpenState } from "../../remoteOpen";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -31,12 +33,15 @@ export function useOpenFavoriteEditorShortcut({
       if (!openInCwd || !preferredEditor) return;
 
       event.preventDefault();
+      const label = editorLabelForPlatform(preferredEditor, navigator.platform);
       void openInEditorMutation({
         environmentId,
         input: {
           cwd: openInCwd,
           editor: preferredEditor,
         },
+      }).then((result) => {
+        if (result._tag === "Success") announce(`Opened in ${label}`);
       });
     };
     window.addEventListener("keydown", handler);
