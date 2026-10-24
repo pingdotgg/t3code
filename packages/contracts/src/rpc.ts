@@ -167,6 +167,9 @@ import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  ProviderVoiceSessionError,
+  ProviderVoiceSessionEvent,
+  ProviderVoiceSessionInput,
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
@@ -467,6 +470,7 @@ export const WS_METHODS = {
   mcpAppsUpdateModelContext: "mcpApps.updateModelContext",
 
   providerUploadFeedback: "provider.uploadFeedback",
+  providerVoiceSession: "provider.voice.session",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   providerAuthComplete: "provider.auth.complete",
@@ -1653,17 +1657,11 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
   error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
 
-const WsSubscribeVcsBranchRpc = Rpc.make(WS_METHODS.subscribeVcsBranch, {
-  payload: VcsStatusInput,
-  success: VcsBranchStatus,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+const WsProviderVoiceSessionRpc = Rpc.make(WS_METHODS.providerVoiceSession, {
+  payload: ProviderVoiceSessionInput,
+  success: ProviderVoiceSessionEvent,
+  error: Schema.Union([ProviderVoiceSessionError, EnvironmentAuthorizationError]),
   stream: true,
-});
-
-const WsVcsRefreshBranchRpc = Rpc.make(WS_METHODS.vcsRefreshBranch, {
-  payload: VcsStatusInput,
-  success: Schema.Void,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -2404,6 +2402,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpAppsReadResourceRpc,
   WsMcpAppsUpdateModelContextRpc,
   WsProviderUploadFeedbackRpc,
+  WsProviderVoiceSessionRpc,
   WsSubscribeVcsStatusRpc,
   WsSubscribeVcsBranchRpc,
   WsVcsRefreshBranchRpc,

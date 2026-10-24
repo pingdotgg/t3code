@@ -1,3 +1,4 @@
+import * as Stream from "effect/Stream";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -114,6 +115,7 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
+        startVoiceSession: () => Stream.empty,
         shutdown: Effect.void,
         open: () => Effect.die("unused open"),
         get: () => Effect.succeedNone,
