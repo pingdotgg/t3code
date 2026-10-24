@@ -1,7 +1,9 @@
 import {
+  CheckpointScopeId,
   GitCommandError,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -40,6 +42,8 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
+import { checkpointRefForScopeOrdinal } from "./orchestration-v2/CheckpointService.ts";
+import { checkpointRefForThreadTurn } from "./checkpointing/Utils.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
@@ -1110,6 +1114,115 @@ const make = Effect.gen(function* () {
   });
 
   const reportRef = yield* SubscriptionRef.make<StorageCleanupReport | null>(null);
+  const cleanCheckpointRefs = Effect.fn("StorageCleanup.cleanCheckpointRefs")(function* () {
+    // Forks display their source history even after its thread is deleted. Keep
+    // that ancestry, including deleted intermediate forks and archived children.
+    const rows = yield* sql<{
+      threadId: string;
+      worktreePath: string | null;
+      workspaceRoot: string | null;
+      scopeId: string | null;
+      cwd: string | null;
+    }>`
+      WITH RECURSIVE retained_checkpoint_threads(thread_id) AS (
+        SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+        UNION
+        SELECT json_extract(t.payload_json, '$.forkedFrom.threadId')
+        FROM orchestration_v2_projection_threads t
+        JOIN retained_checkpoint_threads retained ON retained.thread_id = t.thread_id
+        WHERE json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
+      )
+      SELECT t.thread_id AS "threadId",
+        json_extract(t.payload_json, '$.worktreePath') AS "worktreePath",
+        p.workspace_root AS "workspaceRoot", s.scope_id AS "scopeId",
+        json_extract(s.payload_json, '$.cwd') AS cwd
+      FROM orchestration_v2_projection_threads t
+      LEFT JOIN projection_projects p ON p.project_id = t.project_id
+      LEFT JOIN orchestration_v2_projection_checkpoint_scopes s ON s.thread_id = t.thread_id
+      WHERE t.deleted_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM retained_checkpoint_threads WHERE thread_id = t.thread_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_effect_outbox e
+          WHERE e.thread_id = t.thread_id AND e.status IN ('pending', 'running')
+        )
+    `.pipe(NodeSqliteClient.readOnly);
+    const targets = new Map<string, Set<string>>();
+    for (const row of rows) {
+      // Derive ownership from tombstones, never from absence in this database:
+      // another T3 home can own refs in the same Git repository.
+      const prefixes = [checkpointRefForThreadTurn(ThreadId.make(row.threadId), 0).slice(0, -1)];
+      if (row.scopeId !== null) {
+        prefixes.push(
+          (yield* checkpointRefForScopeOrdinal({
+            scopeId: CheckpointScopeId.make(row.scopeId),
+            ordinalWithinScope: 0,
+          })).slice(0, -1),
+        );
+      }
+      // A worktree may already be gone; its refs live in the shared repository.
+      for (const cwd of [row.cwd, row.worktreePath, row.workspaceRoot]) {
+        if (cwd === null) continue;
+        const key = path.resolve(cwd);
+        const owned = targets.get(key) ?? new Set<string>();
+        for (const prefix of prefixes) owned.add(prefix);
+        targets.set(key, owned);
+      }
+    }
+    const repositories = new Map<string, { cwd: string; prefixes: Set<string> }>();
+    for (const [cwd, prefixes] of targets) {
+      yield* Effect.gen(function* () {
+        if (!(yield* fs.exists(cwd))) return;
+        const result = yield* git.execute({
+          operation: "StorageCleanup.checkpointRepository",
+          cwd,
+          args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+          allowNonZeroExit: true,
+        });
+        if (result.exitCode !== 0) return;
+        const commonDir = yield* fs.realPath(result.stdout.trim());
+        const repository = repositories.get(commonDir) ?? { cwd, prefixes: new Set<string>() };
+        for (const prefix of prefixes) repository.prefixes.add(prefix);
+        repositories.set(commonDir, repository);
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("checkpoint repository inspection failed", { cause }),
+        ),
+      );
+    }
+    for (const { cwd, prefixes } of repositories.values()) {
+      yield* Effect.gen(function* () {
+        const result = yield* git.execute({
+          operation: "StorageCleanup.listCheckpointRefs",
+          cwd,
+          args: [
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/t3/checkpoints/",
+            "refs/t3/orchestration-v2/checkpoints/",
+          ],
+          maxOutputBytes: 16 * 1024 * 1024,
+        });
+        const refs = result.stdout.split("\n").filter((ref) => {
+          const ordinalStart = ref.lastIndexOf("/") + 1;
+          return (
+            prefixes.has(ref.slice(0, ordinalStart)) &&
+            /^(0|[1-9]\d*)$/.test(ref.slice(ordinalStart))
+          );
+        });
+        if (refs.length === 0) return;
+        yield* git.execute({
+          operation: "StorageCleanup.deleteCheckpointRefs",
+          cwd,
+          // Remove a symbolic checkpoint itself, never its branch/tag target.
+          args: ["update-ref", "--no-deref", "-z", "--stdin"],
+          stdin: refs.map((ref) => `delete ${ref}\0\0`).join(""),
+        });
+        yield* Effect.logInfo("storage cleanup removed checkpoint refs", { refCount: refs.length });
+      }).pipe(
+        Effect.catch((cause) => Effect.logWarning("checkpoint ref cleanup failed", { cause })),
+      );
+    }
+  });
   const sweep = Effect.fn("StorageCleanup.sweep")(function* (
     trigger: StorageCleanupReport["trigger"],
   ) {
@@ -1117,6 +1230,9 @@ const make = Effect.gen(function* () {
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
     const entries: StorageCleanupReportEntry[] = [];
+    yield* cleanCheckpointRefs().pipe(
+      Effect.catch((cause) => Effect.logWarning("checkpoint ref cleanup failed", { cause })),
+    );
     yield* cleanWorktrees(serverSettings, now, entries).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
@@ -1276,10 +1392,10 @@ const make = Effect.gen(function* () {
     );
     yield* forkParked(
       Stream.runForEach(events, (event) =>
-        (event.type === "thread.deleted" ||
-          (event.type === "provider-session.updated" &&
-            (event.payload.status === "stopped" || event.payload.status === "error"))) &&
-        anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
+        event.type === "thread.deleted" ||
+        (event.type === "provider-session.updated" &&
+          (event.payload.status === "stopped" || event.payload.status === "error") &&
+          anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete))
           ? requestSweep
           : Effect.void,
       ).pipe(

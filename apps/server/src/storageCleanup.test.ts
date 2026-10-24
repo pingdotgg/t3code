@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import type * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -12,6 +13,9 @@ import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Sqlite from "./persistence/Sqlite.ts";
+import { checkpointRefForScopeOrdinal } from "./orchestration-v2/CheckpointService.ts";
+import { checkpointRefForThreadTurn } from "./checkpointing/Utils.ts";
 import {
   DEFAULT_SERVER_SETTINGS,
   type WorktreeKeepWhen,
@@ -33,6 +37,7 @@ import { ServerActivation } from "./serverActivation.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
+  CheckpointScopeId,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
@@ -239,6 +244,7 @@ const cleanupFixture = (
     worktreeAfterDays: 8,
     worktreeOnDelete: true,
   },
+  sqlOverride?: SqlClient.SqlClient,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -340,37 +346,44 @@ const cleanupFixture = (
       Effect.provideService(Orchestrator.OrchestratorV2, {
         streamDomainEvents: Stream.suspend(() => events),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
-      Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
-        Effect.sync(() =>
-          openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
-            ? [
-                {
-                  payload_json: JSON.stringify({
-                    id: "session-1",
-                    driver: "codex",
-                    providerInstanceId: "codex",
-                    status: "ready",
-                    cwd: openSessionCwd,
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: "2026-06-01T12:00:00.000Z",
-                    updatedAt: "2026-06-01T12:00:00.000Z",
-                    lastError: null,
-                  }),
-                },
-              ]
-            : strings.join("").includes("deleted_at IS NOT NULL")
-              ? deletedThreads.map((thread) => ({
-                  payload_json: JSON.stringify(thread),
-                  workspaceRoot: repo,
-                }))
-              : strings.join("").includes('AS "worktreePath"')
-                ? [
-                    ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                    ...storedWorktreePaths,
-                  ].map((worktreePath) => ({ worktreePath }))
-                : [],
-        )) as unknown as SqlClient.SqlClient),
+      Effect.provideService(
+        SqlClient.SqlClient,
+        sqlOverride ??
+          (((strings: TemplateStringsArray) =>
+            Effect.sync(() =>
+              strings.join("").includes("retained_checkpoint_threads")
+                ? []
+                : openSessionCwd !== null &&
+                    strings.join("").includes("projection_provider_sessions")
+                  ? [
+                      {
+                        payload_json: JSON.stringify({
+                          id: "session-1",
+                          driver: "codex",
+                          providerInstanceId: "codex",
+                          status: "ready",
+                          cwd: openSessionCwd,
+                          model: null,
+                          capabilities: CodexProviderCapabilitiesV2,
+                          createdAt: "2026-06-01T12:00:00.000Z",
+                          updatedAt: "2026-06-01T12:00:00.000Z",
+                          lastError: null,
+                        }),
+                      },
+                    ]
+                  : strings.join("").includes("deleted_at IS NOT NULL")
+                    ? deletedThreads.map((thread) => ({
+                        payload_json: JSON.stringify(thread),
+                        workspaceRoot: repo,
+                      }))
+                    : strings.join("").includes('AS "worktreePath"')
+                      ? [
+                          ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                          ...storedWorktreePaths,
+                        ].map((worktreePath) => ({ worktreePath }))
+                      : [],
+            )) as unknown as SqlClient.SqlClient),
+      ),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),
@@ -475,12 +488,208 @@ const runCleanupTest = <A, E>(
     A,
     E,
     | FileSystem.FileSystem
+    | Crypto.Crypto
     | ServerConfig.ServerConfig
     | GitVcsDriver.GitVcsDriver
     | Path.Path
     | Scope.Scope
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
+
+const checkpointCleanupFixture = Effect.fn("test.checkpointCleanupFixture")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const fixture = yield* cleanupFixture(DEFAULT_SERVER_SETTINGS.storageCleanup, sql);
+  const { repo, worktree, command } = fixture;
+  const timestamp = DateTime.formatIso(at(0));
+  yield* sql`INSERT INTO projection_projects ${sql.insert({
+    project_id: "project-1",
+    title: "Checkpoint cleanup",
+    workspace_root: repo,
+    scripts_json: "[]",
+    created_at: timestamp,
+    updated_at: timestamp,
+    deleted_at: timestamp,
+  })}`;
+  const addThread = Effect.fn("test.addCheckpointThread")(function* (
+    id: string,
+    options: {
+      deleted?: boolean;
+      archived?: boolean;
+      source?: string;
+      legacyOnly?: boolean;
+    } = {},
+  ) {
+    const threadId = ThreadId.make(id);
+    const scopeId = CheckpointScopeId.make(`scope:${id}`);
+    yield* sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({
+      thread_id: threadId,
+      project_id: "project-1",
+      title: id,
+      default_provider: "codex",
+      runtime_mode: "full-access",
+      interaction_mode: "default",
+      created_at: timestamp,
+      updated_at: timestamp,
+      archived_at: options.archived ? timestamp : null,
+      deleted_at: options.deleted ? timestamp : null,
+      payload_json: JSON.stringify({
+        worktreePath: worktree,
+        forkedFrom: options.source ? { type: "run", threadId: options.source } : null,
+      }),
+    })}`;
+    if (!options.legacyOnly)
+      yield* sql`INSERT INTO orchestration_v2_projection_checkpoint_scopes ${sql.insert({
+        scope_id: scopeId,
+        thread_id: threadId,
+        node_id: `node:${id}`,
+        kind: "root_run",
+        ordinal_within_parent: 0,
+        advances_app_run_count: 1,
+        created_at: timestamp,
+        payload_json: JSON.stringify({ cwd: worktree }),
+      })}`;
+    const refs = options.legacyOnly
+      ? [checkpointRefForThreadTurn(threadId, 0)]
+      : [
+          yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 0 }),
+          yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 1 }),
+          checkpointRefForThreadTurn(threadId, 0),
+        ];
+    for (const ref of refs) yield* command(repo, ["update-ref", ref, "HEAD"]);
+    return refs;
+  });
+  const listRefs = () =>
+    git
+      .execute({
+        operation: "cleanup-test.list-checkpoints",
+        cwd: repo,
+        args: ["for-each-ref", "--format=%(refname)", "refs/t3/"],
+        maxOutputBytes: 16 * 1024 * 1024,
+      })
+      .pipe(Effect.map(({ stdout }) => stdout.trim().split("\n").filter(Boolean).sort()));
+  return { ...fixture, sql, addThread, listRefs };
+});
+
+it.live("prunes deleted threads' refs after their worktree is removed", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, repo, worktree, command, addThread, listRefs } =
+        yield* checkpointCleanupFixture();
+      yield* addThread("deleted-before-upgrade", { deleted: true });
+      yield* addThread("imported-deleted-thread", { deleted: true, legacyOnly: true });
+      const retained = [
+        ...(yield* addThread("active")),
+        ...(yield* addThread("archived", { archived: true })),
+        checkpointRefForThreadTurn(ThreadId.make("unknown-owner"), 0),
+      ];
+      yield* command(repo, ["update-ref", retained.at(-1)!, "HEAD"]);
+      yield* command(repo, ["pack-refs", "--all"]);
+      yield* command(repo, ["worktree", "remove", worktree]);
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual(retained.sort());
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual(retained.sort());
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  ),
+);
+
+it.live("retains deleted fork ancestry until its last live or archived descendant is deleted", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, sql, addThread, listRefs } = yield* checkpointCleanupFixture();
+      const root = yield* addThread("root", { deleted: true });
+      const intermediate = yield* addThread("intermediate", { deleted: true, source: "root" });
+      const child = yield* addThread("child", { archived: true, source: "intermediate" });
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual([...root, ...intermediate, ...child].sort());
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = 'deleted' WHERE thread_id = 'child'`;
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual([]);
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  ),
+);
+
+it.live("waits for checkpoint effects and reconciles late refs on the next sweep", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, repo, command, sql, addThread, listRefs } =
+        yield* checkpointCleanupFixture();
+      const refs = yield* addThread("capturing", { deleted: true });
+      yield* sql`INSERT INTO orchestration_v2_effect_outbox ${sql.insert({
+        effect_id: "capture",
+        command_id: "capture",
+        thread_id: "capturing",
+        effect_type: "checkpoint.capture",
+        payload_json: "{}",
+        status: "pending",
+        available_at: "2026-01-01T00:00:00Z",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      })}`;
+      for (const status of ["pending", "running"]) {
+        yield* sql`UPDATE orchestration_v2_effect_outbox SET status = ${status}`;
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual(refs.toSorted());
+      }
+      yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual([]);
+      yield* command(repo, ["update-ref", refs[1]!, "HEAD"]);
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual([]);
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  ),
+);
+
+it.live("retries locked refs without following symbolic refs or touching other namespaces", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, command, addThread, listRefs } = yield* checkpointCleanupFixture();
+      const refs = yield* addThread("deleted", { deleted: true });
+      yield* command(repo, ["pack-refs", "--all"]);
+      yield* command(repo, ["symbolic-ref", refs[0]!, "refs/heads/main"]);
+      const retained = [
+        "refs/t3/unrelated/0",
+        `${refs[1]}-other`,
+        refs[1]!.replace(/1$/, "2/nested"),
+      ];
+      for (const ref of retained) yield* command(repo, ["update-ref", ref, "HEAD"]);
+      yield* fs.writeFileString(`${repo}/.git/packed-refs.lock`, "locked");
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual([...refs, ...retained].sort());
+      yield* fs.remove(`${repo}/.git/packed-refs.lock`);
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual(retained.sort());
+      expect((yield* command(repo, ["show-ref", "--verify", "refs/heads/main"])).stdout).toContain(
+        "refs/heads/main",
+      );
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  ),
+);
+
+it.live("cleans 12,284 checkpoint refs without truncating the ref list", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, repo, addThread, listRefs } = yield* checkpointCleanupFixture();
+      const refs = yield* addThread("many-checkpoints", { deleted: true });
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const prefix = refs[0]!.slice(0, -1);
+      yield* git.execute({
+        operation: "cleanup-test.seed-checkpoints",
+        cwd: repo,
+        args: ["update-ref", "--stdin"],
+        stdin: Array.from(
+          { length: 12_283 },
+          (_, ordinal) => `update ${prefix}${ordinal} HEAD\n`,
+        ).join(""),
+      });
+      expect(yield* listRefs()).toHaveLength(12_284);
+      yield* service.runNow;
+      expect(yield* listRefs()).toEqual([]);
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  ),
+);
 
 const submoduleCleanupFixture = () =>
   Effect.gen(function* () {
