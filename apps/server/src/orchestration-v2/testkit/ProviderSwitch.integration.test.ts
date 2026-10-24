@@ -1,5 +1,8 @@
 import { vi } from "vite-plus/test";
-import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import {
+  historyResponseItems,
+  latestNativeContextUsage,
+} from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -718,19 +721,18 @@ describe("orchestration v2 provider switching", () => {
           }
           if (reasoningScenario && replaceNative) {
             const replaced = yield* orchestrator.getThreadProjection(threadId);
-            assert.equal(
-              replaced.runs.at(-1)?.status,
-              scenario.includes("small") ? "failed" : "completed",
-            );
+            assert.equal(replaced.runs.at(-1)?.status, "completed");
             const target = replaced.providerThreads.find(
               (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
             )!;
             assert.isNull(target.contextUsage);
             assert.equal(yield* Ref.get(generation), 2);
-            assert.equal(
-              (yield* Ref.get(capturedTurns)).at(-1)!.driver,
-              scenario.includes("small") ? CODEX_DRIVER : CLAUDE_DRIVER,
-            );
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CLAUDE_DRIVER);
+            if (scenario.includes("small")) {
+              const handoff = replaced.contextHandoffs.at(-1)!;
+              assert.equal(handoff.deferred, true);
+              assert.isUndefined(handoff.delivery);
+            }
             return;
           }
           if (replaceNative) {
@@ -1278,6 +1280,131 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  it.live(
+    "defers missed-run history until after compaction without blocking or duplicating turns",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("deferred-missed-run");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const refuseStarts = yield* Ref.make(0);
+          const generation = yield* Ref.make(0);
+          const registry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              refuseStarts,
+              getModelContextWindow: () => 32_000,
+              tokenUsageByRunOrdinal: {
+                1: { usedTokens: 30_000, maxTokens: 32_000 },
+                5: { usedTokens: 100, maxTokens: 32_000 },
+              },
+              nativeThreadGeneration: generation,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const run = Effect.fn("run")(function* (ordinal: number, text = `Request ${ordinal}`) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`deferred-missed-run:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`deferred-missed-run:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+              return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("deferred-missed-run:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Refused start",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            assert.equal(yield* run(1), "completed");
+            yield* Ref.set(refuseStarts, 1);
+            assert.equal(yield* run(2), "failed");
+            assert.equal(yield* run(3), "completed");
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.text, "Request 3");
+            const first = (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs;
+            assert.lengthOf(first, 1);
+            assert.equal(first[0]!.deferred, true);
+            assert.isUndefined(first[0]!.delivery);
+
+            assert.equal(yield* run(4), "completed");
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.text, "Request 4");
+            assert.deepEqual(
+              (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs,
+              first,
+            );
+            assert.equal(yield* run(5, "/compact"), "completed");
+            const compacted = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(compacted.contextHandoffs, first);
+            assert.equal(compacted.providerTurns.at(-1)?.tokenUsage?.usedTokens, 100);
+
+            assert.equal(yield* run(6), "completed");
+            const delivered = (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs;
+            assert.lengthOf(delivered, 1);
+            assert.equal(delivered[0]!.id, first[0]!.id);
+            assert.isUndefined(delivered[0]!.deferred);
+            assert.equal(delivered[0]!.delivery?.status, "inline");
+            const accepted = (yield* Ref.get(capturedTurns)).at(-1)!;
+            assert.equal(accepted.text.split("Request 2").length - 1, 1);
+            assert.isTrue(accepted.text.endsWith("Request 6"));
+
+            assert.equal(yield* run(7), "completed");
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.text, "Request 7");
+            assert.deepEqual(
+              (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs,
+              delivered,
+            );
+            assert.equal(yield* Ref.get(generation), 1);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "deferred-missed-run",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                registry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
   it.live.each(
     (
       [
@@ -1463,6 +1590,139 @@ describe("orchestration v2 provider switching", () => {
         );
       }),
     ),
+  );
+
+  it.live(
+    "starts a near-full same-thread Codex turn after a run interrupted before provider start",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("handoff-near-full");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          // Real incident numbers: Codex reported 196,345 of 258,400 tokens used,
+          // which leaves no handoff budget once the reserve is subtracted
+          const usage = { usedTokens: 196_345, maxTokens: 258_400 };
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              injectedHistory,
+              canReuseContextUsage: canReuseCodexContextUsage,
+              tokenUsageByRunOrdinal: { 1: usage },
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const dispatch = (
+              key: string,
+              text: string,
+              dispatchMode: { readonly type: "start_immediately" | "defer_start" },
+            ) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:near-full:${key}`),
+                threadId,
+                messageId: MessageId.make(`message:near-full:${key}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: CODEX_MODEL_SELECTION,
+                dispatchMode,
+              });
+            const waitForTerminal = (ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.threadId === threadId &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+                Effect.andThen(worker.drain()),
+              );
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:near-full:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Near-full Codex thread",
+              modelSelection: CODEX_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* dispatch("first", "Earlier completed request.", { type: "start_immediately" });
+            yield* waitForTerminal(1);
+            const afterFirst = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              latestNativeContextUsage(afterFirst, afterFirst.providerThreads[0]!)?.usage,
+              usage,
+            );
+
+            yield* dispatch("deferred", "Never sent to Codex.", { type: "defer_start" });
+            const deferred = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            assert.equal(deferred.status, "preparing");
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("command:near-full:interrupt"),
+              threadId,
+              runId: deferred.id,
+            });
+            yield* worker.drain();
+            const interrupted = yield* orchestrator.getThreadProjection(threadId);
+            const interruptedRun = interrupted.runs.at(-1)!;
+            assert.equal(interruptedRun.status, "interrupted");
+            assert.equal(interruptedRun.providerThreadId, afterFirst.providerThreads[0]?.id);
+            assert.isFalse(
+              interrupted.providerTurns.some(
+                (turn) => turn.runAttemptId === interruptedRun.activeAttemptId,
+              ),
+            );
+
+            yield* dispatch("target", "Continue", { type: "start_immediately" });
+            yield* waitForTerminal(3);
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const target = projection.runs.at(-1)!;
+            const failure = projection.turnItems.find(
+              (item) => item.type === "error" && item.runId === target.id,
+            );
+            assert.deepEqual(
+              {
+                status: target.status,
+                failure: failure?.type === "error" ? failure.failure.message : null,
+              },
+              { status: "completed", failure: null },
+            );
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)?.text, "Continue");
+            assert.isEmpty(yield* Ref.get(injectedHistory));
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "handoff-near-full",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
   );
 
   it.live("checks the queued provider's capability while the current provider stays running", () =>

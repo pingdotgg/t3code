@@ -15,16 +15,6 @@ import * as Cause from "effect/Cause";
 
 import * as IdAllocator from "./IdAllocator.ts";
 import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
-import * as Schema from "effect/Schema";
-
-export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
-  "ContextHandoffBudgetError",
-  {},
-) {
-  override get message() {
-    return "Insufficient context allowance for the provider handoff. Compact the target conversation or use a larger-context model; the current request has not been truncated.";
-  }
-}
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
@@ -85,8 +75,6 @@ function curatedCauseMessages(cause: unknown): {
       if (typeof cause !== "object") break;
       const tag = (cause as Record<string, unknown>)._tag;
       switch (tag) {
-        case "ContextHandoffBudgetError":
-          return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
         case "AcpModelSelectionError":
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
         case "ClaudeAppendSystemPromptFileError":

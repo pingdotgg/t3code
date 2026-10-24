@@ -10,6 +10,7 @@ import {
   ThreadId,
   TurnItemId,
   OrchestrationV2ContextHandoff,
+  OrchestrationV2ContextHandoffJson,
   type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
@@ -29,6 +30,9 @@ import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
+const handoffJson = Schema.fromJsonString(OrchestrationV2ContextHandoffJson);
+const encodeHandoff = Schema.encodeSync(handoffJson);
+const decodePersistedHandoff = Schema.decodeSync(handoffJson);
 
 const now = DateTime.makeUnsafe("2026-09-17T00:00:00Z");
 const threadId = ThreadId.make("thread:handoff");
@@ -621,23 +625,69 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("fails before delivery when even the coverage marker cannot fit", () =>
-    Effect.gen(function* () {
-      let calls = 0;
-      const result = yield* deliverContextHandoffs({
-        handoffs: [handoff],
-        providerThread,
-        budget: 0,
-        alreadyDeliveredItemIds: new Set(),
-        inject: () =>
-          Effect.sync(() => {
-            calls++;
-            return true;
-          }),
-        persist: () => Effect.void,
-      }).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      assert.equal(calls, 0);
-    }),
+  it.effect.each([true, false])(
+    "retains deferred history until an interrupted send is confirmed (native=%s)",
+    (native) =>
+      Effect.gen(function* () {
+        let durable = handoff;
+        const input = {
+          providerThread: native ? providerThread : { ...providerThread, nativeThreadRef: null },
+          alreadyDeliveredItemIds: new Set<string>(),
+          persist: (value: OrchestrationV2ContextHandoff) =>
+            Effect.sync(() => {
+              durable = decodePersistedHandoff(encodeHandoff(value));
+            }),
+        };
+        const deferred = yield* deliverContextHandoffs({
+          ...input,
+          handoffs: [durable],
+          budget: 0,
+        });
+        assert.equal(deferred.context, "");
+        assert.equal(durable.deferred, true);
+        assert.equal(durable.delivery, undefined);
+
+        const send = deliverContextHandoffs({
+          ...input,
+          handoffs: [durable],
+          budget: 16_000,
+          ...(native ? { inject: () => Effect.fail("lost injection acknowledgement") } : {}),
+        });
+        if (native) {
+          assert.equal(yield* send.pipe(Effect.flip), "lost injection acknowledgement");
+          assert.equal(durable.delivery?.status, "pending");
+        } else {
+          assert.include((yield* send).context, messages[0]!.text);
+          assert.equal(durable.delivery, undefined);
+        }
+        assert.equal(durable.deferred, true);
+
+        let injectedText = "";
+        const recovered = yield* deliverContextHandoffs({
+          ...input,
+          handoffs: [durable],
+          budget: 16_000,
+          ...(native
+            ? {
+                providerThread: {
+                  ...providerThread,
+                  nativeThreadRef: {
+                    ...providerThread.nativeThreadRef!,
+                    nativeId: "native:replacement",
+                  },
+                },
+                inject: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
+                  Effect.sync(() => {
+                    injectedText = history.messages.map((message) => message.text).join("\n");
+                    return true;
+                  }),
+              }
+            : {}),
+        });
+        assert.include(native ? injectedText : recovered.context, messages[0]!.text);
+        yield* recovered.delivered;
+        assert.isUndefined(durable.deferred);
+        if (native) assert.equal(durable.delivery?.status, "injected");
+      }),
   );
 });
