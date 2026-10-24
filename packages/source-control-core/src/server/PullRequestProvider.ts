@@ -296,6 +296,11 @@ export interface PullRequestProviderApi {
    * organization from the checkout, so only a checkout whose key matches the reference serves it.
    */
   readonly repositoryKey?: (input: { readonly canonicalKey: string }) => string;
+  /**
+   * Names the repository in every request and authenticates by host, so a change request on the
+   * definition's `publicHost` can be read from a project with no checkout of its repository.
+   */
+  readonly readsPublicHostWithoutCheckout?: boolean;
 
   readonly getViewer: (input: {
     readonly cwd: string;

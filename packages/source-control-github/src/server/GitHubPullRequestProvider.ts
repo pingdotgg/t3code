@@ -243,6 +243,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("github"),
     capabilities: CAPABILITIES,
+    readsPublicHostWithoutCheckout: true,
     mergeMessageRewrite: removeAgentCredits,
     getRoutingIdentity: (input) =>
       cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),

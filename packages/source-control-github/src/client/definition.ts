@@ -2,7 +2,6 @@ import {
   GitHubHost,
   makeProviderSettingsSchema,
   secretSetting,
-  pullRequestHostOf,
   SourceControlProviderKind,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -15,6 +14,7 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/client/definition";
 
@@ -118,10 +118,21 @@ export const definition = defineSourceControlClient({
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
-  checkoutChangeRequestHost: (identity) => pullRequestHostOf(identity, KIND),
+  checkoutChangeRequestHost: (identity) => projectChangeRequestHost(identity, KIND),
+  // `*.ghe.com` is GitHub Enterprise Cloud with data residency, one subdomain per enterprise.
+  recognizeRemote: ({ host, hostname }) =>
+    hostname === "github.com" ||
+    hostname.endsWith(".ghe.com") ||
+    hostname.split(".").includes("github")
+      ? {
+          kind: KIND,
+          name: hostname === "github.com" ? "GitHub" : "GitHub Self-Hosted",
+          baseUrl: `https://${host}`,
+        }
+      : null,
   isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(KIND, identity, link),
+    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(KIND, identity, link),
+    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   settings,
 });

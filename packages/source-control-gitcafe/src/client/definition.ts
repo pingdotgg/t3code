@@ -12,6 +12,7 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  projectChangeRequestHost,
 } from "@t3tools/source-control-core/client/definition";
 
 /** GitCafe has no self-hosted installs: production and staging are its only hosts. */
@@ -74,9 +75,13 @@ export const definition = defineSourceControlClient({
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
   checkoutChangeRequestHost: () => null,
+  recognizeRemote: ({ hostname }) =>
+    GITCAFE_HOSTS.has(hostname)
+      ? { kind: KIND, name: "GitCafe", baseUrl: `https://${hostname}` }
+      : null,
   isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(KIND, identity, link),
+    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(KIND, identity, link),
+    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   settings,
 });

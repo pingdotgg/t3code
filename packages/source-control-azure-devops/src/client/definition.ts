@@ -1,5 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import {
   changeRequestUrlBelow,
   defineSourceControlClient,
@@ -14,6 +13,44 @@ const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
 
+/**
+ * Azure alone addresses one repository under two names that share no part: `ssh.dev.azure.com` and
+ * `v3/{org}/{project}/{repo}` over SSH, against `dev.azure.com` and `{org}/{project}/_git/{repo}`
+ * everywhere a person sees it. A project cloned over SSH would otherwise be a different repository
+ * to every comparison made against a pull request URL, which arrives in the web spelling.
+ */
+function repositoryKeyFromRemote(key: string): string | null {
+  const match =
+    /^(ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u.exec(key);
+  if (match === null) return null;
+  const [, host, organization, project, repository] = match;
+  return host === "ssh.dev.azure.com"
+    ? `dev.azure.com/${organization}/${project}/_git/${repository}`
+    : `${organization}.visualstudio.com/${project}/_git/${repository}`;
+}
+
+/** Every spelling of an Azure DevOps Services repository, on `dev.azure.com`. */
+function canonicalRepositoryKey(key: string): string | null {
+  const canonical = key
+    .replace(
+      /^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    )
+    .replace(
+      /^([^.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    );
+  return canonical.startsWith("dev.azure.com/") ? canonical : null;
+}
+
+function decodeUrlPathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 function checkoutCommandId(args: string): string | null {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   for (const [index, part] of parts.entries()) {
@@ -23,8 +60,10 @@ function checkoutCommandId(args: string): string | null {
   return parts.find((part) => !part.startsWith("-")) ?? null;
 }
 
+const KIND = SourceControlProviderKind.make("azure-devops");
+
 export const definition = defineSourceControlClient({
-  kind: SourceControlProviderKind.make("azure-devops"),
+  kind: KIND,
   label: "Azure DevOps",
   pickerLabel: "Azure DevOps",
   icon: "azure-devops",
@@ -39,9 +78,8 @@ export const definition = defineSourceControlClient({
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) => {
     if (webUrl) return changeRequestUrlBelow(webUrl, `pullrequest/${number}`);
-    const [canonicalHost = host, ...path] = canonicalRepositoryKey(
-      `${host}/${repository}`.toLowerCase(),
-    ).split("/");
+    const key = `${host}/${repository}`.toLowerCase();
+    const [canonicalHost = host, ...path] = (canonicalRepositoryKey(key) ?? key).split("/");
     return `${remoteWebOrigin(canonicalHost, remoteUrl)}/${path.join("/")}/pullrequest/${number}`;
   },
   // Servers on different ports are different servers, so a port stays in the link.
@@ -69,9 +107,37 @@ export const definition = defineSourceControlClient({
   },
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   checkoutChangeRequestHost: () => null,
-  isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestAuthorityOfProject(identity, link) &&
-    canonicalRepositoryKey(identity.canonicalKey.toLowerCase()) ===
-      canonicalRepositoryKey(`${link.host}/${link.repository}`.toLowerCase()),
+  // `ssh.dev.azure.com` is the default SSH clone host (git@ssh.dev.azure.com:v3/org/project/repo),
+  // so any `*.dev.azure.com` subdomain is Azure. Legacy hosts stay under `.visualstudio.com`,
+  // including `vs-ssh.visualstudio.com`.
+  recognizeRemote: ({ host, hostname }) =>
+    hostname === "dev.azure.com" ||
+    hostname.endsWith(".dev.azure.com") ||
+    hostname.endsWith(".visualstudio.com")
+      ? { kind: KIND, name: "Azure DevOps", baseUrl: `https://${host}` }
+      : null,
+  /**
+   * `az repos pr list --repository` takes a repository name, and takes the organisation and
+   * project from the checkout it detects, so the recorded `org/project/_git/repo` path is refused
+   * outright and the whole repository reads as unavailable. The segment comes from the remote URL,
+   * where a name with a space reads `my%20repo`; `az` looks that up literally and answers 404, so
+   * it goes out decoded.
+   */
+  repositorySelector: (identity) => {
+    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
+    const name = identity.name || segments.at(-1);
+    return name ? decodeUrlPathSegment(name) : null;
+  },
+  repositoryKeyFromRemote,
+  canonicalRepositoryKey,
+  isChangeRequestInRepository: (identity, link) => {
+    if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
+    const projectKey = identity.canonicalKey.toLowerCase();
+    const linkKey = `${link.host}/${link.repository}`.toLowerCase();
+    return (
+      (canonicalRepositoryKey(projectKey) ?? projectKey) ===
+      (canonicalRepositoryKey(linkKey) ?? linkKey)
+    );
+  },
   canReadChangeRequestOnHost: () => false,
 });

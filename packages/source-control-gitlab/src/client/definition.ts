@@ -5,6 +5,7 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  projectChangeRequestHost,
 } from "@t3tools/source-control-core/client/definition";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
@@ -51,8 +52,16 @@ export const definition = defineSourceControlClient({
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   checkoutChangeRequestHost: () => null,
+  recognizeRemote: ({ host, hostname }) =>
+    hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
+      ? {
+          kind: KIND,
+          name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
+          baseUrl: `https://${host}`,
+        }
+      : null,
   isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(KIND, identity, link),
+    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(KIND, identity, link),
+    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
 });

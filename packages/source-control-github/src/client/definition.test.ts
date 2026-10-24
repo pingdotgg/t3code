@@ -1,3 +1,4 @@
+import { recognizeRemoteWith } from "@t3tools/source-control-core/client/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -92,5 +93,31 @@ describe("GitHub change request URLs", () => {
     );
     expect(candidate("https://github.com/pingdotgg/t3code/issues/not-a-number")).toBeNull();
     expect(candidate("https://code.example.test/acme/web/issues/42")).toBeNull();
+  });
+});
+
+describe("GitHub remotes", () => {
+  const recognize = (url: string) => recognizeRemoteWith(definition, url);
+
+  it("recognises github.com, ghe.com subdomains and hosts with a github label", () => {
+    expect(recognize("deploy@github.com:owner/repo.git")).toEqual({
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+    expect(recognize("https://acme.ghe.com/owner/repo.git")).toEqual({
+      kind: "github",
+      name: "GitHub Self-Hosted",
+      baseUrl: "https://acme.ghe.com",
+    });
+    expect(recognize("git@acme.ghe.com:owner/repo.git")?.kind).toBe("github");
+    expect(recognize("https://github.example.com:8443/owner/repo.git")?.baseUrl).toBe(
+      "https://github.example.com:8443",
+    );
+  });
+
+  it("does not claim ghe.com itself or a label that only contains github", () => {
+    expect(recognize("https://ghe.com/owner/repo.git")).toBeNull();
+    expect(recognize("https://notgithub.example.com/owner/repo.git")).toBeNull();
   });
 });

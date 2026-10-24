@@ -24,7 +24,7 @@ import {
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
@@ -104,7 +104,7 @@ const make = Effect.gen(function* () {
               {
                 projectId: ProjectId.make("own"),
                 number: key.number,
-                repository: sourceControlRepositorySelector(identity) ?? "",
+                repository: sourceControlClients.repositorySelector(identity) ?? "",
               },
               identity,
             );

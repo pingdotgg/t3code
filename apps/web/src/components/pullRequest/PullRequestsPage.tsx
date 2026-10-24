@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
@@ -5,7 +6,7 @@ import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullReques
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
-import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ProjectId,
@@ -15,7 +16,6 @@ import type {
   PullRequestListInput,
   PullRequestListResult,
   PullRequestListState,
-  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -1014,9 +1014,9 @@ export function PullRequestsPage() {
           host:
             activePullRequestSurface.host ??
             (selectedProject?.repositoryIdentity
-              ? pullRequestHostOf(
+              ? sourceControlClients.changeRequestHost(
                   selectedProject.repositoryIdentity,
-                  selectedProject.repositoryIdentity.provider as SourceControlProviderKind,
+                  selectedProject.repositoryIdentity.provider,
                 )
               : undefined),
         }

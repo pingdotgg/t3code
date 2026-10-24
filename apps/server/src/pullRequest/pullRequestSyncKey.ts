@@ -1,43 +1,37 @@
-import {
-  pullRequestHostOf,
-  type PullRequestRef,
-  type RepositoryIdentity,
-  SourceControlProviderKind,
-  type ThreadPullRequestKey,
-} from "@t3tools/contracts";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import type { PullRequestRef, RepositoryIdentity, ThreadPullRequestKey } from "@t3tools/contracts";
+import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
 
 export function pullRequestSyncKey(
   reference: PullRequestRef,
   identity?: RepositoryIdentity | null,
 ): ThreadPullRequestKey | null {
-  if (identity?.provider === "azure-devops" && !reference.repository.includes("/")) {
+  const host = identity
+    ? sourceControlClients.changeRequestHost(identity, identity.provider)
+    : undefined;
+  // A host whose tools select a repository by something other than its path (Azure DevOps takes
+  // the bare name) can only key such a reference through the project's own repository.
+  const definition = identity?.provider ? sourceControlClients.find(identity.provider) : undefined;
+  if (identity && definition?.repositorySelector && !reference.repository.includes("/")) {
     if (
       reference.repository.toLowerCase() !==
-        sourceControlRepositorySelector(identity)?.toLowerCase() ||
-      (reference.host !== undefined &&
-        reference.host.toLowerCase() !==
-          pullRequestHostOf(identity, SourceControlProviderKind.make("azure-devops")))
+        definition.repositorySelector(identity)?.toLowerCase() ||
+      (reference.host !== undefined && reference.host.toLowerCase() !== host)
     )
       return null;
-    const [host, ...repository] = identity.canonicalKey.split("/");
-    if (!host || repository.length === 0) return null;
+    const [projectHost, ...repository] = identity.canonicalKey.split("/");
+    if (!projectHost || repository.length === 0) return null;
     return normalizeThreadPullRequestKey({
-      host,
+      host: projectHost,
       repository: repository.join("/"),
       number: reference.number,
     });
   }
-  const host =
-    reference.host ??
-    (identity
-      ? pullRequestHostOf(identity, identity.provider as SourceControlProviderKind)
-      : undefined);
-  return host === undefined
+  const resolvedHost = reference.host ?? host;
+  return resolvedHost === undefined
     ? null
     : normalizeThreadPullRequestKey({
-        host,
+        host: resolvedHost,
         repository: reference.repository,
         number: reference.number,
       });

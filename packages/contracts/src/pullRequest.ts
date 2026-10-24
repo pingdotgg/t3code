@@ -938,27 +938,6 @@ const PROVIDER_REQUIREMENT = new Map<
   ],
 ]);
 
-export function pullRequestHostOf(
-  identity:
-    | {
-        readonly canonicalKey?: string | undefined;
-        readonly locator?: { readonly remoteUrl: string } | undefined;
-      }
-    | null
-    | undefined,
-  kind: SourceControlProviderKind,
-): string {
-  if (kind === "forgejo") {
-    try {
-      const remote = new URL(identity?.locator?.remoteUrl ?? "");
-      if (remote.protocol === "http:" || remote.protocol === "https:")
-        return remote.host.toLowerCase();
-    } catch {}
-  }
-  const host = identity?.canonicalKey?.split("/")[0]?.trim();
-  return host === undefined || host.length === 0 ? kind : host.toLowerCase();
-}
-
 /**
  * `author:me` names whoever is signed in to the host being read, GitHub's `@me` spelled either
  * way. A host's own search would answer it, but the page and the server both re-check an author

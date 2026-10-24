@@ -1,3 +1,4 @@
+import { recognizeRemoteWith } from "@t3tools/source-control-core/client/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -45,5 +46,19 @@ describe("GitCafe change request URLs", () => {
         webUrl: "https://git.cafe/Team/Repo/",
       }),
     ).toBe("https://git.cafe/Team/Repo/pulls/8");
+  });
+});
+
+describe("GitCafe remotes", () => {
+  it("recognises its own hosts only, without a port", () => {
+    expect(recognizeRemoteWith(definition, "https://git.cafe:8443/a/b")).toEqual({
+      kind: "gitcafe",
+      name: "GitCafe",
+      baseUrl: "https://git.cafe",
+    });
+    expect(recognizeRemoteWith(definition, "git@staging.git.cafe:team/repo.git")?.kind).toBe(
+      "gitcafe",
+    );
+    expect(recognizeRemoteWith(definition, "https://cafe.example/a/b")).toBeNull();
   });
 });

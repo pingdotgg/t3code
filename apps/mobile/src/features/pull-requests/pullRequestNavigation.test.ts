@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { nativePullRequestDestination } from "../../lib/pullRequestNavigation";
 
@@ -10,7 +10,7 @@ const project = (id: string, canonicalKey: string, provider: string, remoteUrl: 
     canonicalKey,
     locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
     displayName: canonicalKey.split("/").slice(1).join("/"),
-    provider,
+    provider: SourceControlProviderKind.make(provider),
   },
 });
 const projects = [

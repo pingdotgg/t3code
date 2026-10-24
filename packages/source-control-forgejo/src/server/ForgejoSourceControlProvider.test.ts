@@ -597,7 +597,7 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
       canonicalKey: "forge.test/team/repo",
       locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
       rootPath: "/repo",
-      ...(provider === undefined ? {} : { provider }),
+      ...(provider === undefined ? {} : { provider: SourceControlProviderKind.make(provider) }),
     });
     const served = (baseUrl: string) => () =>
       Effect.succeed({

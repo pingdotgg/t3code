@@ -1,10 +1,7 @@
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import {
   type CommandId,
-  pullRequestHostOf,
   type GitRunStackedActionResult,
   type OrchestrationProjectShell,
-  type SourceControlProviderKind,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -35,11 +32,11 @@ export function createdPullRequestKey(
     return { host: parsed.host, repository: parsed.repository, number: parsed.number, url };
   }
   const identity = project?.repositoryIdentity;
-  const kind = identity?.provider as SourceControlProviderKind | undefined;
-  const repository = sourceControlRepositorySelector(identity);
+  const kind = identity?.provider;
+  const repository = sourceControlClients.repositorySelector(identity);
   if (!identity || kind === undefined || repository === null) return null;
   return {
-    host: pullRequestHostOf(identity, kind),
+    host: sourceControlClients.changeRequestHost(identity, kind),
     repository: repository.toLowerCase(),
     number,
     url,

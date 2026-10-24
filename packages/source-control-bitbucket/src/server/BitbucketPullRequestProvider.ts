@@ -147,6 +147,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
+    readsPublicHostWithoutCheckout: true,
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 

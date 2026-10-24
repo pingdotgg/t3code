@@ -4,7 +4,6 @@ import type {
   ThreadPullRequestKey,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import type { SourceControlClientRegistry } from "./definition.ts";
@@ -63,7 +62,10 @@ export type ThreadPullRequestBadge = {
  * binds these once to its own registry.
  */
 export function makeThreadPullRequests(
-  registry: Pick<SourceControlClientRegistry, "parseChangeRequestUrl">,
+  registry: Pick<
+    SourceControlClientRegistry,
+    "parseChangeRequestUrl" | "canonicalRepositoryKey" | "findByRepositoryKey"
+  >,
 ) {
   const parse = (url: string) => registry.parseChangeRequestUrl(url)?.link ?? null;
 
@@ -74,7 +76,7 @@ export function makeThreadPullRequests(
       (parsed?.repository === key.repository.trim().toLowerCase() && parsed.number === key.number
         ? parsed.authority
         : undefined);
-    const canonical = canonicalRepositoryKey(
+    const canonical = registry.canonicalRepositoryKey(
       `${(authority ?? key.host).trim().toLowerCase()}/${key.repository.trim().toLowerCase()}`,
     );
     const separator = canonical.indexOf("/");
@@ -91,8 +93,10 @@ export function makeThreadPullRequests(
   ): ThreadPullRequestKey {
     const parsed = parse(linked.url);
     if (parsed !== null && parsed.number === linked.number) {
-      const canonical = canonicalRepositoryKey(`${parsed.host}/${parsed.repository}`);
-      if (parsed.authority !== undefined || canonical.startsWith("dev.azure.com/")) {
+      if (
+        parsed.authority !== undefined ||
+        registry.findByRepositoryKey(`${parsed.host}/${parsed.repository}`) !== undefined
+      ) {
         return normalizeThreadPullRequestKey(parsed);
       }
     }

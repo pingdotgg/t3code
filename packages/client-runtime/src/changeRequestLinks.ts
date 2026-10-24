@@ -5,7 +5,6 @@ import type {
   RepositoryIdentity,
 } from "@t3tools/contracts";
 import type { ChangeRequestLink } from "@t3tools/source-control-core/client/definition";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 
@@ -53,7 +52,8 @@ export function resolvePullRequestPreviewTarget({
     input: {
       projectId: project.id,
       host: parsed.authority ?? parsed.host,
-      repository: sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository,
+      repository:
+        sourceControlClients.repositorySelector(project.repositoryIdentity) ?? parsed.repository,
       number: parsed.number,
     },
   };
@@ -66,12 +66,16 @@ export function projectChangeRequestUrl(
   number: number,
 ): string | null {
   if (identity?.provider === undefined) return null;
-  const host = identity.canonicalKey.split("/")[0];
+  const [host, ...path] = identity.canonicalKey.split("/");
   if (!host) return null;
+  // The RPC selector can be shorter than the browser path (Azure's `web` for
+  // `org/project/_git/web`), so the project's own repository uses its full key.
+  const ownRepository = sourceControlClients.repositorySelector(identity) === repository;
   return sourceControlClients.get(identity.provider).changeRequestUrl({
     host,
-    repository,
+    repository: ownRepository ? path.join("/") : repository,
     number,
     remoteUrl: identity.locator.remoteUrl.trim(),
+    ...(ownRepository && identity.webUrl !== undefined ? { webUrl: identity.webUrl } : {}),
   });
 }

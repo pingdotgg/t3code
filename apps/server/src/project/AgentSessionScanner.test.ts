@@ -745,7 +745,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         yield* fileSystem.makeDirectory(submoduleGitDir, { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(submoduleGitDir, "config"),
-          '[remote "origin"]\n\turl = ssh://github.com/pingdotgg/vendor.git\n',
+          '[remote "origin"]\n\turl = ssh://gitlab.com/pingdotgg/libs/vendor.git\n',
         );
         yield* fileSystem.writeFileString(
           path.join(submodule, ".git"),
@@ -767,7 +767,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ).toEqual([
           {
             path: submodule,
-            git: { remoteKey: "github.com/pingdotgg/vendor", repository: "pingdotgg/vendor" },
+            git: {
+              remoteKey: "gitlab.com/pingdotgg/libs/vendor",
+              repository: "pingdotgg/libs/vendor",
+            },
           },
           { path: noRemote, git: { remoteKey: null, repository: null } },
           { path: plain, git: null },

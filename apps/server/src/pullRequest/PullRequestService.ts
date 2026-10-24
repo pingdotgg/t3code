@@ -1,9 +1,4 @@
-import {
-  canonicalRepositoryKey,
-  isSshRemoteUrl,
-  sourceControlRepositorySelector,
-} from "@t3tools/shared/sourceControl";
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parseDiffFilePaths } from "@t3tools/source-control-core/server/diffFileRevisions";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -23,7 +18,6 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import {
   PullRequestOperationError,
   PullRequestUnavailableError,
-  pullRequestHostOf,
   pullRequestProviderRequirement,
   resolvePullRequestAuthorFilter,
   type OrchestrationProjectShell,
@@ -82,7 +76,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -500,6 +494,9 @@ function withRateLimitBackoff(
       ? {}
       : { mergeMessageRewrite: api.mergeMessageRewrite }),
     ...(api.repositoryKey === undefined ? {} : { repositoryKey: api.repositoryKey }),
+    ...(api.readsPublicHostWithoutCheckout === undefined
+      ? {}
+      : { readsPublicHostWithoutCheckout: api.readsPublicHostWithoutCheckout }),
     getViewer:
       options?.viewerAllowsPause === true
         ? interactive("getViewer", api.getViewer)
@@ -648,6 +645,29 @@ function rankFilterOptions<A>(
   };
 }
 
+/** Whether the project's remote is SSH on a host whose SSH remotes do not name its web host. */
+function sshRemoteHidesWebHost(
+  identity: NonNullable<OrchestrationProjectShell["repositoryIdentity"]>,
+) {
+  return (
+    identity.provider !== undefined &&
+    sourceControlClients.find(identity.provider)?.sshRemoteHidesWebHost === true &&
+    isSshRemoteUrl(identity.locator.remoteUrl)
+  );
+}
+
+/** An HTTP remote names its server's web host, port included. */
+function httpRemoteHost(remoteUrl: string): string | null {
+  try {
+    const remote = new URL(remoteUrl);
+    return remote.protocol === "http:" || remote.protocol === "https:"
+      ? remote.host.toLowerCase()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 // Capture before the provider read so a slow response keeps its original freshness through caches.
 const observeRead = Effect.fnUntraced(function* <A, E, R>(read: Effect.Effect<A, E, R>) {
   const observedAt = yield* Clock.currentTimeMillis;
@@ -682,24 +702,22 @@ export const make = Effect.gen(function* () {
       if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
       const identity = project.repositoryIdentity;
       if (
-        (identity?.provider !== "unknown" &&
-          !(identity?.provider === "forgejo" && isSshRemoteUrl(identity.locator.remoteUrl))) ||
-        sourceControlRepositorySelector(project.repositoryIdentity) === null
+        (identity?.provider !== "unknown" && !(identity && sshRemoteHidesWebHost(identity))) ||
+        sourceControlClients.repositorySelector(project.repositoryIdentity) === null
       )
         continue;
-      const host = pullRequestHostOf(identity, SourceControlProviderKind.make("unknown"));
+      const host = sourceControlClients.changeRequestHost(identity, "unknown");
       if (
         filter.host !== undefined &&
         host !== "unknown" &&
         host !== filter.host.toLowerCase() &&
-        pullRequestHostOf(identity, SourceControlProviderKind.make("forgejo")) !==
-          filter.host.toLowerCase() &&
+        httpRemoteHost(identity.locator.remoteUrl) !== filter.host.toLowerCase() &&
         !isSshRemoteUrl(identity.locator.remoteUrl)
       ) {
         continue;
       }
       const { remoteName, remoteUrl } = identity.locator;
-      const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
+      const provider = sourceControlClients.recognizeRemote(remoteUrl);
       if (provider !== null) {
         const candidates = refinements.get(provider.baseUrl);
         const candidate = { project, provider, remoteName, remoteUrl };
@@ -717,10 +735,9 @@ export const make = Effect.gen(function* () {
               sourceControlProviders.resolveHandle({
                 cwd: project.workspaceRoot,
                 context: {
-                  provider:
-                    provider.kind === "forgejo"
-                      ? { ...provider, kind: SourceControlProviderKind.make("unknown") }
-                      : provider,
+                  provider: sourceControlClients.find(provider.kind)?.sshRemoteHidesWebHost
+                    ? { ...provider, kind: SourceControlProviderKind.make("unknown") }
+                    : provider,
                   remoteName,
                   remoteUrl,
                   ...(filter.host !== undefined && isSshRemoteUrl(remoteUrl)
@@ -791,22 +808,20 @@ export const make = Effect.gen(function* () {
           if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
           if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           const identity = project.repositoryIdentity;
-          let kind = identity?.provider as SourceControlProviderKind | undefined;
-          const repository = sourceControlRepositorySelector(project.repositoryIdentity);
+          let kind = identity?.provider;
+          const repository = sourceControlClients.repositorySelector(project.repositoryIdentity);
           if (!identity || kind === undefined || repository === null) continue;
           let refinedProvider: SourceControlProviderInfo | null | undefined;
-          if (
-            kind === "unknown" ||
-            (kind === "forgejo" && isSshRemoteUrl(identity.locator.remoteUrl))
-          ) {
-            const provider = detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl);
+          if (kind === "unknown" || sshRemoteHidesWebHost(identity)) {
+            const provider = sourceControlClients.recognizeRemote(identity.locator.remoteUrl);
             refinedProvider = provider === null ? null : refinedProviders.get(provider.baseUrl);
             kind = refinedProvider?.kind ?? kind;
           }
           const host =
-            refinedProvider?.kind === "forgejo"
+            refinedProvider &&
+            sourceControlClients.find(refinedProvider.kind)?.sshRemoteHidesWebHost
               ? new URL(refinedProvider.baseUrl).host.toLowerCase()
-              : pullRequestHostOf(identity, kind);
+              : sourceControlClients.changeRequestHost(identity, kind);
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
             continue;
           }
@@ -833,9 +848,13 @@ export const make = Effect.gen(function* () {
             api: withRateLimitBackoff(api, host, rateLimits),
             repository,
             host,
-            remote: repositoryKey ?? normalizeGitRemoteUrl(`https://${host}/${repository}`),
+            remote:
+              repositoryKey ??
+              sourceControlClients.repositoryKeyFromRemote(`https://${host}/${repository}`),
             repositoryKey:
-              repositoryKey === null ? null : canonicalRepositoryKey(repositoryKey.toLowerCase()),
+              repositoryKey === null
+                ? null
+                : sourceControlClients.canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
         }
         return { supported, unimplemented, viewerRoots };
@@ -866,11 +885,13 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
-        const repositoryKey = canonicalRepositoryKey(`${host}/${repository}`.toLowerCase());
-        // Azure SSH and legacy clone hosts differ from the browser URL's host. Compare
-        // the complete repository identity before narrowing those checkouts by host.
+        const referenceKey = `${host}/${repository}`.toLowerCase();
+        const repositoryKey = sourceControlClients.canonicalRepositoryKey(referenceKey);
+        // A host that spells one repository several ways (Azure's SSH and legacy clone hosts)
+        // can differ from the browser URL's host. Compare the complete repository identity
+        // before narrowing those checkouts by host.
         return listWorkspaceProjects(
-          repositoryKey.startsWith("dev.azure.com/") ? {} : { host },
+          sourceControlClients.findByRepositoryKey(referenceKey) ? {} : { host },
         ).pipe(
           Effect.flatMap(({ supported }) => {
             const onHost = supported.filter((candidate) => candidate.host === host);
@@ -887,11 +908,9 @@ export const make = Effect.gen(function* () {
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
               return Effect.gen(function* () {
-                const provider = ["github.com", "bitbucket.org", "codeberg.org"].includes(host)
-                  ? detectSourceControlProviderFromRemoteUrl(`https://${host}/${repository}.git`)
-                  : null;
-                const api = provider === null ? null : registry.get(provider.kind);
-                if (api !== null) {
+                const publicHost = sourceControlClients.findByPublicHost(host);
+                const api = publicHost === undefined ? null : registry.get(publicHost.kind);
+                if (api?.readsPublicHostWithoutCheckout) {
                   const selected = yield* projects.getShell(ref.projectId).pipe(
                     Effect.mapError(
                       (cause) =>
@@ -909,7 +928,9 @@ export const make = Effect.gen(function* () {
                       api: withRateLimitBackoff(api, host, rateLimits),
                       repository,
                       host,
-                      remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+                      remote: sourceControlClients.repositoryKeyFromRemote(
+                        `https://${host}/${repository}`,
+                      ),
                       repositoryKey: null,
                     };
                   }
@@ -924,7 +945,9 @@ export const make = Effect.gen(function* () {
                 : {
                     ...route,
                     repository,
-                    remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+                    remote: sourceControlClients.repositoryKeyFromRemote(
+                      `https://${host}/${repository}`,
+                    ),
                   },
             );
           }),

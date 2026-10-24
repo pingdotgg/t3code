@@ -1,3 +1,4 @@
+import { recognizeRemoteWith } from "@t3tools/source-control-core/client/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -34,5 +35,21 @@ describe("Bitbucket change request URLs", () => {
         webUrl: "https://bitbucket.org/w/repo",
       }),
     ).toBe("https://bitbucket.org/w/repo/pull-requests/5");
+  });
+});
+
+describe("Bitbucket remotes", () => {
+  const recognize = (url: string) => recognizeRemoteWith(definition, url);
+
+  it("recognises bitbucket.org and hosts with a bitbucket label", () => {
+    expect(recognize("git@bitbucket.org:workspace/repo.git")).toEqual({
+      kind: "bitbucket",
+      name: "Bitbucket",
+      baseUrl: "https://bitbucket.org",
+    });
+    expect(recognize("https://bitbucket.example.com/workspace/repo.git")?.name).toBe(
+      "Bitbucket Self-Hosted",
+    );
+    expect(recognize("https://notbitbucket.example.com/workspace/repo.git")).toBeNull();
   });
 });

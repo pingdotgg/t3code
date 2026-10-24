@@ -1,4 +1,4 @@
-import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
 import {
@@ -715,7 +715,7 @@ function PullRequestSurfaceIcon({
   const host =
     surface.host ??
     (identity?.provider
-      ? pullRequestHostOf(identity, identity.provider as SourceControlProviderKind)
+      ? sourceControlClients.changeRequestHost(identity, identity.provider)
       : null);
   const configs = useServerConfigs();
   const capabilities =

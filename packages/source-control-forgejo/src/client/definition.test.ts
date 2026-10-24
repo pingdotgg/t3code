@@ -1,4 +1,5 @@
 import type { ChangeRequestProjectIdentity } from "@t3tools/source-control-core/client/definition";
+import { recognizeRemoteWith } from "@t3tools/source-control-core/client/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -100,5 +101,31 @@ describe("Forgejo change request URLs", () => {
     ]) {
       expect(onHost(aliased, parse(url)), url).toBe(false);
     }
+  });
+});
+
+describe("Forgejo remotes", () => {
+  it("recognises Codeberg and Forgejo or Gitea hosts, keeping an HTTP remote's origin", () => {
+    for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
+      expect(recognizeRemoteWith(definition, `http://${host}:3000/team/repo.git`)).toEqual({
+        kind: "forgejo",
+        name: "Forgejo",
+        baseUrl: `http://${host}:3000`,
+      });
+    }
+    expect(
+      recognizeRemoteWith(definition, "ssh://git@forgejo.example.test:2222/team/repo.git")?.baseUrl,
+    ).toBe("https://forgejo.example.test");
+    expect(recognizeRemoteWith(definition, "https://git.example.test/team/repo")).toBeNull();
+  });
+});
+
+describe("Forgejo change request host", () => {
+  it("keeps an HTTP remote's port, because a server's identity includes it", () => {
+    const project = identity("http://forge.example:3000/git/team/repo.git");
+    expect(definition.changeRequestHost?.(project)).toBe("forge.example:3000");
+    expect(
+      definition.changeRequestHost?.(identity("ssh://git@forge.example:2222/git/team/repo.git")),
+    ).toBe("forge.example");
   });
 });

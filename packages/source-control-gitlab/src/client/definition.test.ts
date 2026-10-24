@@ -1,3 +1,4 @@
+import { recognizeRemoteWith } from "@t3tools/source-control-core/client/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -46,5 +47,29 @@ describe("GitLab change request URLs", () => {
         webUrl: "https://gitlab.com/group/sub/project",
       }),
     ).toBe("https://gitlab.com/group/sub/project/-/merge_requests/4");
+  });
+});
+
+describe("GitLab remotes", () => {
+  const recognize = (url: string) => recognizeRemoteWith(definition, url);
+
+  it("keeps an HTTP port in the base URL and drops an SSH one", () => {
+    expect(recognize("https://gitlab.com:8443/group/repo.git")).toEqual({
+      kind: "gitlab",
+      name: "GitLab",
+      baseUrl: "https://gitlab.com:8443",
+    });
+    expect(recognize("ssh://git@gitlab.example.test:24/group/repo.git")).toEqual({
+      kind: "gitlab",
+      name: "GitLab Self-Hosted",
+      baseUrl: "https://gitlab.example.test",
+    });
+    expect(recognize("gitlab@gitlab.example.com:group/project.git")?.baseUrl).toBe(
+      "https://gitlab.example.com",
+    );
+  });
+
+  it("matches complete DNS labels only", () => {
+    expect(recognize("https://notgitlab.example.com/group/repo.git")).toBeNull();
   });
 });

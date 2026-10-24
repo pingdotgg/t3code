@@ -1,4 +1,4 @@
-import { pullRequestHostOf, type RepositoryIdentity } from "@t3tools/contracts";
+import type { RepositoryIdentity } from "@t3tools/contracts";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 
@@ -42,7 +42,7 @@ export function pullRequestLinkProject(identity: RepositoryIdentity | null | und
     (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
   if (repository === null) return null;
   const definition = sourceControlClients.get(identity.provider ?? "unknown");
-  const host = pullRequestHostOf(identity, definition.kind);
+  const host = sourceControlClients.changeRequestHost(identity, definition.kind);
   return {
     host,
     repository,

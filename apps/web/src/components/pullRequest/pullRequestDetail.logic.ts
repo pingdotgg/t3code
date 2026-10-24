@@ -5,7 +5,6 @@ import {
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
-  pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
   type PullRequestBaseComparison,
@@ -135,7 +134,7 @@ export function loadingPullRequestCheckoutCommand(
   if (
     identity?.provider !== undefined &&
     host &&
-    pullRequestHostOf(identity, definition.kind) !== host
+    sourceControlClients.changeRequestHost(identity, definition.kind) !== host
   ) {
     return null;
   }

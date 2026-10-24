@@ -1,14 +1,15 @@
 import {
   type PullRequestAction,
-  pullRequestHostOf,
   type PullRequestReviewVerdict,
   type RepositoryIdentity,
   SourceControlProviderKind,
+  type SourceControlProviderInfo,
 } from "@t3tools/contracts";
+import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
 import * as Schema from "effect/Schema";
 
 /**
- * The two strings are what `pullRequestHostOf` and the project's `repositoryIdentity` produce
+ * The two strings are what `changeRequestHost` and the project's `repositoryIdentity` produce
  * from a git remote — lower case, no port, the full path below the host — because links are
  * matched against those. `authority` keeps the port for hosts whose identity includes it.
  */
@@ -42,6 +43,29 @@ export type ChangeRequestProjectIdentity = Pick<
   RepositoryIdentity,
   "canonicalKey" | "locator" | "webUrl" | "displayName" | "owner" | "name"
 >;
+
+export type ChangeRequestHostIdentity =
+  | {
+      readonly canonicalKey?: string | undefined;
+      readonly locator?: { readonly remoteUrl: string } | undefined;
+    }
+  | null
+  | undefined;
+
+export type RepositorySelectorIdentity = Pick<
+  RepositoryIdentity,
+  "provider" | "displayName" | "owner" | "name"
+>;
+
+/** A git remote's host, as `recognizeRemote` reads it. */
+export interface GitRemoteHost {
+  /** Trimmed. */
+  readonly remoteUrl: string;
+  /** Lower case. Keeps the port of an HTTP remote, never an SSH one. */
+  readonly host: string;
+  /** `host` without its port. */
+  readonly hostname: string;
+}
 
 export interface ChangeRequestCheckoutInput {
   readonly number: number;
@@ -91,6 +115,32 @@ export interface SourceControlClientDefinition {
     link: ChangeRequestLink,
   ) => boolean;
   readonly checkoutChangeRequestHost: (identity: ChangeRequestProjectIdentity) => string | null;
+  /** Null when this host does not claim the remote. Asked in the registry's recognition order. */
+  readonly recognizeRemote: (remote: GitRemoteHost) => SourceControlProviderInfo | null;
+  /** The host change requests in the project are listed and keyed under. */
+  readonly changeRequestHost?: (identity: ChangeRequestHostIdentity) => string;
+  /**
+   * What the host's tools take to select the project's repository. Absent means the repository
+   * path, `owner/name`.
+   */
+  readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
+  /**
+   * For a host that spells one repository differently over SSH and on the web: the web spelling
+   * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
+   * the key is not this host's. Persisted repository keys are built with it, so its output must
+   * not change.
+   */
+  readonly repositoryKeyFromRemote?: (key: string) => string | null;
+  /**
+   * For a host with more than one spelling of a repository key: the one every spelling compares
+   * equal under. Null when the key is not this host's.
+   */
+  readonly canonicalRepositoryKey?: (key: string) => string | null;
+  /**
+   * An SSH remote names the SSH server only, so the web host, and its port, come from resolving
+   * the provider rather than from the remote.
+   */
+  readonly sshRemoteHidesWebHost?: boolean;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
@@ -160,14 +210,23 @@ export function isChangeRequestAuthorityOfProject(
   return true;
 }
 
+/** The host of the project's repository key, or `kind` when the key has none. */
+export function projectChangeRequestHost<const Kind extends string | undefined>(
+  identity: ChangeRequestHostIdentity,
+  kind: Kind,
+): string | Kind {
+  const host = identity?.canonicalKey?.split("/")[0]?.trim();
+  return host === undefined || host.length === 0 ? kind : host.toLowerCase();
+}
+
+/** `projectHost` is the project's `changeRequestHost`. */
 export function isChangeRequestOnProjectHost(
-  kind: SourceControlProviderKind,
+  projectHost: string,
   identity: ChangeRequestProjectIdentity,
   link: ChangeRequestLink,
 ): boolean {
   if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
-  const host = pullRequestHostOf(identity, kind);
-  return host === link.host.toLowerCase() || host === link.authority;
+  return projectHost === link.host.toLowerCase() || projectHost === link.authority;
 }
 
 function projectRepositoryPath(identity: ChangeRequestProjectIdentity): string | null {
@@ -178,7 +237,7 @@ function projectRepositoryPath(identity: ChangeRequestProjectIdentity): string |
 }
 
 export function isChangeRequestInProjectRepository(
-  kind: SourceControlProviderKind,
+  projectHost: string,
   identity: ChangeRequestProjectIdentity,
   link: ChangeRequestLink,
 ): boolean {
@@ -186,8 +245,62 @@ export function isChangeRequestInProjectRepository(
   return (
     repository !== null &&
     repository.toLowerCase() === link.repository.toLowerCase() &&
-    isChangeRequestOnProjectHost(kind, identity, link)
+    isChangeRequestOnProjectHost(projectHost, identity, link)
   );
+}
+
+const SCP_REMOTE = /^[a-zA-Z0-9._-]+@([^:/]+):/;
+
+/** Null when the remote names no host, such as a local path. */
+export function parseGitRemoteHost(remoteUrl: string): GitRemoteHost | null {
+  const trimmed = remoteUrl.trim();
+  if (trimmed.length === 0) return null;
+  let host: string;
+  const scpHost = SCP_REMOTE.exec(trimmed)?.[1];
+  if (scpHost) {
+    host = scpHost.toLowerCase();
+  } else {
+    try {
+      const url = new URL(trimmed);
+      host = (url.protocol === "ssh:" ? url.hostname : url.host).toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+  if (host.length === 0) return null;
+  let hostname: string;
+  try {
+    hostname = new URL(`https://${host}`).hostname.toLowerCase();
+  } catch {
+    hostname = host.replace(/:\d+$/u, "").toLowerCase();
+  }
+  return { remoteUrl: trimmed, host, hostname };
+}
+
+/** What a remote on a host no definition claims reads as. */
+export function unknownRemoteProvider(remote: GitRemoteHost): SourceControlProviderInfo {
+  return {
+    kind: SourceControlProviderKind.make("unknown"),
+    name: remote.host,
+    baseUrl: `https://${remote.host}`,
+  };
+}
+
+/** What `definition` alone makes of a remote, for a host's own code that asks only about itself. */
+export function recognizeRemoteWith(
+  definition: Pick<SourceControlClientDefinition, "recognizeRemote">,
+  remoteUrl: string,
+): SourceControlProviderInfo | null {
+  const remote = parseGitRemoteHost(remoteUrl);
+  return remote === null ? null : definition.recognizeRemote(remote);
+}
+
+function defaultRepositorySelector(
+  identity: RepositorySelectorIdentity | null | undefined,
+): string | null {
+  if (!identity) return null;
+  if (identity.displayName) return identity.displayName;
+  return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
 }
 
 export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
@@ -213,10 +326,15 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
   checkoutChangeRequestHost: () => null,
+  recognizeRemote: () => null,
   isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(SourceControlProviderKind.make("unknown"), identity, link),
+    isChangeRequestInProjectRepository(
+      projectChangeRequestHost(identity, "unknown"),
+      identity,
+      link,
+    ),
   canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(SourceControlProviderKind.make("unknown"), identity, link),
+    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, "unknown"), identity, link),
 };
 
 export interface ParsedChangeRequest {
@@ -235,6 +353,23 @@ export interface SourceControlClientRegistry {
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
   readonly isSameChangeRequest: (left: string, right: string) => boolean;
   readonly changeRequestUrlFromReferenceAutolink: (url: string) => string | null;
+  /**
+   * The host a remote is on, from the first definition in recognition order that claims it, or an
+   * unknown host. Null when the remote names no host.
+   */
+  readonly recognizeRemote: (remoteUrl: string) => SourceControlProviderInfo | null;
+  /** `normalizeGitRemoteUrl`, in the spelling the remote's host uses on the web. */
+  readonly repositoryKeyFromRemote: (remoteUrl: string) => string;
+  readonly canonicalRepositoryKey: (key: string) => string;
+  /** The host that has more than one spelling of `key`, if any does. */
+  readonly findByRepositoryKey: (key: string) => SourceControlClientDefinition | undefined;
+  readonly repositorySelector: (
+    identity: RepositorySelectorIdentity | null | undefined,
+  ) => string | null;
+  readonly changeRequestHost: <const Kind extends string | undefined>(
+    identity: ChangeRequestHostIdentity,
+    kind: Kind,
+  ) => string | Kind;
 }
 
 function httpUrl(value: string): URL | null {
@@ -246,15 +381,30 @@ function httpUrl(value: string): URL | null {
   }
 }
 
+function inOrder(
+  definitions: ReadonlyArray<SourceControlClientDefinition>,
+  firstKinds: ReadonlyArray<SourceControlProviderKind> | undefined,
+): ReadonlyArray<SourceControlClientDefinition> {
+  const first = (firstKinds ?? []).flatMap(
+    (kind) => definitions.find((definition) => definition.kind === kind) ?? [],
+  );
+  return [...first, ...definitions.filter((definition) => !first.includes(definition))];
+}
+
 /**
  * `definitions` is display order, and its first entry is what `get` returns for a repository
  * that has not reported its host yet. A change request URL goes to the first definition that
  * reads it, trying `claimChangeRequestUrlsFirst` before the rest, so a host that claims a route
- * only on its own hostnames can precede one that claims the route everywhere.
+ * only on its own hostnames can precede one that claims the route everywhere. A remote likewise
+ * goes to the first that recognises it, in `recognizeRemotesIn` order and then the rest, because
+ * one hostname can carry several hosts' labels.
  */
 export function makeSourceControlClientRegistry(
   definitions: ReadonlyArray<SourceControlClientDefinition>,
-  options?: { readonly claimChangeRequestUrlsFirst?: ReadonlyArray<SourceControlProviderKind> },
+  options?: {
+    readonly claimChangeRequestUrlsFirst?: ReadonlyArray<SourceControlProviderKind>;
+    readonly recognizeRemotesIn?: ReadonlyArray<SourceControlProviderKind>;
+  },
 ): SourceControlClientRegistry {
   const byKind = new Map<string, SourceControlClientDefinition>();
   for (const definition of definitions) {
@@ -263,11 +413,15 @@ export function makeSourceControlClientRegistry(
     }
     byKind.set(definition.kind, definition);
   }
-  const first = new Set(options?.claimChangeRequestUrlsFirst);
-  const claimOrder = [
-    ...definitions.filter((definition) => first.has(definition.kind)),
-    ...definitions.filter((definition) => !first.has(definition.kind)),
-  ];
+  const claimOrder = inOrder(definitions, options?.claimChangeRequestUrlsFirst);
+  const recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
+  const repositoryKeyOwner = (key: string) => {
+    for (const definition of definitions) {
+      const canonical = definition.canonicalRepositoryKey?.(key);
+      if (canonical != null) return { definition, canonical };
+    }
+    return undefined;
+  };
   const parseChangeRequestUrl = (value: string): ParsedChangeRequest | null => {
     const url = httpUrl(value);
     if (url === null) return null;
@@ -311,6 +465,35 @@ export function makeSourceControlClientRegistry(
       }
       return null;
     },
+    recognizeRemote: (remoteUrl) => {
+      const remote = parseGitRemoteHost(remoteUrl);
+      if (remote === null) return null;
+      for (const definition of recognitionOrder) {
+        const provider = definition.recognizeRemote(remote);
+        if (provider !== null) return provider;
+      }
+      return unknownRemoteProvider(remote);
+    },
+    repositoryKeyFromRemote: (remoteUrl) => {
+      const key = normalizeGitRemoteUrl(remoteUrl);
+      if (parseGitRemoteRepository(remoteUrl) === null) return key;
+      for (const definition of definitions) {
+        const spelled = definition.repositoryKeyFromRemote?.(key);
+        if (spelled != null) return spelled;
+      }
+      return key;
+    },
+    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? key,
+    findByRepositoryKey: (key) => repositoryKeyOwner(key)?.definition,
+    repositorySelector: (identity) =>
+      identity?.provider === undefined
+        ? defaultRepositorySelector(identity)
+        : (byKind.get(identity.provider)?.repositorySelector ?? defaultRepositorySelector)(
+            identity,
+          ),
+    changeRequestHost: (identity, kind) =>
+      (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
+      projectChangeRequestHost(identity, kind),
   };
 }
 

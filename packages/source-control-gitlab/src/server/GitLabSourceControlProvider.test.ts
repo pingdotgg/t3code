@@ -1,8 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import {
-  detectSourceControlProviderFromGitRemoteUrl,
-  normalizeGitRemoteUrl,
-} from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { refineUnknownRemoteProvider } from "@t3tools/source-control-core/server/discovery";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
@@ -128,7 +125,10 @@ it.effect.each([
         canonicalKey: normalizeGitRemoteUrl(remoteUrl),
         locator: { source: "git-remote" as const, remoteName: "upstream", remoteUrl },
         rootPath: "/repo",
-        provider: detectSourceControlProviderFromGitRemoteUrl(remoteUrl)?.kind ?? "unknown",
+        // Only a remote no host recognised is left for glab to refine.
+        provider: SourceControlProviderKind.make(
+          expectedProvider === "github" ? "github" : "unknown",
+        ),
       };
       let authCalls = 0;
       const refined = yield* (
@@ -177,7 +177,10 @@ it.effect.each([
           "https://code.example.test/team/repo/-/merge_requests/42",
         );
       }
-      assert.deepStrictEqual(refined, { ...identity, provider: expectedProvider });
+      assert.deepStrictEqual(refined, {
+        ...identity,
+        provider: SourceControlProviderKind.make(expectedProvider),
+      });
       if (expectedProvider === "github") assert.strictEqual(authCalls, 0);
     }),
 );

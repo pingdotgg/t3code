@@ -259,6 +259,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("forgejo"),
     capabilities: CAPABILITIES,
+    readsPublicHostWithoutCheckout: true,
     getViewer,
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
       function* (input) {

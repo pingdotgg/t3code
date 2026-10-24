@@ -85,7 +85,7 @@ describe("pull request checkout commands", () => {
       remoteName: "origin",
       remoteUrl: "git@github.com:acme/web.git",
     },
-    provider,
+    provider: SourceControlProviderKind.make(provider),
   });
 
   it("uses a matching enterprise identity and rejects an explicit host mismatch", () => {

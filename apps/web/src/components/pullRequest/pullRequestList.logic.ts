@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 
 import {
@@ -5,13 +6,11 @@ import {
   PullRequestListEntry,
   PullRequestListProjectError,
   PullRequestListResult,
-  pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "@t3tools/contracts";
 import type {
   ProjectId,
   RepositoryIdentity,
-  SourceControlProviderKind,
   PullRequestAction,
   PullRequestActor,
   PullRequestDiffStat,
@@ -22,8 +21,6 @@ import type {
   PullRequestListState,
   PullRequestState,
 } from "@t3tools/contracts";
-
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import { toSortableTimestamp } from "../../lib/threadSort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
@@ -1078,12 +1075,15 @@ export function findProjectForRepository<
       return false;
     }
     const identity = project.repositoryIdentity;
-    if (!identity || sourceControlRepositorySelector(identity)?.toLowerCase() !== repository) {
+    if (
+      !identity ||
+      sourceControlClients.repositorySelector(identity)?.toLowerCase() !== repository
+    ) {
       return false;
     }
     return (
       host === undefined ||
-      pullRequestHostOf(identity, identity.provider as SourceControlProviderKind) === host
+      sourceControlClients.changeRequestHost(identity, identity.provider) === host
     );
   });
   // Azure repository names can collide across projects on the same host.

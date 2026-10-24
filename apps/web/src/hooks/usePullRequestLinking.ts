@@ -1,4 +1,3 @@
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type {
   EnvironmentId,
   ScopedThreadRef,
@@ -101,7 +100,7 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       reference: { ...parsed, url },
       legacyProjectId: legacyProject?.id ?? null,
       legacyRepository:
-        sourceControlRepositorySelector(legacyProject?.repositoryIdentity) ?? undefined,
+        sourceControlClients.repositorySelector(legacyProject?.repositoryIdentity) ?? undefined,
       linked,
     });
     if (mutation === null)

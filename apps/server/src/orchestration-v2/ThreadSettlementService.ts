@@ -26,6 +26,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -51,18 +52,6 @@ function latestMillis(values: ReadonlyArray<number | null>): number | null {
   return latest;
 }
 
-function canonicalRepositoryKey(key: string): string {
-  return key
-    .replace(
-      /^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u,
-      "dev.azure.com/$1/$2/_git/$3",
-    )
-    .replace(
-      /^([^.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/u,
-      "dev.azure.com/$1/$2/_git/$3",
-    );
-}
-
 function pullRequestMatchesProject(
   pullRequest: GitManager.GitBranchPullRequest,
   project: {
@@ -72,8 +61,8 @@ function pullRequestMatchesProject(
   return (
     pullRequest.repositoryKey !== null &&
     project.repositoryIdentity != null &&
-    canonicalRepositoryKey(pullRequest.repositoryKey) ===
-      canonicalRepositoryKey(project.repositoryIdentity.canonicalKey)
+    sourceControlClients.canonicalRepositoryKey(pullRequest.repositoryKey) ===
+      sourceControlClients.canonicalRepositoryKey(project.repositoryIdentity.canonicalKey)
   );
 }
 

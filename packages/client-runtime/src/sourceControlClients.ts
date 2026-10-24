@@ -22,7 +22,8 @@ import * as GitLab from "@t3tools/source-control-gitlab/client/definition";
  * GitHub comes first because a repository that has not reported its host yet reads as GitHub,
  * which is what clients have always shown there. A change request URL goes to the first host
  * whose shape it has, so GitCafe, which claims `/pull/` and `/pulls/` only on its own hostnames,
- * claims before GitHub and Forgejo, which claim them everywhere. The server's
+ * claims before GitHub and Forgejo, which claim them everywhere. A hostname can carry more than
+ * one host's label (`gitea.github.example`), so remote recognition has its own order. The server's
  * `sourceControl/sourceControlClients.ts` keeps the same order.
  */
 const BUILT_IN_SOURCE_CONTROL_CLIENTS = [
@@ -36,7 +37,17 @@ const BUILT_IN_SOURCE_CONTROL_CLIENTS = [
 
 export const sourceControlClients = makeSourceControlClientRegistry(
   BUILT_IN_SOURCE_CONTROL_CLIENTS,
-  { claimChangeRequestUrlsFirst: [GitCafe.definition.kind] },
+  {
+    claimChangeRequestUrlsFirst: [GitCafe.definition.kind],
+    recognizeRemotesIn: [
+      GitCafe.definition.kind,
+      Forgejo.definition.kind,
+      GitHub.definition.kind,
+      GitLab.definition.kind,
+      AzureDevOps.definition.kind,
+      Bitbucket.definition.kind,
+    ],
+  },
 );
 
 export type { GitHubSettings } from "@t3tools/source-control-github/client/definition";

@@ -1,12 +1,14 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   changeRequestUrlBelow,
+  type ChangeRequestHostIdentity,
   type ChangeRequestProjectIdentity,
   defineSourceControlClient,
   isChangeRequestAuthorityOfProject,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/client/definition";
 
@@ -33,6 +35,19 @@ function resolvedWebUrl(identity: ChangeRequestProjectIdentity): URL | null {
   }
 }
 
+/** A server's identity includes its port, which only an HTTP remote names. */
+function changeRequestHost(identity: ChangeRequestHostIdentity): string {
+  try {
+    const remote = new URL(identity?.locator?.remoteUrl ?? "");
+    if (remote.protocol === "http:" || remote.protocol === "https:") {
+      return remote.host.toLowerCase();
+    }
+  } catch {
+    // SSH remotes do not name the web server.
+  }
+  return projectChangeRequestHost(identity, KIND);
+}
+
 export const definition = defineSourceControlClient({
   kind: KIND,
   label: "Forgejo",
@@ -40,8 +55,8 @@ export const definition = defineSourceControlClient({
   icon: "forgejo",
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "owner/repo",
-  // Forgejo and Gitea are self-hosted, so no hostname names them.
-  publicHost: null,
+  // Codeberg is the public Forgejo; any other server is self-hosted.
+  publicHost: "codeberg.org",
   publishDescription: "Your signed-in server",
   publishHost: (signedInHost) => signedInHost ?? "your server",
   newRepositoryOwner: (account) => (account ? { owner: account } : null),
@@ -71,10 +86,23 @@ export const definition = defineSourceControlClient({
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   checkoutChangeRequestHost: () => null,
+  recognizeRemote: ({ remoteUrl, host, hostname }) =>
+    hostname === "codeberg.org" ||
+    hostname.split(".").includes("forgejo") ||
+    hostname.split(".").includes("gitea")
+      ? {
+          kind: KIND,
+          name: "Forgejo",
+          baseUrl: /^https?:/iu.test(remoteUrl) ? new URL(remoteUrl).origin : `https://${host}`,
+        }
+      : null,
+  changeRequestHost,
+  sshRemoteHidesWebHost: true,
   isChangeRequestInRepository: (identity, link) => {
     if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
     const web = resolvedWebUrl(identity);
-    if (!web) return isChangeRequestInProjectRepository(KIND, identity, link);
+    if (!web)
+      return isChangeRequestInProjectRepository(changeRequestHost(identity), identity, link);
     return (
       web.host.toLowerCase() === (link.authority ?? link.host).toLowerCase() &&
       web.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() === link.repository.toLowerCase()
@@ -83,7 +111,7 @@ export const definition = defineSourceControlClient({
   // A server mounted below a path serves only repositories under that mount.
   canReadChangeRequestOnHost: (identity, link) => {
     const web = resolvedWebUrl(identity);
-    if (!web) return isChangeRequestOnProjectHost(KIND, identity, link);
+    if (!web) return isChangeRequestOnProjectHost(changeRequestHost(identity), identity, link);
     const mount = web.pathname
       .replace(/^\/+|\/+$/g, "")
       .split("/")
