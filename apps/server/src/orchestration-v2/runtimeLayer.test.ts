@@ -1743,6 +1743,88 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
   );
 });
 
+// The parent turn ends while its async child still runs, a second user turn
+// takes the thread, and the child's completion queues behind it.
+const queueDelegatedCompletion = (threadId: ThreadId, projectId: ProjectId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const completionMessageId = MessageId.make(`${threadId}:completion`);
+    const taskIds = [NodeId.make(`${threadId}:task`)];
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`${threadId}:create`),
+      threadId,
+      projectId,
+      createdBy: "user",
+      creationSource: "web",
+      title: "Delegated completion selection",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: process.cwd(),
+    });
+    const dispatchUserTurn = (name: string) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:${name}`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:${name}`),
+        text: name,
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    yield* dispatchUserTurn("parent");
+    const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    const now = yield* DateTime.now;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:parent-completed`),
+          type: "run.updated",
+          threadId,
+          runId: parent.id,
+          occurredAt: now,
+          payload: {
+            ...parent,
+            status: "completed",
+            completedAt: now,
+            delegatedCompletion: {
+              disposition: "open",
+              nextGeneration: 2,
+              delivery: { messageId: completionMessageId, generation: 1, taskIds },
+            },
+          },
+        },
+      ],
+    });
+    yield* dispatchUserTurn("second");
+    const second = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+      (run) => run.id !== parent.id,
+    )!;
+    // ProviderContinuationService queues the completion without a selection.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`${threadId}:completion`),
+      threadId,
+      messageId: completionMessageId,
+      text: "Delegated task finished",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "server",
+      delegatedCompletion: { parentRunId: parent.id, generation: 1, taskIds },
+    });
+    const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+      (run) => run.status === "queued",
+    )!;
+    return { parent, second, queued, now };
+  });
+
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
@@ -4655,6 +4737,153 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect.each([
+    ["model", { ...modelSelection, model: "gpt-5.5" }],
+    ["instance", { instanceId: alternateInstanceId, model: "gpt-5.5" }],
+  ] as const)(
+    "starts a queued delegated completion on the %s chosen while it waited",
+    ([kind, currentSelection]) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-queue-delegated-completion-${kind}`);
+        const { parent, second, queued, now } = yield* queueDelegatedCompletion(
+          threadId,
+          ProjectId.make(`${threadId}:project`),
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:select-current`),
+          threadId,
+          modelSelection: currentSelection,
+        });
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:second-completed`),
+              type: "run.updated",
+              threadId,
+              runId: second.id,
+              occurredAt: now,
+              payload: { ...second, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const started = after.runs.find((run) => run.id === queued.id)!;
+        assert.equal(started.status, "starting");
+        assert.deepEqual(after.thread.modelSelection, currentSelection);
+        assert.deepEqual(started.modelSelection, currentSelection);
+        assert.equal(started.providerInstanceId, currentSelection.instanceId);
+        // Same instance continues the parent's conversation; another instance gets its own.
+        const providerThread = after.providerThreads.find(
+          (thread) => thread.id === started.providerThreadId,
+        );
+        assert.equal(providerThread?.providerInstanceId, currentSelection.instanceId);
+        assert.equal(started.providerThreadId === parent.providerThreadId, kind === "model");
+        const attempt = after.attempts.find(
+          (candidate) => candidate.id === started.activeAttemptId,
+        );
+        assert.equal(attempt?.providerInstanceId, currentSelection.instanceId);
+        assert.equal(attempt?.providerThreadId, started.providerThreadId);
+        assert.equal(after.thread.activeProviderThreadId, started.providerThreadId);
+        const root = after.nodes.find((node) => node.id === started.rootNodeId)!;
+        assert.equal(root.providerThreadId, started.providerThreadId);
+        assert.equal(
+          after.checkpointScopes.find((scope) => scope.id === root.checkpointScopeId)
+            ?.providerThreadId,
+          started.providerThreadId,
+        );
+      }),
+  );
+
+  it.effect("holds a queued delegated completion only while its current provider is limited", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queue-delegated-completion-limit");
+      const { second, queued, now } = yield* queueDelegatedCompletion(
+        threadId,
+        ProjectId.make(`${threadId}:project`),
+      );
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: second.id,
+            nodeId: second.rootNodeId!,
+            providerInstanceId: second.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: second.id,
+              nodeId: second.rootNodeId!,
+              providerThreadId: second.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Usage limit reached",
+                code: "usage_limit",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:second-failed`),
+            type: "run.updated",
+            threadId,
+            runId: second.id,
+            providerInstanceId: second.providerInstanceId,
+            occurredAt: now,
+            payload: { ...second, status: "failed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const held = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(held.runs.find((run) => run.id === queued.id)?.status, "queued");
+      const blocked = yield* orchestrator
+        .dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:blocked`),
+          threadId,
+        })
+        .pipe(Effect.flip);
+      assert.equal(blocked._tag, "OrchestratorDispatchError");
+
+      const availableSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`${threadId}:select-available`),
+        threadId,
+        modelSelection: availableSelection,
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:resume`),
+        threadId,
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const started = after.runs.find((run) => run.id === queued.id);
+      assert.equal(started?.status, "starting");
+      assert.deepEqual(started?.modelSelection, availableSelection);
+    }),
+  );
+
   it.effect("keeps the queue after a user interrupts the active run", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -6652,6 +6881,42 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
             "a refused resume re-holds the queue instead of leaving it looking resumable",
           );
         }),
+    );
+
+    it.effect("holds a queued delegated completion when its current instance is turned off", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("queue-disabled-instance-delegated-completion");
+        const { second, queued, now } = yield* queueDelegatedCompletion(
+          threadId,
+          queueResumeDisabledInstanceProjectId,
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:select-disabled`),
+          threadId,
+          modelSelection: { instanceId: alternateInstanceId, model: "gpt-5.5" },
+        });
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:second-completed`),
+              type: "run.updated",
+              threadId,
+              runId: second.id,
+              occurredAt: now,
+              payload: { ...second, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const held = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === queued.id,
+        );
+        assert.equal(held?.status, "queued");
+        assert.isTrue(held?.queueHeld);
+      }),
     );
   },
 );
