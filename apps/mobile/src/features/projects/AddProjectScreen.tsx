@@ -40,6 +40,7 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -687,10 +688,55 @@ async function draftWithPrompt(
   return draftId;
 }
 
+// Adding a folder the environment already tracks should behave like picking
+// that project from the list. Stored workspace roots are absolute, so a `~`
+// path is first expanded by the environment: browsing a directory reports it
+// back with home resolved the same way project creation resolves it.
+function useOpenExistingProject(environment: EnvironmentOption | null) {
+  const navigation = useNavigation();
+  const projects = useProjects();
+  const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+
+  return async (path: string, prompt?: string | null): Promise<boolean> => {
+    if (!environment) return false;
+    let workspaceRoot = path;
+    if (path.startsWith("~")) {
+      const browseResult = await loadBrowsePath({
+        environmentId: environment.environmentId,
+        input: { partialPath: ensureBrowseDirectoryPath(path) },
+      });
+      // A folder that cannot be browsed is not an existing project's root.
+      if (!AsyncResult.isSuccess(browseResult)) return false;
+      workspaceRoot = browseResult.value.parentPath;
+    }
+    const existing = findExistingAddProject({
+      projects,
+      environmentId: environment.environmentId,
+      path: workspaceRoot,
+    });
+    if (!existing) return false;
+    openNewTaskDraft(navigation, {
+      environmentId: existing.environmentId,
+      projectId: existing.id,
+      title: existing.title,
+      ...(prompt
+        ? await draftWithPrompt(existing.environmentId, existing.id, prompt).then(
+            (draftId) => ({ draftId }),
+            () => ({}),
+          )
+        : {}),
+    });
+    return true;
+  };
+}
+
 function useCreateProject(environment: EnvironmentOption | null) {
   const navigation = useNavigation();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
-  const projects = useProjects();
+  const openExistingProject = useOpenExistingProject(environment);
 
   return async (workspaceRoot: string) => {
     if (
@@ -705,20 +751,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       return;
     }
 
-    const existing = findExistingAddProject({
-      projects,
-      environmentId: environment.environmentId,
-      path: workspaceRoot,
-    });
-    if (existing) {
-      Dialog.alert("Project already exists", existing.title);
-      openNewTaskDraft(navigation, {
-        environmentId: existing.environmentId,
-        projectId: existing.id,
-        title: existing.title,
-      });
-      return;
-    }
+    if (await openExistingProject(workspaceRoot)) return;
 
     const projectId = ProjectId.make(uuidv4());
     const command = buildProjectCreateCommand({
@@ -1283,6 +1316,7 @@ export function AddProjectDestinationScreen(props: {
   );
   const canCloneProject = canWriteSourceControl && canCreateProject;
   const createProject = useCreateProject(environment);
+  const openExistingProject = useOpenExistingProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
@@ -1317,6 +1351,11 @@ export function AddProjectDestinationScreen(props: {
     }
 
     setIsSubmitting(true);
+    // Cloning into a folder that is already a project can only fail.
+    if (await openExistingProject(resolved.path, prompt)) {
+      setIsSubmitting(false);
+      return;
+    }
     if (environment.supportsCloneTracking) {
       const projectId = ProjectId.make(uuidv4());
       const title = inferProjectTitleFromPath(resolved.path);
