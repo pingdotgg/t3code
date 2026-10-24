@@ -22,8 +22,6 @@ import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorag
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 
-const SIDEBAR_COOKIE_NAME = "sidebar_state";
-const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
@@ -94,10 +92,21 @@ function useSidebarVisibility() {
   return isMobile ? openMobile : open;
 }
 
+function readStoredSidebarOpen(storageKey: string | undefined): boolean | null {
+  if (!storageKey) return null;
+  try {
+    return getLocalStorageItem(storageKey, Schema.Boolean);
+  } catch (error) {
+    console.error("Could not restore persisted sidebar state.", error);
+    return null;
+  }
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
   onOpenChange: setOpenProp,
+  storageKey,
   className,
   style,
   children,
@@ -106,6 +115,7 @@ function SidebarProvider({
   defaultOpen?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  storageKey?: string;
 }) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
@@ -114,9 +124,9 @@ function SidebarProvider({
     setMobileSheetMounted(element !== null);
   };
 
-  const [_open, _setOpen] = React.useState(defaultOpen);
+  const [_open, _setOpen] = React.useState(() => readStoredSidebarOpen(storageKey) ?? defaultOpen);
   const open = openProp ?? _open;
-  const setOpen = async (value: boolean | ((value: boolean) => boolean)) => {
+  const setOpen = (value: boolean | ((value: boolean) => boolean)) => {
     const openState = typeof value === "function" ? value(open) : value;
     if (setOpenProp) {
       setOpenProp(openState);
@@ -124,12 +134,13 @@ function SidebarProvider({
       _setOpen(openState);
     }
 
-    await cookieStore.set({
-      expires: Date.now() + SIDEBAR_COOKIE_MAX_AGE * 1000,
-      name: SIDEBAR_COOKIE_NAME,
-      path: "/",
-      value: String(openState),
-    });
+    if (storageKey) {
+      try {
+        setLocalStorageItem(storageKey, openState, Schema.Boolean);
+      } catch (error) {
+        console.error("Could not persist sidebar state.", error);
+      }
+    }
   };
 
   const toggleSidebar = () => {
