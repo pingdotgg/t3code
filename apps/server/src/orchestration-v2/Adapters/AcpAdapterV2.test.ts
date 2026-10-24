@@ -13,7 +13,7 @@ import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
   EnvironmentId,
@@ -1213,6 +1213,110 @@ describe("AcpAdapterV2", () => {
         snapshot.messages.map((message) => message.text),
         ["before plan", "after plan"],
       );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("replays history in order, with stable earlier snapshots and linear work", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test-v2-replay-order");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-v2-replay-order");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-v2-replay-order"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.isDefined(sessionUpdateHandler);
+      const replay = (
+        sessionUpdate: "user_message_chunk" | "agent_message_chunk",
+        messageId: string,
+        text: string,
+      ) =>
+        sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: { sessionUpdate, messageId, content: { type: "text", text } },
+        });
+
+      yield* replay("user_message_chunk", "u1", "hel");
+      yield* replay("user_message_chunk", "u1", "lo");
+      yield* replay("agent_message_chunk", "a1", "hi");
+      yield* replay("user_message_chunk", "u2", "next");
+      yield* replay("agent_message_chunk", "a1", " there");
+      const first = yield* runtime.readThreadSnapshot({ providerThread });
+      yield* replay("agent_message_chunk", "a2", "done");
+      yield* replay("user_message_chunk", "u2", " one");
+      const second = yield* runtime.readThreadSnapshot({ providerThread });
+
+      const texts = (snapshot: typeof first) =>
+        snapshot.messages.map((message) => `${message.role}:${message.text}`);
+      assert.deepEqual(texts(first), ["user:hello", "assistant:hi there", "user:next"]);
+      assert.deepEqual(texts(second), [
+        "user:hello",
+        "assistant:hi there",
+        "user:next one",
+        "assistant:done",
+      ]);
+
+      // Copying the history Map for each chunk calls Map.prototype.set once per
+      // stored message, so a long replay would make about n^2 / 2 writes instead
+      // of one per chunk.
+      const longHistory = 500;
+      const mapWrites = yield* Effect.acquireUseRelease(
+        Effect.sync(() => vi.spyOn(Map.prototype, "set")),
+        (mapSet) =>
+          Effect.forEach(
+            Array.from({ length: longHistory }, (_, index) => index),
+            (index) =>
+              replay(
+                index % 2 === 0 ? "user_message_chunk" : "agent_message_chunk",
+                `h${index}`,
+                "x",
+              ),
+            { discard: true },
+          ).pipe(Effect.map(() => mapSet.mock.calls.length)),
+        (mapSet) => Effect.sync(() => mapSet.mockRestore()),
+      );
+      const long = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.equal(long.messages.length, 4 + longHistory);
+      assert.isBelow(mapWrites, longHistory * 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
