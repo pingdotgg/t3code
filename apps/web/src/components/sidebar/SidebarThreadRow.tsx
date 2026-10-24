@@ -1,7 +1,8 @@
+import { useClientSettings } from "../../hooks/useSettings";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
-import { requestCustomSnooze } from "../CustomSnoozeDialog";
+import { requestCustomSnooze, updateSnoozeFavorites } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useSortable } from "@dnd-kit/sortable";
@@ -9,6 +10,8 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
   hasQueuedTurnStart,
+  removeSnoozeFavorite,
+  snoozeFavoriteLabel,
   QUEUED_TURN_START_GRACE_MS,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -369,7 +372,8 @@ function SnoozeMenuButton(props: {
   timestampFormat: TimestampFormat;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat } = props;
-  const presets = open ? resolveSnoozePresets(new Date(), timestampFormat) : [];
+  const snoozeFavorites = useClientSettings((s) => s.snoozeFavorites);
+  const presets = open ? resolveSnoozePresets(new Date(), timestampFormat, snoozeFavorites) : [];
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
       <Tooltip>
@@ -393,18 +397,54 @@ function SnoozeMenuButton(props: {
         <TooltipPopup>Snooze thread</TooltipPopup>
       </Tooltip>
       <MenuPopup side="bottom" align="end">
-        {presets.map((preset) => (
-          <MenuItem
-            key={preset.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSnooze(preset);
-            }}
-          >
-            {preset.label}
-            <MenuShortcut>{preset.whenLabel}</MenuShortcut>
-          </MenuItem>
-        ))}
+        {presets.map((preset) => {
+          const favorite = preset.favorite;
+          const item = (
+            <MenuItem
+              key={preset.id}
+              className={favorite ? "flex-1" : undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSnooze(preset);
+              }}
+            >
+              {preset.label}
+              <MenuShortcut>{preset.whenLabel}</MenuShortcut>
+            </MenuItem>
+          );
+          if (!favorite) return item;
+          // The remove control is its own menu item, not a button nested in
+          // the snooze item: nested, a press-drag-release over it would also
+          // fire the snooze item, and arrow keys could not reach it.
+          return (
+            // The remove button takes no space until the row is hovered, a
+            // row item is keyboard-highlighted, or on touch (no hover). Its
+            // size is set here because MenuItem owns its own effects.
+            <div
+              key={preset.id}
+              className="flex items-center [&>[data-favorite-remove]]:w-0 [&>[data-favorite-remove]]:overflow-hidden [&>[data-favorite-remove]]:border-0 [&>[data-favorite-remove]]:px-0 [&>[data-favorite-remove]]:opacity-0 hover:[&>[data-favorite-remove]]:w-7 hover:[&>[data-favorite-remove]]:opacity-100 has-data-highlighted:[&>[data-favorite-remove]]:w-7 has-data-highlighted:[&>[data-favorite-remove]]:opacity-100 pointer-coarse:[&>[data-favorite-remove]]:w-7 pointer-coarse:[&>[data-favorite-remove]]:opacity-100"
+            >
+              {item}
+              <MenuItem
+                data-favorite-remove=""
+                closeOnClick={false}
+                aria-label={`Remove ${snoozeFavoriteLabel(favorite)} from favorites`}
+                label={`Remove ${snoozeFavoriteLabel(favorite)} from favorites`}
+                variant="ghost"
+                className="h-7 min-h-7 justify-center"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  updateSnoozeFavorites(
+                    (favorites) => removeSnoozeFavorite(favorites, favorite),
+                    "Could not remove the favorite",
+                  );
+                }}
+              >
+                <XIcon className="size-3" />
+              </MenuItem>
+            </div>
+          );
+        })}
         <MenuSeparator />
         <MenuItem
           onClick={async (event) => {
