@@ -32,7 +32,13 @@ export function SessionPermissions({
     </div>
   ) : (
     <p className="py-3 text-xs text-muted-foreground">
-      Permissions not checked. Connect to this environment to view this session’s permissions.
+      {!connected
+        ? "Permissions not checked. Connect to this environment to view this session’s permissions."
+        : session.hasError
+          ? "Could not check this session’s permissions."
+          : session.isPending || !session.data
+            ? "Checking this session’s permissions…"
+            : "This connection is not authenticated."}
     </p>
   );
 }
