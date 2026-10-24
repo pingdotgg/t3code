@@ -4,6 +4,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -14,6 +15,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   type RunId,
+  type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -67,11 +69,13 @@ interface RestartAdapterState {
   readonly opened: ReadonlyArray<{
     readonly model: string | null;
     readonly cwd: string | null;
+    readonly runtimeMode: RuntimeMode;
   }>;
   readonly started: ReadonlyArray<{
     readonly model: string;
     readonly cwd: string | null;
     readonly attemptId: string;
+    readonly runtimeMode: RuntimeMode;
   }>;
   readonly closedSessionCount: number;
   readonly failedReplacementOpen: boolean;
@@ -108,6 +112,7 @@ function makeRestartAdapter(
                 {
                   model: sessionInput.modelSelection.model,
                   cwd: sessionInput.runtimePolicy.cwd,
+                  runtimeMode: sessionInput.runtimePolicy.runtimeMode,
                 },
               ],
             },
@@ -218,6 +223,7 @@ function makeRestartAdapter(
                     model: input.modelSelection.model,
                     cwd: input.runtimePolicy.cwd,
                     attemptId: input.attemptId,
+                    runtimeMode: input.runtimePolicy.runtimeMode,
                   },
                 ],
               }));
@@ -433,6 +439,172 @@ it.live("retries a failed selection restart session open before completing", () 
         projection.providerThreads[0]?.providerSessionId,
         projection.providerSessions.find((session) => session.model === replacementSelection.model)
           ?.id,
+      );
+    }),
+  ),
+);
+
+/**
+ * Starts a Supervised turn on a provider that fixes its mode when the session
+ * opens (like Claude), switches the thread to Auto mid-turn, stops that turn,
+ * and sends another message.
+ */
+const switchModeMidTurn = (name: string, options: { readonly backgroundWork: boolean }) =>
+  Effect.gen(function* () {
+    const cwd = yield* checkpointWorkspace(name);
+    const threadId = ThreadId.make(`thread:${name}`);
+    const state = yield* Ref.make<RestartAdapterState>({
+      activeTurn: null,
+      opened: [],
+      started: [],
+      closedSessionCount: 0,
+      failedReplacementOpen: true,
+    });
+    const base = makeRestartAdapter(state, {
+      ...exclusiveCapabilities,
+      sessions: {
+        ...exclusiveCapabilities.sessions,
+        supportsRuntimeModeSwitchInSession: false,
+      },
+    });
+    const layerRegistry = ProviderAdapterRegistry.layerSingle({
+      ...base,
+      openSession: (input) =>
+        base.openSession(input).pipe(
+          Effect.map((session) => ({
+            ...session,
+            hasPendingBackgroundWork: Effect.succeed(options.backgroundWork),
+          })),
+        ),
+    });
+
+    const result = yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const send = (step: string) =>
+        Effect.gen(function* () {
+          const settled = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                (event.type === "provider-turn.updated" && event.payload.status === "running") ||
+                (event.type === "run.updated" && event.payload.status === "failed"),
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${name}:${step}`),
+            threadId,
+            messageId: MessageId.make(`${name}:${step}`),
+            text: step,
+            attachments: [],
+            modelSelection: initialSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Fiber.join(settled);
+          yield* worker.drain();
+        });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${name}:create`),
+        threadId,
+        projectId: ProjectId.make(`project:${name}`),
+        title: name,
+        modelSelection: initialSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+      });
+      yield* send("first");
+
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make(`${name}:auto`),
+        threadId,
+        runtimeMode: "auto",
+      });
+      yield* worker.drain();
+      const midTurn = yield* orchestrator.getThreadProjection(threadId);
+      const closedMidTurn = (yield* Ref.get(state)).closedSessionCount;
+
+      const interrupted = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) => event.type === "run.updated" && event.payload.status === "interrupted",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${name}:stop`),
+        threadId,
+        runId: midTurn.runs[0]!.id,
+      });
+      yield* worker.drain();
+      yield* Fiber.join(interrupted);
+      yield* send("second");
+      return {
+        midTurn,
+        closedMidTurn,
+        final: yield* orchestrator.getThreadProjection(threadId),
+        captured: yield* Ref.get(state),
+      };
+    }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+    return result;
+  });
+
+it.live("a runtime mode change waits for the next turn instead of ending the current one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { midTurn, closedMidTurn, captured } = yield* switchModeMidTurn(
+        "runtime-mode-mid-turn",
+        { backgroundWork: false },
+      );
+      assert.equal(midTurn.thread.runtimeMode, "auto");
+      assert.equal(closedMidTurn, 0);
+      assert.deepEqual(
+        midTurn.runs.map((run) => run.status),
+        ["running"],
+      );
+      assert.equal(captured.closedSessionCount, 1);
+      assert.deepEqual(
+        captured.opened.map((open) => open.runtimeMode),
+        ["approval-required", "auto"],
+      );
+      assert.deepEqual(
+        captured.started.map((turn) => turn.runtimeMode),
+        ["approval-required", "auto"],
+      );
+    }),
+  ),
+);
+
+it.live("a runtime mode change does not end background work to restart the session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { final, captured } = yield* switchModeMidTurn("runtime-mode-background-work", {
+        backgroundWork: true,
+      });
+      assert.equal(captured.closedSessionCount, 0);
+      assert.lengthOf(captured.opened, 1);
+      assert.deepEqual(
+        final.runs.map((run) => run.status),
+        ["interrupted", "failed"],
+      );
+      assert.isTrue(
+        final.turnItems.some(
+          (item) =>
+            item.type === "error" &&
+            item.failure.message.startsWith("The agent is still running background agents"),
+        ),
       );
     }),
   ),

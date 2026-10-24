@@ -2936,7 +2936,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     const needsProviderState =
-      command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
       command.type === "provider.switch" ||
       command.type === "thread.archive" ||
@@ -3699,13 +3698,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== undefined &&
             command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-          : command.type === "thread.runtime-mode.set"
-            ? (providerContext?.providerSessions ?? [])
-                .filter(
-                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-                )
-                .map((session) => session.id)
-            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
+          : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
       const liveSessions = (providerContext?.providerSessions ?? []).filter(
@@ -3737,9 +3730,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       ? "Thread settled."
                       : command.type === "thread.metadata.update"
                         ? "Workspace changed."
-                        : command.type === "thread.runtime-mode.set"
-                          ? "Runtime mode changed."
-                          : "Provider or model selection changed.",
+                        : "Provider or model selection changed.",
               },
             });
             const pendingEffect = {
@@ -3756,9 +3747,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       ? "Thread settled."
                       : command.type === "thread.metadata.update"
                         ? "Workspace changed."
-                        : command.type === "thread.runtime-mode.set"
-                          ? "Runtime mode changed."
-                          : "Provider or model selection changed.",
+                        : "Provider or model selection changed.",
                 // Terminal detaches revoke the thread's MCP credentials; other
                 // detach reasons keep them so a re-attaching provider process
                 // stays authorized.
