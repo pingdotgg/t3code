@@ -139,7 +139,7 @@ import {
   markdownFileEditorTarget,
   resolveMarkdownFileHostPath,
 } from "../markdownFileHostPath";
-import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
+import { isLinearAppLinkHref, isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
@@ -645,6 +645,7 @@ function useChatMarkdownState({
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
+    if (isLinearAppLinkHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };

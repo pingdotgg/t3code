@@ -28,6 +28,21 @@ it("preserves in-app thread links through the shared Markdown sanitizer", () => 
   expect(JSON.stringify(tree)).not.toContain("javascript:");
 });
 
+it("keeps Linear desktop app links through the shared Markdown sanitizer", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(
+    processor.parse("[ENG-123](linear://linear.app/acme/issue/ENG-123)"),
+  );
+  expect(tree.children[0]).toMatchObject({
+    tagName: "p",
+    children: [{ tagName: "a", properties: { href: "linear://linear.app/acme/issue/ENG-123" } }],
+  });
+});
+
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
   const processor = unified()
     .use(remarkParse)
