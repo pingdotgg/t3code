@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Tracer from "effect/Tracer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -366,6 +367,44 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       queued,
       ThreadId.make("thread:recovery:settled-599"),
     ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("looks up a thread's unfinished turn items without reading its finished history", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = yield* createThread("unfinished-item-lookups");
+    yield* createRun(threadId, "running");
+    const statements: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (typeof query === "string") statements.push(query);
+        };
+        return span;
+      },
+    });
+    yield* projections.getRuntimeRecoveryProjection(threadId).pipe(Effect.withTracer(tracer));
+
+    const itemLookups: Array<string> = [];
+    for (const statement of statements) {
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statement}`,
+      );
+      itemLookups.push(
+        ...plan.map((row) => row.detail).filter((detail) => /^(?:SEARCH|SCAN) item\b/.test(detail)),
+      );
+    }
+    // Partial indexes hold only unfinished items, so a long thread's history stays unread.
+    assert.equal(itemLookups.length, 7);
+    for (const lookup of itemLookups) {
+      assert.match(lookup, /turn_items_(?:active|recovery)_idx\b/);
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

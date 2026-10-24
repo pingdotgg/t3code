@@ -4373,7 +4373,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE item.thread_id = ${threadId}
                       AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
                       AND item.status IN ('pending', 'running', 'waiting')
-                      AND item.run_id IS NOT NULL
                   )
                 )
               ORDER BY run.ordinal ASC
