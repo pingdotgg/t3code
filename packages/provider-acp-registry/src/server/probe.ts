@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -104,14 +105,52 @@ function shellDisplayToken(token: string): string {
   return SHELL_SAFE_TOKEN.test(token) ? token : `'${token.replaceAll("'", `'\\''`)}'`;
 }
 
-function terminalAuthCommand(
-  method: Extract<EffectAcpSchema.AuthMethod, { readonly type: "terminal" }>,
+export interface AcpRegistryTerminalAuthLaunch {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env: Readonly<Record<string, string>>;
+}
+
+// Agents that predate terminal auth methods (Kimi CLI) advertise an untyped
+// method with Zed's `terminal-auth` meta. Unlike typed methods, its command
+// line is complete: it is not appended to the agent's own ACP command.
+const LegacyTerminalAuth = Schema.Struct({
+  command: Schema.String,
+  args: Schema.optionalKey(Schema.Array(Schema.String)),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+});
+const decodeLegacyTerminalAuth = Schema.decodeUnknownOption(LegacyTerminalAuth);
+
+function legacyTerminalAuth(
+  method: EffectAcpSchema.AuthMethod,
+): AcpRegistryTerminalAuthLaunch | undefined {
+  if (method.type !== undefined) return undefined;
+  const legacy = Option.getOrUndefined(decodeLegacyTerminalAuth(method._meta?.["terminal-auth"]));
+  const command =
+    legacy === undefined ? undefined : boundedOpaqueValue(legacy.command, MAX_COMMAND_LINE_LENGTH);
+  return legacy === undefined || command === undefined
+    ? undefined
+    : { command, args: legacy.args ?? [], env: legacy.env ?? {} };
+}
+
+export function acpRegistryTerminalAuthLaunch(
+  method: EffectAcpSchema.AuthMethod,
   spawn: AcpRegistryAuthSpawnContext,
-): string | undefined {
-  const environmentPrefix = Object.entries(method.env ?? {}).map(
+): AcpRegistryTerminalAuthLaunch | undefined {
+  if (method.type === "terminal")
+    return {
+      command: spawn.command,
+      args: [...spawn.args, ...(method.args ?? [])],
+      env: method.env ?? {},
+    };
+  return legacyTerminalAuth(method);
+}
+
+function terminalAuthCommand(launch: AcpRegistryTerminalAuthLaunch): string | undefined {
+  const environmentPrefix = Object.entries(launch.env).map(
     ([name, value]) => `${name}=${shellDisplayToken(value)}`,
   );
-  const command = [spawn.command, ...spawn.args, ...(method.args ?? [])].map(shellDisplayToken);
+  const command = [launch.command, ...launch.args].map(shellDisplayToken);
   const displayCommand = [...environmentPrefix, ...command].join(" ");
   return displayCommand.length <= MAX_COMMAND_LINE_LENGTH ? displayCommand : undefined;
 }
@@ -124,7 +163,7 @@ export function normalizeAcpRegistryAuthMethods(
   for (const method of methods ?? []) {
     const id = boundedOpaqueValue(method.id, MAX_ID_LENGTH);
     if (id === undefined) continue;
-    const type = method.type ?? "agent";
+    const type = method.type ?? (legacyTerminalAuth(method) ? "terminal" : "agent");
     const envVarNames =
       type === "env_var" && "vars" in method
         ? method.vars
@@ -134,10 +173,8 @@ export function normalizeAcpRegistryAuthMethods(
             })
             .slice(0, 16)
         : [];
-    const command =
-      spawn !== undefined && "type" in method && method.type === "terminal"
-        ? terminalAuthCommand(method, spawn)
-        : undefined;
+    const launch = spawn === undefined ? undefined : acpRegistryTerminalAuthLaunch(method, spawn);
+    const command = launch === undefined ? undefined : terminalAuthCommand(launch);
     const link =
       type === "env_var" && "link" in method && method.link
         ? normalizeAcpRegistryWebUrl(method.link)

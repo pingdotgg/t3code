@@ -25,6 +25,24 @@ const terminalMethod = {
   args: ["login"],
   env: { LOGIN: "yes", OVERRIDE: "method" },
 };
+// Kimi CLI 1.52.0 advertises its only method this way: untyped, with the
+// terminal command in the legacy `terminal-auth` meta. It never answers
+// `authenticate` for it.
+const legacyTerminalMethod: AcpSchema.AuthMethod = {
+  id: "login",
+  name: "Login with Kimi account",
+  description:
+    "Run `kimi login` command in the terminal, then follow the instructions to finish login.",
+  _meta: {
+    "terminal-auth": {
+      command: "/opt/kimi/kimi",
+      args: ["login"],
+      label: "Kimi Code Login",
+      env: {},
+      type: "terminal",
+    },
+  },
+};
 const resolved: AcpRegistrySupport.ResolvedAcpRegistryAgent = {
   agent: {
     id: "test-agent",
@@ -344,4 +362,21 @@ it.effect("does not report authentication when post-login verification fails", (
     assert.deepEqual(h.changed, []);
     assert.isTrue(h.killed());
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "runs legacy terminal-auth meta methods in a terminal instead of calling authenticate",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness(legacyTerminalMethod);
+      const discovered = yield* h.state((value) => (value.methods?.length ?? 0) > 0);
+      assert.strictEqual(discovered.methods?.[0]?.type, "terminal");
+      yield* h.controller.start("owner", Effect.void, "login");
+      const started = yield* h.phase("waiting");
+      assert.deepEqual(h.authenticated, []);
+      assert.strictEqual(started.interaction?.type, "terminal");
+      // The meta carries the whole login command, never `<agent> --acp login`.
+      assert.deepEqual(h.terminalSpawn()?.shell, "/opt/kimi/kimi");
+      assert.deepEqual(h.terminalSpawn()?.args, ["login"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
