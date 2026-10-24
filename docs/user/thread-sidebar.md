@@ -21,7 +21,10 @@ the project menu in that heading or from **New thread in...** in the command
 palette, or press `mod+alt+n`. On mobile, pick **No project** from the project
 list. It starts on your current machine; before sending, pick another machine
 from the machine menu to move it there. To move a draft into a project, pick the
-project in the heading.
+project in the heading. You can also just name the project in your first message,
+like "in whatscord, fix the login bug": the agent moves the thread into that
+project before it starts working, and it continues there as a normal project
+thread.
 
 Each thread without a project works in its own folder under `~/.t3/scratch` (the
 `scratch` folder of your T3 data directory), named after its date, the first words

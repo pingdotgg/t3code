@@ -175,10 +175,24 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
-      const firstScope =
-        input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
-          : undefined;
+      // A thread that started without a project ran its first turns in a
+      // folder without Git, so its diffable history starts at the first scope
+      // that has one. A worktree handoff keeps an earlier scope: it shares refs.
+      let firstScope: (typeof projection.checkpointScopes)[number] | undefined;
+      if (input.fromTurnCount === 0) {
+        for (const scope of projection.checkpointScopes) {
+          if (scope.kind !== "root_run") continue;
+          if (
+            scope.cwd === toScope.cwd ||
+            (yield* checkpointStore
+              .isGitRepository(scope.cwd)
+              .pipe(Effect.orElseSucceed(() => false)))
+          ) {
+            firstScope = scope;
+            break;
+          }
+        }
+      }
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined

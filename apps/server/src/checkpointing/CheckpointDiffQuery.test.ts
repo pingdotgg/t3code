@@ -190,6 +190,60 @@ it.effect.each([false, true])(
   },
 );
 
+it.effect("starts the full-thread diff in the project after a thread moved out of Scratch", () => {
+  const projection = makeProjection();
+  const scratchFolder = "/scratch/2026-10-23-fix-the-login-bug-a1b2c3d4";
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("diff --git a/file b/file"),
+  );
+  const isGitRepository = vi.fn((cwd: string) => Effect.succeed(cwd !== scratchFolder));
+  const layer = CheckpointDiffQuery.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getCheckpointContext: () =>
+            Effect.succeed({
+              ...projection,
+              checkpointScopes: projection.checkpointScopes.map((scope) =>
+                scope.id === firstScopeId ? { ...scope, cwd: scratchFolder } : scope,
+              ),
+            }),
+        }),
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          diffCheckpoints,
+          isGitRepository,
+          listAuthoredPaths: () => Effect.succeed(null),
+        }),
+      ),
+    ),
+    Layer.provideMerge(NodeCrypto.layer),
+  );
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+
+    assert.deepEqual(isGitRepository.mock.calls, [[scratchFolder]]);
+    assert.deepEqual(
+      diffCheckpoints.mock.calls.map(([input]) => ({
+        cwd: input.cwd,
+        from: input.fromCheckpointRef,
+        to: input.toCheckpointRef,
+      })),
+      [
+        {
+          cwd: "/repo",
+          from: yield* checkpointRefForScopeOrdinal({
+            scopeId: secondScopeId,
+            ordinalWithinScope: 0,
+          }),
+          to: secondRef,
+        },
+      ],
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const layerStore = CheckpointStore.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcess))),

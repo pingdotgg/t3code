@@ -32,6 +32,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -535,6 +536,159 @@ it.effect(
       });
       assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
     }).pipe(Effect.provide(layerTest)),
+);
+
+// The calling agent's own turn is still running when it moves the thread, and
+// detaching then would fail that turn before the tool call returns.
+it.effect.each([
+  { duringTurn: false, detaches: true },
+  { duringTurn: true, detaches: false },
+])(
+  "moves a thread to another project's root (during a turn: $duringTurn)",
+  ({ duringTurn, detaches }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:project-set");
+      const scratchProjectId = ProjectId.make("project:project-set-scratch");
+      const targetProjectId = ProjectId.make("project:project-set-target");
+      const scratchFolder = "/scratch/2026-10-23-in-whatscord-fix-login";
+      const now = yield* DateTime.now;
+      yield* projects.apply({
+        sequence: 1,
+        eventId: EventId.make("event:project-set-target"),
+        aggregateKind: "project",
+        aggregateId: targetProjectId,
+        occurredAt: DateTime.formatIso(now),
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          projectId: targetProjectId,
+          title: "whatscord",
+          workspaceRoot: "/repo/whatscord",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: DateTime.formatIso(now),
+          updatedAt: DateTime.formatIso(now),
+        },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-project-set"),
+        threadId,
+        projectId: scratchProjectId,
+        title: "Fix the login bug",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: scratchFolder,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const sessionId = ProviderSessionId.make("session:project-set");
+      yield* projections.apply({
+        id: EventId.make("attach-project-set"),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: scratchFolder,
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+
+      if (duringTurn) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("start-project-set"),
+          threadId,
+          messageId: MessageId.make("message:project-set"),
+          text: "In whatscord, fix the login bug",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+
+      const rejection = (commandId: string, input: { projectId: ProjectId; worktree: string }) =>
+        orchestrator
+          .dispatch({
+            type: "thread.project.set",
+            commandId: CommandId.make(commandId),
+            threadId,
+            projectId: input.projectId,
+            expectedWorktreePath: input.worktree,
+          })
+          .pipe(
+            Effect.flip,
+            Effect.map((error) => String(error.cause ?? error.message)),
+          );
+      assert.include(
+        yield* rejection("project-set-unknown", {
+          projectId: ProjectId.make("project:missing"),
+          worktree: scratchFolder,
+        }),
+        "was not found",
+      );
+      assert.include(
+        yield* rejection("project-set-raced", {
+          projectId: targetProjectId,
+          worktree: "/scratch/other",
+        }),
+        "worktree changed",
+      );
+      assert.equal((yield* projections.getThread(threadId)).projectId, scratchProjectId);
+
+      yield* orchestrator.dispatch({
+        type: "thread.project.set",
+        commandId: CommandId.make("project-set"),
+        threadId,
+        projectId: targetProjectId,
+        expectedWorktreePath: scratchFolder,
+      });
+
+      const moved = yield* projections.getThreadShell(threadId);
+      assert.deepEqual(
+        { projectId: moved?.projectId, branch: moved?.branch, worktreePath: moved?.worktreePath },
+        { projectId: targetProjectId, branch: null, worktreePath: null },
+      );
+      const effects = yield* outbox.listByCommandId(CommandId.make("project-set"));
+      assert.deepEqual(
+        effects.map((effect) => effect.request),
+        detaches
+          ? [
+              {
+                type: "provider-session.detach",
+                providerSessionId: sessionId,
+                detail: "Workspace changed.",
+              },
+            ]
+          : [],
+      );
+      assert.deepEqual(
+        (yield* projections.getThreadProviderContext(threadId)).providerSessions.map(
+          (session) => session.id,
+        ),
+        detaches ? [] : [sessionId],
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(layerTest, ProjectStore.layer.pipe(Layer.provide(layerDatabase)))),
+    ),
 );
 
 it.effect("implements a proposed plan that the command projection leaves out", () =>

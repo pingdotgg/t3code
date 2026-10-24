@@ -2,6 +2,8 @@ import {
   CommandId,
   MessageId,
   type ProjectId,
+  type ThreadSelectProjectMcpInput,
+  type ThreadSelectProjectMcpResult,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
@@ -13,11 +15,13 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -34,6 +38,11 @@ export class WorktreeMcpService extends Context.Service<
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
+    /** Moves a "No project" thread into a project before it has touched any files. */
+    readonly selectProject: (
+      scope: McpInvocationScope,
+      input: ThreadSelectProjectMcpInput,
+    ) => Effect.Effect<ThreadSelectProjectMcpResult, WorktreeMcpFailure>;
   }
 >()("t3/mcp/WorktreeMcpService") {}
 
@@ -62,18 +71,20 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+  const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const fileSystem = yield* FileSystem.FileSystem;
 
-  // Serializes handoffs per thread: two concurrent calls could otherwise both
-  // pass the worktreePath === null check and each create a worktree, leaving
-  // one untracked on disk.
-  const handoffThreadsInFlight = new Set<string>();
+  // Serializes workspace changes per thread: two concurrent handoffs could
+  // otherwise both pass the worktreePath === null check and each create a
+  // worktree, leaving one untracked on disk.
+  const workspaceChangesInFlight = new Set<string>();
 
   const requireThreadScope = (scope: McpInvocationScope) =>
     scope.thread === undefined
       ? Effect.fail(
           failure(
             "thread_credential_required",
-            "Worktree handoff and status act as the calling T3 thread, so they need an agent running inside T3 Code.",
+            "Worktree handoff, worktree status, and project selection act as the calling T3 thread, so they need an agent running inside T3 Code.",
           ),
         )
       : Effect.succeed(scope as McpThreadInvocationScope);
@@ -123,17 +134,19 @@ const make = Effect.gen(function* () {
     asOperationFailed("Unable to read server settings"),
   );
 
-  const handoffIds = (scope: McpThreadInvocationScope) =>
+  const operationIds = (
+    scope: McpThreadInvocationScope,
+    operation: string,
+    continuationOperation: string,
+  ) =>
     crypto.randomUUIDv4().pipe(
       Effect.map((uuid) => {
-        const part = (kind: string, operation: string) =>
-          [kind, "mcp", encodeURIComponent(scope.thread.providerSessionId), operation, uuid].join(
-            ":",
-          );
+        const part = (kind: string, name: string) =>
+          [kind, "mcp", encodeURIComponent(scope.thread.providerSessionId), name, uuid].join(":");
         return {
-          commandId: CommandId.make(part("command", "worktree-handoff")),
-          continuationCommandId: CommandId.make(part("command", "worktree-continuation")),
-          continuationMessageId: MessageId.make(part("message", "worktree-continuation")),
+          commandId: CommandId.make(part("command", operation)),
+          continuationCommandId: CommandId.make(part("command", continuationOperation)),
+          continuationMessageId: MessageId.make(part("message", continuationOperation)),
         };
       }),
       Effect.orDie,
@@ -223,7 +236,7 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const ids = yield* handoffIds(scope);
+    const ids = yield* operationIds(scope, "worktree-handoff", "worktree-continuation");
 
     // uninterruptibleMask: only the potentially slow worktree creation itself
     // stays interruptible (restore). From the moment it succeeds, through the
@@ -389,43 +402,173 @@ const make = Effect.gen(function* () {
           continuation,
           note:
             continuation.status === "scheduled"
-              ? "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the queued continuation prompt then starts the next turn inside the worktree with the conversation preserved. The worktree is not removed automatically when the thread is deleted."
-              : "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the conversation continues inside the worktree when the thread receives its next message. Pass continuationPrompt to resume automatically. The worktree is not removed automatically when the thread is deleted.",
+              ? "Handoff recorded. This turn still runs in the previous workspace, so end it now; the queued continuation prompt then starts the next turn inside the worktree with the conversation preserved. The worktree is not removed automatically when the thread is deleted."
+              : "Handoff recorded. This turn still runs in the previous workspace, so end it now; the conversation continues inside the worktree when the thread receives its next message. Pass continuationPrompt to resume automatically. The worktree is not removed automatically when the thread is deleted.",
         };
         return result;
       }),
     );
   });
 
+  // uninterruptibleMask: the guard acquisition and the registration of the
+  // releasing finalizer happen with no interruptible gap in between. An
+  // interrupt landing between a bare add() and the start of an ensured effect
+  // would otherwise leak the guard entry and block every future workspace
+  // change for this thread until restart.
+  const exclusivelyForThread = <A>(
+    scope: McpThreadInvocationScope,
+    operation: Effect.Effect<A, WorktreeMcpFailure>,
+  ) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        const threadId = scope.thread.threadId;
+        if (workspaceChangesInFlight.has(threadId)) {
+          return Effect.fail(
+            failure(
+              "handoff_in_progress",
+              `A worktree handoff or project selection is already in progress for thread '${threadId}'.`,
+            ),
+          );
+        }
+        workspaceChangesInFlight.add(threadId);
+        return restore(operation).pipe(
+          Effect.ensuring(Effect.sync(() => workspaceChangesInFlight.delete(threadId))),
+        );
+      }),
+    );
+
   const handoff: WorktreeMcpService["Service"]["handoff"] = Effect.fn("WorktreeMcpService.handoff")(
     function* (callerScope, input) {
       yield* requireCapability(callerScope);
       const scope = yield* requireThreadScope(callerScope);
-      // uninterruptibleMask: the guard acquisition and the registration of the
-      // releasing finalizer happen with no interruptible gap in between. An
-      // interrupt landing between a bare add() and the start of an ensured
-      // effect would otherwise leak the guard entry and block every future
-      // handoff for this thread until restart.
-      return yield* Effect.uninterruptibleMask((restore) =>
-        Effect.suspend(() => {
-          if (handoffThreadsInFlight.has(scope.thread.threadId)) {
-            return Effect.fail(
-              failure(
-                "handoff_in_progress",
-                `A worktree handoff is already in progress for thread '${scope.thread.threadId}'.`,
-              ),
-            );
-          }
-          handoffThreadsInFlight.add(scope.thread.threadId);
-          return restore(performHandoff(scope, input)).pipe(
-            Effect.ensuring(
-              Effect.sync(() => handoffThreadsInFlight.delete(scope.thread.threadId)),
-            ),
-          );
-        }),
-      );
+      return yield* exclusivelyForThread(scope, performHandoff(scope, input));
     },
   );
+
+  // A missing folder has nothing in it to lose.
+  const isEmptyFolder = (folder: string) =>
+    fileSystem.readDirectory(folder).pipe(
+      Effect.map((entries) => entries.length === 0),
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(true),
+      ),
+      asOperationFailed(`Unable to read the thread's folder '${folder}'`),
+    );
+
+  const performSelectProject = Effect.fn("WorktreeMcpService.performSelectProject")(function* (
+    scope: McpThreadInvocationScope,
+    input: ThreadSelectProjectMcpInput,
+  ) {
+    const { thread } = yield* loadThread(scope);
+    if (thread.archivedAt !== null) {
+      return yield* failure(
+        "invalid_request",
+        `Thread '${thread.id}' is archived and cannot move to a project.`,
+      );
+    }
+    if (
+      thread.lineage.relationshipToParent === "subagent" ||
+      !(yield* managedFolders.isScratchProject(thread.projectId))
+    ) {
+      return yield* failure(
+        "invalid_request",
+        "Only a top-level thread without a project can select its project. To work in another project, start a thread there with t3_thread_launch.",
+      );
+    }
+    if (thread.worktreePath !== null && !(yield* isEmptyFolder(thread.worktreePath))) {
+      return yield* failure(
+        "invalid_request",
+        `This thread already has files in '${thread.worktreePath}', so it can no longer move to a project. Start a thread in the project with t3_thread_launch and its projectId instead.`,
+      );
+    }
+    const target = yield* loadProject(scope, input.projectId);
+    if (yield* managedFolders.isScratchProject(target.id)) {
+      return yield* failure(
+        "invalid_request",
+        "That is the project for threads without a project. Pick one of the user's projects from t3_project_list.",
+      );
+    }
+
+    const ids = yield* operationIds(scope, "select-project", "select-project-continuation");
+    const continuationPrompt =
+      input.continuationPrompt ??
+      `This thread now works in the ${target.title} project at ${target.workspaceRoot}. Continue the user's request there.`;
+
+    // uninterruptibleMask: once the move commits, the queued continuation is
+    // what starts the thread in the project, so a cancelled request must not
+    // skip it.
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        yield* restore(
+          threadManagement.dispatch({
+            type: "thread.project.set",
+            commandId: ids.commandId,
+            threadId: thread.id,
+            projectId: target.id,
+            expectedWorktreePath: thread.worktreePath,
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause as Cause.Cause<never>)
+              : Effect.fail(
+                  failure(
+                    "operation_failed",
+                    `Unable to move the thread to project '${target.id}': ${errorMessage(Cause.squash(cause))}`,
+                  ),
+                ),
+          ),
+        );
+
+        const continuation = yield* threadManagement
+          .sendToThread({
+            projectId: target.id,
+            commandId: ids.continuationCommandId,
+            threadId: thread.id,
+            messageId: ids.continuationMessageId,
+            text: continuationPrompt,
+            attachments: [],
+            mode: "queue",
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
+              status: "scheduled",
+              delivery: sendResult.delivery,
+            })),
+            Effect.catchCause((cause) => {
+              const detail = errorMessage(Cause.squash(cause));
+              return Effect.logWarning("project selection continuation failed to queue", {
+                threadId: thread.id,
+                projectId: target.id,
+                detail,
+              }).pipe(Effect.as<WorktreeMcpContinuationStatus>({ status: "failed", detail }));
+            }),
+          );
+
+        const result: ThreadSelectProjectMcpResult = {
+          projectId: target.id,
+          workspaceRoot: target.workspaceRoot,
+          continuation,
+          note:
+            continuation.status === "scheduled"
+              ? "Thread moved to the project's root. This turn still runs in the scratch folder, so end it now without touching files; the queued continuation then starts the next turn in the project with the conversation preserved. Use t3_worktree_handoff there if the work needs its own worktree."
+              : "Thread moved to the project's root. This turn still runs in the scratch folder, so end it now without touching files; the conversation continues in the project when the thread receives its next message.",
+        };
+        return result;
+      }),
+    );
+  });
+
+  const selectProject: WorktreeMcpService["Service"]["selectProject"] = Effect.fn(
+    "WorktreeMcpService.selectProject",
+  )(function* (callerScope, input) {
+    yield* requireCapability(callerScope);
+    const scope = yield* requireThreadScope(callerScope);
+    return yield* exclusivelyForThread(scope, performSelectProject(scope, input));
+  });
 
   const status: WorktreeMcpService["Service"]["status"] = Effect.fn("WorktreeMcpService.status")(
     function* (callerScope) {
@@ -447,7 +590,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return WorktreeMcpService.of({ handoff, status });
+  return WorktreeMcpService.of({ handoff, status, selectProject });
 });
 
 export const layer: Layer.Layer<
@@ -460,4 +603,6 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
+  | ManagedProjectFolders.ManagedProjectFolders
+  | FileSystem.FileSystem
 > = Layer.effect(WorktreeMcpService, make);

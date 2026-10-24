@@ -272,6 +272,7 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly existingSessionCwd?: string;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -440,7 +441,23 @@ function makeLocalCommandHarness(input: {
         createdAt: now,
       },
     ],
-    providerSessions: [],
+    providerSessions:
+      input.existingSessionCwd === undefined
+        ? []
+        : [
+            {
+              id: providerSessionId,
+              driver: ProviderDriverKind.make("codex"),
+              providerInstanceId: newInstanceId,
+              status: "ready",
+              cwd: input.existingSessionCwd,
+              model: null,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          ],
     providerTurns: [],
     contextHandoffs: [],
     contextTransfers: [],
@@ -571,7 +588,7 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
-  const open = vi.fn(() =>
+  const open = vi.fn((_request?: { readonly resumeFromSession?: unknown }) =>
     input.interruptOpen === true
       ? Effect.interrupt
       : "historyReadFailureAfterFallback" in input
@@ -611,6 +628,10 @@ function makeLocalCommandHarness(input: {
                   resumeThread: () => Effect.succeed(projection.providerThreads[0]),
                 } as never)
               : Effect.die("A local command must not open a native session."),
+  );
+  const detach = vi.fn(
+    (_request: Parameters<ProviderSessionManager.ProviderSessionManagerV2Shape["detach"]>[0]) =>
+      Effect.void,
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
@@ -724,6 +745,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
+          detach,
           get: () =>
             Effect.succeed(
               input.previousTurn?.liveSession === false
@@ -752,6 +774,7 @@ function makeLocalCommandHarness(input: {
     resolveRuntimePolicy,
     createWorktree,
     open,
+    detach,
     writeIfRunCurrent,
     startRootRun,
     interruptTurn,
@@ -773,6 +796,36 @@ function makeLocalCommandHarness(input: {
     }).pipe(Effect.provide(layer)),
   };
 }
+
+// A workspace change made during a turn keeps that turn's session, so the
+// next turn must not reuse it in the old working directory.
+effectIt.effect.each([
+  { existingSessionCwd: "/scratch/2026-10-23-in-whatscord-a1b2c3d4", replaced: true },
+  { existingSessionCwd: "/tmp/native-account-command", replaced: false },
+])(
+  "replaces a session left in another workspace (replaced: $replaced)",
+  ({ existingSessionCwd, replaced }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        existingSessionCwd,
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      });
+
+      yield* harness.start;
+
+      expect(harness.detach.mock.calls.map(([request]) => request.detail)).toEqual(
+        replaced ? ["Workspace changed."] : [],
+      );
+      if (replaced) {
+        expect(harness.detach.mock.invocationCallOrder[0]).toBeLessThan(
+          harness.open.mock.invocationCallOrder[0]!,
+        );
+      }
+      expect(harness.open.mock.calls[0]?.[0]?.resumeFromSession === undefined).toBe(replaced);
+      expect(harness.startRootRun).toHaveBeenCalledOnce();
+    }),
+);
 
 effectIt.effect("recovers an abandoned failed turn before continuing its native conversation", () =>
   Effect.gen(function* () {

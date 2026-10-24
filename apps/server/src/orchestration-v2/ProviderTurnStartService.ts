@@ -650,25 +650,44 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
+      // A workspace change made during a turn leaves that turn's session
+      // running, since detaching it would end the turn, including the tool
+      // call that asked for the change. The first turn in the new workspace
+      // replaces it here; the native conversation still resumes.
+      const workspaceChanged =
+        existingSessionProjection !== undefined &&
+        resolvedRuntimePolicy.cwd !== null &&
+        existingSessionProjection.cwd !== resolvedRuntimePolicy.cwd;
       const sessionResult = yield* Effect.result(
-        providerSessions.open({
-          threadId: projection.thread.id,
-          providerSessionId,
-          modelSelection: run.modelSelection,
-          runtimePolicy: resolvedRuntimePolicy,
-          ...(existingSessionProjection === undefined
-            ? {}
-            : { resumeFromSession: existingSessionProjection }),
-          ...(providerThread.nativeThreadRef?.nativeId == null
-            ? {}
-            : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-          ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-            ? {}
-            : {
-                initialProviderItemIdentityVersion:
-                  providerThread.nativeMetadata.itemIdentityVersion,
-              }),
-        }),
+        (workspaceChanged
+          ? providerSessions.detach({
+              providerSessionId,
+              threadId: projection.thread.id,
+              detail: "Workspace changed.",
+            })
+          : Effect.void
+        ).pipe(
+          Effect.andThen(
+            providerSessions.open({
+              threadId: projection.thread.id,
+              providerSessionId,
+              modelSelection: run.modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              ...(existingSessionProjection === undefined || workspaceChanged
+                ? {}
+                : { resumeFromSession: existingSessionProjection }),
+              ...(providerThread.nativeThreadRef?.nativeId == null
+                ? {}
+                : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+              ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+                ? {}
+                : {
+                    initialProviderItemIdentityVersion:
+                      providerThread.nativeMetadata.itemIdentityVersion,
+                  }),
+            }),
+          ),
+        ),
       );
       if (sessionResult._tag === "Failure") {
         if (input.willRetry === true) return yield* sessionResult.failure;

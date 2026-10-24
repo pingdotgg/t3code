@@ -3089,6 +3089,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     placeholder: Schema.optional(Schema.String),
     secretStatus: OrchestrationV2SecretRequestStatus,
   }),
+  /**
+   * Moves a thread to another project's root. Internal because only the
+   * agent's t3_thread_select_project may do it, after checking the thread
+   * has not touched files yet.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.project.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+    expectedWorktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
