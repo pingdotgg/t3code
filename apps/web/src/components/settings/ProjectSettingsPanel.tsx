@@ -237,6 +237,7 @@ function ProjectDetail({
       projectIcon: ProjectIconOverride | null;
     }>,
     failureTitle: string,
+    onFailure = reportFailure,
   ): Promise<AtomCommandResult<void, unknown>> => {
     const denied = checkProjectAccess(group.memberProjects, failureTitle);
     if (denied) return denied;
@@ -249,7 +250,7 @@ function ProjectDetail({
         `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
       );
       const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
-      reportFailure(failureTitle, result);
+      onFailure(failureTitle, result);
       return result;
     }
     for (const member of group.memberProjects) {
@@ -263,7 +264,7 @@ function ProjectDetail({
         () => undefined,
       );
       if (result._tag === "Failure") {
-        reportFailure(
+        onFailure(
           group.memberProjects.length > 1
             ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
             : failureTitle,
@@ -297,16 +298,31 @@ function ProjectDetail({
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
-  const setProjectIcon = async (input: {
-    faviconPath: string | null;
-    projectIcon: ProjectIconOverride | null;
-  }) => {
-    if (savingFaviconRef.current) return;
+  const setProjectIcon = async (
+    input: {
+      faviconPath: string | null;
+      projectIcon: ProjectIconOverride | null;
+    },
+    onFailure = reportFailure,
+  ) => {
+    if (savingFaviconRef.current) {
+      return AsyncResult.failure<void, Error>(
+        Cause.fail(new Error("A project icon update is already in progress.")),
+      );
+    }
     savingFaviconRef.current = true;
     setIsSavingFavicon(true);
-    await updateAllMembers(input, "Failed to update project icon");
+    let result;
+    try {
+      result = await updateAllMembers(input, "Failed to update project icon", onFailure);
+    } catch (error) {
+      savingFaviconRef.current = false;
+      setIsSavingFavicon(false);
+      throw error;
+    }
     savingFaviconRef.current = false;
     setIsSavingFavicon(false);
+    return result;
   };
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
@@ -604,7 +620,13 @@ function ProjectDetail({
             projectName={representative.title}
             open
             onOpenChange={setIconPickerOpen}
-            onSelect={(icon) => void setProjectIcon({ faviconPath: null, projectIcon: icon })}
+            onSelect={async (icon) => {
+              const result = await setProjectIcon(
+                { faviconPath: null, projectIcon: icon },
+                () => undefined,
+              );
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            }}
           />
         </Suspense>
       ) : null}

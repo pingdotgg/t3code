@@ -10,6 +10,8 @@ import { createElement, useEffect, useRef, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
+  normalizeProjectMonogramInput,
+  projectIconSaveErrorMessage,
   PROJECT_EMOJIS,
   PROJECT_ICON_COLORS,
   projectIconColorClassName,
@@ -56,7 +58,7 @@ export function ProjectIconPickerDialog({
   readonly projectName: string;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly onSelect: (icon: ProjectIconOverride) => void;
+  readonly onSelect: (icon: ProjectIconOverride) => Promise<void>;
 }) {
   const automatic = deriveProjectIdentity(projectName);
   const [mode, setMode] = useState<ProjectIconOverride["kind"]>(current?.kind ?? "lucide");
@@ -73,6 +75,10 @@ export function ProjectIconPickerDialog({
   const [query, setQuery] = useState("");
   const [customEmoji, setCustomEmoji] = useState("");
   const previousOpenRef = useRef(false);
+  const composingRef = useRef(false);
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open && !previousOpenRef.current) {
@@ -83,6 +89,7 @@ export function ProjectIconPickerDialog({
       setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
       setQuery("");
       setCustomEmoji("");
+      setSaveError(null);
     }
     previousOpenRef.current = open;
   }, [current, open, automatic.color, automatic.monogram]);
@@ -90,21 +97,38 @@ export function ProjectIconPickerDialog({
   const icons = filterProjectIconNames(query);
   const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
-  const validMonogram = isMonogramText(monogram);
-  const save = () => {
-    if (mode === "monogram" && !validMonogram) return;
-    onSelect(
-      mode === "monogram"
-        ? { kind: "monogram", text: monogram, color }
-        : mode === "lucide"
-          ? { kind: "lucide", name: iconName, color }
-          : { kind: "emoji", emoji },
-    );
-    onOpenChange(false);
+  const validMonogram =
+    isMonogramText(monogram) && normalizeProjectMonogramInput(monogram) === monogram;
+  const save = async () => {
+    if (savingRef.current || composingRef.current || (mode === "monogram" && !validMonogram))
+      return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSelect(
+        mode === "monogram"
+          ? { kind: "monogram", text: monogram, color }
+          : mode === "lucide"
+            ? { kind: "lucide", name: iconName, color }
+            : { kind: "emoji", emoji },
+      );
+      onOpenChange(false);
+    } catch (error) {
+      setSaveError(projectIconSaveErrorMessage(error));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!savingRef.current) onOpenChange(nextOpen);
+      }}
+    >
       <DialogPopup className="w-full sm:w-[32rem]">
         <DialogHeader>
           <DialogTitle>Choose project icon</DialogTitle>
@@ -112,6 +136,7 @@ export function ProjectIconPickerDialog({
         </DialogHeader>
         <DialogPanel className="flex min-h-0 flex-col">
           <ToggleGroup
+            disabled={saving}
             aria-label="Icon type"
             variant="segmented"
             value={[mode]}
@@ -133,6 +158,7 @@ export function ProjectIconPickerDialog({
                   <button
                     key={option.value}
                     type="button"
+                    disabled={saving}
                     aria-label={option.label}
                     aria-pressed={color === option.value}
                     className={cn(
@@ -151,6 +177,7 @@ export function ProjectIconPickerDialog({
           {mode === "lucide" ? (
             <>
               <Input
+                disabled={saving}
                 type="search"
                 value={query}
                 aria-label="Search Lucide icons"
@@ -163,6 +190,7 @@ export function ProjectIconPickerDialog({
                     <button
                       key={name}
                       type="button"
+                      disabled={saving}
                       aria-label={iconLabel(name)}
                       aria-pressed={iconName === name}
                       className={cn(
@@ -193,15 +221,32 @@ export function ProjectIconPickerDialog({
                   Letters
                 </label>
                 <Input
+                  disabled={saving}
                   id="project-monogram"
                   value={letters}
-                  onChange={(event) => setLetters(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setLetters(
+                      composingRef.current
+                        ? event.currentTarget.value
+                        : normalizeProjectMonogramInput(event.currentTarget.value),
+                    );
+                    setSaveError(null);
+                  }}
+                  onCompositionStart={() => {
+                    composingRef.current = true;
+                  }}
+                  onCompositionEnd={(event) => {
+                    composingRef.current = false;
+                    setLetters(normalizeProjectMonogramInput(event.currentTarget.value));
+                  }}
                   aria-describedby="project-monogram-hint"
                   aria-invalid={!validMonogram}
                   autoComplete="off"
                 />
                 <p id="project-monogram-hint" className="text-xs text-muted-foreground">
-                  One or two letters or numbers.
+                  {validMonogram
+                    ? "One or two letters or numbers."
+                    : "Enter one or two letters or numbers."}
                 </p>
               </div>
             </div>
@@ -213,6 +258,7 @@ export function ProjectIconPickerDialog({
                     <button
                       key={option.emoji}
                       type="button"
+                      disabled={saving}
                       aria-label={option.label}
                       aria-pressed={emoji === option.emoji}
                       className={cn(
@@ -231,6 +277,7 @@ export function ProjectIconPickerDialog({
                   Or paste any emoji
                 </div>
                 <Input
+                  disabled={saving}
                   value={customEmoji}
                   aria-label="Custom emoji"
                   placeholder="Paste an emoji"
@@ -245,11 +292,16 @@ export function ProjectIconPickerDialog({
             </>
           )}
         </DialogPanel>
+        {saveError ? (
+          <p role="alert" className="px-6 text-sm text-destructive">
+            {saveError}
+          </p>
+        ) : null}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={mode === "monogram" && !validMonogram}>
+          <Button onClick={save} disabled={saving || (mode === "monogram" && !validMonogram)}>
             Save icon
           </Button>
         </DialogFooter>

@@ -79,3 +79,33 @@ export function firstEmoji(value: string): string | null {
   }
   return segment;
 }
+
+const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+export function normalizeProjectMonogramInput(value: string): string {
+  const normalized = value.normalize("NFKC").trim().toUpperCase();
+  let result = "";
+  let count = 0;
+  for (const { segment } of monogramSegmenter.segment(normalized)) {
+    result += segment;
+    if (++count === 2) break;
+  }
+  return result;
+}
+
+export function projectIconSaveErrorMessage(error: unknown): string {
+  let current = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (typeof current !== "object" || current === null) break;
+    if (
+      (("name" in current && current.name === "ProjectCommandInvariantError") ||
+        ("_tag" in current && current._tag === "ProjectCommandInvariantError")) &&
+      "message" in current &&
+      typeof current.message === "string"
+    ) {
+      return current.message;
+    }
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return error instanceof Error ? error.message : "Failed to update project icon. Try again.";
+}

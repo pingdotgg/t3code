@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "projectName": "Monogram evidence",
+  "workspaceRoot": "/tmp/t3-monogram-evidence",
+  "initialIcon": null,
+  "color": "blue",
+  "frozenClock": "2026-10-21T12:00:00Z",
+  "viewports": [
+    [1440, 900],
+    [390, 844]
+  ],
+  "themes": ["light", "dark"],
+  "monograms": ["AB", "ABCD", "  ａｂｃ  ", "ßa", "ạ́bc", "", "A!"],
+  "composition": { "candidate": "ABC", "syntheticEvents": true },
+  "failureModes": {
+    "server-reject": "Replace only this project's outgoing monogram text with ABC; the actual server rejects it.",
+    "reject": "Synthesize a typed ProjectMutationError response with Connection closed. No request reaches the server.",
+    "hold": "Queue only this project's outgoing icon mutation until monogramEvidence.release()."
+  },
+  "seed": [
+    "Create workspaceRoot, then use Add project in the real app to add it and name it projectName.",
+    "Open Settings, select projectName, choose Project, then Choose icon.",
+    "Evaluate browser.mjs in that browser tab. The first icon mutation pins its project id.",
+    "Before each sequence, use Reset project icon to restore Automatic, then Choose icon; choose blue for non-emoji modes.",
+    "Set monogramEvidence.mode to pass, hold, server-reject, or reject before Save icon.",
+    "Use identical UI inputs and checkpoints on both revisions. Collect full viewport screenshots and environment().",
+    "Reload restores the browser instrumentation. Run only with isolated development state."
+  ]
+}
