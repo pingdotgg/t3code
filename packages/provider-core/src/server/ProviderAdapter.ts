@@ -110,6 +110,19 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     subagent: OrchestrationV2Subagent,
   }),
+  /**
+   * A native subagent ended that the live provider process never tracked, such
+   * as one an earlier process started before the session was replaced. The
+   * ingestor settles its durable record, if it is still open.
+   */
+  Schema.Struct({
+    type: Schema.Literal("subagent.ended"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    subagentId: NodeId,
+    status: Schema.Literals(["completed", "failed", "cancelled"]),
+    result: Schema.NullOr(Schema.String),
+  }),
   Schema.Struct({
     type: Schema.Literal("message.updated"),
     driver: ProviderDriverKind,

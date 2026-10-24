@@ -5556,6 +5556,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...entry, messages });
           });
 
+        const emitUntrackedSubagentOutcome = Effect.fn(
+          "ClaudeAdapterV2.emitUntrackedSubagentOutcome",
+        )(function* (
+          threadId: ThreadId,
+          message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
+        ) {
+          yield* emitProviderEvent({
+            type: "subagent.ended",
+            driver: CLAUDE_PROVIDER,
+            threadId,
+            subagentId: idAllocator.derive.nodeFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: `task:${message.task_id}`,
+            }),
+            status: claudeTaskOutcome(message.status),
+            result: message.summary ?? null,
+          });
+        });
+
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
@@ -5592,6 +5611,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : input.context.subagentsByToolUseId.get(input.toolUseId)) ??
                 registeredSubagent);
           if (existingSubagent === undefined && input.status !== "running") {
+            // A task an earlier process started (the replacement reports it
+            // stopped on resume) is unknown here, so the server settles it.
+            if (input.nativeOutcome !== undefined) {
+              yield* emitUntrackedSubagentOutcome(
+                input.context.input.threadId,
+                input.nativeOutcome,
+              );
+            }
             return;
           }
           if (
@@ -7555,6 +7582,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // task_notification must buffer wake evidence while still tracked
             // on the roster; clearing first would drop the wake pin.
             if (message.type === "system" && message.subtype === "task_notification") {
+              const wasBackgroundTask = yield* isKnownOpaqueBackgroundTaskOnNativeThread(
+                liveQuery.nativeThreadId,
+                message.task_id,
+              );
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
@@ -7573,6 +7604,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       entry.subtype === "task_started" &&
                       entry.task_id === message.task_id,
                   ) ?? false;
+              if (registered === undefined && !hasBufferedStart && !wasBackgroundTask) {
+                const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(
+                  liveQuery.nativeThreadId,
+                );
+                if (route !== undefined) {
+                  yield* emitUntrackedSubagentOutcome(route.threadId, message);
+                }
+              }
               const canApplyOutcome =
                 subagentStopOutcomes.has(message.task_id) ||
                 (!hasBufferedStart && registered?.task.workflow === undefined);

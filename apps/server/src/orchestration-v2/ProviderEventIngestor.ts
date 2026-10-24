@@ -36,6 +36,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
+import {
+  endOrphanedNativeSubagent,
+  endRunlessRootTurns,
+} from "@t3tools/provider-core/server/subagentProjection";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
@@ -518,6 +522,55 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    // A replacement receipt arrives on a newer run; keep the task's original ownership.
+    const endUntrackedSubagent = Effect.fn("ProviderEventIngestor.endUntrackedSubagent")(function* (
+      input: ProviderEventIngestInput,
+      ended: Extract<ProviderAdapter.ProviderAdapterV2Event, { readonly type: "subagent.ended" }>,
+    ) {
+      const projection = yield* projections.getThreadRecords(
+        ended.threadId,
+        ["nodes", "subagents", "turnItems"],
+        { turnItemTypes: ["subagent"], turnItemStatuses: ["pending", "running", "waiting"] },
+      );
+      const subagent = projection.subagents.find((task) => task.id === ended.subagentId);
+      if (subagent === undefined || subagent.driver !== ended.driver) return [];
+      const now = yield* DateTime.now;
+      const allocateEventId = () =>
+        idAllocator.allocate.event({
+          threadId: ended.threadId,
+          providerSessionId: input.providerSessionId,
+        });
+      const events = yield* endOrphanedNativeSubagent({
+        projection,
+        subagentId: subagent.id,
+        status: ended.status,
+        result: ended.result,
+        now,
+        emitted: [],
+        allocateEventId,
+      });
+      if (events.length === 0 || subagent.childThreadId === null) return events;
+      const child = yield* projections
+        .getThreadRecords(subagent.childThreadId, ["nodes", "turnItems"], {
+          turnItemRunIds: [null],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        })
+        .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
+      if (child === null) return events;
+      return [
+        ...events,
+        ...(yield* endRunlessRootTurns({
+          threadId: subagent.childThreadId,
+          providerInstanceId: subagent.providerInstanceId,
+          projection: child,
+          status: ended.status,
+          now,
+          emitted: events,
+          allocateEventId,
+        })),
+      ];
+    });
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -621,6 +674,8 @@ export const layer: Layer.Layer<
                   nodeId: input.event.subagent.id,
                 }),
               ];
+            case "subagent.ended":
+              return yield* endUntrackedSubagent(input, input.event);
             case "message.updated":
               return [
                 yield* makeDomainEvent(input, {

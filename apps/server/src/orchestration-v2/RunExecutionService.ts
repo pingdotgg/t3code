@@ -479,6 +479,8 @@ export function routeProviderEvent(
       }
       return [true, { ...adopted, workflowMemberParents }];
     }
+    case "subagent.ended":
+      return [event.threadId === input.threadId || ownsChildThread(event.threadId), state];
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {
@@ -1402,6 +1404,19 @@ export const layer: Layer.Layer<
                     : {}),
                 });
                 storedEventCount = storedEvents.length;
+                // No adapter item update follows, so an inherited item this
+                // settled stops holding the stream here.
+                if (event.type === "subagent.ended") {
+                  const settledItemIds = new Set(
+                    storedEvents.flatMap((stored) =>
+                      stored.event.type === "turn-item.updated" ? [stored.event.payload.id] : [],
+                    ),
+                  );
+                  yield* Ref.update(
+                    activeBackgroundTurnItems,
+                    (current) => new Set([...current].filter((id) => !settledItemIds.has(id))),
+                  );
+                }
                 if (
                   isRootProviderThreadUpdate &&
                   rootTerminalAlreadySeen &&

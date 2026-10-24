@@ -164,6 +164,40 @@ it.effect("routes shared-runtime events only to their owning root run", () =>
   }),
 );
 
+it("routes untracked subagent outcomes for the root and owned children only", () => {
+  const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    threadId: ThreadId.make("thread:orphaned-root"),
+    runId: RunId.make("run:orphaned-root"),
+    attemptId: RunAttemptId.make("attempt:orphaned-root"),
+    providerThreadId: ProviderThreadId.make("provider-thread:orphaned-root"),
+  };
+  const childThreadId = ThreadId.make("thread:orphaned-child");
+  const state = RunExecutionService.makeProviderEventRoutingState({
+    identity,
+    providerTurnId: null,
+    relatedThreadIds: [childThreadId],
+  });
+  const outcome = (threadId: ThreadId): ProviderAdapter.ProviderAdapterV2Event => ({
+    type: "subagent.ended",
+    driver,
+    threadId,
+    subagentId: NodeId.make("node:orphaned-task"),
+    status: "cancelled",
+    result: "Previous process ended.",
+  });
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(outcome(identity.threadId), identity, state)[0],
+  );
+  assert.isTrue(RunExecutionService.routeProviderEvent(outcome(childThreadId), identity, state)[0]);
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(
+      outcome(ThreadId.make("thread:unrelated")),
+      identity,
+      state,
+    )[0],
+  );
+});
+
 it("routes only enrolled workflow members after the root turn ends", () => {
   const threadId = ThreadId.make("thread:late-child");
   const rootProviderTurnId = ProviderTurnId.make("provider-turn:late-child");
