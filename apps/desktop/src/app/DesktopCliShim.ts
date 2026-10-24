@@ -98,12 +98,15 @@ export const renderCliShim = (input: {
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
     // The AppImage runtime prints its mount point, then stays mounted until
-    // killed. Background jobs ignore Ctrl-C, so the traps unmount it on any exit.
+    // killed. A signal to the whole process group (Ctrl-C, a closed SSH session,
+    // a service manager) would unmount it under the still-running server, so it
+    // gets its own session and the traps unmount it once the server has exited.
+    // Without setsid the mount fails and the extract fallback below runs.
     "work=$(mktemp -d) || exit 1",
-    '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
+    'setsid "$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
     `trap 'kill "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
-    "trap 'exit 130' INT TERM",
+    "trap 'exit 130' INT TERM HUP",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
     '  mount=$(head -n 1 "$work/mount")',
