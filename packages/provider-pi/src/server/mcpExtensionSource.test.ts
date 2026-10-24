@@ -200,6 +200,88 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
   });
 
+  it("declares orchestration and called T3 tools for gateways that opt out of eager schemas", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      gatewayTools: "called",
+    });
+    const messages: Array<{
+      role: string;
+      content: Array<{ type: string; name?: string }>;
+    }> = [];
+    const event = { systemPrompt: "" };
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      sessionManager: { buildSessionProjection: () => ({ messages }) },
+      ui: { notify: assert.fail },
+    };
+    await bridge.handlers.get("session_start")!(event, gatewayContext);
+    await bridge.handlers.get("before_agent_start")!(event, gatewayContext);
+    const orchestrationLoadout = [
+      "read",
+      "tool_search",
+      "mcp__t3-code__orchestrator_capabilities",
+      "mcp__t3-code__delegate_task",
+      "mcp__t3-code__task_status",
+    ];
+    assert.deepEqual(bridge.getActiveTools(), orchestrationLoadout);
+
+    messages.push(
+      { role: "user", content: [{ type: "text" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text" },
+          { type: "toolCall", name: "mcp__t3-code__preview_snapshot" },
+          { type: "toolCall", name: "bash" },
+        ],
+      },
+    );
+    await bridge.handlers.get("model_select")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), [
+      ...orchestrationLoadout,
+      "mcp__t3-code__preview_snapshot",
+    ]);
+    // A tree restore can bring back a loadout without the orchestration tools.
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_tree")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), [
+      ...orchestrationLoadout,
+      "mcp__t3-code__preview_snapshot",
+    ]);
+  });
+
+  it("keeps an existing thread's eager loadout after the gateway opts out", async () => {
+    const event = { systemPrompt: "" };
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      sessionManager: { buildSessionProjection: () => ({ messages: [] }) },
+      ui: { notify: assert.fail },
+    };
+    const eager = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+    await eager.handlers.get("session_start")!(event, gatewayContext);
+    const eagerLoadout = [...eager.getActiveTools()];
+    assert.include(eagerLoadout, "mcp__t3-code__preview_snapshot");
+
+    // Pi restores the thread's saved loadout when it resumes under the opt-out.
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      gatewayTools: "called",
+    });
+    bridge.restoreActiveTools(eagerLoadout);
+    for (const hookName of [
+      "session_start",
+      "model_select",
+      "session_tree",
+      "before_agent_start",
+    ]) {
+      await bridge.handlers.get(hookName)!(event, gatewayContext);
+      assert.deepEqual(bridge.getActiveTools(), eagerLoadout);
+    }
+  });
+
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",
     async (mode) => {

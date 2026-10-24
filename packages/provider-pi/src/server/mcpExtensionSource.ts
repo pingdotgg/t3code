@@ -10,6 +10,7 @@ export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+export const T3_PI_GATEWAY_TOOLS_ENV = "T3_PI_GATEWAY_TOOLS";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -27,6 +28,7 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
+const GATEWAY_TOOLS_ENV = ${JSON.stringify(T3_PI_GATEWAY_TOOLS_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -421,7 +423,23 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
-  const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {
+  // Instances whose gateway runs tools found through tool_search opt out of
+  // the full catalog and keep only T3 tools already called in this branch,
+  // plus whatever tool_search loaded into the active loadout. Tools already
+  // active stay, including ones eagerly loaded before the opt-out.
+  const eagerGatewayTools = env(GATEWAY_TOOLS_ENV) !== "called";
+  const calledToolNames = (ctx: Pick<ExtensionContext, "sessionManager">) => {
+    const names = new Set<string>();
+    for (const message of ctx.sessionManager.buildSessionProjection().messages) {
+      if (message.role !== "assistant") continue;
+      for (const part of message.content) {
+        if (part.type === "toolCall") names.add(part.name);
+      }
+    }
+    return names;
+  };
+
+  const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model" | "sessionManager">) => {
     if (!supportsExposure) return;
     // A disabled or replaced search builtin cannot discover deferred tools.
     const hasToolSearch = hasBuiltinToolSearch();
@@ -433,10 +451,19 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // in history or guidance. Eagerly load T3 schemas, including after tree
     // restores, while retaining deferred exposure for Pi's allowlist rules.
     // Pi still applies --tools/--exclude-tools to this active loadout.
-    const required = [
-      ...(hasToolSearch ? ["tool_search"] : []),
-      ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => "mcp__t3-code__" + tool.name) : []),
-    ];
+    let gatewayTools: string[] = [];
+    if (ctx.model?.api === "openai-completions") {
+      gatewayTools = catalog.map((tool) => "mcp__t3-code__" + tool.name);
+      if (!eagerGatewayTools) {
+        // A restored loadout can drop the orchestration tools, so re-add
+        // them whether or not this branch has called them.
+        const called = calledToolNames(ctx);
+        gatewayTools = gatewayTools.filter(
+          (name) => called.has(name) || directTools.has(name.slice("mcp__t3-code__".length)),
+        );
+      }
+    }
+    const required = [...(hasToolSearch ? ["tool_search"] : []), ...gatewayTools];
     const missing = required.filter((name) => !active.includes(name));
     if (missing.length > 0) pi.setActiveTools([...active, ...missing]);
   };
