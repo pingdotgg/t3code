@@ -1583,7 +1583,11 @@ const make = Effect.gen(function* () {
               : childRun,
           )
         : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
+          ? // A cancelled task's finished turn settles it as interrupted.
+            task.cancelRequestedAt !== undefined &&
+            taskStatusForRun(taskResultRun ?? childRun) === "completed"
+            ? "interrupted"
+            : taskStatusForRun(taskResultRun ?? childRun)
           : taskStatusForRun(taskResultRun ?? childRun) === "queued"
             ? "queued"
             : "running";
@@ -2385,7 +2389,7 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
-        yield* threadManagement
+        const stopThread = threadManagement
           .dispatch({
             type: "thread.stop",
             commandId,
@@ -2401,6 +2405,14 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
+        // An unsettled task records the cancel, so it settles as interrupted once its turn ends.
+        yield* isTerminalTaskStatus(current.status)
+          ? stopThread
+          : threadManagement.cancelDelegatedTask({
+              parentThreadId: scope.thread.threadId,
+              taskId: input.taskId,
+              stop: stopThread,
+            });
         yield* threadManagement
           .stopDelegatedTasks({ threadId: current.childThreadId, commandId, reason })
           .pipe(
