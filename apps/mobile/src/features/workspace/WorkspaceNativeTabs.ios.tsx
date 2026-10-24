@@ -24,10 +24,12 @@ import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-con
 import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useDeviceType } from "../../native/native-layout-metrics";
+import { dispatchHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
+const SEARCH_SLOT = "search";
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
@@ -76,6 +78,15 @@ export function WorkspaceNativeTabs(props: {
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
+  const searchTab = deviceType === "duo-folded";
+  const openSearch = () => {
+    if (workspace.settingsOpen) navigation.goBack();
+    if (workspace.settingsOpen || !workspaceUsesColumns(selectedTab)) {
+      props.onSelect();
+      workspace.dispatch({ type: "select", tab: "threads" });
+      requestAnimationFrame(() => dispatchHardwareKeyboardCommand("focusSearch"));
+    } else dispatchHardwareKeyboardCommand("focusSearch");
+  };
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
   const request = useMemo(
     () => ({
@@ -98,6 +109,10 @@ export function WorkspaceNativeTabs(props: {
         onTabSelectionPrevented={({
           nativeEvent,
         }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
+          if (nativeEvent.preventedScreenKey === SEARCH_SLOT) {
+            openSearch();
+            return;
+          }
           if (nativeEvent.preventedScreenKey === "settings") {
             navigation.navigate("SettingsSheet", {
               screen: "SettingsContent",
@@ -113,6 +128,10 @@ export function WorkspaceNativeTabs(props: {
         onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
           setProvenance(nativeEvent.provenance);
           if (nativeEvent.actionOrigin === "programmatic-js") return;
+          if (nativeEvent.selectedScreenKey === SEARCH_SLOT) {
+            openSearch();
+            return;
+          }
           const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
           // UIKit sends reselects here even when preventNativeSelection is enabled.
           if (tab === "settings") {
@@ -162,6 +181,24 @@ export function WorkspaceNativeTabs(props: {
             </Tabs.Screen>
           );
         })}
+        {searchTab ? (
+          // UIKit sets a search tab apart below the others, like Photos. It never becomes
+          // selected: pressing it opens the current list's own search.
+          <Tabs.Screen
+            key={SEARCH_SLOT}
+            screenKey={SEARCH_SLOT}
+            title=""
+            tabBarItemAccessibilityLabel="Search"
+            preventNativeSelection
+            ios={{
+              role: "search",
+              systemItem: "search",
+              automaticallyActivatesSearch: true,
+            }}
+          >
+            <View />
+          </Tabs.Screen>
+        ) : null}
       </Tabs.Host>
       {(deviceType === "pad" ||
         compactTabs ||
