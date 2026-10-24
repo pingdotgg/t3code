@@ -18,11 +18,14 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import { Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { cli } from "../binCli.ts";
@@ -37,6 +40,10 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import {
+  makePersistedServerRuntimeState,
+  persistServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -117,6 +124,52 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
 
     yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
+    assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("waits for a busy live server to apply a project change", () =>
+  Effect.gen(function* () {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-live-project-cli-"));
+    const workspaceRoot = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3-live-project-workspace-"),
+    );
+    yield* persistServerRuntimeState({
+      path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+      state: yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 3_773,
+      }),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const mutateReceived = Promise.withResolvers<void>();
+    const mutateResponse = Promise.withResolvers<Response>();
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      if (init?.method !== "POST") return Response.json({ projects: [], updatedAt: now });
+      mutateReceived.resolve();
+      return mutateResponse.promise;
+    };
+
+    const add = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.forkChild,
+    );
+    yield* Effect.promise(() => mutateReceived.promise);
+    yield* TestClock.adjust("1 second");
+    mutateResponse.resolve(
+      Response.json({
+        id: "live-project",
+        title: NodePath.basename(workspaceRoot),
+        workspaceRoot,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      }),
+    );
+    yield* Fiber.join(add);
+
     assert.deepEqual((yield* readProjects(baseDir)).projects, []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
