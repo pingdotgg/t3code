@@ -18,6 +18,7 @@ import {
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTargetNotEditableError,
   PreviewAutomationTimeoutError,
+  PreviewAutomationTimeoutDetail,
   PreviewAutomationUnsupportedClientError,
   PreviewTabId,
   type PreviewAutomationError,
@@ -206,6 +207,7 @@ function remoteDetailKind(detail: unknown): RemoteDetailKind {
 }
 
 const MAX_REASON_CHARS = 500;
+const decodeTimeoutDetail = Schema.decodeUnknownOption(PreviewAutomationTimeoutDetail);
 
 const classifyResponseError = (
   context: PreviewAutomationRequestErrorContext,
@@ -253,11 +255,19 @@ const classifyResponseError = (
         ...context,
         ...remoteDiagnostics,
       });
-    case "PreviewAutomationTimeoutError":
+    case "PreviewAutomationTimeoutError": {
+      const detail = decodeTimeoutDetail(error.detail);
       return new PreviewAutomationTimeoutError({
         ...context,
         ...remoteDiagnostics,
+        ...(Option.isSome(detail)
+          ? {
+              timeoutMs: Math.min(context.timeoutMs, detail.value.timeoutMs),
+              pendingStages: detail.value.pendingStages,
+            }
+          : {}),
       });
+    }
     case "PreviewAutomationControlInterruptedError": {
       const reason = decodeControlReason(error.detail);
       return new PreviewAutomationControlInterruptedError({
