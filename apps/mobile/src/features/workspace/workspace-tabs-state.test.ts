@@ -1,7 +1,73 @@
 import { describe, expect, it } from "vite-plus/test";
-import { initialWorkspaceTabsState, workspaceTabsReducer } from "./workspace-tabs-state";
+import {
+  initialWorkspaceTabsState,
+  workspaceTabsReducer,
+  workspaceTabForNativeSlot,
+  resolveWorkspaceTabOrder,
+  workspaceSearchBottomClearance,
+  workspaceDockBottomClearance,
+  workspaceUsesColumns,
+} from "./workspace-tabs-state";
+
+describe("compact list clearance", () => {
+  it.each([
+    { bottomInset: 34, keyboardHeight: 300, clearance: 380 },
+    { bottomInset: 34, keyboardHeight: 0, clearance: 114 },
+    { bottomInset: 34, keyboardHeight: 20, clearance: 114 },
+  ])("keeps the last result above the keyboard and dock: %j", ({ clearance, ...input }) => {
+    expect(workspaceDockBottomClearance(input)).toBe(clearance);
+  });
+});
+
+describe("Duo list clearance", () => {
+  it.each([18, 60])(
+    "scrolls the last row above search with a %s-point native bar inset",
+    (bottomBarInset) => {
+      const clearance = workspaceSearchBottomClearance({
+        bottomInset: 34,
+        bottomBarInset,
+        keyboardHeight: 0,
+      });
+      expect(clearance).toBe(bottomBarInset + 48 + 16);
+    },
+  );
+
+  it("keeps the last row above search when the keyboard lifts the field", () => {
+    expect(
+      workspaceSearchBottomClearance({ bottomInset: 34, bottomBarInset: 18, keyboardHeight: 300 }),
+    ).toBe(300 + 8 + 48 + 16);
+  });
+
+  it("falls back to the field's safe-area spacing before native bar metrics arrive", () => {
+    expect(workspaceSearchBottomClearance({ bottomInset: 34, keyboardHeight: 0 })).toBe(
+      34 + 48 + 16,
+    );
+    expect(workspaceSearchBottomClearance({ bottomInset: 0, keyboardHeight: 0 })).toBe(
+      12 + 48 + 16,
+    );
+  });
+});
 
 describe("workspace root navigation", () => {
+  it("keeps Usage and Settings out of the list/detail layout", () => {
+    expect(workspaceUsesColumns("usage")).toBe(false);
+    expect(workspaceUsesColumns("threads", "SettingsSheet")).toBe(false);
+    expect(workspaceUsesColumns("pullRequests", "SettingsSheet")).toBe(false);
+  });
+
+  it("restores columns for chat and pull request lists and their details", () => {
+    expect(workspaceUsesColumns("threads")).toBe(true);
+    expect(workspaceUsesColumns("threads", "Thread")).toBe(true);
+    expect(workspaceUsesColumns("pullRequests", "PullRequest")).toBe(true);
+  });
+
+  it("keeps the registered defaults while customization is unavailable", () => {
+    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["threads", "pullRequests", "usage"]);
+    expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
+      resolveWorkspaceTabOrder(undefined),
+    );
+  });
+
   it("retains separate queries and positions across tabs, and cancels only the current search", () => {
     let state = initialWorkspaceTabsState();
     state = workspaceTabsReducer(state, { type: "scroll", tab: "threads", offset: 640 });
@@ -63,5 +129,26 @@ describe("workspace root navigation", () => {
     expect(state.tabs.threads).toMatchObject({ query: "keyboard", searchMode: "expanded" });
     expect(state.tabs.pullRequests.searchMode).toBe("resting");
     expect(workspaceTabsReducer(state, { type: "select", tab: "pullRequests" })).toBe(state);
+  });
+  it("returns from Usage without losing list state", () => {
+    let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
+      type: "query",
+      query: "retained",
+      tab: "threads",
+    });
+    for (const tab of ["usage"] as const) {
+      state = workspaceTabsReducer(state, { type: "select", tab });
+      expect(state.selectedTab).toBe(tab);
+      expect(workspaceTabsReducer(state, { type: "search" })).toBe(state);
+    }
+    state = workspaceTabsReducer(state, { type: "select", tab: "threads" });
+    expect(state.tabs.threads.query).toBe("retained");
+  });
+  it("opens Settings on native reselection instead of selecting its overflow section", () => {
+    const order = ["threads", "pullRequests", "usage"] as const;
+    expect(workspaceTabForNativeSlot(order, "settings")).toBe("settings");
+    expect(workspaceTabForNativeSlot(order, "first")).toBe("threads");
+    expect(workspaceTabForNativeSlot(order, "third")).toBe("usage");
+    expect(workspaceTabForNativeSlot(order, "removed")).toBeNull();
   });
 });

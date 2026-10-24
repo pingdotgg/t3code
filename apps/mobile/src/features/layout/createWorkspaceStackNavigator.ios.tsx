@@ -26,7 +26,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
-import { isDuoDevice } from "../../lib/device-type";
+import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
@@ -178,12 +178,10 @@ function WorkspaceColumns(
 
   const selectedTab = useWorkspaceTabs()?.state.selectedTab;
   const openNewTask = startNewTask;
-  // The Duo keeps compose in the detail column's bar, which is its vertical bar in landscape
-  // and folded, so it sits with the column's other actions whichever screen is shown. Pull
-  // requests leave it out, including one opened from a thread; their bar is already full of
-  // review actions.
+  // The cover detail rail needs room for thread tools above the fixed tabs.
+  // The unfolded Duo keeps compose beside its sidebar control.
   const detailCompose =
-    isDuoDevice(deviceType) && selectedTab !== "pullRequests" ? openNewTask : undefined;
+    deviceType === "duo-unfolded" && selectedTab !== "pullRequests" ? openNewTask : undefined;
   const inspector = use(NativeWorkspaceInspectorContext);
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
@@ -362,7 +360,8 @@ function WorkspaceColumns(
 }
 
 function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean }) {
-  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const workspace = useWorkspaceTabs()!;
   // Native dismiss commits the route pop after the transition. Restore the dock
   // when the primary screen starts appearing, including interactive back gestures.
   const [primaryVisible, setPrimaryVisible] = useState(false);
@@ -380,6 +379,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const descriptors = props.descriptors;
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
   const visibleRoute = projection.detail.at(-1) ?? primaryRoute;
+  const workspacePage = !workspaceUsesColumns(workspace.state.selectedTab, visibleRoute.name);
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
@@ -389,8 +389,8 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     options: { headerShown: false },
     render: () => (
       <WorkspaceNativeTabs
-        onNewTask={startNewTask}
         hidden={
+          !workspacePage &&
           projection.detail.length > 0 &&
           !primaryVisible &&
           !layout.usesSplitView &&
@@ -401,7 +401,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
             props.navigation.dispatch({ type: "POP_TO_TOP", target: props.state.key });
         }}
       >
-        {props.nativeColumns ? (
+        {props.nativeColumns && !workspacePage ? (
           <WorkspaceColumns
             {...props}
             descriptors={descriptors}
@@ -503,7 +503,7 @@ function WorkspaceStackNavigator({
   return (
     <NativeWorkspaceModeContext value={usesNativeWorkspaceColumns}>
       <NavigationContent>
-        <WorkspaceTabsProvider>
+        <WorkspaceTabsProvider settingsOpen={state.routes[state.index]?.name === "SettingsSheet"}>
           <WorkspaceStackView
             nativeColumns={usesNativeWorkspaceColumns}
             {...rest}

@@ -1,6 +1,7 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
-import { Keyboard } from "react-native";
+import { Keyboard, Platform } from "react-native";
+import { resetAndroidWorkspace } from "../../lib/android-workspace-navigation";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
@@ -8,15 +9,14 @@ import type { WorkspaceTab } from "./workspace-tabs-state";
 export function useSelectWorkspaceTab() {
   const workspace = useWorkspaceTabs()!;
   const navigation = useNavigation();
-  const selectedTab = workspace.state.selectedTab;
   const { dispatch } = workspace;
   return useCallback(
     (tab: WorkspaceTab) => {
-      if (tab === selectedTab) return;
       Keyboard.dismiss();
-      if (navigation.getState()?.index) navigation.dispatch(StackActions.popToTop());
+      if (Platform.OS === "android") resetAndroidWorkspace(navigation);
+      else navigation.dispatch(StackActions.popTo("Home"));
       dispatch({ type: "select", tab });
     },
-    [dispatch, navigation, selectedTab],
+    [dispatch, navigation],
   );
 }

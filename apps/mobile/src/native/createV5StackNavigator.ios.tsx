@@ -237,6 +237,9 @@ export function V5CardStackView(
                     }
                   />
                   <NativeColumnContent
+                    backgroundColor={
+                      StyleSheet.flatten(descriptor.options.contentStyle)?.backgroundColor
+                    }
                     insetHorizontally={
                       (descriptor.options as AppNativeStackNavigationOptions)
                         .nativeContentInsetHorizontally

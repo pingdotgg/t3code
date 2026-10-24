@@ -13,6 +13,8 @@ export function WorkspaceEmptyDetail(props: {
   readonly onAddConnection?: () => void;
 }) {
   const pullRequests = props.tab === "pullRequests";
+  if (props.tab && props.tab !== "threads" && props.tab !== "pullRequests")
+    return <View className="flex-1 bg-screen" />;
   return (
     <View
       className={

@@ -218,15 +218,22 @@ export function V5StackHeader(props: {
     bottom.length = 0;
   }
   if (props.onCompose) {
-    if (trailing.length)
-      trailing.push({ type: "spacer", id: "compose-group", sizing: "fixed", width: 8 });
-    trailing.push({
+    const compose: HeaderItem = {
       type: "item",
       id: "workspace-compose",
       title: "New task",
       icon: { type: "sfSymbol", name: "square.and.pencil" },
       onPress: props.onCompose,
-    });
+    };
+    if (deviceType === "duo-unfolded") {
+      if (leading.length)
+        leading.unshift({ type: "spacer", id: "compose-group", sizing: "fixed", width: 8 });
+      leading.unshift(compose);
+    } else {
+      if (trailing.length)
+        trailing.push({ type: "spacer", id: "compose-group", sizing: "fixed", width: 8 });
+      trailing.push(compose);
+    }
   }
   const left = options.headerLeft?.(itemProps);
   const right = options.headerRight?.(itemProps);

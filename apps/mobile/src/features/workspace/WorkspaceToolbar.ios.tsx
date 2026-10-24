@@ -1,6 +1,6 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { Toolbar } from "../../components/ui/Toolbar";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { Platform, Pressable, type TextInputInstance } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -20,12 +20,8 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceSearchField } from "./WorkspaceSearchField";
 import { WORKSPACE_TOOLBAR } from "./workspace-tabs-state";
-import { useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
-import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
-import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
-
-// Tabler's git-pull-request geometry, shared with the UIKit tab bar.
-const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
+import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
+import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
 
 /**
  * Rises once the keyboard reaches its content. UIKit also reports keyboards without height, with a
@@ -61,11 +57,9 @@ export function WorkspaceToolbar(props: {
 }) {
   const workspace = useWorkspaceTabs()!;
   const activeNewTask = useActiveNewTask();
-  const navigation = useNavigation();
   const deviceType = useDeviceType();
   const sidebarTabs = useSidebarWorkspaceTabs();
-  const selectTab = useSelectWorkspaceTab();
-  const selectedTint = useMobileNavigationTheme().colors.primary;
+  const compactTabs = useCompactWorkspaceTabs();
   // On the Duo, compose belongs to the threads tab, in the detail column's bar when unfolded.
   const nativeToolbarCompose =
     Platform.OS === "ios" &&
@@ -168,16 +162,17 @@ export function WorkspaceToolbar(props: {
       />
       {/* UIKit lays trailing items out from the edge inward. */}
       <Toolbar placement="right">
-        <Toolbar.Button
-          accessibilityLabel="Settings"
-          icon="gearshape"
-          onPress={() =>
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "Settings" },
-            })
-          }
-        />
+        {selectedTab !== "threads" ||
+        isDuoDevice(deviceType) ||
+        deviceType === "pad" ||
+        sidebarTabs === "picker" ||
+        compactTabs ? null : (
+          <Toolbar.Button
+            accessibilityLabel="New chat"
+            icon="square.and.pencil"
+            onPress={props.onNewTask}
+          />
+        )}
         {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
           <Toolbar.Button
             accessibilityLabel={
@@ -189,24 +184,7 @@ export function WorkspaceToolbar(props: {
         )}
       </Toolbar>
       <Toolbar placement="bottom">
-        {sidebarTabs === "toolbar" ? (
-          <Toolbar.Button
-            identifier="workspace-tab-threads"
-            accessibilityLabel="Threads"
-            icon={selectedTab === "threads" ? "text.bubble.fill" : "text.bubble"}
-            tintColor={selectedTab === "threads" ? selectedTint : undefined}
-            onPress={() => selectTab("threads")}
-          />
-        ) : null}
-        {sidebarTabs === "toolbar" ? (
-          <Toolbar.Button
-            identifier="workspace-tab-pull-requests"
-            accessibilityLabel="Pull requests"
-            icon={{ type: "image", source: PULL_REQUEST_ICON, tinted: true }}
-            tintColor={selectedTab === "pullRequests" ? selectedTint : undefined}
-            onPress={() => selectTab("pullRequests")}
-          />
-        ) : null}
+        {sidebarTabs === "toolbar" ? <WorkspaceTabToolbarButtons /> : null}
         {nativeToolbarCompose ? <Toolbar.Spacer flexible /> : null}
         {nativeToolbarCompose ? (
           <Toolbar.Button
