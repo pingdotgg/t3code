@@ -637,6 +637,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
+      updateRequiredModels,
       slashCommands: dedupedSlashCommands,
       skills,
       probe: {
