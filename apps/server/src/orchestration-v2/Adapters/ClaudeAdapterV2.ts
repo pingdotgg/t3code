@@ -546,6 +546,19 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
   }
 }
 
+/**
+ * Raised while the query is opening, before the user's prompt is offered, so the
+ * native session never saw the turn.
+ */
+export class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegistrationTimeoutError>()(
+  "ClaudeMcpRegistrationTimeoutError",
+  {},
+) {
+  override get message(): string {
+    return "Claude Code did not answer the MCP server registration.";
+  }
+}
+
 export class ClaudeAppendSystemPromptFileError extends Schema.TaggedError<ClaudeAppendSystemPromptFileError>()(
   "ClaudeAppendSystemPromptFileError",
   {
@@ -571,7 +584,10 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
     input: ClaudeAgentSdkQueryOpenInput,
-  ) => Effect.Effect<ClaudeAgentSdkQuerySession, ClaudeAgentSdkQueryRunnerError>;
+  ) => Effect.Effect<
+    ClaudeAgentSdkQuerySession,
+    ClaudeAgentSdkQueryRunnerError | ClaudeMcpRegistrationTimeoutError
+  >;
   readonly forkSession: (
     input: ClaudeAgentSdkSessionForkInput,
   ) => Effect.Effect<
@@ -983,13 +999,7 @@ export const layerQueryRunner: Layer.Layer<
                       Effect.orElseSucceed(() => Object.keys(mcpServers)),
                       Effect.timeoutOrElse({
                         duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
-                        orElse: () =>
-                          Effect.fail(
-                            queryRunnerError(
-                              "Claude Code did not answer the MCP server registration.",
-                              "setMcpServers",
-                            ),
-                          ),
+                        orElse: () => Effect.fail(new ClaudeMcpRegistrationTimeoutError()),
                       }),
                     );
                     if (failed.length > 0) {
