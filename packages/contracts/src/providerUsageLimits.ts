@@ -59,10 +59,13 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 /**
  * Sparse by contract: Claude's `rate_limit_event` names one window at a time
  * and Codex documents its notification as a partial. Windows merge by `id` onto
- * the instance's published snapshot; omitted windows are unchanged.
+ * the instance's published snapshot; omitted windows are unchanged. `complete`
+ * marks an update that carries every window the provider currently reports, not
+ * just the one that changed, so it can stand in for a failed probe.
  */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  complete: Schema.optional(Schema.Boolean),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
