@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - integration tests use a real Git filesystem fixture.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
@@ -83,7 +89,8 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  // ProjectService.make reads workspace git metadata, so the harness exposes the filesystem too.
+  Layer.provideMerge(NodeServices.layer),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -349,6 +356,80 @@ it.layer(layerTest)("ProjectService", (it) => {
         "/work/conflict-mover",
       );
     }),
+  );
+
+  it.effect(
+    "rejects the parent of a bare-repository worktree layout but accepts its worktrees",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const fixture = yield* Effect.acquireRelease(
+          Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bare-root-"))),
+          (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+        );
+        const git = (cwd: string, ...args: Array<string>) =>
+          NodeChildProcess.execFileSync(
+            "git",
+            ["-c", "user.email=t@t", "-c", "user.name=t", ...args],
+            { cwd, stdio: "pipe" },
+          );
+        const source = NodePath.join(fixture, "source");
+        NodeFS.mkdirSync(source);
+        git(source, "init", "-b", "develop");
+        git(source, "commit", "--allow-empty", "-m", "init");
+        const makeContainer = (name: string, coreBare: boolean, checkoutName: string) => {
+          const root = NodePath.join(fixture, name);
+          git(fixture, "clone", "--bare", source, NodePath.join(root, ".bare"));
+          NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: ./.bare\n");
+          git(root, "worktree", "add", checkoutName, "develop");
+          // With core.bare=false git treats the container itself as a checkout of HEAD, so the
+          // bare metadata and every sibling worktree show up as changes.
+          git(root, "config", "core.bare", String(coreBare));
+          return root;
+        };
+
+        for (const [name, coreBare, checkoutName] of [
+          ["bare-true", true, "develop"],
+          ["bare-false", false, "develop"],
+          ["bare-dotdot-true", true, "..develop"],
+          ["bare-dotdot-false", false, "..develop"],
+        ] as const) {
+          const root = makeContainer(name, coreBare, checkoutName);
+          const rejected = yield* service
+            .create({
+              commandId: CommandId.make(`command:bare-root:${name}`),
+              projectId: ProjectId.make(`project:bare-root:${name}`),
+              title: name,
+              workspaceRoot: root,
+            })
+            .pipe(Effect.flip);
+          assert.match(rejected.message, /worktree/i, `core.bare=${coreBare}`);
+          assert.isTrue(Option.isNone(yield* service.getByWorkspaceRoot(root)));
+
+          const worktreeRoot = NodePath.join(root, checkoutName);
+          const worktree = yield* service.create({
+            commandId: CommandId.make(`command:bare-root:${name}:develop`),
+            projectId: ProjectId.make(`project:bare-root:${name}:develop`),
+            title: `${name} develop`,
+            workspaceRoot: worktreeRoot,
+          });
+          assert.equal(worktree.workspaceRoot, worktreeRoot);
+        }
+
+        // A primary checkout may keep its git dir inside itself; worktrees elsewhere are fine.
+        const checkout = NodePath.join(fixture, "separate-git-dir");
+        NodeFS.mkdirSync(checkout);
+        git(checkout, "init", "-b", "develop", "--separate-git-dir", ".metadata", checkout);
+        git(checkout, "commit", "--allow-empty", "-m", "init");
+        git(checkout, "worktree", "add", NodePath.join(fixture, "external"), "-b", "external");
+        const primary = yield* service.create({
+          commandId: CommandId.make("command:bare-root:separate-git-dir"),
+          projectId: ProjectId.make("project:bare-root:separate-git-dir"),
+          title: "separate git dir",
+          workspaceRoot: checkout,
+        });
+        assert.equal(primary.workspaceRoot, checkout);
+      }),
   );
 
   it.effect("replays a workspace conflict after the workspace frees up", () =>

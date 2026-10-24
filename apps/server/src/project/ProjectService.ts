@@ -12,8 +12,10 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -83,6 +85,15 @@ export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyErro
   }
 }
 
+export class ProjectWorkspaceBareRepositoryError extends Schema.TaggedError<ProjectWorkspaceBareRepositoryError>()(
+  "ProjectWorkspaceBareRepositoryError",
+  { workspaceRoot: Schema.String },
+) {
+  override get message(): string {
+    return `${this.workspaceRoot} holds a bare repository and its worktrees. Add an individual worktree as the project instead.`;
+  }
+}
+
 export class ProjectOperationError extends Schema.TaggedError<ProjectOperationError>()(
   "ProjectOperationError",
   {
@@ -108,6 +119,7 @@ export type ProjectServiceError =
   | ProjectNotFoundError
   | ProjectConflictError
   | ProjectNotEmptyError
+  | ProjectWorkspaceBareRepositoryError
   | ProjectOperationError;
 
 export class ProjectService extends Context.Service<
@@ -140,6 +152,17 @@ export class ProjectService extends Context.Service<
   }
 >()("t3/project/ProjectService") {}
 
+// Linear scan; a regex with lazy captures and `m` goes quadratic on long malformed input.
+const parseGitdirFile = (contents: string): string | undefined => {
+  for (const line of contents.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("gitdir:")) continue;
+    const target = trimmed.slice("gitdir:".length).trim();
+    return target === "" ? undefined : target;
+  }
+  return undefined;
+};
+
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -150,6 +173,8 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -209,6 +234,52 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+
+  /**
+   * Rejects the `.bare` worktree layout: `<root>/.git` is a `gitdir:` file pointing at a
+   * repository stored inside the root, with linked worktrees as siblings. Git treats the root as
+   * a checkout (or refuses it when core.bare=true), so threads there would see the repository
+   * metadata and every sibling worktree as changes. A primary checkout whose separate git dir sits
+   * inside it looks the same on disk, so only a registered worktree inside the root rejects it.
+   */
+  const rejectBareRepositoryContainer = Effect.fn("ProjectService.rejectBareRepositoryContainer")(
+    function* (workspaceRoot: string) {
+      const isInsideRoot = (candidate: string) => {
+        const relative = path.relative(workspaceRoot, candidate);
+        return (
+          relative !== "" &&
+          relative !== ".." &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(relative)
+        );
+      };
+      const readGitdirFile = (file: string) =>
+        fileSystem.readFileString(file).pipe(
+          Effect.map(parseGitdirFile),
+          Effect.orElseSucceed(() => undefined),
+        );
+      const target = yield* readGitdirFile(path.join(workspaceRoot, ".git"));
+      if (target === undefined) return;
+      const gitDir = path.resolve(workspaceRoot, target);
+      if (!isInsideRoot(gitDir)) return;
+      const worktreesDir = path.join(gitDir, "worktrees");
+      const worktrees = yield* fileSystem
+        .readDirectory(worktreesDir)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      for (const name of worktrees) {
+        // `worktrees/<name>/gitdir` holds the path of that worktree's `.git` file.
+        const registered = yield* fileSystem
+          .readFileString(path.join(worktreesDir, name, "gitdir"))
+          .pipe(Effect.orElseSucceed(() => ""));
+        const dotGitPath = registered.trim();
+        if (dotGitPath === "") continue;
+        const worktreeRoot = path.dirname(path.resolve(worktreesDir, name, dotGitPath));
+        if (isInsideRoot(worktreeRoot)) {
+          return yield* new ProjectWorkspaceBareRepositoryError({ workspaceRoot });
+        }
+      }
+    },
+  );
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
@@ -332,6 +403,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
+      yield* rejectBareRepositoryContainer(workspaceRoot);
       yield* commit({
         type: "project.create",
         commandId: input.commandId,
@@ -359,6 +431,7 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
+      if (workspaceRoot !== previousRoot) yield* rejectBareRepositoryContainer(workspaceRoot);
       yield* commit({
         type: "project.meta.update",
         commandId: input.commandId,
