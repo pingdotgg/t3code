@@ -664,6 +664,25 @@ it.live("preserves late tracked edits when submodules were never initialized", (
   ),
 );
 
+it.live("keeps a managed worktree folder left with only node_modules", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+      yield* fs.makeDirectory(`${worktree}/node_modules/pkg`, { recursive: true });
+      for (const entry of yield* fs.readDirectory(worktree)) {
+        if (entry !== "node_modules") yield* fs.remove(`${worktree}/${entry}`, { recursive: true });
+      }
+      yield* command(repo, ["worktree", "prune"]);
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "kept",
+        reason: "Not a linked worktree",
+      });
+      expect(yield* fs.exists(`${worktree}/node_modules/pkg`)).toBe(true);
+    }),
+  ),
+);
+
 describe("subagent worktree ownership", () => {
   it.effect.each([
     "idle",

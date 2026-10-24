@@ -874,6 +874,63 @@ effectIt.effect("does not resume a continuation stopped while recovery was in fl
   }),
 );
 
+effectIt.effect.each([["node_modules"], ["node_modules", ".next"]])(
+  "recreates a managed worktree folder that holds only %s",
+  (leftovers) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-start-" });
+      const worktreePath = path.join(workspaceRoot, "project", "worktree");
+      // What a junction-skipping `git worktree remove` leaves behind: no `.git`, no files.
+      for (const leftover of leftovers) {
+        yield* fileSystem.makeDirectory(path.join(worktreePath, leftover), { recursive: true });
+      }
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        worktreePath,
+        worktreesDir: workspaceRoot,
+        fileSystem,
+        failReadsAfterRunning: true,
+      });
+      // `git worktree add` refuses a non-empty target, so the leftover must be gone first.
+      harness.createWorktree.mockImplementation(() =>
+        fileSystem.exists(worktreePath).pipe(
+          Effect.tap((exists) => Effect.sync(() => expect(exists).toBe(false))),
+          Effect.as({} as never),
+          Effect.orDie,
+        ),
+      );
+      yield* harness.start;
+      expect(harness.createWorktree).toHaveBeenCalledWith({
+        cwd: "/tmp/native-account-project",
+        refName: "feature/restore",
+        path: worktreePath,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+effectIt.effect("leaves a managed worktree folder with other files untouched", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-start-" });
+    const worktreePath = path.join(workspaceRoot, "project", "worktree");
+    yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(worktreePath, "notes.md"), "keep me");
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      worktreesDir: workspaceRoot,
+      fileSystem,
+      failReadsAfterRunning: true,
+    });
+    yield* harness.start;
+    expect(harness.createWorktree).not.toHaveBeenCalled();
+    expect(yield* fileSystem.readFileString(path.join(worktreePath, "notes.md"))).toBe("keep me");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 effectIt.effect.each(["cleanup-first", "startup-first"])(
   "coordinates provider startup with %s",
   (order) =>
