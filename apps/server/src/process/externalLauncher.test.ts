@@ -434,6 +434,36 @@ for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12
   );
 }
 
+it.effect.skipIf(windowsHost)("prefers zeditor over the ZFS zed on Linux PATH", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-linux-" });
+    for (const name of ["zed", "zeditor"]) {
+      yield* fs.writeFileString(path.join(binDir, name), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(binDir, name), 0o755);
+    }
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { HOME: binDir, PATH: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    assert.ok(spawned);
+    assert.equal(spawned.command, "zeditor");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.each([
   { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
   { editor: "idea", installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea" },

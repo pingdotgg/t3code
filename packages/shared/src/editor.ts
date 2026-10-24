@@ -37,8 +37,11 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   // OpenZFS also installs a `zed` executable. Prefer the macOS editor bundle
   // so a PATH entry for the ZFS Event Daemon cannot take over editor opens.
   const preferBundle = platform === "darwin" && editor.id === "zed";
+  // On Linux distro packages ship the editor as `zeditor` precisely because `zed` belongs to ZFS.
+  const commands =
+    platform === "linux" && editor.id === "zed" ? ["zeditor", "zed"] : editor.commands;
   if (!preferBundle) {
-    for (const command of editor.commands) {
+    for (const command of commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
   }
@@ -135,7 +138,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
     }
     for (const dir of dirs) {
-      for (const name of editor.commands) candidates.push(path.join(dir, name));
+      for (const name of commands) candidates.push(path.join(dir, name));
     }
   }
 
