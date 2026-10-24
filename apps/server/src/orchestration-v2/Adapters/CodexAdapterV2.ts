@@ -1393,6 +1393,118 @@ const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
   Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
 );
 
+// Only the fields the review check reads, so hook metadata that newer or
+// older Codex versions add or lack cannot block thread start. A missing
+// trustStatus or errors list predates hook review.
+const decodeCodexHooksList = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    data: Schema.Array(
+      Schema.Struct({
+        errors: Schema.optional(
+          Schema.Array(Schema.Struct({ message: Schema.String, path: Schema.String })),
+        ),
+        hooks: Schema.Array(
+          Schema.Struct({
+            enabled: Schema.Boolean,
+            trustStatus: Schema.optional(Schema.String),
+            sourcePath: Schema.String,
+          }),
+        ),
+      }),
+    ),
+  }),
+);
+
+// Codex rejects methods it does not know as an invalid request naming the
+// method, not as JSON-RPC method-not-found.
+function isCodexHooksListUnsupported(error: CodexErrors.CodexAppServerRequestError): boolean {
+  return (
+    error.code === -32601 ||
+    (error.code === -32600 && error.errorMessage.includes("unknown variant `hooks/list`"))
+  );
+}
+
+const MAX_CODEX_HOOK_SOURCE_PATHS = 10;
+const MAX_CODEX_HOOK_SOURCE_PATH_LENGTH = 256;
+
+const truncateWithEllipsis = (text: string, maxLength: number) =>
+  text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+
+const codexHookReviewTarget = (cwd: string | null, homePath: string | undefined) =>
+  `\`codex\`${cwd === null ? "" : ` in ${cwd}`}${homePath ? ` with CODEX_HOME=${homePath}` : ""}`;
+
+// Codex's discovery text can echo config values, so it stays in `cause`; the
+// message points the user at Codex, which prints the full errors.
+class CodexHookDiscoveryError extends Schema.TaggedError<CodexHookDiscoveryError>()(
+  "CodexHookDiscoveryError",
+  {
+    cwd: Schema.NullOr(Schema.String),
+    homePath: Schema.optional(Schema.String),
+    errorCount: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  static fromDiscoveryErrors(input: {
+    readonly cwd: string | null;
+    readonly homePath: string | undefined;
+    readonly errors: ReadonlyArray<{ readonly path: string; readonly message: string }>;
+  }): CodexHookDiscoveryError {
+    return new CodexHookDiscoveryError({
+      cwd: input.cwd,
+      ...(input.homePath ? { homePath: input.homePath } : {}),
+      errorCount: input.errors.length,
+      cause: input.errors,
+    });
+  }
+
+  override get message(): string {
+    return (
+      `Codex could not load its hook configuration (${this.errorCount} ${this.errorCount === 1 ? "error" : "errors"}), so T3 Code cannot check whether a hook needs review. ` +
+      `Run ${codexHookReviewTarget(this.cwd, this.homePath)} to see the errors, fix the configuration, then try again.`
+    );
+  }
+}
+
+class CodexHookReviewRequiredError extends Schema.TaggedError<CodexHookReviewRequiredError>()(
+  "CodexHookReviewRequiredError",
+  {
+    cwd: Schema.NullOr(Schema.String),
+    homePath: Schema.optional(Schema.String),
+    hookCount: Schema.Number,
+    sourcePathCount: Schema.Number,
+    sourcePaths: Schema.Array(
+      Schema.String.check(Schema.isMaxLength(MAX_CODEX_HOOK_SOURCE_PATH_LENGTH)),
+    ).check(Schema.isMaxLength(MAX_CODEX_HOOK_SOURCE_PATHS)),
+  },
+) {
+  static fromPendingHooks(input: {
+    readonly cwd: string | null;
+    readonly homePath: string | undefined;
+    readonly hooks: ReadonlyArray<{ readonly sourcePath: string }>;
+  }): CodexHookReviewRequiredError {
+    const sourcePaths = [...new Set(input.hooks.map((hook) => hook.sourcePath))];
+    return new CodexHookReviewRequiredError({
+      cwd: input.cwd,
+      ...(input.homePath ? { homePath: input.homePath } : {}),
+      hookCount: input.hooks.length,
+      sourcePathCount: sourcePaths.length,
+      sourcePaths: sourcePaths
+        .slice(0, MAX_CODEX_HOOK_SOURCE_PATHS)
+        .map((path) => truncateWithEllipsis(path, MAX_CODEX_HOOK_SOURCE_PATH_LENGTH)),
+    });
+  }
+
+  override get message(): string {
+    const one = this.hookCount === 1;
+    const omitted = this.sourcePathCount - this.sourcePaths.length;
+    const sources = `${this.sourcePaths.join(", ")}${omitted > 0 ? `, and ${omitted} more` : ""}`;
+    return (
+      `Codex will not run ${one ? "an enabled hook" : `${this.hookCount} enabled hooks`} until ${one ? "it is" : "they are"} reviewed (${sources}). ` +
+      `Open ${codexHookReviewTarget(this.cwd, this.homePath)}, enter \`/hooks\` to review or disable ${one ? "it" : "them"}, then try again.`
+    );
+  }
+}
+
 const CodexChildSelection = Schema.Struct({
   thread: Schema.Struct({ id: Schema.String }),
   model: Schema.NullOr(Schema.String),
@@ -1763,12 +1875,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        const settings = resolvedRuntime?.config ?? adapterOptions.settings;
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
-          settings: resolvedRuntime?.config ?? adapterOptions.settings,
+          settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
         const additionalContextByThread = yield* Ref.make(
@@ -1842,6 +1955,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             yield* Ref.set(initialized, true);
           }),
         );
+        // Codex silently skips enabled hooks that are untrusted or modified since
+        // review, so starting a new thread anyway would drop the user's hooks
+        // without a trace.
+        const requireReviewedHooks = Effect.fn("CodexAdapterV2.requireReviewedHooks")(function* (
+          cwd: string | null,
+        ) {
+          const listed = yield* client.raw
+            .request("hooks/list", cwd === null ? {} : { cwds: [cwd] })
+            .pipe(
+              Effect.flatMap(decodeCodexHooksList),
+              Effect.catchTags({
+                // Codex versions without hooks/list have no hook review to bypass.
+                CodexAppServerRequestError: (error) =>
+                  isCodexHooksListUnsupported(error) ? Effect.succeed(null) : Effect.fail(error),
+              }),
+            );
+          const homePath = settings.homePath;
+          // Codex lists no hooks for a config layer it cannot load, so an empty
+          // list cannot prove that none need review.
+          const discoveryErrors = listed?.data.flatMap((entry) => entry.errors ?? []) ?? [];
+          if (discoveryErrors.length > 0) {
+            return yield* CodexHookDiscoveryError.fromDiscoveryErrors({
+              cwd,
+              homePath,
+              errors: discoveryErrors,
+            });
+          }
+          const pending =
+            listed?.data.flatMap((entry) =>
+              entry.hooks.filter(
+                (hook) =>
+                  hook.enabled &&
+                  (hook.trustStatus === "untrusted" || hook.trustStatus === "modified"),
+              ),
+            ) ?? [];
+          if (pending.length === 0) return;
+          return yield* CodexHookReviewRequiredError.fromPendingHooks({
+            cwd,
+            homePath,
+            hooks: pending,
+          });
+        });
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -6686,6 +6841,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
+              Effect.andThen(requireReviewedHooks(threadInput.runtimePolicy.cwd)),
               Effect.andThen(mcpSessions.read(threadInput.threadId)),
               Effect.flatMap((mcpSession) =>
                 client.request(
@@ -6695,6 +6851,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
                   }),
+                ),
+              ),
+              // With workspace-write permissions, thread/start can trust a new
+              // project, which only then exposes its project hooks for review.
+              Effect.tap((response) =>
+                requireReviewedHooks(threadInput.runtimePolicy.cwd).pipe(
+                  Effect.onError(() =>
+                    client
+                      .request("thread/unsubscribe", { threadId: response.thread.id })
+                      .pipe(Effect.ignore),
+                  ),
                 ),
               ),
               Effect.map((response): OrchestrationV2ProviderThread =>
@@ -7509,6 +7676,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
+                Effect.andThen(requireReviewedHooks(threadInput.runtimePolicy?.cwd ?? null)),
                 Effect.andThen(
                   client.request("thread/fork", {
                     threadId,
@@ -7525,14 +7693,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         : { runtimePolicy: threadInput.runtimePolicy }),
                     }),
                   }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterForkThreadError({
-                      driver: CODEX_PROVIDER,
-                      providerThreadId: threadInput.sourceProviderThread.id,
-                      cause: normalizeCodexCause(cause),
-                    }),
                 ),
               );
               let forkedThread = response.thread;
