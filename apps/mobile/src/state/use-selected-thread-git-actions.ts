@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useMemo } from "react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   type GitActionRequestInput,
   type VcsActionOperation,
@@ -22,7 +22,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { useBranches } from "../state/queries";
 import { threadEnvironment } from "../state/threads";
-import { vcsActionManager, vcsEnvironment } from "../state/vcs";
+import { vcsActionManager, vcsEnvironment, vcsRefsQuery } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
@@ -218,12 +218,29 @@ export function useSelectedThreadGitActions() {
     [selectedThread, selectedThreadCwd, selectedThreadProject],
   );
 
-  const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
-    branchState.refresh();
-    return dedupeRemoteBranchesWithLocalMatches(branchState.data?.refs ?? []).filter(
-      (branch) => !branch.isRemote,
-    );
-  }, [branchState]);
+  const refreshSelectedThreadBranches =
+    useCallback(async (): Promise<ReadonlyArray<VcsRef> | null> => {
+      if (branchTarget.environmentId === null || branchTarget.cwd === null) return null;
+      const result = await executeAtomQuery(
+        appAtomRegistry,
+        vcsRefsQuery({
+          environmentId: branchTarget.environmentId,
+          input: { cwd: branchTarget.cwd, limit: 100 },
+        }),
+        { refresh: true, reportFailure: false },
+      );
+      if (AsyncResult.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        const message = error instanceof Error ? error.message : "Failed to refresh branches.";
+        setPendingConnectionError(message);
+        showGitActionResult({ type: "error", title: "Git action failed", description: message });
+        return null;
+      }
+      setPendingConnectionError(null);
+      return dedupeRemoteBranchesWithLocalMatches(result.value.refs).filter(
+        (branch) => !branch.isRemote,
+      );
+    }, [branchTarget]);
 
   const syncSelectedThreadBranchState = useCallback(
     async (input: {
