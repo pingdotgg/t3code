@@ -250,6 +250,22 @@ function isWinGetClaudeCommandPath(commandPath: string): boolean {
   return winGetClaudeCommandPath.test(normalizeCommandPath(commandPath));
 }
 
+/**
+ * CLI copies the Codex desktop apps ship and replace when they update. On Windows: the versioned
+ * binaries under `%LOCALAPPDATA%\OpenAI\Codex\bin` and the copy kept at
+ * `<CODEX_HOME>\plugins\.plugin-appserver`, but not the standalone installer's
+ * `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`. On macOS: the CLI inside ChatGPT.app or Codex.app.
+ */
+const codexDesktopCommandPath: Partial<Record<NodeJS.Platform, RegExp>> = {
+  win32:
+    /(?<!\/programs)\/openai\/codex\/bin\/(?:[^/]+\/)?codex\.exe$|\/plugins\/\.plugin-appserver\/codex\.exe$/,
+  darwin: /\/(?:chatgpt|codex)\.app\/contents\/resources\//,
+};
+
+function isCodexDesktopCommandPath(platform: NodeJS.Platform, commandPath: string): boolean {
+  return codexDesktopCommandPath[platform]?.test(normalizeCommandPath(commandPath)) ?? false;
+}
+
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -449,6 +465,15 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     definition.provider === "claudeAgent" &&
     context.platform === "win32" &&
     commandPaths.some(isWinGetClaudeCommandPath)
+  ) {
+    return manual;
+  }
+  // A Codex desktop app replaces its own copies when it updates; `codex update` on one fails with
+  // "Could not detect the Codex installation method" and exits 1. Only the real path decides, so
+  // a link named like the app's folder that targets a standalone install keeps its updater.
+  if (
+    definition.provider === "codex" &&
+    isCodexDesktopCommandPath(context.platform, context.realCommandPath)
   ) {
     return manual;
   }

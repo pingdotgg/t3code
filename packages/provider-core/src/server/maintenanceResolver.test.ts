@@ -511,6 +511,117 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  const codexUpdate = {
+    provider: driver("codex"),
+    npmPackageName: "@openai/codex",
+    nativeUpdate: {
+      args: ["update"],
+      isCommandPath: isNativeTestCommandPath("/packages/standalone/"),
+    },
+  };
+  const codexDesktopBin =
+    "C:\\Users\\me\\AppData\\Local\\OpenAI\\Codex\\bin\\6257d9e8f63c0f2b\\codex.exe";
+  const codexDesktopAppServer = "C:\\Users\\me\\.codex\\plugins\\.plugin-appserver\\codex.exe";
+
+  it.effect.each([
+    { name: "a versioned desktop binary", resolved: codexDesktopBin, real: codexDesktopBin },
+    {
+      name: "the legacy unversioned desktop binary",
+      resolved: "C:\\Users\\me\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe",
+      real: "C:\\Users\\me\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe",
+    },
+    {
+      name: "the plugin app-server copy",
+      resolved: codexDesktopAppServer,
+      real: codexDesktopAppServer,
+    },
+    {
+      name: "a redirected local app data folder",
+      resolved: "D:\\LocalAppData\\OpenAI\\Codex\\bin\\6257d9e8f63c0f2b\\codex.exe",
+      real: "D:\\LocalAppData\\OpenAI\\Codex\\bin\\6257d9e8f63c0f2b\\codex.exe",
+    },
+    {
+      name: "a custom CODEX_HOME",
+      resolved: "D:\\codex-home\\plugins\\.plugin-appserver\\codex.exe",
+      real: "D:\\codex-home\\plugins\\.plugin-appserver\\codex.exe",
+    },
+  ] as const)("keeps a Codex desktop app copy manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: codexUpdate, ...fixture });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect("keeps the native updater for a Codex standalone install", () =>
+    Effect.gen(function* () {
+      const standalone = "C:\\Users\\me\\.codex\\packages\\standalone\\current\\bin\\codex.exe";
+      const capabilities = yield* resolveInstall({
+        definition: codexUpdate,
+        resolved: "C:\\Users\\me\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe",
+        real: standalone,
+      });
+
+      expect(capabilities.update).toMatchObject({ args: ["update"], lockKey: "codex-native" });
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "the ChatGPT.app bundled CLI",
+      resolved: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+      real: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    },
+    {
+      name: "the Codex.app bundled CLI",
+      resolved: "/Applications/Codex.app/Contents/Resources/codex",
+      real: "/Applications/Codex.app/Contents/Resources/codex",
+    },
+    {
+      name: "a launcher symlink into an app bundle",
+      resolved: "/usr/local/bin/codex",
+      real: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    },
+  ] as const)("keeps a macOS app-bundled CLI manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({
+        definition: codexUpdate,
+        platform: "darwin",
+        ...fixture,
+      });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect.each([
+    "/Users/me/.codex/packages/standalone/current/bin/codex",
+    "/Users/me/Tools.app/Contents/.codex/packages/standalone/current/bin/codex",
+  ])("keeps the native updater for a macOS standalone install at %s", (standalone) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({
+        definition: codexUpdate,
+        platform: "darwin",
+        resolved: standalone,
+        real: standalone,
+      });
+
+      expect(capabilities.update).toMatchObject({ args: ["update"], lockKey: "codex-native" });
+    }),
+  );
+
+  it.effect("keeps the native updater for a desktop-named junction into a standalone install", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({
+        definition: codexUpdate,
+        resolved: "D:\\Tools\\OpenAI\\Codex\\bin\\codex.exe",
+        real: "C:\\Users\\me\\.codex\\packages\\standalone\\releases\\0.120.0-x86_64\\bin\\codex.exe",
+      });
+
+      expect(capabilities.update).toMatchObject({ args: ["update"], lockKey: "codex-native" });
+    }),
+  );
+
   it.effect.each([
     {
       name: "the default home",
