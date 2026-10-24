@@ -816,9 +816,10 @@ const handoffTargetIds = (
 };
 
 /**
- * Runs a tool registration against a server that records one anonymous
- * `mcp.tool.invoked` event per call: the tool, the calling agent's provider,
- * the outcome with its failure code, and the duration. A handoff tool also
+ * Runs a tool registration against a server that records an anonymous
+ * `mcp.tool.invoked` event for every handoff call and every failed call of
+ * other tools: the tool, the calling agent's provider, the outcome with its
+ * failure code, and the duration. A handoff tool also
  * reports the caller's model, origin, and delegation depth, the settings the
  * agent chose, and the provider, model, and modes of each thread that received
  * the work. Ids, prompts, and free text are never recorded.
@@ -882,6 +883,11 @@ const withToolAnalytics =
           result: McpSchema.CallToolResult | undefined,
           durationMs: number,
         ) {
+          const handoff = HANDOFF_TOOLS.has(tool);
+          const outcome = toolOutcome(result);
+          // Agents call status, read, and preview tools in tight loops, so an
+          // event per successful call floods analytics. Only failures count there.
+          if (!handoff && outcome.outcome === "ok") return;
           // Client credentials (no calling thread) report an unknown caller.
           const invocation = Option.getOrUndefined(
             yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
@@ -889,7 +895,6 @@ const withToolAnalytics =
           const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
           // Only handoff tools pay for thread lookups; the rest report the
           // caller's provider from the credential.
-          const handoff = HANDOFF_TOOLS.has(tool);
           const caller =
             handoff && invocation !== undefined
               ? ((yield* shellOf(invocation.threadId)) ?? undefined)
@@ -917,7 +922,7 @@ const withToolAnalytics =
                   ),
                 }),
             targets: targets.filter((thread) => thread !== null),
-            outcome: toolOutcome(result),
+            outcome,
             ...(handoff
               ? { settings: handoffSettings(tool, args, result?.structuredContent) }
               : {}),
