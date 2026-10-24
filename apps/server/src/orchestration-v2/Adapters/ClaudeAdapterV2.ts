@@ -2673,6 +2673,7 @@ function isClaudeTypedToolResultErrorContent(content: ClaudeTypedToolResultConte
   }
 
   switch (content.type) {
+    case "advisor_tool_result_error":
     case "bash_code_execution_tool_result_error":
     case "code_execution_tool_result_error":
     case "text_editor_code_execution_tool_result_error":
