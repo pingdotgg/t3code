@@ -894,3 +894,39 @@ describe("Usage shortcuts", () => {
     );
   });
 });
+
+describe("custom browser action shortcuts", () => {
+  const bindings = mergeWithDefaultKeybindings(
+    compileResolvedKeybindingsConfig([
+      { key: "mod+t", command: "preview.newTab", when: "!terminalFocus" },
+      { key: "mod+alt+c", command: "preview.annotate", when: "previewOpen && !terminalFocus" },
+    ]),
+  );
+
+  it.each([
+    { platform: "MacIntel", modifiers: { metaKey: true } },
+    { platform: "Linux x86_64", modifiers: { ctrlKey: true } },
+  ])(
+    "opens a browser from chat and annotates from chat or a page on $platform",
+    ({ platform, modifiers }) => {
+      const resolve = (key: string, context: Record<string, boolean>, altKey = false) =>
+        resolveShortcutCommand(event({ key, ...modifiers, altKey }), bindings, {
+          platform,
+          context,
+        });
+      assert.strictEqual(
+        resolve("t", { composerFocus: true, editableFocus: true }),
+        "preview.newTab",
+      );
+      for (const previewFocus of [false, true]) {
+        assert.strictEqual(
+          resolve("c", { previewOpen: true, previewFocus }, true),
+          "preview.annotate",
+        );
+      }
+      assert.isNull(resolve("c", { previewOpen: false }, true));
+      assert.isNull(resolve("t", { terminalFocus: true }));
+      assert.isNull(resolve("c", { previewOpen: true, terminalFocus: true }, true));
+    },
+  );
+});

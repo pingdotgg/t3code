@@ -44,6 +44,14 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Browser
+
+Bind **Preview: New Tab** to create a browser tab and type in its address bar
+immediately. Bind **Preview: Annotate** to start or cancel annotation of the open
+desktop browser page, from chat or the page itself. Both commands have no default
+shortcut. To use `mod+t` for a browser tab instead of the panel's add menu, replace
+its binding with `preview.newTab` and condition `!terminalFocus`.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`

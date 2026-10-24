@@ -22,7 +22,8 @@ import {
 import { setActivePreviewTab } from "../../previewStateStore";
 import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
-import { subscribePreviewAction } from "../preview/previewActionBus";
+import { dispatchPreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
@@ -124,6 +125,15 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     });
   };
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
+  const runBrowserShortcut = useStableCallback((command: "preview.newTab" | "preview.annotate") => {
+    if (!canOperatePreview || !browserAvailable) return false;
+    if (command === "preview.newTab") createBrowserSurface();
+    else {
+      if (!previewPanelOpen) return false;
+      dispatchPreviewAction("annotate");
+    }
+    return true;
+  });
   const addDiffSurface = () => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
@@ -293,7 +303,27 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     [togglePreviewPanelStable],
   );
 
+  useEffect(
+    () =>
+      window.desktopBridge?.onMenuAction((action) => {
+        if (
+          (action === "preview.newTab" || action === "preview.annotate") &&
+          !isCommandPaletteOpen()
+        )
+          runBrowserShortcut(action);
+      }),
+    [runBrowserShortcut],
+  );
+
   const shortcuts = {
+    "preview.newTab": ({ event, terminalFocusOwner }) => {
+      if (terminalFocusOwner !== null) return false;
+      if (!event.repeat) return runBrowserShortcut("preview.newTab");
+    },
+    "preview.annotate": ({ event, terminalFocusOwner }) => {
+      if (terminalFocusOwner !== null) return false;
+      if (!event.repeat) return runBrowserShortcut("preview.annotate");
+    },
     "rightPanel.toggle": () => toggleRightPanel(),
     "rightPanel.toggleMaximized": ({ event }) => {
       if (!event.repeat) toggleRightPanelMaximized();

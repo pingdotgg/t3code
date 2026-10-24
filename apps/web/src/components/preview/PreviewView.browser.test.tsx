@@ -161,6 +161,7 @@ import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { PreviewView } from "./PreviewView";
+import { dispatchPreviewAction } from "./previewActionBus";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -201,6 +202,7 @@ function setup() {
   mocks.readEnvironmentScope.mockReset().mockReturnValue(true);
   mocks.setAnnotationSendEnabled.mockReset().mockResolvedValue(undefined);
   mocks.pickElement.mockReset();
+  mocks.cancelPickElement.mockReset().mockResolvedValue(undefined);
   mocks.pictureInPicture = false;
   mocks.showEmptyState = false;
   mocks.loading = false;
@@ -218,6 +220,118 @@ function setup() {
 }
 
 describe("PreviewView", () => {
+  it("puts typing in the address bar when an empty browser tab opens", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    await using screen = await render(
+      <>
+        <textarea aria-label="Chat draft" />
+        {view()}
+      </>,
+    );
+    const address = page.getByPlaceholder("Search or enter URL");
+    await expect.element(address).toHaveFocus();
+    await userEvent.keyboard("example.com");
+    await expect.element(address).toHaveValue("example.com");
+    await userEvent.click(page.getByRole("textbox", { name: "Chat draft" }));
+    await screen.rerender(
+      <>
+        <textarea aria-label="Chat draft" />
+        <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-2" visible />
+      </>,
+    );
+    await expect.element(address).toHaveFocus();
+    await expect.element(address).toHaveValue("");
+    await userEvent.keyboard("second.example.com");
+    await expect.element(address).toHaveValue("second.example.com");
+    await userEvent.click(page.getByRole("textbox", { name: "Chat draft" }));
+    await screen.rerender(
+      <>
+        <textarea aria-label="Chat draft" />
+        {view()}
+      </>,
+    );
+    await expect.element(address).toHaveFocus();
+    await expect.element(address).toHaveValue("example.com");
+    await userEvent.keyboard("{Escape}");
+    await expect.element(address).toHaveValue("");
+    await userEvent.click(address);
+    await expect.element(address).toHaveValue("");
+    await expect.element(page.getByRole("textbox", { name: "Chat draft" })).toHaveValue("");
+  });
+
+  it("does not replay an address focus request when returning to a browser tab", async () => {
+    setup();
+    await using screen = await render(
+      <>
+        <textarea aria-label="Chat draft" />
+        {view()}
+      </>,
+    );
+    const address = page.getByPlaceholder("Search or enter URL");
+    const chat = page.getByRole("textbox", { name: "Chat draft" });
+    await act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+    await userEvent.click(chat);
+    await screen.rerender(
+      <>
+        <textarea aria-label="Chat draft" />
+        <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-2" visible />
+      </>,
+    );
+    await userEvent.click(chat);
+    await screen.rerender(
+      <>
+        <textarea aria-label="Chat draft" />
+        {view()}
+      </>,
+    );
+    await expect.element(chat).toHaveFocus();
+    await act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+    await userEvent.click(chat);
+    await act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+  });
+
+  it("starts and cancels the same annotation picker through a browser action", async () => {
+    setup();
+    let finish: ((result: unknown) => void) | undefined;
+    mocks.pickElement.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    mocks.cancelPickElement.mockImplementation(async () => {
+      finish?.(null);
+      return undefined;
+    });
+    await using _screen = await render(view());
+    await act(() => dispatchPreviewAction("annotate"));
+    await expect.element(page.getByRole("button", { name: "Cancel annotation" })).toBeVisible();
+    await act(() => dispatchPreviewAction("annotate"));
+    await expect.element(page.getByRole("button", { name: "Annotate preview" })).toBeVisible();
+    expect(mocks.cancelPickElement).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
+    expect(mocks.addPreviewAnnotation).not.toHaveBeenCalled();
+
+    const picked = annotation("shortcut-pick");
+    mocks.pickElement.mockResolvedValue({ annotation: picked, submission: "attach" });
+    await act(() => dispatchPreviewAction("annotate"));
+    await vi.waitFor(() =>
+      expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, picked),
+    );
+  });
+
+  it("does not annotate a hidden browser tab", async () => {
+    setup();
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible={false} />,
+    );
+    await act(() => dispatchPreviewAction("annotate"));
+    expect(mocks.pickElement).not.toHaveBeenCalled();
+  });
+
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
     const picked = annotation("annotation-revoked");

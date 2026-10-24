@@ -43,7 +43,7 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 
-const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
+const PREVIEW_FORWARDED_APP_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
@@ -74,6 +74,7 @@ export function ReopenClosedViewShortcut() {
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hasHistory = useClosedViewStore((state) => state.entries.length > 0);
+  const hasThread = threadRef !== null;
   const openPreview = useAtomCommand(previewEnvironment.open);
   const pending = useRef(Promise.resolve());
 
@@ -184,7 +185,7 @@ export function ReopenClosedViewShortcut() {
     const options = {
       context: {
         previewFocus: true,
-        previewOpen: true,
+        previewOpen,
         terminalFocus: false,
         terminalOpen,
         editableFocus: false,
@@ -198,7 +199,9 @@ export function ReopenClosedViewShortcut() {
     // sends each command back as a menu action.
     const commands = [
       ...(hasHistory ? (["view.reopenClosed"] as const) : []),
-      ...PREVIEW_FORWARDED_LAYOUT_COMMANDS,
+      ...PREVIEW_FORWARDED_APP_COMMANDS,
+      ...(hasThread ? (["preview.newTab"] as const) : []),
+      ...(previewOpen ? (["preview.annotate"] as const) : []),
     ];
     void preview
       .setForwardedShortcuts(
@@ -213,7 +216,7 @@ export function ReopenClosedViewShortcut() {
     return () => {
       void preview.setForwardedShortcuts?.([]).catch(() => undefined);
     };
-  }, [hasHistory, keybindings, terminalOpen]);
+  }, [hasHistory, hasThread, keybindings, previewOpen, terminalOpen]);
 
   return null;
 }

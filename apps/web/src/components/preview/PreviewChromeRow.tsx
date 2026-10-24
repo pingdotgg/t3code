@@ -22,6 +22,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 interface Props {
+  tabId: string | null;
   url: string;
   loading: boolean;
   canGoBack: boolean;
@@ -29,6 +30,7 @@ interface Props {
   refreshDisabled: boolean;
   inputDisabled?: boolean | undefined;
   focusUrlNonce?: number | undefined;
+  emptyTabToFocus?: string | null | undefined;
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
@@ -51,6 +53,7 @@ interface Props {
 const NOOP = () => {};
 
 export function PreviewChromeRow({
+  tabId,
   url,
   loading,
   canGoBack,
@@ -58,6 +61,7 @@ export function PreviewChromeRow({
   refreshDisabled,
   inputDisabled,
   focusUrlNonce,
+  emptyTabToFocus,
   onBack,
   onForward,
   onRefresh,
@@ -77,21 +81,38 @@ export function PreviewChromeRow({
   leadingActions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [draft, setDraft] = useState(url);
+  const handledFocusUrlNonce = useRef<number | undefined>(undefined);
+  const [drafts, setDrafts] = useState<ReadonlyMap<string | null, string>>(() => new Map());
+  const draft = drafts.get(tabId) ?? url;
+  const setDraft = (value: string | null) => {
+    setDrafts((current) => {
+      const next = new Map(current);
+      if (value === null) next.delete(tabId);
+      else next.set(tabId, value);
+      return next;
+    });
+  };
   const [inputFocused, setInputFocused] = useState(false);
 
   useEffect(() => {
-    if (focusUrlNonce == null) return;
+    if (focusUrlNonce == null || focusUrlNonce === handledFocusUrlNonce.current) return;
     const node = inputRef.current;
     if (!node) return;
+    handledFocusUrlNonce.current = focusUrlNonce;
     node.focus();
+    node.select();
   }, [focusUrlNonce]);
+
+  useEffect(() => {
+    if (emptyTabToFocus) inputRef.current?.focus();
+  }, [emptyTabToFocus]);
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
     const next = draft.trim();
     if (next.length === 0) return;
     onSubmit(next);
+    setDraft(null);
     inputRef.current?.blur();
   };
 
@@ -167,7 +188,6 @@ export function PreviewChromeRow({
                   value={inputFocused ? draft : url}
                   onChange={(event) => setDraft(event.target.value)}
                   onFocus={() => {
-                    setDraft(url);
                     setInputFocused(true);
                     queueMicrotask(() => inputRef.current?.select());
                   }}
@@ -178,7 +198,7 @@ export function PreviewChromeRow({
                     if (event.key === "Enter") submit(event);
                     if (event.key === "Escape") {
                       event.preventDefault();
-                      setDraft(url);
+                      setDraft(null);
                       inputRef.current?.blur();
                     }
                   }}

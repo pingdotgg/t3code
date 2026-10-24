@@ -150,7 +150,10 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
-  const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
+  const [focusUrlRequest, setFocusUrlRequest] = useState<{
+    tabId: string | null;
+    nonce: number;
+  } | null>(null);
   const [pickActive, setPickActive] = useState(false);
   const canSendAnnotation =
     useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
@@ -885,8 +888,11 @@ export function PreviewView({
         case "refresh":
           handleRefresh();
           return;
+        case "annotate":
+          if (previewBridge && tabId && !isServerTab && !isUnreachable) handlePickElement();
+          return;
         case "focus-url":
-          setFocusUrlNonce((value) => (value ?? 0) + 1);
+          setFocusUrlRequest((request) => ({ tabId, nonce: (request?.nonce ?? 0) + 1 }));
           return;
         case "zoom-in":
           handleZoomIn();
@@ -913,13 +919,15 @@ export function PreviewView({
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
+        tabId={runtimeTabId}
         url={url}
         loading={loading || serverStreamPending}
         canGoBack={canGoBack && !serverInputDisabled}
         canGoForward={canGoForward && !serverInputDisabled}
         refreshDisabled={refreshDisabled || serverInputDisabled}
         inputDisabled={serverInputDisabled}
-        focusUrlNonce={focusUrlNonce}
+        focusUrlNonce={focusUrlRequest?.tabId === tabId ? focusUrlRequest?.nonce : undefined}
+        emptyTabToFocus={visible && showEmptyState && !serverInputDisabled ? runtimeTabId : null}
         onBack={handleBack}
         onForward={handleForward}
         onRefresh={handleRefresh}

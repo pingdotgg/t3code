@@ -1,5 +1,9 @@
 import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+  mergeWithDefaultKeybindings,
+} from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -146,6 +150,31 @@ function press(target: Element = document.body) {
 }
 
 describe("root reopen shortcut", () => {
+  it("forwards custom browser actions from a focused page with their configured chords", async () => {
+    setup();
+    state.params = { environmentId: ref.environmentId, threadId: ref.threadId };
+    state.keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "mod+t", command: "preview.newTab", when: "!terminalFocus" },
+        { key: "mod+alt+c", command: "preview.annotate", when: "previewOpen && !terminalFocus" },
+      ]),
+    );
+    useRightPanelStore.getState().openBrowser(ref, "tab-1");
+    await using _view = await renderShortcut();
+    expect(state.setShortcuts).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          command: "preview.newTab",
+          shortcut: expect.objectContaining({ key: "t", modKey: true }),
+        }),
+        expect.objectContaining({
+          command: "preview.annotate",
+          shortcut: expect.objectContaining({ key: "c", modKey: true, altKey: true }),
+        }),
+      ]),
+    );
+  });
+
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore
