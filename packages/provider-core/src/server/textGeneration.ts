@@ -70,6 +70,17 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface NextMessageSuggestionGenerationInput {
+  cwd: string;
+  threadContext: string;
+  modelSelection: ModelSelection;
+}
+
+export interface NextMessageSuggestionGenerationResult {
+  /** Empty when the model has nothing worth suggesting. */
+  suggestion: string;
+}
+
 export interface ReviewGuideStackLayer {
   readonly number: number;
   readonly title: string | null;
@@ -111,6 +122,10 @@ export interface ProviderTextGeneration {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  readonly generateNextMessageSuggestion: (
+    input: NextMessageSuggestionGenerationInput,
+  ) => Effect.Effect<NextMessageSuggestionGenerationResult, TextGenerationError>;
 
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,

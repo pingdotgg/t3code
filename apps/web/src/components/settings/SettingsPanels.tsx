@@ -517,6 +517,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
     ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+    ...(settings.nextMessageSuggestionsEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.nextMessageSuggestionsEnabled
+      ? ["Next message suggestions"]
+      : []),
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
       : []),
@@ -629,6 +633,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      nextMessageSuggestionsEnabled: DEFAULT_UNIFIED_SETTINGS.nextMessageSuggestionsEnabled,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -1911,6 +1916,22 @@ export function GeneralSettingsPanel() {
           }
         />
         <ThreadTitleInstructionsSettings />
+        <SettingsRow
+          serverScoped
+          settingKeys={["nextMessageSuggestionsEnabled"]}
+          {...searchableSetting("next-message-suggestions")}
+          description="After the agent replies, the text generation model suggests your next message in the empty composer. Press Tab to use it."
+          control={
+            <ScopedSwitch
+              settingKeys={["nextMessageSuggestionsEnabled"]}
+              checked={settings.nextMessageSuggestionsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ nextMessageSuggestionsEnabled: Boolean(checked) })
+              }
+              aria-label="Next message suggestions"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="about" title="About">

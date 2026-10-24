@@ -3106,6 +3106,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
   getTurnItem: "orchestration.getTurnItem",
+  suggestNextMessage: "orchestration.suggestNextMessage",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
@@ -3487,6 +3488,41 @@ export const OrchestrationV2GetTurnItemResult = Schema.Struct({
 });
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
 
+/** `afterMessageId` is the agent reply the suggestion answers. */
+export const OrchestrationV2SuggestNextMessageInput = Schema.Struct({
+  threadId: ThreadId,
+  afterMessageId: MessageId,
+});
+export type OrchestrationV2SuggestNextMessageInput =
+  typeof OrchestrationV2SuggestNextMessageInput.Type;
+
+/** `suggestion` is empty when the model has nothing worth suggesting. */
+export const OrchestrationV2SuggestNextMessageResult = Schema.Struct({
+  suggestion: Schema.String,
+});
+export type OrchestrationV2SuggestNextMessageResult =
+  typeof OrchestrationV2SuggestNextMessageResult.Type;
+
+export class OrchestrationV2SuggestNextMessageError extends Schema.TaggedError<OrchestrationV2SuggestNextMessageError>()(
+  "OrchestrationV2SuggestNextMessageError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals(["disabled", "unavailable", "generation-failed"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "disabled":
+        return "Next message suggestions are off. Turn them on in Settings → General → Text generation.";
+      case "unavailable":
+        return "This thread or the server settings could not be read.";
+      case "generation-failed":
+        return "The text generation model could not suggest a next message.";
+    }
+  }
+}
+
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
   "root-unavailable": "Script root unavailable.",
@@ -3608,6 +3644,10 @@ export const OrchestrationV2RpcSchemas = {
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,
     output: OrchestrationV2GetTurnItemResult,
+  },
+  suggestNextMessage: {
+    input: OrchestrationV2SuggestNextMessageInput,
+    output: OrchestrationV2SuggestNextMessageResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

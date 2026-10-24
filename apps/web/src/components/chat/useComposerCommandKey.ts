@@ -25,7 +25,8 @@ import { type Dispatch, type RefObject, type SetStateAction, useLayoutEffect, us
 
 /**
  * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
- * prompt history on ArrowUp/ArrowDown, plan-mode toggle, and list continuation.
+ * prompt history on ArrowUp/ArrowDown, plan-mode toggle, list continuation, and Tab to accept a
+ * next message suggestion.
  */
 export function useComposerCommandKey(input: {
   readonly keybindings: ChatComposerProps["keybindings"];
@@ -78,6 +79,7 @@ export function useComposerCommandKey(input: {
     dispatchMode: ComposerDispatchMode,
     submissionIntent: ComposerSubmissionIntent,
   ) => void;
+  readonly nextMessageSuggestion: string | null;
 }) {
   const {
     keybindings,
@@ -115,6 +117,7 @@ export function useComposerCommandKey(input: {
     readComposerSnapshot,
     applyPromptReplacement,
     submitComposer,
+    nextMessageSuggestion,
   } = input;
   // Entries are built on the keypress, not per render: the timeline changes
   // on every streamed delta and ArrowUp is rare.
@@ -128,7 +131,7 @@ export function useComposerCommandKey(input: {
   // otherwise turn B's own draft into a browsing position.
   const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
 
-  const replacePromptFromHistory = (nextPrompt: string) => {
+  const replacePrompt = (nextPrompt: string) => {
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
@@ -172,7 +175,7 @@ export function useComposerCommandKey(input: {
     promptHistoryPositionRef.current = step.position
       ? { targetKey: promptHistoryTargetKey, position: step.position }
       : null;
-    replacePromptFromHistory(step.prompt);
+    replacePrompt(step.prompt);
     return true;
   };
 
@@ -230,6 +233,19 @@ export function useComposerCommandKey(input: {
         }),
         submissionIntent,
       );
+      return true;
+    }
+    if (
+      key === "Tab" &&
+      nextMessageSuggestion !== null &&
+      promptRef.current === "" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.isComposing
+    ) {
+      replacePrompt(nextMessageSuggestion);
       return true;
     }
     if (key === "Enter" && isTaskItem) return false;

@@ -31,6 +31,7 @@ import {
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   isLatestRunSettled,
+  latestSettledReplyId,
   selectComposerTasksPlan,
   selectHandoffImageResources,
   selectMessageImageResources,
@@ -70,6 +71,30 @@ describe("V2 session presentation", () => {
         { status: "running", activeRunId: RunId.make("run-active") },
       ),
     ).toBe(false);
+  });
+
+  it("offers the latest reply for a suggestion only once its run completes", () => {
+    const runId = RunId.make("run-reply");
+    const reply = MessageId.make("reply-1");
+    const run = {
+      runId,
+      startedAt: "2026-06-20T00:00:00.000Z",
+      completedAt: "2026-06-20T00:01:00.000Z",
+      assistantMessageId: reply,
+    };
+    expect(latestSettledReplyId({ ...run, status: "completed" }, null)).toBe(reply);
+    expect(
+      latestSettledReplyId(
+        { ...run, status: "completed" },
+        { status: "running", activeRunId: runId },
+      ),
+    ).toBeNull();
+    expect(latestSettledReplyId({ ...run, status: "running" }, null)).toBeNull();
+    expect(latestSettledReplyId({ ...run, status: "interrupted" }, null)).toBeNull();
+    expect(
+      latestSettledReplyId({ ...run, status: "completed", assistantMessageId: null }, null),
+    ).toBeNull();
+    expect(latestSettledReplyId(null, null)).toBeNull();
   });
 
   it("offers Stop while a run is preparing/starting, not just once it's running (#13392)", () => {

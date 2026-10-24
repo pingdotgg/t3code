@@ -2,6 +2,7 @@ import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-ru
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
+  type MessageId,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
@@ -225,6 +226,19 @@ export function isLatestRunSettled(
   )
     return false;
   return runtime?.activeRunId !== latestRun.runId;
+}
+
+/** The latest run's reply, once that run has completed and settled. */
+export function latestSettledReplyId(
+  latestRun: Pick<
+    ThreadRunSummary,
+    "runId" | "startedAt" | "completedAt" | "status" | "assistantMessageId"
+  > | null,
+  runtime: Pick<ThreadRuntimeSummary, "status" | "activeRunId"> | null,
+): MessageId | null {
+  return latestRun?.status === "completed" && isLatestRunSettled(latestRun, runtime)
+    ? latestRun.assistantMessageId
+    : null;
 }
 
 export function deriveActiveWorkStartedAt(

@@ -17,6 +17,7 @@ import type {
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
+  MessageId,
   ModelSelection,
   ProjectId,
   PreviewAnnotationPayload,
@@ -286,6 +287,8 @@ import { ComposerCommandMenuLayer } from "./ComposerCommandMenuLayer";
 import { useRestingComposerControlsLayout } from "./useRestingComposerControlsLayout";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
 import { useComposerProviderModel } from "./useComposerProviderModel";
+import { useNextMessageSuggestion } from "./useNextMessageSuggestion";
+import { Kbd } from "../ui/kbd";
 import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
@@ -389,6 +392,8 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   activeThreadShell: ThreadShell | null;
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
+  /** The latest run's reply once that run completes; next message suggestions answer it. */
+  latestReplyId: MessageId | null;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
@@ -554,6 +559,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
+    latestReplyId,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
@@ -1260,6 +1266,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       (supportsQuestionAttachments &&
         activePendingProgress.activeQuestion?.allowCustomAnswer !== false));
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  // Suggestions are accepted with Tab, which touch-only devices do not have.
+  const canAcceptWithTab = useMediaQuery("(any-pointer: fine)");
+  // A suggestion takes the default placeholder's place, so it never hides a prompt the user
+  // needs to act on, and Tab only accepts one the user can see.
+  const nextMessageSuggestion = useNextMessageSuggestion({
+    environmentId,
+    threadId: activeThreadId,
+    afterMessageId: latestReplyId,
+    enabled:
+      settings.nextMessageSuggestionsEnabled &&
+      canAcceptWithTab &&
+      environmentUnavailable === null &&
+      prompt === "" &&
+      composerContextRecords.size === 0 &&
+      !isComposerApprovalState &&
+      !activePendingProgress &&
+      !(showPlanFollowUpPrompt && activeProposedPlan) &&
+      !projectSelectionRequired &&
+      !showProviderUnavailable,
+  });
 
   const editPromptFromTraits = (edit: (prompt: string) => string) => {
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
@@ -2282,6 +2308,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     readComposerSnapshot,
     applyPromptReplacement,
     submitComposer,
+    nextMessageSuggestion,
   });
 
   const {
@@ -3819,10 +3846,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
                                 ? "Enable a provider in Settings to send a message"
-                                : phase === "disconnected"
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                : (nextMessageSuggestion ??
+                                  (phase === "disconnected"
+                                    ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"))
                     }
+                    placeholderHint={nextMessageSuggestion ? <Kbd>Tab</Kbd> : undefined}
                     disabled={
                       isConnecting ||
                       projectSelectionRequired ||

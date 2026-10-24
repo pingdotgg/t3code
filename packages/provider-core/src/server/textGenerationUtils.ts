@@ -77,6 +77,18 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, MAX_THREAD_TITLE_CHARS - 3).trimEnd()}...`;
 }
 
+const MAX_NEXT_MESSAGE_SUGGESTION_CHARS = 240;
+
+/** Returns an empty string for a suggestion too long to show as one line in the composer. */
+export function sanitizeNextMessageSuggestion(raw: string): string {
+  const normalized = raw
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.length <= MAX_NEXT_MESSAGE_SUGGESTION_CHARS ? normalized : "";
+}
+
 function cliLabel(cliName: string): string {
   const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);
   return `${capitalized} CLI (\`${cliName}\`)`;

@@ -131,6 +131,7 @@ import {
   findRevertCheckpoint,
   hasActionableProposedPlan,
   isLatestRunSettled,
+  latestSettledReplyId,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
@@ -3514,6 +3515,7 @@ export default function ChatView(props: ChatViewProps) {
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
                               promptHistoryMessages={timelineMessages}
+                              latestReplyId={latestSettledReplyId(activeLatestRun, activeRuntime)}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
                               forceExpandedOnMobile={

@@ -145,6 +145,15 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Next message suggestions
+
+Turn on **Settings → General → Text generation → Next message suggestions** to have the text
+generation model suggest your next message after the agent replies. The suggestion appears in the
+empty composer on web and desktop; press `Tab` to put it in the composer, then edit or send it.
+Typing hides it. The model reads the thread's recent messages and is asked once per agent reply,
+including when you open a thread whose latest reply has no suggestion yet. Suggestions use the
+text generation model set for the thread's project.
+
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind

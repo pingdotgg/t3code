@@ -270,6 +270,31 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       ),
   );
 
+  it.effect("suggests the next message from outside the project", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: { suggestion: '  "Yes, run the full suite"  ' },
+        }),
+        cwdMustNotBe: process.cwd(),
+        stdinMustContain: "ASSISTANT:\nShould I run the full suite?",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateNextMessageSuggestion({
+            cwd: process.cwd(),
+            threadContext: "USER:\nFix the flaky test\n\nASSISTANT:\nShould I run the full suite?",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.suggestion).toBe("Yes, run the full suite");
+        }),
+    ),
+  );
+
   it.effect("sends thread title instructions to the provider prompt", () =>
     withFakeClaudeEnv(
       {

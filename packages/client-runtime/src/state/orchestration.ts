@@ -96,6 +96,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     }),
+    suggestNextMessage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:suggest-next-message",
+      tag: ORCHESTRATION_V2_WS_METHODS.suggestNextMessage,
+    }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,

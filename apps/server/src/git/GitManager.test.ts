@@ -360,6 +360,7 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateNextMessageSuggestion: () => Effect.succeed({ suggestion: "" }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
     ...overrides,
   };
@@ -409,6 +410,7 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateNextMessageSuggestion: (input) => implementation.generateNextMessageSuggestion(input),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
   };
 }

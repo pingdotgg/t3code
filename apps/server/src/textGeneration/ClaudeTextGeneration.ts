@@ -188,13 +188,20 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
+      // Titles and suggestions run on their own, from arbitrary thread text, so they get no
+      // project skills or settings to act on.
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" || operation === "generateNextMessageSuggestion"
           ? yield* fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
+              .makeTempDirectoryScoped({ prefix: "t3code-claude-isolated-" })
               .pipe(
                 Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
+                  normalizeCliError(
+                    "claude",
+                    operation,
+                    cause,
+                    "Failed to create an isolated working directory",
+                  ),
                 ),
               )
           : cwd;

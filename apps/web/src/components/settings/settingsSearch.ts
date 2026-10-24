@@ -532,6 +532,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles prompt custom style naming rename regenerate"],
   },
   {
+    id: "next-message-suggestions",
+    title: "Next message suggestions",
+    to: "/settings/general",
+    searchTerms: ["composer autocomplete predict follow up reply ghost text tab"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "app-version",
     title: "Version",
     to: "/settings/general",
