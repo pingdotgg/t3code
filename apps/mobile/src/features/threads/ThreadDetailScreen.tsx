@@ -763,7 +763,19 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
           label: statusPending ? "Stopping..." : "Stop",
           accessibilityLabel: "Stop background work",
           disabled: !props.canOperateThread || statusPending,
-          onPress: () => void runStatusAction("stop"),
+          // Stop sits between the capsule's navigation targets, so a stray tap
+          // must not end every background task.
+          onPress: () =>
+            Dialog.confirm({
+              title: "Stop background work?",
+              message:
+                queuedCount > 0
+                  ? `${pendingBackgroundWork.title}. Queued messages wait until you resume.`
+                  : pendingBackgroundWork.title,
+              confirmText: "Stop",
+              destructive: true,
+              onConfirm: () => void runStatusAction("stop"),
+            }),
         },
       };
     }
