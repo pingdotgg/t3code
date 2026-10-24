@@ -9,6 +9,7 @@ import {
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -237,6 +238,99 @@ it("keeps the caret inside unknown dollar text across rich and plain remounts", 
     editor.commands.insertContent("Y");
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe("echo $HOXYME now");
+});
+
+function blockTypes(editor: Editor) {
+  const types: string[] = [];
+  editor.state.doc.forEach((node) => types.push(node.type.name));
+  return types;
+}
+
+describe("a line written as a list item after the fact", () => {
+  it.each([
+    { line: "-get md", at: 1, insert: " " },
+    { line: "get md", at: 0, insert: "- " },
+  ])("turns $line into a bullet once the caret leaves it", async ({ line, at, insert }) => {
+    await using screen = await mountEditor(`few\n${line}`);
+    const { editor } = screen;
+    // The second paragraph's text starts after `few` and both paragraph boundaries.
+    const lineStart = "few".length + 3;
+    await act(async () => {
+      typeText(editor, lineStart + at, lineStart + at, insert);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "paragraph"]);
+    await act(async () => {
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "bulletList"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("few\n- get md");
+  });
+
+  it("joins the new bullet with the lists around it", async () => {
+    await using screen = await mountEditor("- fix it\n-get md\n- and more");
+    const { editor } = screen;
+    expect(blockTypes(editor)).toEqual(["bulletList", "paragraph", "bulletList"]);
+    let dash = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === "-get md") dash = pos;
+    });
+    await act(async () => {
+      editor.commands.setTextSelection(dash + 1);
+      typeText(editor, dash + 1, dash + 1, " ");
+      editor.commands.focus("start");
+    });
+    expect(blockTypes(editor)).toEqual(["bulletList"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("- fix it\n- get md\n- and more");
+  });
+
+  it("leaves a line that reads as a horizontal rule alone", async () => {
+    await using screen = await mountEditor("few\n-- -x");
+    const { editor } = screen;
+    const lineStart = "few".length + 3;
+    await act(async () => {
+      typeText(editor, lineStart + 1, lineStart + 1, " ");
+      editor.view.dispatch(editor.state.tr.delete(lineStart + 5, lineStart + 6));
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "paragraph"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("few\n- - -");
+  });
+
+  it("keeps redo after undoing the conversion and leaving the line again", async () => {
+    await using screen = await mountEditor("few\n-get md");
+    const { editor } = screen;
+    const lineStart = "few".length + 3;
+    await act(async () => {
+      typeText(editor, lineStart + 1, lineStart + 1, " ");
+      editor.view.dispatch(closeHistory(editor.state.tr));
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "bulletList"]);
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("few\n- get md");
+    await act(async () => {
+      editor.commands.focus("end");
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "paragraph"]);
+    expect(editor.can().redo()).toBe(true);
+  });
+
+  it("still lets a typed `- [ ] ` become a task", async () => {
+    await using screen = await mountEditor("few\n");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+      for (const char of "- [ ] x") {
+        const { from, to } = editor.state.selection;
+        typeText(editor, from, to, char);
+      }
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "taskList"]);
+  });
 });
 
 const file = {
