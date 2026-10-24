@@ -203,8 +203,11 @@ export function resolveAutoSettlementAt(input: {
   const { thread } = input;
   let pullRequest = input.pullRequest;
   const links = settlementPullRequestLinks(thread.pullRequests ?? []);
-  if (links.some((link) => link.snapshot === null || link.snapshot.state === "open")) return null;
-  if (links.length > 0) {
+  if (links.some((link) => link.snapshot === null)) return null;
+  if (links.some((link) => link.snapshot?.state === "open")) {
+    // Open links prevent merge/close settlement, but still allow inactivity.
+    pullRequest = null;
+  } else if (links.length > 0) {
     const latest = links.reduce((current, candidate) =>
       linkTerminalAtMs(candidate) > linkTerminalAtMs(current) ? candidate : current,
     );
@@ -229,7 +232,10 @@ export function resolveAutoSettlementAt(input: {
     return DateTime.makeUnsafe(activityAtMs);
   }
   const hasPullRequest =
-    pullRequest !== null || thread.linkedPullRequest != null || thread.branchPullRequest != null;
+    links.length > 0 ||
+    pullRequest !== null ||
+    thread.linkedPullRequest != null ||
+    thread.branchPullRequest != null;
   if (input.autoSettleKeepPullRequests === true && hasPullRequest) return null;
   if (input.autoSettleAfterDays === null) return null;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
