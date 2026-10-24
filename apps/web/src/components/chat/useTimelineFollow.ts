@@ -311,7 +311,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
         const viewportIsAwayFromEnd = () =>
           resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
         const handleWheel = (event: WheelEvent) => {
-          if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
+          if (
+            event.ctrlKey ||
+            !isTimelineScrollTarget(event.target, scrollNode, event.deltaY, event)
+          )
             return;
           if (event.deltaY > 0) {
             timelineScrollIntentRef.current = "toward-end";

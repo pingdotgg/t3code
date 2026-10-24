@@ -50,6 +50,49 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("timeline scroll targets", () => {
+  it("retains vertical wheel and keyboard scroll intent", () => {
+    const { timeline } = setup();
+    const content = new ScrollElement(timeline);
+    expect(
+      isTimelineScrollTarget(content, timeline as unknown as HTMLElement, -30, {
+        deltaX: 5,
+        shiftKey: false,
+      }),
+    ).toBe(true);
+    expect(targetsTimeline(content, timeline, -30)).toBe(true);
+    expect(
+      isTimelineScrollTarget(content, timeline as unknown as HTMLElement, 0, {
+        deltaX: 80,
+        shiftKey: false,
+      }),
+    ).toBe(false);
+  });
+  it.each([
+    { deltaX: 80, deltaY: -30, shiftKey: false },
+    { deltaX: -80, deltaY: 30, shiftKey: false },
+    { deltaX: 0, deltaY: -30, shiftKey: true },
+  ])("keeps horizontal gestures out of composer collapse and timeline follow: %j", (gesture) => {
+    const { timeline } = setup();
+    const table = new ScrollElement(timeline);
+    const targets = isTimelineScrollTarget(
+      table,
+      timeline as unknown as HTMLElement,
+      gesture.deltaY,
+      gesture,
+    );
+    expect(targets).toBe(false);
+    expect(
+      recordComposerScrollGestureEvent(createComposerScrollGestureState(), {
+        now: 0,
+        deltaPx: Math.abs(gesture.deltaY),
+        collapseThresholdPx: 24,
+        collapseEligible: targets,
+        canScrollInGestureDirection: true,
+        scrollsTowardLogicalEnd: false,
+      }),
+    ).toBe(false);
+  });
+
   it.each([-30, 30])("keeps a nested tool group's scroll out of the timeline: %i", (deltaY) => {
     const { timeline, group, content } = setup();
     expect(targetsTimeline(content, timeline, deltaY)).toBe(false);
