@@ -180,6 +180,7 @@ describe("BrowserSession", () => {
         "clipboard-sanitized-write",
         "geolocation",
         "fullscreen",
+        "loopback-network",
       ]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
@@ -190,8 +191,15 @@ describe("BrowserSession", () => {
 
       // `clipboard-write` is not a real Electron permission — the async write API
       // uses `clipboard-sanitized-write` — so the stale name must not be granted,
-      // and unrelated permissions stay denied.
-      for (const permission of ["clipboard-write", "notifications", "midi"]) {
+      // and unrelated permissions stay denied. Loopback access does not extend to
+      // the rest of the local network, under either its current or legacy name.
+      for (const permission of [
+        "clipboard-write",
+        "notifications",
+        "midi",
+        "local-network",
+        "local-network-access",
+      ]) {
         assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
         assert.isFalse(
           checkHandler(null, permission) as boolean,

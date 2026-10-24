@@ -38,6 +38,11 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // and every preview guest, so a page that goes fullscreen fills its own
   // webview instead of taking over the whole T3 window.
   "fullscreen",
+  // Electron 44 does not gate loopback requests behind this permission, so pages
+  // can already reach 127.0.0.1. Denying the check only makes
+  // `navigator.permissions.query` lie, and sign-in widgets that read it first,
+  // such as Okta FastPass reaching Okta Verify, give up before trying (#9724).
+  "loopback-network",
   // Deliberately NOT local-fonts: preview sessions run untrusted web content,
   // and silently granting it would hand every page the user's installed-font
   // fingerprint (and font file bytes via FontData.blob()).
