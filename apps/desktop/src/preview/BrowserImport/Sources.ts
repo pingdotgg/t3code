@@ -26,6 +26,7 @@ export interface BrowserImportSourceDefinition {
   readonly engine: BrowserImportEngine;
   readonly platforms: ReadonlyArray<NodeJS.Platform>;
   readonly userDataDirectory: (context: BrowserImportPathContext) => string | undefined;
+  readonly alternateLinuxRoots?: (context: BrowserImportPathContext) => ReadonlyArray<string>;
   readonly keychainService?: string;
   readonly keychainAccount?: string;
   readonly linuxSecretApplication?: string;
@@ -171,6 +172,23 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
       }
       return context.path.join(context.home, ".mozilla", "firefox");
     },
+    alternateLinuxRoots: (context) => [
+      context.path.join(context.home, "snap", "firefox", "common", ".mozilla", "firefox"),
+    ],
+  },
+  {
+    id: "zen",
+    name: "Zen",
+    engine: "firefox",
+    platforms: ["darwin", "win32", "linux"],
+    userDataDirectory: (context) => {
+      if (context.platform === "darwin") return macApplicationSupport(context, "zen");
+      if (context.platform === "win32") {
+        return context.appData ? context.path.join(context.appData, "zen") : undefined;
+      }
+      return context.path.join(context.home, ".config", "zen");
+    },
+    alternateLinuxRoots: (context) => [context.path.join(context.home, ".zen")],
   },
 ];
 
@@ -491,7 +509,7 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
 });
 
 /**
- * Include Firefox's Snap home alongside its native home. Snap profiles use
+ * Include alternate Linux homes alongside the native home. Alternate profiles use
  * absolute directories so cookie reads and lock checks keep pointing at the
  * installation they came from, even when both installs use the same name.
  */
@@ -505,10 +523,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
 
   const root = definition.userDataDirectory(context);
   if (root === undefined) return [];
-  const roots = [
-    root,
-    context.path.join(context.home, "snap", "firefox", "common", ".mozilla", "firefox"),
-  ];
+  const roots = [root, ...(definition.alternateLinuxRoots?.(context) ?? [])];
   const profiles = new Map<string, BrowserImportSourceProfile>();
   for (const directory of roots) {
     const found = yield* listSourceProfilesInDirectory(
