@@ -47,7 +47,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onFileContextMenu,
   } = props;
   const summaryStat = summarizeTurnDiffStats(files);
-  const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
+  const hasDirectories = files.some((file) => file.path.includes("/"));
 
   return (
     <div
