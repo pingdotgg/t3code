@@ -352,6 +352,27 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
+  it.effect("warns instead of reporting ready when no models are discovered", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: "You are logged in with grok.com.\n",
+            acp: true,
+          });
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "", T3_ACP_OMIT_INITIALIZE_MODEL_STATE: "1" },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.message).toContain("did not list any models");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
+    }),
+  );
+
   it.effect("treats XAI_API_KEY as authenticated regardless of CLI login state", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
