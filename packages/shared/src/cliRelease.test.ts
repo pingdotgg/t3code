@@ -39,4 +39,19 @@ describe("cliRelease", () => {
     expect(newestCliReleaseVersion(releases, "stable")).toBe("1.2.3");
     expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
   });
+
+  it("never picks a prerelease on the stable channel", () => {
+    const releases = [
+      { tag_name: "v1.3.0", prerelease: true },
+      { tag_name: "v1.3.0-rc.1" },
+      { tag_name: "v1.2.3" },
+    ];
+    expect(newestCliReleaseVersion(releases, "stable")).toBe("1.2.3");
+    expect(
+      newestCliReleaseVersion(
+        [{ tag_name: "v1.4.0-nightly.20260912.7", prerelease: true }],
+        "nightly",
+      ),
+    ).toBe("1.4.0-nightly.20260912.7");
+  });
 });

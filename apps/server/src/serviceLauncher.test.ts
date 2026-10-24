@@ -1,9 +1,11 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
+// @effect-diagnostics globalTimers:off nodeBuiltinImport:off
 import type * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeFSP from "node:fs/promises";
 import { assert, it } from "@effect/vitest";
 import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -12,7 +14,7 @@ import { vi } from "vite-plus/test";
 import {
   databaseBackupBlocker,
   Launcher,
-  main,
+  pruneServiceRuntimes,
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
@@ -124,6 +126,35 @@ const writeFakeRuntime = (
       `${path.basename(versionDir)}\n`,
     );
     return entryPath;
+  });
+
+const pathExists = (target: string) =>
+  NodeFSP.access(target).then(
+    () => true,
+    () => false,
+  );
+
+/**
+ * Runs the launcher until the persisted state satisfies `done`, then stops it.
+ * An active child that exits is restarted, so the launcher no longer ends
+ * itself once an update settles.
+ */
+const runUntil = (
+  launcher: Launcher,
+  statePath: string,
+  done: (state: Awaited<ReturnType<typeof readServiceState>>) => Promise<boolean>,
+) =>
+  Effect.promise(async () => {
+    const running = launcher.run();
+    await vi.waitFor(
+      async () => {
+        const state = await readServiceState(statePath);
+        if (!(await done(state))) throw new Error("The launcher has not reached the state yet.");
+      },
+      { timeout: 30_000, interval: 50 },
+    );
+    await launcher.stop("SIGTERM");
+    await running;
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
@@ -253,6 +284,43 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
+  it.effect("does not schedule a crash restart after a stop is requested by the child exit", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-exit-stop-" });
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        'process.on("message", () => process.exit(1));\nsetInterval(() => {}, 1_000);\n',
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const launcher = new Launcher(root, {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+      });
+      yield* Effect.addFinalizer(() => Effect.promise(() => launcher.stop("SIGTERM")));
+      const before = spawnedChildren.length;
+      const running = launcher.run();
+      yield* Effect.promise(() =>
+        vi.waitFor(() => assert.equal(spawnedChildren.length, before + 1)),
+      );
+      const child = spawnedChildren.at(-1)!;
+      const stopped = Promise.withResolvers<void>();
+      child.once("exit", () => {
+        launcher.stop("SIGTERM").then(stopped.resolve, stopped.reject);
+      });
+      child.send({ type: "test-exit" });
+      yield* Effect.promise(() => stopped.promise);
+      yield* Effect.promise(() => running);
+      assert.equal(vi.getTimerCount(), 0);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+      assert.equal(spawnedChildren.length, before + 1);
+    }),
+  );
+
   it.effect("commits only after the trial reports prepared", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -267,17 +335,15 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
   process.send({ type: "prepared", updateId: context.update.id });
-  process.on("message", (message) => {
-    if (message.type === "committed") process.exit(0);
-  });
+  setInterval(() => {}, 1_000);
 } else if (context.update === undefined) {
   process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${encodedDatabasePath} });
   setInterval(() => {}, 1_000);
 } else {
-  process.exit(0);
+  setInterval(() => {}, 1_000);
 }
 `;
-      for (const version of ["1.0.0", "1.1.0"]) {
+      for (const version of ["0.5.0", "1.0.0", "1.1.0"]) {
         yield* writeFakeRuntime(
           fs,
           path,
@@ -285,6 +351,9 @@ if (context.update?.status === "pending") {
           childSource,
         );
       }
+      // Pruning leaves runtimes published within the last hour.
+      const twoHoursAgo = DateTime.toDate(DateTime.subtract(yield* DateTime.now, { hours: 2 }));
+      yield* fs.utimes(path.join(root, "runtime", "versions", "0.5.0"), twoHoursAgo, twoHoursAgo);
       yield* Effect.promise(() =>
         writeServiceState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -293,16 +362,20 @@ if (context.update?.status === "pending") {
       );
 
       const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      yield* Effect.promise(() =>
-        launcher.run().then(
-          () => Promise.reject(new Error("launcher unexpectedly completed")),
-          () => Promise.resolve(),
-        ),
+      yield* runUntil(
+        launcher,
+        statePath,
+        // The old runtime goes once the commit lands.
+        async (state) =>
+          state.update?.status === "committed" &&
+          !(await pathExists(path.join(root, "runtime", "versions", "0.5.0"))),
       );
 
       const state = yield* Effect.promise(() => readServiceState(statePath));
       assert.equal(state.activeVersion, "1.1.0");
       assert.equal(state.update?.status, "committed");
+      // The version it came from stays for a manual return.
+      assert.isTrue(yield* fs.exists(path.join(root, "runtime", "versions", "1.0.0")));
     }),
   );
 
@@ -336,7 +409,7 @@ if (context.update?.status === "pending") {
   process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${encodedDatabasePath} });
   setInterval(() => {}, 1_000);
 } else {
-  process.exit(0);
+  setInterval(() => {}, 1_000);
 }
 `;
       for (const version of ["1.0.0", "1.1.0"]) {
@@ -354,11 +427,18 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      yield* Effect.promise(() =>
-        main().then(
-          () => Promise.reject(new Error("launcher unexpectedly completed")),
-          () => Promise.resolve(),
-        ),
+      const environment = yield* Effect.promise(() => readServiceEnvironment(root));
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { environment },
+      );
+      yield* runUntil(
+        launcher,
+        statePath,
+        async (state) =>
+          state.update?.status === "rolled-back" &&
+          (await NodeFSP.readFile(observationsPath, "utf8")).trim().split("\n").length === 3,
       );
 
       const state = yield* Effect.promise(() => readServiceState(statePath));
@@ -418,7 +498,7 @@ if (context.update?.status === "pending") {
   process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${encodedDatabasePath} });
   setInterval(() => {}, 1_000);
 } else {
-  process.exit(0);
+  setInterval(() => {}, 1_000);
 }
 `;
         for (const version of ["1.0.0", "1.1.0"]) {
@@ -440,11 +520,12 @@ if (context.update?.status === "pending") {
           root,
           yield* Effect.promise(() => readServiceState(statePath)),
         );
-        yield* Effect.promise(() =>
-          launcher.run().then(
-            () => Promise.reject(new Error("launcher unexpectedly completed")),
-            () => Promise.resolve(),
-          ),
+        yield* runUntil(
+          launcher,
+          statePath,
+          async (state) =>
+            state.update?.status === "rolled-back" &&
+            !(await pathExists(path.join(root, "runtime", "db-backup", state.update.id))),
         );
 
         const state = yield* Effect.promise(() => readServiceState(statePath));
@@ -513,12 +594,7 @@ if (context.update?.status === "pending") {
         yield* Effect.promise(() => readServiceState(statePath)),
         { backupSpaceProbe },
       );
-      yield* Effect.promise(() =>
-        launcher.run().then(
-          () => Promise.reject(new Error("launcher unexpectedly completed")),
-          () => Promise.resolve(),
-        ),
-      );
+      yield* runUntil(launcher, statePath, async () => pathExists(replyPath));
 
       return {
         reason: yield* fs.readFileString(replyPath),
@@ -604,14 +680,12 @@ setInterval(() => {}, 1_000);
           },
         },
       );
-      const failure = yield* Effect.promise(() =>
-        launcher.run().then(
-          () => new Error("launcher unexpectedly completed"),
-          (cause: unknown) => cause as Error,
-        ),
+      const initialChildCount = spawnedChildren.length;
+      yield* runUntil(
+        launcher,
+        statePath,
+        async () => spawnedChildren.length >= initialChildCount + 2,
       );
-
-      assert.include(failure.message, "Active child exited unexpectedly (3)");
       const state = yield* Effect.promise(() => readServiceState(statePath));
       assert.equal(state.activeVersion, "1.0.0");
       assert.isUndefined(state.update);
@@ -640,6 +714,108 @@ setInterval(() => {}, 1_000);
       assert.include(blocker ?? "", "Not enough free disk space");
       assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
       assert.include(blocker ?? "", "The server was not stopped");
+    }),
+  );
+  it.effect("prunes old runtimes but keeps what recovery and the service unit still name", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-prune-" });
+      const versionDir = (version: string) => path.join(root, "runtime", "versions", version);
+      const remaining = Effect.gen(function* () {
+        const names = yield* fs.readDirectory(path.join(root, "runtime", "versions"));
+        return names.toSorted();
+      });
+      const twoHoursAgo = DateTime.toDate(DateTime.subtract(yield* DateTime.now, { hours: 2 }));
+      const seed = (versions: ReadonlyArray<string>) =>
+        Effect.forEach(versions, (version) =>
+          writeFakeRuntime(fs, path, versionDir(version), "").pipe(
+            Effect.andThen(fs.utimes(versionDir(version), twoHoursAgo, twoHoursAgo)),
+          ),
+        );
+      // A directory without the completion marker is a staging in progress.
+      yield* fs.makeDirectory(versionDir("0.4.0"), { recursive: true });
+      yield* seed(["0.5.0", "0.6.0", "0.7.0", "0.8.0", "1.0.0", "1.1.0"]);
+      // Just published by `t3 update`, which has not recorded its restart yet.
+      yield* writeFakeRuntime(fs, path, versionDir("1.2.0"), "");
+      // The running launcher is 0.6.0, but a deferred CLI update repointed the unit to 0.8.0.
+      yield* fs.writeFileString(
+        path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE),
+        "0.8.0\n",
+      );
+
+      yield* Effect.promise(() =>
+        pruneServiceRuntimes(
+          root,
+          {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            update: {
+              id: "update-1",
+              fromVersion: "0.7.0",
+              targetVersion: "1.0.0",
+              status: "committed",
+            },
+          },
+          "0.6.0",
+        ),
+      );
+      assert.deepEqual(yield* remaining, ["0.4.0", "0.6.0", "0.7.0", "0.8.0", "1.0.0", "1.2.0"]);
+
+      yield* seed(["0.5.0", "1.1.0"]);
+      yield* Effect.promise(() =>
+        pruneServiceRuntimes(
+          root,
+          {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            update: {
+              id: "update-2",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              dbPath: path.join(root, "state.sqlite"),
+              status: "pending",
+            },
+          },
+          "0.6.0",
+        ),
+      );
+      assert.deepEqual(yield* remaining, ["0.4.0", "0.6.0", "0.8.0", "1.0.0", "1.1.0", "1.2.0"]);
+    }),
+  );
+
+  it.effect("restarts a crashing active child without the launcher exiting", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-crash-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const startsPath = path.join(root, "starts");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        `
+import { appendFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(startsPath)}, "start\\n");
+process.exit(1);
+`,
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      yield* runUntil(
+        launcher,
+        statePath,
+        async () =>
+          (await NodeFSP.readFile(startsPath, "utf8").catch(() => "")).split("\n").filter(Boolean)
+            .length >= 2,
+      );
     }),
   );
 });

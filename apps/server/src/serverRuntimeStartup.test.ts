@@ -206,6 +206,7 @@ it.effect.each([
         }),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: false,
+          lastOutcome: undefined,
           prepareTrial: Effect.succeed(undefined),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),

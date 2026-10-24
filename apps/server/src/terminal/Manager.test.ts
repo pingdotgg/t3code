@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { ChildProcessSpawner } from "effect/process";
 import { expect, vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -620,6 +621,71 @@ it.layer(
       expect(second.writes).toEqual(["ls\n"]);
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
     }),
+  );
+
+  it.effect("reports busy only while a terminal runs a foreground command", () =>
+    Effect.gen(function* () {
+      let inspect: {
+        readonly hasRunningSubprocess: boolean;
+        readonly childCommand: string | null;
+        readonly processIds: ReadonlyArray<number>;
+      } = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      const { manager } = yield* createManager(5, {
+        subprocessInspector: () => Effect.succeed(inspect),
+        subprocessPollIntervalMs: 60_000,
+      });
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+
+      yield* manager.open(openInput());
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+
+      inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100] };
+      expect(yield* manager.hasBusyTerminals).toBe(true);
+
+      inspect = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+    }),
+  );
+
+  it.effect(
+    "uses the process fallback for fresh activity and blocks restarts only when both paths fail",
+    () =>
+      Effect.gen(function* () {
+        let output = "  9000  1 bash";
+        let fails = false;
+        const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+          run: () =>
+            Effect.succeed({
+              stdout: output,
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(fails ? 1 : 0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+        };
+        const { manager } = yield* createManager(5, {
+          subprocessPollIntervalMs: 60_000,
+          processTable: Effect.fail("sidecar unavailable").pipe(
+            Effect.mapError((cause) => cause as never),
+          ),
+        }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+          Effect.provide(layerWithHostPlatform("linux")),
+        );
+        expect(yield* manager.hasBusyTerminals).toBe(false);
+        yield* manager.open(openInput());
+        fails = true;
+        expect(yield* manager.hasBusyTerminals).toBe(true);
+        fails = false;
+        expect(yield* manager.hasBusyTerminals).toBe(false);
+        output += "\n  100  9000 vim";
+        expect(yield* manager.hasBusyTerminals).toBe(true);
+        output = "  9000  1 bash";
+        expect(yield* manager.hasBusyTerminals).toBe(false);
+      }),
   );
 
   it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>

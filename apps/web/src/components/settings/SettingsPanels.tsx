@@ -1594,12 +1594,12 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["automaticUpdates"]}
           {...searchableSetting("automatic-updates")}
-          description="Install updates for provider CLIs that support one-click updates in the background on the selected environments while nothing is running."
+          description="Install provider CLI updates, and update background-service installs, on the selected environments while nothing is running."
           status={
             !supportsAutomaticUpdates
               ? "All selected connected environments must support automatic updates."
               : !settings.enableProviderUpdateChecks
-                ? "Turn on Provider update checks to update automatically."
+                ? "Provider CLIs update only while Provider update checks is on."
                 : undefined
           }
           resetAction={
@@ -1617,7 +1617,7 @@ export function GeneralSettingsPanel() {
             <ScopedSwitch
               settingKeys={["automaticUpdates"]}
               checked={settings.automaticUpdates}
-              disabled={!supportsAutomaticUpdates || !settings.enableProviderUpdateChecks}
+              disabled={!supportsAutomaticUpdates}
               onCheckedChange={(checked) => updateSettings({ automaticUpdates: Boolean(checked) })}
               aria-label="Update automatically"
             />

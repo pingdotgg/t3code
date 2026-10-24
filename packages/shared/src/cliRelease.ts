@@ -87,12 +87,14 @@ export function cliReleaseIndexPageUrl(page: number): string {
 }
 
 /**
- * Drafts are skipped because their assets are not downloadable.
+ * Drafts are skipped because their assets are not downloadable. The stable
+ * channel never offers a prerelease, whether GitHub flags it or the version says so.
  */
 export function newestCliReleaseVersion(
   releases: ReadonlyArray<{
     readonly tag_name: string;
     readonly draft?: boolean | undefined;
+    readonly prerelease?: boolean | undefined;
   }>,
   channel: CliReleaseChannel,
 ): string | undefined {
@@ -100,6 +102,7 @@ export function newestCliReleaseVersion(
     if (release.draft) continue;
     const version = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name)?.[1];
     if (version === undefined) continue;
+    if (channel === "stable" && (release.prerelease || version.includes("-"))) continue;
     if (cliReleaseChannelOf(version) === channel) return version;
   }
   return undefined;

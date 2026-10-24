@@ -178,6 +178,8 @@ import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProviderInstallLock from "./provider/ProviderInstallLock.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAutoUpdater from "./updates/ProviderAutoUpdater.ts";
+import * as RestartWork from "./updates/RestartWork.ts";
+import * as ServerAutoUpdater from "./updates/ServerAutoUpdater.ts";
 import * as UpdateWindow from "./updates/UpdateWindow.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -731,6 +733,10 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
+  // Shares the routes' ServerSelfUpdate, so a manual and a background update never overlap.
+  ServerAutoUpdater.layer.pipe(
+    Layer.provide(UpdateWindow.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  ),
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
@@ -1082,6 +1088,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(AgentScopeLive.layer),
       // Provider installs and turn starts coordinate with every T3 server on the host.
       Layer.provideMerge(ProviderInstallLock.layer),
+      // One counter for clones, thread launches, review guides, and the update window.
+      Layer.provideMerge(RestartWork.layer),
       Layer.provideMerge(layerPlatformServices),
     );
   }),

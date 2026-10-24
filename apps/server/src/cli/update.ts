@@ -29,7 +29,11 @@ import {
   prunePinnedRuntimes,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
-import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+import {
+  CLI_LAUNCHER_FILE,
+  compareExactServiceVersions,
+  isExactServiceVersion,
+} from "../cloud/serviceProtocol.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -48,6 +52,7 @@ const ReleaseIndex = Schema.Array(
   Schema.Struct({
     tag_name: Schema.String,
     draft: Schema.optional(Schema.Boolean),
+    prerelease: Schema.optional(Schema.Boolean),
   }),
 );
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
@@ -105,6 +110,16 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   if (input.launchedAs === undefined) return Option.none<string>();
   const ownsTarget = (candidate: string) =>
     launcherOwnsVersionsDir(path, input.versionsDir, candidate);
+  const pinPath = path.join(path.dirname(input.versionsDir), CLI_LAUNCHER_FILE);
+  const tempPinPath = `${pinPath}.${process.pid}.tmp`;
+  // Record before switching so pruning follows the actual target even if the swap fails.
+  const pinLauncher = (launcherPath: string) =>
+    fs.writeFileString(tempPinPath, `${path.resolve(launcherPath)}\n`, { mode: 0o600 }).pipe(
+      Effect.andThen(fs.rename(tempPinPath, pinPath)),
+      Effect.mapError(
+        () => new CliUpdateError({ reason: "Could not record the t3 CLI launcher." }),
+      ),
+    );
 
   if (platform === "win32") {
     const shimPath = yield* findWindowsShim(input.launchedAs);
@@ -112,6 +127,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? windowsShimTarget(current.value) : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
+    yield* pinLauncher(shimPath);
     yield* fs
       .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
       .pipe(
@@ -126,6 +142,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   if (Option.isNone(linkTarget)) return Option.none<string>();
   const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
   if (!ownsTarget(resolvedTarget)) return Option.none<string>();
+  yield* pinLauncher(input.launchedAs);
   const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
   yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
     Effect.andThen(fs.rename(tempLink, input.launchedAs)),

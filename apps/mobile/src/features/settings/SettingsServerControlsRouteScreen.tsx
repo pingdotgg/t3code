@@ -489,15 +489,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                             : !supportsAutomaticUpdates
                               ? "Update older servers to control automatic updates."
                               : uniform("enableProviderUpdateChecks") === false
-                                ? "Turn on Provider update checks to update automatically."
-                                : "Install updates for provider CLIs that support one-click updates on the selected environments while nothing is running."
+                                ? "Update background-service installs on the selected environments while nothing is running. Provider CLIs update only while Provider update checks is on."
+                                : "Install provider CLI updates, and update background-service installs, on the selected environments while nothing is running."
                         }
                         value={uniform("automaticUpdates")}
-                        disabled={
-                          disabledFor("automaticUpdates") ||
-                          !supportsAutomaticUpdates ||
-                          uniform("enableProviderUpdateChecks") === false
-                        }
+                        disabled={disabledFor("automaticUpdates") || !supportsAutomaticUpdates}
                         onValueChange={(value) => write({ automaticUpdates: value })}
                       />
                     </View>

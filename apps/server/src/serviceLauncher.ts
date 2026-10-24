@@ -20,6 +20,7 @@ import type {
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
 import {
+  CLI_LAUNCHER_FILE,
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
@@ -37,8 +38,15 @@ const HANDOFF_DELAY_MS = 2_000;
  * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
  * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
  */
-const PREPARED_TIMEOUT_MS = 30 * 60_000;
+const PREPARED_TIMEOUT_MS = 10 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
+const CRASH_RESTART_BASE_MS = 1_000;
+const CRASH_RESTART_MAX_MS = 30_000;
+/** A child that ran this long before exiting was not crash-looping. */
+const STABLE_RUN_MS = 60_000;
+// `t3 update` publishes a runtime before it records the restart that selects
+// it, so a runtime that just appeared may be about to become the active one.
+const PRUNE_MIN_AGE_MS = 60 * 60_000;
 // Matches SERVER_EXIT_CODE_STATE_DIR_OWNED in contracts. The standalone
 // launcher stays independent of the Effect-backed contracts package.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
@@ -50,6 +58,7 @@ interface ManagedChild {
   readonly version: string;
   role: ChildRole;
   readonly process: NodeChildProcess.ChildProcess;
+  readonly startedAt: number;
 }
 
 const runtimePaths = (baseDir: string, version: string) => {
@@ -412,6 +421,65 @@ async function runtimeExists(baseDir: string, version: string): Promise<boolean>
   }
 }
 
+/**
+ * Removes completed runtimes nothing can return to, so unattended updates do
+ * not fill the disk. Keep both the running launcher and a deferred CLI/service
+ * install, which may name different executables. Recovery also needs the active
+ * version, the version an update came from, a pending target, and the CLI's runtime.
+ */
+export async function pruneServiceRuntimes(
+  baseDir: string,
+  state: ServiceState,
+  launcherVersion: string | undefined,
+): Promise<void> {
+  const keep = new Set([state.activeVersion]);
+  if (launcherVersion !== undefined) keep.add(launcherVersion);
+  const readOptionalText = (filePath: string) =>
+    NodeFSP.readFile(filePath, "utf8").catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+  const installedVersion = await readOptionalText(restartPendingPath(baseDir));
+  if (installedVersion !== undefined) keep.add(installedVersion.trim());
+  const versionsDir = NodePath.join(baseDir, "runtime", "versions");
+  const cliLauncher = await readOptionalText(NodePath.join(baseDir, "runtime", CLI_LAUNCHER_FILE));
+  if (cliLauncher !== undefined) {
+    const cliPath = cliLauncher.trim();
+    const cliEntry =
+      // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+      process.platform === "win32"
+        ? /^"([^"]+)"/m.exec((await readOptionalText(cliPath)) ?? "")?.[1]
+        : await NodeFSP.readlink(cliPath)
+            .then((target) => NodePath.resolve(NodePath.dirname(cliPath), target))
+            .catch((error: unknown) => {
+              const code = (error as NodeJS.ErrnoException).code;
+              if (code === "ENOENT" || code === "EINVAL") return undefined;
+              throw error;
+            });
+    const cliVersion =
+      cliEntry === undefined
+        ? undefined
+        : NodePath.relative(versionsDir, cliEntry).split(NodePath.sep)[0];
+    if (cliVersion !== undefined && isExactServiceVersion(cliVersion)) keep.add(cliVersion);
+  }
+  if (state.update !== undefined) {
+    keep.add(state.update.fromVersion);
+    if (state.update.status === "pending") keep.add(state.update.targetVersion);
+  }
+  for (const entry of await NodeFSP.readdir(versionsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !isExactServiceVersion(entry.name) || keep.has(entry.name)) {
+      continue;
+    }
+    // An incomplete directory is a staging in progress, not an old runtime.
+    if (!(await runtimeExists(baseDir, entry.name))) continue;
+    const versionDir = NodePath.join(versionsDir, entry.name);
+    // Standalone launcher has no Effect runtime.
+    // @effect-diagnostics-next-line globalDate:off
+    if (Date.now() - (await NodeFSP.stat(versionDir)).mtimeMs < PRUNE_MIN_AGE_MS) continue;
+    await NodeFSP.rm(versionDir, { recursive: true, force: true });
+  }
+}
+
 function terminalUpdate<S extends TerminalStatus>(input: {
   readonly pending: PendingServiceUpdate;
   readonly status: S;
@@ -473,6 +541,7 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
+  #crashDelayMs = CRASH_RESTART_BASE_MS;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -639,6 +708,7 @@ export class Launcher {
       version,
       role,
       process: child,
+      startedAt: performance.now(),
     };
     this.#child = managed;
     child.on("message", (value) => {
@@ -767,6 +837,25 @@ export class Launcher {
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    await this.#pruneRuntimes();
+  }
+
+  async #pruneRuntimes(): Promise<void> {
+    try {
+      // The running launcher can predate a deferred CLI/service install.
+      const executableDir = NodePath.dirname(await NodeFSP.realpath(process.execPath));
+      // Both sides resolved: a symlinked home would otherwise hide the launcher's own runtime.
+      const versionsDir = await NodeFSP.realpath(
+        NodePath.join(this.#baseDir, "runtime", "versions"),
+      );
+      const launcherVersion =
+        NodePath.dirname(executableDir) === versionsDir
+          ? NodePath.basename(executableDir)
+          : undefined;
+      await pruneServiceRuntimes(this.#baseDir, this.#state, launcherVersion);
+    } catch {
+      // Pruning only saves disk; it must never stop the service.
+    }
   }
 
   async #handlePreparedTimeout(child: ManagedChild): Promise<void> {
@@ -783,7 +872,7 @@ export class Launcher {
     code: number | null,
     signal: NodeJS.Signals | null,
   ): Promise<void> {
-    if (this.#child !== child || this.#stopping) return;
+    if (this.#child !== child || this.#stopping || this.#stopRequested) return;
     this.#child = null;
     if (code === STATE_DIR_OWNED_EXIT_CODE) {
       await this.#idleWhileStateDirOwned();
@@ -809,7 +898,19 @@ export class Launcher {
       await this.#startTrial(pending);
       return;
     }
-    throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
+    // Restart in-process so systemd's start limit cannot strand an unattended
+    // service behind a crashing release.
+    if (performance.now() - child.startedAt >= STABLE_RUN_MS) {
+      this.#crashDelayMs = CRASH_RESTART_BASE_MS;
+    }
+    const delay = this.#crashDelayMs;
+    this.#crashDelayMs = Math.min(delay * 2, CRASH_RESTART_MAX_MS);
+    this.#timer = setTimeout(() => {
+      this.#timer = undefined;
+      this.#enqueue(() =>
+        this.#startChild(this.#state.activeVersion, "active", this.#state.update),
+      );
+    }, delay);
   }
 
   /**
@@ -858,6 +959,7 @@ export class Launcher {
     this.#state = next;
     await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     await this.#startChild(next.activeVersion, "active", outcome);
+    await this.#pruneRuntimes();
   }
 }
 

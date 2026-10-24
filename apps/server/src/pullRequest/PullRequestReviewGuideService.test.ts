@@ -25,6 +25,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as PullRequestReviewGuideService from "./PullRequestReviewGuideService.ts";
@@ -160,6 +161,7 @@ const makeLayer = (input: {
   readonly identity?: typeof ACME_APP;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
+    Layer.provideMerge(RestartWork.layer),
     Layer.provide(
       Layer.effect(
         PullRequestReviewGuides.PullRequestReviewGuideRepository,
@@ -419,6 +421,56 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         assert.isFalse(run.fetchedRefs.some((ref) => ref.startsWith("-")));
         const fs = yield* FileSystem.FileSystem;
         assert.isFalse(yield* fs.exists(`${run.repositories.root}/injected`));
+      }),
+    ),
+  );
+
+  it.effect("counts a running review guide as restart work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const entered = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const stored = yield* Deferred.make<void>();
+        // Built in this test's scope: runs are forked into the service's scope and must outlive
+        // the call that obtains the service.
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            generate: () =>
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(finish)),
+                Effect.as({
+                  stops: [
+                    {
+                      title: "The feature",
+                      summary: "The change.",
+                      attention: null,
+                      excerpts: [
+                        { path: "feature.txt", side: "new", start: 4, end: 10, caption: "" },
+                      ],
+                      files: [],
+                      notes: [],
+                      questions: [],
+                    },
+                  ],
+                }),
+              ),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const restartWork = Context.get(context, RestartWork.RestartWork);
+
+        yield* service.generate(reference);
+        yield* Deferred.await(entered);
+        // A restart now would lose the guide being written.
+        assert.strictEqual(yield* restartWork.count, 1);
+        yield* Deferred.succeed(finish, undefined);
+        yield* Deferred.await(stored);
       }),
     ),
   );

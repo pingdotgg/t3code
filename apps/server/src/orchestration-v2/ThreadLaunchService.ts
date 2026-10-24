@@ -1,6 +1,7 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -199,6 +200,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const setupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+  const restartWork = yield* RestartWork.RestartWork;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
@@ -792,19 +794,23 @@ const make = Effect.gen(function* () {
         );
       yield* Effect.raceFirst(prepare, interruption);
     });
-    yield* preparation.pipe(
-      Effect.onError((cause) =>
-        failPreparedRun(
-          input,
-          threadId,
-          runId,
-          Cause.hasInterruptsOnly(cause) ? "Worktree setup cancelled." : Cause.squash(cause),
+    // A restart would lose the setup script, so it counts as restart work from the moment it forks.
+    yield* restartWork
+      .track(
+        preparation.pipe(
+          Effect.onError((cause) =>
+            failPreparedRun(
+              input,
+              threadId,
+              runId,
+              Cause.hasInterruptsOnly(cause) ? "Worktree setup cancelled." : Cause.squash(cause),
+            ),
+          ),
+          Effect.ignoreCause,
+          Effect.ensuring(releasePreparation(input.commandId)),
         ),
-      ),
-      Effect.ignoreCause,
-      Effect.ensuring(releasePreparation(input.commandId)),
-      Effect.forkIn(preparationScope),
-    );
+      )
+      .pipe(Effect.forkIn(preparationScope, { startImmediately: true }));
   });
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(

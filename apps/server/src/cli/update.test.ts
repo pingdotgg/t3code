@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -8,6 +9,11 @@ import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { afterEach, vi } from "vite-plus/test";
 
+import {
+  SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_RESTART_PENDING_FILE,
+} from "../cloud/serviceProtocol.ts";
+import { pruneServiceRuntimes } from "../serviceLauncher.ts";
 import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
 
 afterEach(() => vi.restoreAllMocks());
@@ -36,7 +42,7 @@ it.effect("authenticates each release page until the requested channel is found"
 );
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
-  it.effect("repoints a symlink that lives in a runtime versions tree", () =>
+  it.effect("keeps a repointed CLI runtime after subsequent service updates", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -44,9 +50,13 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
       const newExe = path.join(root, "runtime/versions/2.0.0/t3");
       const launcher = path.join(root, "bin/t3");
-      for (const file of [oldExe, newExe]) {
+      const twoHoursAgo = DateTime.toDate(DateTime.subtract(yield* DateTime.now, { hours: 2 }));
+      for (const version of ["1.0.0", "2.0.0"]) {
+        const file = path.join(root, "runtime/versions", version, "t3");
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-        yield* fs.writeFileString(file, "");
+        yield* fs.writeFileString(file, version);
+        yield* fs.writeFileString(path.join(path.dirname(file), ".install-complete"), version);
+        yield* fs.utimes(path.dirname(file), twoHoursAgo, twoHoursAgo);
       }
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       yield* fs.symlink(oldExe, launcher);
@@ -59,6 +69,41 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
+      assert.isFalse(yield* fs.exists(path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE)));
+      for (const version of [3, 4]) {
+        const versionDir = path.join(root, "runtime/versions", `${version}.0.0`);
+        yield* fs.makeDirectory(versionDir);
+        yield* fs.writeFileString(path.join(versionDir, "t3"), `${version}.0.0`);
+        yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${version}.0.0`);
+        yield* fs.utimes(versionDir, twoHoursAgo, twoHoursAgo);
+        if (version === 4) {
+          const tempLink = `${launcher}.${process.pid}.tmp`;
+          yield* fs.writeFileString(tempLink, "");
+          yield* repointLauncher({
+            launchedAs: launcher,
+            versionsDir: path.join(root, "runtime/versions"),
+            targetEntryPath: path.join(versionDir, "t3"),
+          }).pipe(Effect.flip);
+          yield* fs.remove(tempLink);
+        }
+        yield* Effect.promise(() =>
+          pruneServiceRuntimes(
+            root,
+            {
+              protocol: SERVICE_LAUNCHER_PROTOCOL,
+              activeVersion: `${version}.0.0`,
+              update: {
+                id: `update-${version}`,
+                fromVersion: `${version - 1}.0.0`,
+                targetVersion: `${version}.0.0`,
+                status: "committed",
+              },
+            },
+            "1.0.0",
+          ),
+        );
+      }
+      assert.equal(yield* fs.readFileString(launcher), "2.0.0");
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 

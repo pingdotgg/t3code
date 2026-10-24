@@ -57,6 +57,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -172,6 +173,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerExternalServices = Layer.mergeAll(
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
+    RestartWork.layer,
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
@@ -545,6 +547,43 @@ it.effect("provisions independent launches concurrently instead of behind a glob
       );
       yield* Deferred.await(bothEntered);
       assert.equal(yield* Ref.get(setupCount), 2);
+      yield* Deferred.succeed(allowSetup, undefined);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("counts workspace setup as restart work while it runs", () =>
+  Effect.gen(function* () {
+    const setupEntered = yield* Deferred.make<void>();
+    const allowSetup = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSetup)),
+          Effect.as({
+            status: "started" as const,
+            async: false,
+            scriptId: "setup",
+            scriptName: "Setup",
+            scriptCommand: "vp install",
+            terminalId: "setup",
+            cwd: "/repo",
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({
+        command: "command:launch:release",
+        thread: "thread:launch:release",
+        message: "Start after setup",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+      const restartWork = yield* RestartWork.RestartWork;
+      yield* launches.launch(input);
+      yield* Deferred.await(setupEntered);
+      // A restart now would cut the setup script off.
+      assert.equal(yield* restartWork.count, 1);
       yield* Deferred.succeed(allowSetup, undefined);
     }).pipe(Effect.provide(harness.layer));
   }),

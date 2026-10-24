@@ -32,6 +32,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
@@ -72,6 +73,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
+  const restartWork = yield* RestartWork.RestartWork;
   const serviceScope = yield* Effect.scope;
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
   let runCounter = 0;
@@ -521,7 +523,8 @@ const make = Effect.gen(function* () {
               ),
             ),
       ),
-      Effect.forkIn(serviceScope),
+      restartWork.track,
+      Effect.forkIn(serviceScope, { startImmediately: true }),
     );
     return { guide: stored, run: running, currentHeadSha, started: true };
   });

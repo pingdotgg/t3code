@@ -19,6 +19,7 @@ import {
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  PinnedRuntimePreflightBlockedError,
   type PinnedRuntimeProgress,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
@@ -211,7 +212,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect("removes staging and leaves no final runtime when validation fails", () =>
+  it.effect.each([
+    new PinnedRuntimeInstallError({ step: "validating the staged runtime" }),
+    new PinnedRuntimePreflightBlockedError({ version, reason: "Different client protocol." }),
+  ])("removes staging and leaves no final runtime when validation fails: %s", (error) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -227,8 +231,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
-        validate: () =>
-          Effect.fail(new PinnedRuntimeInstallError({ step: "validating the staged runtime" })),
+        validate: () => Effect.fail(error),
       }).pipe(Effect.flip);
 
       assert.isFalse(yield* fs.exists(finalPaths.versionDir));
