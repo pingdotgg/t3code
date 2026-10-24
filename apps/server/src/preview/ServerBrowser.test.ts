@@ -379,6 +379,37 @@ beforeEach(() => {
   desktopConnections.length = 0;
 });
 
+it.live("preview_open reports its navigation timeout instead of the request budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      initialNavigation = async () => {
+        throw Object.assign(new Error("page.goto: Timeout 15000ms exceeded."), {
+          name: "TimeoutError",
+        });
+      };
+
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: {
+            url: "http://localhost:1337/",
+            reuseExistingTab: false,
+            show: false,
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationTimeoutError",
+        timeoutMs: 15_000,
+      });
+      expect(error.message).toBe("Preview automation open timed out after 15000ms.");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live.each(["desktop" as const, undefined])(
   "explicit desktop targets ($0 runtime) fail without creating a server tab",
   (runtime) =>
