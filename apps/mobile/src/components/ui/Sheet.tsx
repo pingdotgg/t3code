@@ -30,7 +30,8 @@ export function Sheet(props: SheetProps) {
       onDismiss={props.onClose}
       onNativeDismiss={props.onClose}
     >
-      <View collapsable={false} className="flex-1 bg-sheet">
+      {/* Flex children are not bounded by the FormSheet host, so pin to its edges. */}
+      <View collapsable={false} className="absolute inset-0 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
           <NativeScreen
             activityState={2}
