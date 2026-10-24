@@ -15,6 +15,7 @@ import {
   type ThemeAppearance,
   type ThemeColors,
   type ThemeDefinition,
+  withThemeColorOverrides,
 } from "../themePalette";
 import { useTheme } from "./useTheme";
 
@@ -30,7 +31,7 @@ function publishedThemeColors(
     appearance === theme.appearance && theme.canvas !== undefined && theme.accent !== undefined
       ? createVividThemeColors(appearance, theme.canvas, theme.accent)
       : getDefaultThemeColors(appearance);
-  return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
+  return withThemeColorOverrides(base, lenientThemeColorOverrides(colors ?? {}));
 }
 
 export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
