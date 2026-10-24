@@ -2,6 +2,7 @@ import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   AuthSettingsWriteScope,
   type EnvironmentId,
+  type ProjectId,
   type ProjectScript,
   type T3ProjectFileScript,
 } from "@t3tools/contracts";
@@ -63,6 +64,7 @@ interface ProjectScriptsControlProps {
   presentation?: "toolbar" | "menu";
   onRequestMenuClose?: () => void;
   environmentId: EnvironmentId;
+  projectId: ProjectId;
   scripts: ReadonlyArray<ProjectScript>;
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   preferredScriptId?: string | null;
@@ -80,6 +82,7 @@ export default function ProjectScriptsControl({
   presentation = "toolbar",
   onRequestMenuClose,
   environmentId,
+  projectId,
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
   preferredScriptId = null,
@@ -111,7 +114,7 @@ export default function ProjectScriptsControl({
     (fileScript) =>
       !scripts.some(
         (script) =>
-          script.command === fileScript.command ||
+          (script.type !== "prompt" && script.command === fileScript.command) ||
           script.name.toLowerCase() === fileScript.name.toLowerCase(),
       ),
   );
@@ -451,6 +454,7 @@ export default function ProjectScriptsControl({
 
       <ProjectScriptEditorDialog
         environmentId={environmentId}
+        projectId={projectId}
         request={editorRequest}
         scripts={scripts}
         onSubmit={submitScript}

@@ -8,7 +8,7 @@ import {
   OrchestrationV2CheckpointUnavailableError,
   WS_METHODS,
   type ChatAttachment,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   type NodeId,
   type OrchestrationV2Command,
@@ -27,7 +27,7 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
 } from "@t3tools/contracts";
-import { modelSelectionCommandType } from "@t3tools/shared/model";
+import { modelSelectionCommandType, modelSelectionsEqual } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
@@ -768,6 +768,62 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ? { deliveryIntent: requestedMode }
       : {}),
     dispatchMode,
+  });
+});
+
+export interface RunProjectPromptInput extends ThreadCommandInput {
+  readonly action: Extract<ProjectScript, { type: "prompt" }>;
+  readonly modelSelection?: ModelSelection;
+  readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
+}
+
+export const runProjectPrompt = Effect.fn("EnvironmentCommands.runProjectPrompt")(function* (
+  input: RunProjectPromptInput,
+) {
+  const projection = yield* getProjection(input.threadId);
+  const current = projection.thread;
+  const modelSelection =
+    input.action.modelSelection ?? input.modelSelection ?? current.modelSelection;
+  const runtimeMode = input.runtimeMode ?? current.runtimeMode;
+  const interactionMode = input.interactionMode ?? current.interactionMode;
+  const dispatchCommandId = yield* allocateCommandId(input);
+  if (!modelSelectionsEqual(modelSelection, current.modelSelection)) {
+    yield* updateThreadMetadata({
+      commandId: CommandId.make(`${dispatchCommandId}:model-selection`),
+      threadId: input.threadId,
+      modelSelection,
+    });
+  }
+  if (runtimeMode !== current.runtimeMode) {
+    yield* setThreadRuntimeMode({
+      commandId: CommandId.make(`${dispatchCommandId}:runtime-mode`),
+      threadId: input.threadId,
+      runtimeMode,
+    });
+  }
+  if (interactionMode !== current.interactionMode) {
+    yield* setThreadInteractionMode({
+      commandId: CommandId.make(`${dispatchCommandId}:interaction-mode`),
+      threadId: input.threadId,
+      interactionMode,
+    });
+  }
+  const crypto = yield* Crypto.Crypto;
+  return yield* startThreadTurn({
+    ...input,
+    commandId: dispatchCommandId,
+    modelSelection,
+    message: {
+      messageId: MessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+      role: "user",
+      text: input.action.prompt,
+      attachments: [],
+    },
+    runtimeMode,
+    interactionMode,
+    // Resolve the thread's current selection and approvals on the server, as for a normal send.
+    dispatchMode: "queue",
   });
 });
 

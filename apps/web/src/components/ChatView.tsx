@@ -1860,8 +1860,12 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
     terminalUiState,
     activeThread,
+    modelSelection: composerSelectedModelSelection ?? activeThread?.modelSelection,
+    runtimeMode,
+    interactionMode,
     activeThreadId,
     activeThreadRef,
+    isServerThread,
     activeProject,
     activeRightPanelSurface,
     runningTerminalIds,
@@ -2746,9 +2750,11 @@ export default function ChatView(props: ChatViewProps) {
     },
     fallback: (command) => {
       const scriptId = projectScriptIdFromCommand(command);
-      if (!scriptId || !activeProject || !canOperateTerminal) return undefined;
+      if (!scriptId || !activeProject) return undefined;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
-      return script ? () => void runProjectScriptStable(script) : undefined;
+      if (!script || (script.type === "prompt" ? !canOperateThread : !canOperateTerminal))
+        return undefined;
+      return () => void runProjectScriptStable(script);
     },
   });
 

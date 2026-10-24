@@ -41,6 +41,7 @@ import {
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
+  runProjectPrompt,
 } from "./commands.ts";
 
 const layerTestCrypto = Layer.succeed(
@@ -693,3 +694,180 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 });
+
+it.effect(
+  "runs a saved project prompt through normal dispatch in the invoking thread and worktree",
+  () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        thread: {
+          ...v2Projection.thread,
+          worktreePath: "/workspace/research-worktree",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("custom-provider"),
+            model: "deepseek/deepseek-v4.1-flash:free",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+          runtimeMode: "full-access",
+        },
+      };
+      const supervisor = yield* makeSupervisor({ commands, projects: [], launches, projection });
+      const action = {
+        id: "status",
+        name: "Status",
+        type: "prompt",
+        prompt: "Read project instructions.\nInspect results without edits.",
+        icon: "play",
+        runOnWorktreeCreate: false,
+      } as const;
+      const selectedModel = {
+        instanceId: ProviderInstanceId.make("custom-provider"),
+        model: "deepseek/deepseek-v4.1-flash:free",
+        options: [{ id: "reasoningEffort", value: "max" }],
+      };
+      yield* runProjectPrompt({
+        commandId: CommandId.make("project-prompt"),
+        threadId: projection.thread.id,
+        action,
+        modelSelection: selectedModel,
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      expect(launches).toEqual([]);
+      expect(commands).toHaveLength(4);
+      expect(commands.map((command) => command.commandId)).toEqual([
+        "project-prompt:model-selection",
+        "project-prompt:runtime-mode",
+        "project-prompt:interaction-mode",
+        "project-prompt",
+      ]);
+      expect(commands[0]).toMatchObject({
+        type: "thread.model-selection.set",
+        modelSelection: selectedModel,
+      });
+      expect(commands[1]).toMatchObject({
+        type: "thread.runtime-mode.set",
+        runtimeMode: "approval-required",
+      });
+      expect(commands[2]).toMatchObject({
+        type: "thread.interaction-mode.set",
+        interactionMode: "plan",
+      });
+      expect(commands[3]).toMatchObject({
+        type: "message.dispatch",
+        threadId: projection.thread.id,
+        text: action.prompt,
+        attachments: [],
+        createdBy: "user",
+        dispatchMode: { type: "queue_after_active" },
+      });
+      expect(commands[3]).not.toHaveProperty("runtimeMode");
+      expect(commands[3]).not.toHaveProperty("worktreePath");
+      expect(projection.thread.worktreePath).toBe("/workspace/research-worktree");
+    }).pipe(Effect.provide(layerTestCrypto)),
+);
+
+it.effect("prefers a saved prompt action's model over the composer and thread selections", () =>
+  Effect.gen(function* () {
+    const commands: OrchestrationV2Command[] = [];
+    const currentModel = {
+      instanceId: ProviderInstanceId.make("custom-provider"),
+      model: "deepseek/deepseek-v4.1-flash:free",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    const actionModel = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-4-1",
+      options: [{ id: "effort", value: "max" }],
+    };
+    const composerModel = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.1-codex",
+    };
+    const projection: OrchestrationV2ThreadProjection = {
+      ...v2Projection,
+      thread: { ...v2Projection.thread, modelSelection: currentModel },
+    };
+    const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+    yield* runProjectPrompt({
+      threadId: projection.thread.id,
+      action: {
+        id: "status",
+        name: "Status",
+        type: "prompt",
+        prompt: "Inspect results.",
+        modelSelection: actionModel,
+        icon: "play",
+        runOnWorktreeCreate: false,
+      },
+      modelSelection: composerModel,
+    }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+    expect(commands[0]).toMatchObject({
+      type: "thread.model-selection.set",
+      modelSelection: actionModel,
+    });
+    expect(commands[1]).toMatchObject({
+      type: "message.dispatch",
+      text: "Inspect results.",
+      modelSelection: actionModel,
+    });
+  }).pipe(Effect.provide(layerTestCrypto)),
+);
+
+it.effect("reports an unavailable environment when running a saved prompt", () =>
+  Effect.gen(function* () {
+    const commands: OrchestrationV2Command[] = [];
+    const supervisor = yield* makeSupervisor({ commands, projects: [] });
+    yield* SubscriptionRef.set(supervisor.session, Option.none());
+    const result = yield* runProjectPrompt({
+      threadId: v2ThreadId,
+      action: {
+        id: "status",
+        name: "Status",
+        type: "prompt",
+        prompt: "Inspect results.",
+        icon: "play",
+        runOnWorktreeCreate: false,
+      },
+    }).pipe(
+      Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Failure");
+    expect(commands).toEqual([]);
+  }).pipe(Effect.provide(layerTestCrypto)),
+);
+
+it.effect("keeps persisted thread settings when a prompt has no composer overrides", () =>
+  Effect.gen(function* () {
+    const commands: OrchestrationV2Command[] = [];
+    const projection: OrchestrationV2ThreadProjection = {
+      ...v2Projection,
+      thread: {
+        ...v2Projection.thread,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.1-codex",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
+    };
+    const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+    yield* runProjectPrompt({
+      threadId: projection.thread.id,
+      action: {
+        id: "status",
+        name: "Status",
+        type: "prompt",
+        prompt: "Inspect results.",
+        icon: "play",
+        runOnWorktreeCreate: false,
+      },
+    }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ type: "message.dispatch", text: "Inspect results." });
+  }).pipe(Effect.provide(layerTestCrypto)),
+);

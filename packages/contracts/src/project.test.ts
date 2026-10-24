@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
 import {
+  ProjectScript,
   ProjectFaviconPath,
   ReceivedProjectIcon,
   StoredProjectIcon,
@@ -177,3 +178,47 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+describe("project action persistence", () => {
+  const shell = {
+    id: "test",
+    name: "Test",
+    command: "npm test",
+    icon: "test",
+    runOnWorktreeCreate: true,
+    async: false,
+    previewUrl: "http://localhost:5173",
+    autoOpenPreview: true,
+  };
+  const modelSelection = {
+    instanceId: "custom-provider",
+    model: "deepseek/deepseek-v4.1-flash:free",
+    options: [{ id: "reasoningEffort", value: "max" }],
+  };
+  const prompt = {
+    id: "status",
+    name: "Status",
+    type: "prompt",
+    prompt: "Inspect outputs.\nDo not edit files or submit jobs.",
+    modelSelection,
+    icon: "play",
+    runOnWorktreeCreate: false,
+  };
+
+  it("round trips mixed prompt and legacy shell actions without rewriting shell settings", () => {
+    const json = Schema.fromJsonString(Schema.Array(ProjectScript));
+    const decode = Schema.decodeUnknownSync(json);
+    const actions = decode(JSON.stringify([shell, prompt]));
+    expect(actions).toEqual([shell, prompt]);
+    expect(decode(Schema.encodeSync(json)(actions))).toEqual([shell, prompt]);
+    expect(actions[1]).not.toHaveProperty("command");
+  });
+
+  it("rejects empty prompts and automatic shell lifecycle roles on prompts", () => {
+    const decode = Schema.decodeUnknownSync(ProjectScript);
+    expect(() => decode({ ...prompt, prompt: "  " })).toThrow();
+    expect(() => decode({ ...prompt, runOnWorktreeCreate: true })).toThrow();
+    expect(() => decode({ ...prompt, runOnSettle: true })).toThrow();
+    expect(() => decode({ ...prompt, prompt: undefined, command: "echo unsafe" })).toThrow();
+  });
+});

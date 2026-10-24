@@ -45,6 +45,7 @@ import {
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
+  type RunProjectPromptInput,
   type StopThreadSessionInput,
   type UnarchiveThreadInput,
   type UnlinkThreadPullRequestInput,
@@ -81,6 +82,7 @@ import {
   settleThread,
   snoozeThread,
   startThreadTurn,
+  runProjectPrompt,
   stopThreadSession,
   unarchiveThread,
   unlinkThreadPullRequest,
@@ -312,6 +314,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     setInteractionMode: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-interaction-mode",
       execute: (input: SetThreadInteractionModeInput) => setThreadInteractionMode(input),
+      scheduler,
+      concurrency,
+    }),
+    runProjectPrompt: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:run-project-prompt",
+      execute: (input: RunProjectPromptInput) => runProjectPrompt(input),
       scheduler,
       concurrency,
     }),

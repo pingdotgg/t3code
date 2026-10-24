@@ -103,6 +103,7 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   };
   readonly canOpenTerminal: boolean;
   readonly canOperateTerminal: boolean;
+  readonly canRunPrompt: boolean;
   readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
@@ -274,15 +275,15 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
   return {
     terminal: {
       accessibilityLabel: "Open terminal",
-      disabled: !props.canOpenTerminal,
+      disabled: !props.canOpenTerminal && !props.canRunPrompt,
       icon: { name: "terminal", type: "sfSymbol" },
       identifier: "thread-right-terminal",
       label: "Terminal",
       menu: {
         items: [
           ...props.projectScripts.map((script) => ({
-            description: script.command,
-            disabled: !props.canOperateTerminal,
+            description: script.type === "prompt" ? script.prompt : script.command,
+            disabled: script.type === "prompt" ? !props.canRunPrompt : !props.canOperateTerminal,
             icon: { name: projectScriptMenuIcon(script.icon), type: "sfSymbol" as const },
             label: projectScriptMenuLabel(script),
             onPress: () => void props.onRunProjectScript(script),
@@ -301,6 +302,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               ]
             : []),
           ...props.terminalSessions.map((session) => ({
+            disabled: !props.canOpenTerminal,
             description: [
               getTerminalStatusLabel({
                 status: session.status,
@@ -442,7 +444,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         <Toolbar.Menu
           accessibilityLabel="Open terminal"
           icon="terminal"
-          disabled={!props.canOpenTerminal}
+          disabled={!props.canOpenTerminal && !props.canRunPrompt}
           separateBackground
         >
           {props.projectScripts.length > 0 ? (
@@ -450,9 +452,11 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
               <Toolbar.MenuAction
                 key={script.id}
                 icon={projectScriptMenuIcon(script.icon)}
-                disabled={!props.canOperateTerminal}
+                disabled={
+                  script.type === "prompt" ? !props.canRunPrompt : !props.canOperateTerminal
+                }
                 onPress={() => void props.onRunProjectScript(script)}
-                subtitle={script.command}
+                subtitle={script.type === "prompt" ? script.prompt : script.command}
               >
                 <Toolbar.Label>{projectScriptMenuLabel(script)}</Toolbar.Label>
               </Toolbar.MenuAction>
@@ -471,6 +475,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
             <Toolbar.MenuAction
               key={session.terminalId}
               icon="terminal"
+              disabled={!props.canOpenTerminal}
               onPress={() => props.onOpenTerminal(session.terminalId)}
               subtitle={[
                 getTerminalStatusLabel({

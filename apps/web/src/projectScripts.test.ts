@@ -1,8 +1,10 @@
 import { shortcutLabelForCommand } from "./keybindings";
 import { describe, expect, it } from "vite-plus/test";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { settleProjectScript, setupProjectScript } from "@t3tools/shared/projectScripts";
 
 import {
+  buildProjectScript,
   commandForProjectScript,
   nextProjectScriptId,
   primaryProjectScript,
@@ -89,4 +91,52 @@ describe("projectScripts helpers", () => {
       releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: false, runOnSettle: false }),
     ).toBe(holder);
   });
+});
+
+it("creates and edits prompt actions without shell settings or claiming lifecycle roles", () => {
+  const input = {
+    type: "prompt",
+    prompt: "Read project instructions and report status.",
+    command: "echo old shell",
+    name: "Status",
+    icon: "debug",
+    runOnWorktreeCreate: true,
+    waitForSetup: true,
+    runOnSettle: true,
+    previewUrl: "http://localhost:3000",
+    autoOpenPreview: true,
+  } as const;
+  const action = buildProjectScript("status", input);
+  expect(action).toEqual({
+    id: "status",
+    name: "Status",
+    type: "prompt",
+    prompt: input.prompt,
+    icon: "debug",
+    runOnWorktreeCreate: false,
+  });
+  expect(setupProjectScript([action])).toBeNull();
+  expect(settleProjectScript([action])).toBeNull();
+  expect(
+    buildProjectScript(action.id, { ...input, name: "Updated", prompt: "Read new outputs." }),
+  ).toMatchObject({ id: "status", name: "Updated", prompt: "Read new outputs." });
+  const modelSelection = {
+    instanceId: ProviderInstanceId.make("custom-provider"),
+    model: "deepseek/deepseek-v4.1-flash:free",
+    options: [{ id: "reasoningEffort", value: "max" as const }],
+  };
+  expect(buildProjectScript("status", { ...input, modelSelection })).toMatchObject({
+    modelSelection,
+  });
+  const shell = buildProjectScript("shell", { ...input, type: "shell" });
+  expect(shell).toMatchObject({
+    command: "echo old shell",
+    runOnWorktreeCreate: true,
+    async: false,
+    runOnSettle: true,
+    previewUrl: input.previewUrl,
+    autoOpenPreview: true,
+  });
+  expect(shell).not.toHaveProperty("prompt");
+  expect(releaseClaimedRoles(shell, input)).toBe(shell);
 });

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   MessageId,
+  type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
@@ -200,6 +201,28 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
 const layer = it.layer(CommandPolicy.layer);
 
 layer("CommandPolicyV2", (it) => {
+  it.effect("starts an idle queued prompt with the thread's arbitrary model and options", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      const modelSelection: ModelSelection = {
+        instanceId: ProviderInstanceId.make("custom-runtime"),
+        model: "deepseek/deepseek-v4.1-flash:free",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      const projection = {
+        ...dispatchProjection(),
+        thread: { id: threadId, modelSelection },
+      } as OrchestrationV2ThreadProjection;
+      const decision = yield* policy.decideMessageDispatch({
+        commandId,
+        projection,
+        requestedMode: { type: "queue_after_active" },
+        capabilities: baseCapabilities,
+      });
+      assert.deepEqual(decision, { type: "start_run", modelSelection });
+    }),
+  );
+
   it.effect("falls back to portable context when Cursor cannot fork natively", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;

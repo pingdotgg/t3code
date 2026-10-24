@@ -98,7 +98,7 @@ Invalid rules are ignored; if the file cannot be parsed, T3 Code uses defaults.
 Each rule requires a `key` shortcut and a `command` ID. An optional `when`
 expression restricts when it runs.
 
-Project scripts use `script.{id}.run`, such as `script.test.run`.
+Project actions, including shell scripts and prompts, use `script.{id}.run`, such as `script.test.run`.
 
 ## Key syntax
 

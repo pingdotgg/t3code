@@ -88,7 +88,7 @@ export function ProjectActionsSettings() {
     (fileScript) =>
       !scripts.some(
         (script) =>
-          script.command === fileScript.command ||
+          (script.type !== "prompt" && script.command === fileScript.command) ||
           script.name.toLowerCase() === fileScript.name.toLowerCase(),
       ),
   );
@@ -203,6 +203,7 @@ export function ProjectActionsSettings() {
         <ProjectScriptEditorDialog
           environmentId={target.environmentId}
           editScope={AuthSettingsWriteScope}
+          projectId={target.projectId ?? null}
           request={request}
           scripts={scripts}
           onSubmit={submit}

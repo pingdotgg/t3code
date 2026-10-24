@@ -2,6 +2,7 @@ import {
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   type KeybindingCommand,
+  type ModelSelection,
   type ProjectScript,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -9,7 +10,10 @@ const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
 export interface ProjectScriptInput {
   readonly name: ProjectScript["name"];
-  readonly command: ProjectScript["command"];
+  readonly type?: "shell" | "prompt";
+  readonly prompt?: string;
+  readonly modelSelection?: ModelSelection | null;
+  readonly command: string;
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly waitForSetup: boolean;
@@ -19,6 +23,17 @@ export interface ProjectScriptInput {
 }
 
 export function buildProjectScript(id: string, input: ProjectScriptInput): ProjectScript {
+  if (input.type === "prompt") {
+    return {
+      id,
+      name: input.name,
+      type: "prompt",
+      prompt: input.prompt ?? "",
+      ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+      icon: input.icon,
+      runOnWorktreeCreate: false,
+    };
+  }
   return {
     id,
     name: input.name,
@@ -40,6 +55,7 @@ export function releaseClaimedRoles(
   script: ProjectScript,
   saved: ProjectScriptInput,
 ): ProjectScript {
+  if (script.type === "prompt" || saved.type === "prompt") return script;
   const releaseSetup = saved.runOnWorktreeCreate && script.runOnWorktreeCreate;
   const releaseSettle = saved.runOnSettle && script.runOnSettle === true;
   if (!releaseSetup && !releaseSettle) return script;

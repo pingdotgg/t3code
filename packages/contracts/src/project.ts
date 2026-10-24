@@ -30,17 +30,32 @@ export const ProjectScriptIcon = Schema.Literals([
 ]);
 export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
 
-export const ProjectScript = Schema.Struct({
+const ProjectScriptFields = {
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
-  command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
-  runOnWorktreeCreate: Schema.Boolean,
   runOnSettle: Schema.optional(Schema.Boolean),
   async: Schema.optional(Schema.Boolean),
   previewUrl: Schema.optional(TrimmedNonEmptyString),
   autoOpenPreview: Schema.optional(Schema.Boolean),
-});
+};
+
+export const ProjectScript = Schema.Union([
+  Schema.Struct({
+    ...ProjectScriptFields,
+    type: Schema.optional(Schema.Literal("shell")),
+    command: TrimmedNonEmptyString,
+    runOnWorktreeCreate: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...ProjectScriptFields,
+    type: Schema.Literal("prompt"),
+    prompt: TrimmedNonEmptyString,
+    modelSelection: Schema.optional(ModelSelection),
+    runOnWorktreeCreate: Schema.Literal(false),
+    runOnSettle: Schema.optional(Schema.Literal(false)),
+  }),
+]);
 export type ProjectScript = typeof ProjectScript.Type;
 
 export const ProjectIconColor = Schema.Literals([

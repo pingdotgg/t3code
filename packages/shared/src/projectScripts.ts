@@ -64,20 +64,29 @@ export function projectScriptRuntimeEnv(
   return env;
 }
 
-export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
-  return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
+export function setupProjectScript(scripts: readonly ProjectScript[]) {
+  return (
+    scripts
+      .filter((script) => script.type !== "prompt")
+      .find((script) => script.runOnWorktreeCreate) ?? null
+  );
 }
 
 export function projectScriptMenuLabel(script: ProjectScript): string {
   const roles = [
+    ...(script.type === "prompt" ? ["prompt"] : []),
     ...(script.runOnWorktreeCreate ? ["setup"] : []),
     ...(script.runOnSettle ? ["on settle"] : []),
   ];
   return roles.length === 0 ? script.name : `${script.name} (${roles.join(", ")})`;
 }
 
-export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
-  return scripts.find((script) => script.runOnSettle === true) ?? null;
+export function settleProjectScript(scripts: readonly ProjectScript[]) {
+  return (
+    scripts
+      .filter((script) => script.type !== "prompt")
+      .find((script) => script.runOnSettle === true) ?? null
+  );
 }
 
 /**

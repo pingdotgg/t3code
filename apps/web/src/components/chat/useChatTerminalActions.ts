@@ -9,6 +9,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
+  AuthOrchestrationOperateScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
   type EnvironmentId,
@@ -38,8 +39,10 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { previewEnvironment } from "../../state/preview";
 import { readEnvironmentScope } from "../../state/session";
+import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 const SCRIPT_TERMINAL_COLS = 120;
@@ -56,8 +59,12 @@ interface ChatTerminalActionsInput {
   readonly composerRef: ComposerHandleRef;
   readonly terminalUiState: ReturnType<typeof selectThreadTerminalUiState>;
   readonly activeThread: EnvironmentThreadShell | undefined;
+  readonly modelSelection: EnvironmentThreadShell["modelSelection"] | undefined;
+  readonly runtimeMode: EnvironmentThreadShell["runtimeMode"] | undefined;
+  readonly interactionMode: EnvironmentThreadShell["interactionMode"] | undefined;
   readonly activeThreadId: ThreadId | null;
   readonly activeThreadRef: ScopedThreadRef | null;
+  readonly isServerThread: boolean;
   readonly activeProject: EnvironmentProject | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
   readonly runningTerminalIds: ReadonlyArray<string>;
@@ -81,8 +88,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     composerRef,
     terminalUiState,
     activeThread,
+    modelSelection,
+    runtimeMode,
+    interactionMode,
     activeThreadId,
     activeThreadRef,
+    isServerThread,
     activeProject,
     activeRightPanelSurface,
     runningTerminalIds,
@@ -95,6 +106,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     setTerminalUiLaunchContext,
     setThreadError,
   } = input;
+  const runPrompt = useAtomCommand(threadEnvironment.runProjectPrompt, { reportFailure: false });
+  const setComposerModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
 
   const hasTerminalWriteAccess = () =>
@@ -199,12 +212,57 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       shellHistory?: "preserve" | "suppress";
     },
   ) => {
-    if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
+    if (!activeThreadId || !activeProject || !activeThread) return;
+    if (script.type !== "prompt" && !hasTerminalWriteAccess()) return;
     if (options?.rememberAsLastInvoked !== false) {
       setLastInvokedScriptByProjectId((current) => {
         if (current[activeProject.id] === script.id) return current;
         return { ...current, [activeProject.id]: script.id };
       });
+    }
+    if (script.type === "prompt") {
+      if (!isServerThread) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Start this thread first",
+            description: "Send a message before running a prompt action.",
+          }),
+        );
+        return;
+      }
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        setThreadError(activeThreadId, "This connection cannot run prompt actions.");
+        return;
+      }
+      const result = await runPrompt({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          action: script,
+          ...(modelSelection ? { modelSelection } : {}),
+          ...(runtimeMode ? { runtimeMode } : {}),
+          ...(interactionMode ? { interactionMode } : {}),
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error
+              ? error.message
+              : `Could not run prompt action "${script.name}". Check that the thread's model and provider are available.`,
+          );
+        }
+        return;
+      }
+      if (script.modelSelection && activeThreadRef) {
+        setComposerModelSelection(activeThreadRef, script.modelSelection, {
+          replaceOptions: true,
+        });
+      }
+      return;
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
     const reusableTerminalId =

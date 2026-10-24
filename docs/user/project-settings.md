@@ -156,6 +156,14 @@ checkouts and removal. Actions belong to a project: editing them creates the pro
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
+Choose **Shell script** to run a terminal command, or **Prompt** to save a task for the agent.
+Run a prompt from the thread's action menu or its configured keyboard shortcut. By default it
+uses that thread's model, workspace, and permissions, and queues behind any active turn. To give
+an action its own model and reasoning level, turn off **Use the thread's current model** and pick
+one; the thread switches to that selection before the prompt runs. Start the thread with a
+message before running a prompt action from a new thread. Automatic setup and settle hooks apply
+only to shell scripts.
+
 Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `t3.json`, then the
 built-in default. Leave a setting on **Inherit** to let the next tier decide.

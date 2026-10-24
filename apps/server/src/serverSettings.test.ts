@@ -1722,6 +1722,88 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     },
   );
 
+  it.effect(
+    "persists prompt actions beside legacy shells and preserves unrelated settings on later saves",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const projectId = ProjectId.make("prompt-project");
+        const shell: ProjectScript = {
+          id: "test",
+          name: "Test",
+          command: "npm test",
+          icon: "test",
+          runOnWorktreeCreate: true,
+          async: false,
+          runOnSettle: true,
+        };
+        const prompt: ProjectScript = {
+          id: "status",
+          name: "Status",
+          type: "prompt",
+          prompt: "Read project instructions.\nReport completed results without changes.",
+          icon: "play",
+          runOnWorktreeCreate: false,
+        };
+        yield* service.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: { defaultAutoPull: true, defaultProjectScripts: [shell, prompt] },
+          },
+        });
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.projectSettingsOverrides[projectId], {
+          defaultAutoPull: true,
+          defaultProjectScripts: [shell, prompt],
+        });
+        const reloaded = yield* Effect.gen(function* () {
+          const fresh = yield* ServerSettingsModule.ServerSettingsService;
+          return yield* fresh.getSettings;
+        }).pipe(
+          Effect.provide(
+            Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+          ),
+        );
+        assert.deepEqual(
+          reloaded.projectSettingsOverrides[projectId],
+          saved.projectSettingsOverrides[projectId],
+        );
+        yield* service.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: {
+              ...saved.projectSettingsOverrides[projectId],
+              defaultProjectScripts: [shell, { ...prompt, prompt: "Inspect new results." }],
+            },
+          },
+        });
+        const edited = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(edited.projectSettingsOverrides[projectId]?.defaultProjectScripts, [
+          shell,
+          { ...prompt, prompt: "Inspect new results." },
+        ]);
+        yield* service.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: {
+              ...edited.projectSettingsOverrides[projectId],
+              defaultProjectScripts: [shell],
+            },
+          },
+        });
+        const deleted = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(deleted.projectSettingsOverrides[projectId], {
+          defaultAutoPull: true,
+          defaultProjectScripts: [shell],
+        });
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("folds legacy project overrides into projectSettingsOverrides once", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

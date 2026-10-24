@@ -210,18 +210,21 @@ function getProviderInstanceEntry(
   return deriveProviderInstanceEntries(providers).find((entry) => entry.instanceId === instanceId);
 }
 
-export function getDefaultProviderInstanceModel(
-  providers: ReadonlyArray<ServerProvider>,
-  instanceId: ProviderInstanceId,
-): string | undefined {
-  const entry = getProviderInstanceEntry(providers, instanceId);
-  if (!entry) return undefined;
+function getDefaultProviderInstanceEntryModel(entry: ProviderInstanceEntry): string | undefined {
   return (
     entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     entry.models.find((model) => !model.isCustom)?.slug ??
     entry.models[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
   );
+}
+
+export function getDefaultProviderInstanceModel(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+): string | undefined {
+  const entry = getProviderInstanceEntry(providers, instanceId);
+  return entry ? getDefaultProviderInstanceEntryModel(entry) : undefined;
 }
 
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
@@ -251,13 +254,23 @@ export function resolveSelectableProviderInstance(
   return resolveSelectableProviderInstanceEntry(entries, instanceId)?.instanceId;
 }
 
+export function resolveDefaultProviderModelSelectionFromEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  selection: ModelSelection | null | undefined,
+): ModelSelection | null {
+  const entry = resolveSelectableProviderInstanceEntry(entries, selection?.instanceId);
+  if (!entry) return null;
+  if (selection?.instanceId === entry.instanceId) return selection;
+  const model = getDefaultProviderInstanceEntryModel(entry);
+  return model ? { instanceId: entry.instanceId, model } : null;
+}
+
 export function resolveDefaultProviderModelSelection(
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection | null | undefined,
 ): ModelSelection | null {
-  const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
-  if (instanceId === undefined) return null;
-  if (selection?.instanceId === instanceId) return selection;
-  const model = getDefaultProviderInstanceModel(providers, instanceId);
-  return model ? { instanceId, model } : null;
+  return resolveDefaultProviderModelSelectionFromEntries(
+    deriveProviderInstanceEntries(providers),
+    selection,
+  );
 }
