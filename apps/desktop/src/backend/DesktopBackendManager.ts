@@ -40,6 +40,16 @@ const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 // Same as the service launcher. A killed backend leaves its agents running,
 // and a busy one needs a few seconds to stop every provider session.
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
+/**
+ * How long app quit waits for each backend to stop. Covers the SIGTERM grace,
+ * the SIGKILL after it, and the spawner's one-second wait for the group to exit.
+ * Waiting only the grace lets the app exit before the SIGKILL, orphaning a
+ * backend whose shutdown hangs, along with the agents it started.
+ */
+export const BACKEND_QUIT_STOP_TIMEOUT = Duration.sum(
+  DEFAULT_BACKEND_TERMINATE_GRACE,
+  Duration.seconds(2),
+);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =
