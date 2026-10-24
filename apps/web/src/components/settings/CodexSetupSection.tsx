@@ -955,6 +955,16 @@ function ManagedCodexSetup({
                     Use a different account
                   </Button>
                 ) : null}
+                {allowExistingCli ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={readOnly || busy}
+                    onClick={() => onModeChange("existing")}
+                  >
+                    Use existing CLI
+                  </Button>
+                ) : null}
               </>
             )}
           </div>
