@@ -22,8 +22,9 @@ const capabilityKeys = [
   "threadTitleRegeneration",
 ] as const;
 
-function selectEnvironment(config: ServerConfig) {
+function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {
+    isConnected,
     providers: config.providers.map(
       ({ instanceId, driver, enabled, displayName, accentColor, iconUrl }) => ({
         instanceId,
@@ -71,15 +72,16 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const pinReorderEnvironmentIds = new Set<EnvironmentId>();
   const activeReorderEnvironmentIds = new Set<EnvironmentId>();
   const titleRegenerationEnvironmentIds = new Set<EnvironmentId>();
-  for (const [id, { providers, machineKind, capabilities }] of environments) {
+  for (const [id, { providers, machineKind, capabilities, isConnected }] of environments) {
     providersByEnvironmentId.set(id, providers);
     machineByEnvironmentId.set(id, machineKind);
     if (capabilities.threadSettlement === true) settlementEnvironmentIds.add(id);
     if (capabilities.threadSnooze === true) snoozeEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
     if (capabilities.threadPinning === true) pinningEnvironmentIds.add(id);
-    if (capabilities.threadPinReorder === true) pinReorderEnvironmentIds.add(id);
-    if (capabilities.threadActiveReorder === true) activeReorderEnvironmentIds.add(id);
+    if (isConnected && capabilities.threadPinReorder === true) pinReorderEnvironmentIds.add(id);
+    if (isConnected && capabilities.threadActiveReorder === true)
+      activeReorderEnvironmentIds.add(id);
     if (capabilities.threadTitleRegeneration === true) titleRegenerationEnvironmentIds.add(id);
   }
   return {
@@ -97,15 +99,17 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
 
 export function createThreadListEnvironmentsAtom(
   configsAtom: Atom.Atom<ReadonlyMap<EnvironmentId, ServerConfig>>,
+  connectedEnvironmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>,
 ) {
   let previous = new Map<EnvironmentId, ListEnvironment>();
   let result = collectEnvironments(previous);
   return Atom.make((get) => {
     const configs = get(configsAtom);
+    const connectedEnvironmentIds = new Set(get(connectedEnvironmentIdsAtom));
     const next = new Map<EnvironmentId, ListEnvironment>();
     let changed = configs.size !== previous.size;
     for (const [id, config] of configs) {
-      const selected = selectEnvironment(config);
+      const selected = selectEnvironment(config, connectedEnvironmentIds.has(id));
       const prior = previous.get(id);
       if (prior && sameProviders(prior.providers, selected.providers)) {
         selected.providers = prior.providers;
@@ -114,6 +118,7 @@ export function createThreadListEnvironmentsAtom(
         prior &&
         prior.providers === selected.providers &&
         prior.machineKind === selected.machineKind &&
+        prior.isConnected === selected.isConnected &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),
         );

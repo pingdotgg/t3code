@@ -15,6 +15,7 @@ import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThre
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
@@ -635,13 +636,19 @@ export function useThreadListActions(): {
       return settled;
     }
     const configs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
+    const connectedEnvironmentIds = new Set(appAtomRegistry.get(connectedEnvironmentIdsAtom));
+
+    if (!connectedEnvironmentIds.has(thread.environmentId)) return false;
+
+    const canReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
+      if (!connectedEnvironmentIds.has(environmentId)) return false;
+
       const capabilities = configs.get(environmentId)?.environment.capabilities;
       return section === "pinned"
         ? capabilities?.threadPinReorder === true
         : capabilities?.threadActiveReorder === true;
     };
-    if (!supportsReorder(thread.environmentId)) {
+    if (!canReorder(thread.environmentId)) {
       Dialog.alert(
         "Could not move thread",
         "This environment's server does not support reordering these threads. Update the server to arrange them.",
@@ -668,7 +675,7 @@ export function useThreadListActions(): {
       allThreads: shells,
       ordered,
       section,
-      reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
+      reorderableEnvironmentIds: new Set([...configs.keys()].filter(canReorder)),
     })(scopedThreadKey(thread.environmentId, thread.id), direction);
     if (assignments === null) return false;
     const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
