@@ -151,11 +151,12 @@ const target = {
   threadId: ThreadId.make("thread"),
 };
 const position = { x: 10, y: 20 };
-const createMenu = () =>
+const createMenu = (options: { readonly withFind?: boolean } = {}) =>
   useThreadActionMenu({
     threadRef: target,
     projectCwd: "/project",
     onStartRename: () => recordEffect("rename"),
+    ...(options.withFind ? { onFind: () => recordEffect("find") } : {}),
   });
 
 beforeEach(() => {
@@ -179,4 +180,16 @@ describe("thread menu permissions", () => {
       expect(state.effects).toEqual([]);
     },
   );
+
+  it("offers find only to a header that can open it, without task permission", async () => {
+    createMenu().openMenu(position);
+    expect(state.show.mock.calls[0]![0].some((item) => item.id === "find")).toBe(false);
+    state.show.mockResolvedValue("find");
+    createMenu({ withFind: true }).openMenu(position);
+    await state.completed.promise;
+    const items = state.show.mock.calls[1]![0];
+    expect(items[0]).toMatchObject({ id: "find", label: "Find in thread" });
+    expect(items[0]?.disabled).not.toBe(true);
+    expect(state.effects).toEqual(["find"]);
+  });
 });

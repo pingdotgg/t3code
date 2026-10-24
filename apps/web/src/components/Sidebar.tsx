@@ -2320,6 +2320,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
+              canFind: false,
               branch: thread.branch ?? null,
               projectFilter: threadProjectGroup
                 ? {
