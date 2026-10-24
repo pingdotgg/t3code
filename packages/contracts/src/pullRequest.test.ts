@@ -79,6 +79,19 @@ describe("PullRequestListResult", () => {
       ),
     ).toBe("forge.example");
   });
+
+  it("names GitHub subdomain checkouts by their API host and preserves enterprise ports", () => {
+    for (const [host, expected] of [
+      ["ssh.github.com", "github.com"],
+      ["work.github.com:8443", "github.com"],
+      ["github.example.com:8443", "github.example.com:8443"],
+    ]) {
+      const identity = { canonicalKey: `${host}/acme/web` };
+      expect(pullRequestHostOf(identity, SourceControlProviderKind.make("github"))).toBe(expected);
+      expect(pullRequestHostOf(identity, SourceControlProviderKind.make("gitlab"))).toBe(host);
+    }
+  });
+
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema

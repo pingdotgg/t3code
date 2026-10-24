@@ -1,3 +1,4 @@
+import { gitHubApiHostOf } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import {
   detectSourceControlProviderFromRemoteUrl,
@@ -26,8 +27,8 @@ export function parseFetchRemotes(
  * remote `gh repo set-default` marked, else the first of upstream, github, origin (in any case), else
  * the only remote.
  *
- * Null whenever gh might weigh the remotes differently: a remote on another host or under an SSH alias,
- * more than one mark, or several remotes with none of those names.
+ * Null whenever gh might weigh the remotes differently: a remote on another API host or under a
+ * dotless SSH alias, more than one mark, or several remotes with none of those names.
  */
 export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
@@ -38,7 +39,8 @@ export function selectGitHubBaseRepository(input: {
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const remote of parseFetchRemotes(input.remotes)) {
     const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
-    if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
+    if (!remoteHost || gitHubApiHostOf(remoteHost) !== host || !owner || !name || rest.length > 0)
+      return null;
     repositories.set(remote.name, { owner, name });
   }
   const marks = input.resolved
@@ -157,22 +159,22 @@ export function parsePullRequestReference(
   return { kind: "branch", headSelector: trimmed };
 }
 
-/**
- * An SSH alias (`git@github-work:owner/repo`) names no API host of its own; it is read
- * through `github.com`, which is what such an alias almost always stands for (issue
- * #6198).
- */
+/** Dotless GitHub SSH aliases and github.com subdomains use github.com for API requests. */
 export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
   if (provider === null) return null;
   const host = new URL(provider.baseUrl).host.toLowerCase();
+  if (gitHubApiHostOf(host) === "github.com") return "github.com";
+  // A dotless SSH host is an alias from ~/.ssh/config, never a real API host.
   if (isSshRemoteUrl(remoteUrl) && !host.includes(".")) {
     return host.includes("github") ? "github.com" : null;
   }
   return provider.kind === "github" ? host : null;
 }
 
-function apiHostForHint(host: string): string {
+export function apiHostForHint(host: string): string {
   const normalized = host.toLowerCase();
-  return !normalized.includes(".") && normalized.includes("github") ? "github.com" : normalized;
+  return !normalized.includes(".") && normalized.includes("github")
+    ? "github.com"
+    : gitHubApiHostOf(normalized);
 }

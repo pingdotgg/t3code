@@ -956,7 +956,14 @@ export function pullRequestHostOf(
     } catch {}
   }
   const host = identity?.canonicalKey?.split("/")[0]?.trim();
-  return host === undefined || host.length === 0 ? kind : host.toLowerCase();
+  if (host === undefined || host.length === 0) return kind;
+  return kind === "github" ? gitHubApiHostOf(host) : host.toLowerCase();
+}
+
+/** SSH remotes under github.com share github.com's API host and credentials. */
+export function gitHubApiHostOf(host: string): string {
+  const normalized = host.toLowerCase();
+  return normalized.replace(/:\d+$/, "").endsWith(".github.com") ? "github.com" : normalized;
 }
 
 /**
