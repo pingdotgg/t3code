@@ -6,11 +6,12 @@ export function resolveProtocolRelativeMediaUrl(src: string): string {
   return `${protocol}${src}`;
 }
 
-async function readMediaBlob(src: string): Promise<Blob> {
+async function readMediaBlob(src: string, fallback?: () => Promise<string>): Promise<Blob> {
   let response: Response;
   try {
     response = await fetch(src);
   } catch (cause) {
+    if (fallback) return readMediaBlob(await fallback());
     throw new Error(
       "The file could not be fetched. The host may block browser access (CORS), or the connection may be unavailable.",
       { cause },
@@ -36,8 +37,8 @@ export async function downloadMedia(src: string, name: string): Promise<void> {
   }
 }
 
-export async function readMediaPng(src: string): Promise<Blob> {
-  const blob = await readMediaBlob(src);
+export async function readMediaPng(src: string, fallback?: () => Promise<string>): Promise<Blob> {
+  const blob = await readMediaBlob(src, fallback);
   if (blob.type.split(";", 1)[0] === "image/png") return blob;
 
   const url = URL.createObjectURL(blob);

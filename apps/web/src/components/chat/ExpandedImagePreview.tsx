@@ -42,6 +42,7 @@ export async function resolveMarkdownMediaPreview(input: {
   source: string;
   resolvedFilePath?: string | undefined;
   cwd?: string | undefined;
+  environmentId?: EnvironmentId | null | undefined;
   threadRef?: ScopedThreadRef | undefined;
   httpBaseUrl?: string | undefined;
   onOpenFile?: ((relativePath: string) => void) | undefined;
@@ -57,6 +58,7 @@ export async function resolveMarkdownMediaPreview(input: {
   });
   if (media === null) return null;
   const { kind, name, reference } = media;
+  const environmentId = input.environmentId ?? input.threadRef?.environmentId;
   const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
 
   let src: string;
@@ -91,6 +93,7 @@ export async function resolveMarkdownMediaPreview(input: {
           kind,
           name,
           src,
+          ...(environmentId ? { environmentId } : {}),
           ...(reference ? { reference } : {}),
           ...(asset ? { asset } : {}),
           ...(relativePath && input.onOpenFile

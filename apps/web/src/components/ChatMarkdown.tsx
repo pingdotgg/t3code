@@ -521,6 +521,7 @@ function useChatMarkdownState({
       source,
       resolvedFilePath,
       cwd,
+      environmentId,
       threadRef,
       // Read at click time: a reconnect replaces the prepared connection, and
       // subscribing would hand every rendered markdown element a new context.
@@ -1422,6 +1423,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
         kind,
         name: altText || kind,
         src: mediaSrc,
+        ...(environmentId === null ? {} : { environmentId }),
+        ...(githubMediaUrl !== null && cwd !== undefined && environmentId !== null
+          ? {
+              asset: {
+                environmentId,
+                resource: { _tag: "github-media", cwd, url: githubMediaUrl },
+              },
+            }
+          : {}),
         ...(reference ? { reference } : {}),
       };
       if (kind === "video") {

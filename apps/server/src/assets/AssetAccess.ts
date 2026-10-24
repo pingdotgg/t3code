@@ -160,6 +160,12 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("remote-image"),
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("github-media"),
     /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
     url: Schema.String,
@@ -187,6 +193,11 @@ export type ResolvedAsset =
       readonly kind: "bytes";
       readonly bytes: Uint8Array;
       readonly mimeType: string;
+    }
+  | {
+      readonly kind: "remote-image";
+      readonly url: string;
+      readonly expiresAt: number;
     }
   | {
       readonly kind: "github-media";
@@ -803,6 +814,11 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "remote-image": {
+      claims = { version: 1, kind: "remote-image", url: input.resource.url, expiresAt };
+      fileName = "image";
+      break;
+    }
     case "github-media": {
       const fetchUrl = githubMediaFetchUrl(input.resource.url);
       if (fetchUrl === null) {
@@ -924,6 +940,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     return faviconPath === claims.filePath ? yield* projectFaviconAsset(faviconPath) : null;
+  }
+
+  if (claims.kind === "remote-image") {
+    return {
+      kind: "remote-image",
+      url: claims.url,
+      expiresAt: claims.expiresAt,
+    } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "github-media") {

@@ -47,6 +47,9 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
+  Schema.TaggedStruct("remote-image", {
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
   // An upload a pull request body points at on GitHub. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches
   // them with the `gh` credential the repository at `cwd` authenticates with.

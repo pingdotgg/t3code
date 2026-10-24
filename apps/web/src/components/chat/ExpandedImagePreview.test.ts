@@ -1,8 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import { buildExpandedImagePreview, resolveMarkdownMediaPreview } from "./ExpandedImagePreview";
 
 describe("resolveMarkdownMediaPreview", () => {
+  it("keeps the originating environment for remote images opened outside a thread", async () => {
+    const environmentId = EnvironmentId.make("pull-request-environment");
+    const preview = await resolveMarkdownMediaPreview({
+      source: "https://images.example.com/image.png",
+      environmentId,
+      createAssetUrl: vi.fn(),
+    });
+    expect(preview?.images[0]?.actionsSource).toMatchObject({
+      environmentId,
+      src: "https://images.example.com/image.png",
+    });
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

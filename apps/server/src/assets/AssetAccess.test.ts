@@ -994,6 +994,26 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("signs remote image URLs without allowing the target to be replaced", () =>
+    Effect.gen(function* () {
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "remote-image",
+          url: "https://images.example.com/shot.png?signature=example",
+        },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      expect(yield* resolveAsset(token, "other.png")).toEqual({
+        kind: "remote-image",
+        url: "https://images.example.com/shot.png?signature=example",
+        expiresAt: result.expiresAt,
+      });
+      expect(yield* resolveAsset(`${token}tampered`, "shot.png")).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves GitHub-hosted pull request media through the repository's credential", () =>
     Effect.gen(function* () {
       const resolve = (relativeUrl: string) => {
