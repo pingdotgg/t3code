@@ -13,10 +13,10 @@ const ModelSelectionWire = Schema.Struct({
 });
 
 const ModelSelectionSource = Schema.Struct({
-  provider: Schema.optional(Schema.Unknown),
-  instanceId: Schema.optional(Schema.Unknown),
-  model: Schema.Unknown,
-  options: Schema.optional(Schema.Unknown),
+  provider: Schema.optional(Schema.NullOr(Schema.String)),
+  instanceId: Schema.optional(Schema.String),
+  model: Schema.String,
+  options: Schema.optional(Schema.toEncoded(ProviderOptionSelections)),
 });
 
 export const ModelSelection = ModelSelectionSource.pipe(
