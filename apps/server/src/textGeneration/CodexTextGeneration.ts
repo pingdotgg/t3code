@@ -190,17 +190,23 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) {
-        yield* Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
-          reason: "exit",
-          exitCode,
-        });
-        return [];
+        yield* Effect.logWarning(
+          "codex mcp list failed; could not discover MCP servers for text generation",
+          {
+            reason: "exit",
+            exitCode,
+          },
+        );
+        return null;
       }
       const servers = yield* decodeCodexMcpServers(stdout).pipe(
         Effect.tapError(() =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
-            reason: "decode",
-          }),
+          Effect.logWarning(
+            "codex mcp list failed; could not discover MCP servers for text generation",
+            {
+              reason: "decode",
+            },
+          ),
         ),
       );
       return servers.filter((server) => server.enabled).map((server) => server.name);
@@ -210,13 +216,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     Effect.flatMap(
       Option.match({
         onNone: () =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
-            reason: "timeout",
-          }).pipe(Effect.as<ReadonlyArray<string>>([])),
+          Effect.logWarning(
+            "codex mcp list failed; could not discover MCP servers for text generation",
+            {
+              reason: "timeout",
+            },
+          ).pipe(Effect.as<ReadonlyArray<string> | null>(null)),
         onSome: (names) => Effect.succeed(names),
       }),
     ),
-    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    Effect.orElseSucceed((): ReadonlyArray<string> | null => null),
   );
 
   const runCodexJson = Effect.fn("runCodexJson")(function* <S extends Schema.Top>({
@@ -243,6 +252,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
+      const workingDirectory = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, {
+        operation,
+        cwd,
+      });
       const resolved = resolveRuntime
         ? yield* resolveRuntime.pipe(
             Effect.mapError(
@@ -278,13 +291,21 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           : {}),
       };
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
-      const mcpServersOff = yield* listEnabledMcpServers({
+      const mcpServers = yield* listEnabledMcpServers({
         binary,
-        cwd,
+        cwd: workingDirectory,
         env,
         // `codex mcp` rejects --strict-config; the overrides still apply.
         launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
-      }).pipe(Effect.map(codexMcpServersOff));
+      });
+      if (mcpServers === null && cwd === null) {
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            "Could not discover Codex MCP servers; refusing to run an isolated text-generation request with tools enabled.",
+        });
+      }
+      const mcpServersOff = mcpServers === null ? null : codexMcpServersOff(mcpServers);
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
@@ -299,6 +320,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "--skip-git-repo-check",
           "-s",
           "read-only",
+          // A request with no project runs on untrusted text; the read-only
+          // sandbox still lets the shell read absolute paths, so turn it off.
+          ...(cwd === null ? ["--config", "features.shell_tool=false"] : []),
           "--model",
           model,
           "--config",
@@ -315,7 +339,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env,
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),

@@ -1,15 +1,22 @@
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 
 import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type {
+  ProviderFailureExplanationInput,
+  ProviderFailureExplanationResult,
+  ProviderTextGeneration,
+} from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildProviderFailureExplanationPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
@@ -17,13 +24,18 @@ import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
+  truncateOnCodePoint,
 } from "./textGenerationUtils.ts";
 
 export type Operation = keyof ProviderTextGeneration;
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
-  readonly cwd: string;
+  /**
+   * The project to run in. Null means the prompt needs no project access, so
+   * the provider runs in an empty temporary directory (see `resolveWorkingDirectory`).
+   */
+  readonly cwd: string | null;
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
@@ -55,6 +67,28 @@ export const withoutInvestigation =
       ? Effect.fail(investigationUnsupported(request.operation, provider))
       : run(request);
 
+/**
+ * The directory a provider process runs in: the request's project, or a fresh
+ * empty temporary directory removed with the scope when the request has none.
+ */
+export const resolveWorkingDirectory = (
+  fileSystem: FileSystem.FileSystem,
+  request: Pick<Request<Schema.Top>, "operation" | "cwd">,
+): Effect.Effect<string, TextGenerationError, Scope.Scope> =>
+  request.cwd !== null
+    ? Effect.succeed(request.cwd)
+    : fileSystem.makeTempDirectoryScoped({ prefix: "t3code-text-generation-" }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: request.operation,
+              detail: "Failed to create an isolated working directory.",
+              cause,
+            }),
+        ),
+      );
+
+/** Decodes the JSON object in a text reply, which models often wrap in prose. */
 export const decodeJsonReply = <S extends Schema.Top>(
   request: Pick<Request<S>, "operation" | "outputSchema">,
   provider: string,
@@ -73,6 +107,37 @@ export const decodeJsonReply = <S extends Schema.Top>(
   );
 };
 
+const MAX_EXPLANATION_SUMMARY_CHARS = 600;
+const MAX_EXPLANATION_FIX_CHARS = 900;
+
+/** Trims a model reply and caps it so a runaway answer cannot flood the banner. */
+function boundExplanationText(raw: string, maxChars: number): string {
+  const text = raw.trim();
+  return text.length <= maxChars ? text : `${truncateOnCodePoint(text, maxChars - 3).trimEnd()}...`;
+}
+
+/**
+ * Trims and caps a provider failure explanation as the model wrote it, and
+ * keeps a matched issue only when the model was shown that issue.
+ */
+export const boundProviderFailureExplanation = (
+  generated: { readonly summary: string; readonly likelyFix: string },
+  knownIssues: ProviderFailureExplanationInput["knownIssues"],
+): ProviderFailureExplanationResult => {
+  const named =
+    "matchingIssueNumber" in generated && typeof generated.matchingIssueNumber === "number"
+      ? generated.matchingIssueNumber
+      : null;
+  return {
+    summary: boundExplanationText(generated.summary, MAX_EXPLANATION_SUMMARY_CHARS),
+    likelyFix: boundExplanationText(generated.likelyFix, MAX_EXPLANATION_FIX_CHARS),
+    // A number the model was not shown is invented, so it is no match.
+    matchingIssueNumber:
+      named !== null && (knownIssues ?? []).some((issue) => issue.number === named) ? named : null,
+  };
+};
+
+/** The text generation service over `run`. `name` prefixes each operation's span. */
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
@@ -170,11 +235,27 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const explainProviderFailure: ProviderTextGeneration["explainProviderFailure"] = Effect.fn(
+    `${name}.explainProviderFailure`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "explainProviderFailure",
+      cwd: null,
+      modelSelection: input.modelSelection,
+      ...buildProviderFailureExplanationPrompt({
+        context: input.context,
+        knownIssues: input.knownIssues,
+      }),
+    });
+    return boundProviderFailureExplanation(generated, input.knownIssues);
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    explainProviderFailure,
   } satisfies ProviderTextGeneration;
 }
