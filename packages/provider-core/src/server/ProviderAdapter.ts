@@ -104,11 +104,13 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("node.updated"),
     driver: ProviderDriverKind,
     node: OrchestrationV2ExecutionNode,
+    ingestion: Schema.optional(Schema.Literal("session")),
   }),
   Schema.Struct({
     type: Schema.Literal("subagent.updated"),
     driver: ProviderDriverKind,
     subagent: OrchestrationV2Subagent,
+    ingestion: Schema.optional(Schema.Literal("session")),
   }),
   Schema.Struct({
     type: Schema.Literal("message.updated"),
@@ -119,6 +121,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("turn_item.updated"),
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
+    ingestion: Schema.optional(Schema.Literal("session")),
   }),
   /**
    * Raw output from a running command. Never persisted: the session manager
@@ -152,6 +155,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     status: Schema.Literals(["completed", "interrupted", "cancelled"]),
     failure: Schema.Null,
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    /** Native parent aborts can leave detached children reporting their own terminals. */
+    childTurnsContinue: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("turn.terminal"),
@@ -174,6 +179,20 @@ export const ProviderAdapterV2Event = Schema.Union([
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
+
+/** Session-owned observations may enrich an earlier run after its subscriber has closed. */
+export function sessionIngestedEventThreadId(event: ProviderAdapterV2Event): ThreadId | undefined {
+  switch (event.type) {
+    case "node.updated":
+      return event.ingestion === "session" ? event.node.threadId : undefined;
+    case "subagent.updated":
+      return event.ingestion === "session" ? event.subagent.threadId : undefined;
+    case "turn_item.updated":
+      return event.ingestion === "session" ? event.turnItem.threadId : undefined;
+    default:
+      return undefined;
+  }
+}
 
 export class ProviderAdapterCapabilitiesError extends Schema.TaggedError<ProviderAdapterCapabilitiesError>()(
   "ProviderAdapterCapabilitiesError",

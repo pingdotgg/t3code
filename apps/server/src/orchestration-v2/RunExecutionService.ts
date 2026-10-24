@@ -170,7 +170,7 @@ function isRunOwnedSubagentTerminalStatus(
 }
 
 function childTurnsContinue(terminal: ProviderTerminalEvent): boolean {
-  return terminal.status === "failed" && terminal.childTurnsContinue === true;
+  return terminal.childTurnsContinue === true;
 }
 
 /**
@@ -1365,7 +1365,10 @@ export const layer: Layer.Layer<
                 event,
                 DateTime.toEpochMillis(yield* DateTime.now),
               );
-              if (deliveredEvent) {
+              if (
+                deliveredEvent &&
+                ProviderAdapter.sessionIngestedEventThreadId(deliveredEvent) === undefined
+              ) {
                 const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
                 const isRootProviderThreadUpdate =
                   event.type === "provider_thread.updated" &&
