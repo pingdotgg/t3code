@@ -482,6 +482,35 @@ const runCleanupTest = <A, E>(
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
 
+it.live.each([
+  { policy: "tracked-changes", kind: "worktree" },
+  { policy: "tracked-changes", kind: "repository" },
+  { policy: "uncommitted-changes", kind: "worktree" },
+  { policy: "uncommitted-changes", kind: "repository" },
+] as const)("keeps an ignored nested $policy / $kind", ({ policy, kind }) =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+      setPolicy(policy);
+      const nested = `${worktree}/dist/nested`;
+      if (kind === "worktree") {
+        yield* command(repo, ["worktree", "add", "-b", "nested", nested]);
+      } else {
+        yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
+      }
+      yield* fs.writeFileString(`${nested}/uncommitted.txt`, "irreplaceable work\n");
+      expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "kept",
+        reason: "Contains a nested Git repository",
+      });
+      expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("irreplaceable work\n");
+      expect((yield* command(nested, ["rev-parse", "--show-toplevel"])).stdout.trim()).toBe(nested);
+    }),
+  ),
+);
+
 const submoduleCleanupFixture = () =>
   Effect.gen(function* () {
     const fixture = yield* cleanupFixture();
@@ -505,6 +534,48 @@ const submoduleCleanupFixture = () =>
     yield* recordSubmodules();
     return { ...fixture, submodule, child, recordSubmodules };
   });
+
+it.live("inspects repositories even in a pnpm store excluded from reclaimed bytes", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+      setPolicy("tracked-changes");
+      const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-store-" });
+      const nested = `${worktree}/node_modules/.pnpm/nested`;
+      yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
+      yield* fs.writeFileString(`${nested}/uncommitted.txt`, "keep me");
+      yield* fs.writeFileString(
+        `${worktree}/node_modules/.modules.yaml`,
+        JSON.stringify({ storeDir, virtualStoreDir: ".pnpm" }),
+      );
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "kept",
+        reason: "Contains a nested Git repository",
+      });
+      expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+    }),
+  ),
+);
+
+it.live("keeps an ignored repository inside a registered submodule", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, submodule, command, setPolicy } =
+        yield* submoduleCleanupFixture();
+      setPolicy("tracked-changes");
+      const nested = `${submodule}/dist/nested`;
+      yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
+      yield* fs.writeFileString(`${nested}/uncommitted.txt`, "keep me");
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "kept",
+        reason: "Contains a nested Git repository",
+      });
+      expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+    }),
+  ),
+);
 
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>
   runCleanupTest(
@@ -1429,7 +1500,7 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live("still removes a worktree when measuring its size fails", () =>
+  it.live("keeps a worktree when the inspection cannot read its directories", () =>
     runCleanupTest(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1440,9 +1511,14 @@ describe("storage cleanup reports and local file policies", () => {
           }),
         );
         const report = yield* service.runNow;
-        expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes: null, files: null });
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Worktree could not be fully inspected",
+          bytes: null,
+          files: null,
+        });
         expect(report.bytesFreed).toBe(0);
-        expect(yield* fs.exists(worktree)).toBe(false);
+        expect(yield* fs.exists(worktree)).toBe(true);
       }),
     ),
   );
