@@ -601,3 +601,42 @@ describe("AgentAwarenessRelay", () => {
     }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );
 });
+
+describe("startup catch-up", { concurrent: false }, () => {
+  const enablePublishing = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
+    secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+  const linkChecks = (secretReads: ReadonlyArray<string>) =>
+    secretReads.filter((name) => name === RELAY_URL_SECRET).length;
+
+  it.effect("catches up again after startup without resuming idle polling", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay();
+      yield* relay.start();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+
+      yield* enablePublishing(secrets);
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 2);
+
+      const checksBeforeIdle = linkChecks(secretReads);
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(catchUp.shellSnapshotReads, 2);
+      assert.equal(linkChecks(secretReads), checksBeforeIdle);
+
+      yield* secrets.set(
+        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+        new TextEncoder().encode("credential-2"),
+      );
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 3);
+    }).pipe(Effect.scoped),
+  );
+});
