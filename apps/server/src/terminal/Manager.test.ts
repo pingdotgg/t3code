@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -411,6 +412,41 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
   }
 });
 
+it("restores bounded history across append compaction, clears and split Unicode", () => {
+  const maxBytes = 64;
+  const history = new TerminalManager.BoundedTerminalHistory(3, "", maxBytes);
+  let cursor: ReturnType<typeof history.persistenceUpdate>["cursor"] | undefined;
+  let persisted = "";
+  let compactions = 0;
+  const flush = () => {
+    const update = history.persistenceUpdate(cursor);
+    if (!update.append) compactions += 1;
+    const encoded = Buffer.from(update.data).toString();
+    persisted = update.append ? persisted + encoded : encoded;
+    cursor = update.cursor;
+    expect(Buffer.byteLength(persisted)).toBeLessThanOrEqual(maxBytes * 2);
+    expect(retainedHistory(persisted, 3, maxBytes)).toBe(Buffer.from(history.value()).toString());
+  };
+  for (let index = 0; index < 100; index += 1) {
+    history.append(`line ${index} 名\n`);
+    flush();
+  }
+  expect(compactions).toBeGreaterThan(1);
+  expect(compactions).toBeLessThan(50);
+  history.clear();
+  flush();
+  expect(persisted).toBe("");
+  history.append("\ud83d");
+  flush();
+  history.append("\ude80");
+  flush();
+  expect(persisted).toBe("🚀");
+  // More output than the retained window between flushes must replace the file.
+  history.append("z".repeat(maxBytes * 3));
+  flush();
+  expect(persisted).toBe("z".repeat(maxBytes));
+});
+
 it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
@@ -731,6 +767,82 @@ it.layer(
       const snapshot = events.filter((event) => event.type === "snapshot").at(-1)?.snapshot;
       expect(snapshot?.history).toBe("aa😀\rEND");
       expect(snapshot?.sequence).toBe(reopened.sequence);
+    }),
+  );
+
+  it.effect("persists small terminal updates without rewriting the retained history", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const writes = yield* Queue.unbounded<number>();
+      const maxBytes = 64 * 1024;
+      const { manager, ptyAdapter, logsDir } = yield* createManager(5_000, {
+        historyByteLimit: maxBytes,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (path, data, options) =>
+            fs
+              .writeFileString(path, data, options)
+              .pipe(
+                Effect.tap(() =>
+                  data.length > 0 ? Queue.offer(writes, Buffer.byteLength(data)) : Effect.void,
+                ),
+              ),
+        }),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("a".repeat(maxBytes));
+      let written = yield* Queue.take(writes);
+      for (let index = 0; index < 16; index += 1) {
+        process.emitData("b".repeat(1024));
+        written += yield* Queue.take(writes);
+      }
+      expect(written).toBeLessThan(maxBytes * 2);
+      yield* manager.close({ threadId: "thread-1" });
+      const expected = "a".repeat(maxBytes - 16 * 1024) + "b".repeat(16 * 1024);
+      expect((yield* manager.open(openInput())).history).toBe(expected);
+      expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe(expected);
+    }),
+  );
+
+  it.effect("rewrites history after an append fails partway through", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const writes = yield* Queue.unbounded<void>();
+      let failAppend = false;
+      const { manager, ptyAdapter, logsDir } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (path, data, options) => {
+            if (options?.flag === "a" && failAppend) {
+              failAppend = false;
+              return fs.writeFileString(path, data.slice(0, 1), options).pipe(
+                // The file cannot also be a parent directory: fail after the partial append.
+                Effect.andThen(fs.writeFileString(`${path}/missing`, data)),
+                Effect.ensuring(Queue.offer(writes, undefined)),
+              );
+            }
+            return fs
+              .writeFileString(path, data, options)
+              .pipe(
+                Effect.tap(() => (data.length > 0 ? Queue.offer(writes, undefined) : Effect.void)),
+              );
+          },
+        }),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("start:");
+      yield* Queue.take(writes);
+      failAppend = true;
+      process.emitData("middle");
+      yield* Queue.take(writes);
+      expect(failAppend).toBe(false);
+      process.emitData(":end");
+      yield* Queue.take(writes);
+      expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe("start:middle:end");
+      yield* manager.close({ threadId: "thread-1" });
     }),
   );
 
