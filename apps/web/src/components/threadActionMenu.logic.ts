@@ -3,6 +3,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "fork-to-machine"
   | "filter-by-project"
   | "project-settings"
   | "pin"
@@ -78,6 +79,8 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  /** Another connected machine has this project, so the thread can be forked there. */
+  readonly canForkToMachine: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -111,6 +114,16 @@ export function buildThreadActionMenuItems(
             id: "new-thread-on-branch" as const,
             label: `New thread on ${state.branch}`,
             icon: "message-square-plus",
+          },
+        ]
+      : []),
+    ...(state.canForkToMachine
+      ? [
+          {
+            id: "fork-to-machine" as const,
+            label: "Fork to another machine…",
+            icon: "git-fork",
+            disabled: state.isRunning,
           },
         ]
       : []),

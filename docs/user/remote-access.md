@@ -121,6 +121,18 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
+### Fork a thread to another machine
+
+Choose **Fork to another machine…** from a thread's menu, the command palette, or the mobile
+thread menu or git menu. It starts a new thread on another connected machine that has the same
+project. The original thread stays where it is and keeps working.
+
+The new thread starts on a new branch from `origin/<branch>`, so push the branch first.
+Uncommitted changes stay on the original machine. Provider sessions cannot move between machines,
+so an agent first writes a handoff note from the original thread. You can edit the note before it
+becomes the new thread's first message. Writing the note runs one extra turn in a temporary copy of
+the thread, and the app removes that copy when the note is ready.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale

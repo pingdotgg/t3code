@@ -1420,6 +1420,7 @@ export const make = Effect.gen(function* () {
 
     return {
       hasUpstream: details.hasUpstream,
+      ...(details.upstreamRef ? { upstreamRef: details.upstreamRef } : {}),
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       aheadOfDefaultCount: details.aheadOfDefaultCount,

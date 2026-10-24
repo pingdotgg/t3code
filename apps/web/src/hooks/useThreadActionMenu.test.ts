@@ -35,6 +35,7 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
+vi.mock("../components/ForkToMachineDialog", () => ({ openForkToMachine: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
@@ -48,6 +49,7 @@ vi.mock("../state/session", () => ({
 }));
 vi.mock("../state/entities", () => ({
   readEnvironmentSupportsAutoSettleOptOut: () => true,
+  readEnvironmentSupportsForkNote: () => true,
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsSettlement: () => true,
   readEnvironmentSupportsSnooze: () => true,
@@ -64,7 +66,10 @@ vi.mock("../state/entities", () => ({
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
-vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
+vi.mock("../state/environments", () => ({
+  useEnvironments: () => ({ environments: [] }),
+  usePrimaryEnvironmentId: () => "primary",
+}));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {

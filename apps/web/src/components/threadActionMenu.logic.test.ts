@@ -13,6 +13,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  canForkToMachine: false,
   supports: {
     settlement: true,
     autoSettleOptOut: true,

@@ -92,6 +92,8 @@ export type ThreadGitMenuProps = {
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
+  /** Present only when the thread can be forked to another machine. */
+  readonly onForkToMachine?: () => void;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -389,6 +391,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
                 },
               ]
             : []),
+          ...(props.onForkToMachine
+            ? [
+                {
+                  description: "Start a new thread on another machine from this branch",
+                  icon: { name: "arrow.branch", type: "sfSymbol" as const },
+                  label: "Fork to another machine…",
+                  onPress: props.onForkToMachine,
+                  type: "action" as const,
+                },
+              ]
+            : []),
           {
             description:
               props.hasThread === false
@@ -562,6 +575,17 @@ function threadGitMenuDefinition(
             : "Turn diffs and worktree changes",
         onPress: model.openReview,
       },
+      ...(props.onForkToMachine
+        ? [
+            {
+              id: "git-fork-to-machine",
+              title: "Fork to another machine…",
+              icon: "arrow.branch",
+              subtitle: "Start a new thread on another machine from this branch",
+              onPress: props.onForkToMachine,
+            },
+          ]
+        : []),
       {
         id: "git-more",
         title: "More",

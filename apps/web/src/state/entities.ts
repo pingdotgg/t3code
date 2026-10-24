@@ -322,6 +322,13 @@ export function readEnvironmentSupportsTitleRegeneration(environmentId: Environm
   );
 }
 
+export function readEnvironmentSupportsForkNote(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadForkNote === true
+  );
+}
+
 export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

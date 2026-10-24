@@ -56,6 +56,13 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "line", attrs: { x1: "10", x2: "8", y1: "3", y2: "21" } },
     { tag: "line", attrs: { x1: "16", x2: "14", y1: "3", y2: "21" } },
   ],
+  "git-fork": [
+    { tag: "circle", attrs: { cx: "12", cy: "18", r: "3" } },
+    { tag: "circle", attrs: { cx: "6", cy: "6", r: "3" } },
+    { tag: "circle", attrs: { cx: "18", cy: "6", r: "3" } },
+    { tag: "path", attrs: { d: "M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" } },
+    { tag: "path", attrs: { d: "M12 12v3" } },
+  ],
   "mail-open": [
     {
       tag: "path",

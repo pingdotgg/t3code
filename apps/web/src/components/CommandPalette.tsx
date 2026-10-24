@@ -56,6 +56,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  GitForkIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -65,6 +66,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
 } from "lucide-react";
+import { openForkToMachine } from "./ForkToMachineDialog";
 import { requestThreadFindOpen } from "./chat/threadFindActionBus";
 import {
   useDeferredValue,
@@ -1246,6 +1248,24 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "chat.find",
       run: async () => {
         requestThreadFindOpen();
+      },
+    });
+  }
+
+  if (
+    activeThread?.branch &&
+    environments.length > 1 &&
+    activeThreadServerConfig?.environment.capabilities.threadForkNote === true
+  ) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:fork-to-machine",
+      title: "Fork thread to another machine",
+      searchTerms: ["fork", "machine", "environment", "handoff", "move", "continue"],
+      icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openForkToMachine(threadRef);
       },
     });
   }

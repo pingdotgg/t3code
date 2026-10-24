@@ -245,6 +245,8 @@ const VcsStatusLocalShape = {
 
 const VcsStatusRemoteShape = {
   hasUpstream: Schema.Boolean,
+  /** The branch's upstream, for example origin/feature. */
+  upstreamRef: Schema.optional(TrimmedNonEmptyStringSchema),
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   aheadOfDefaultCount: Schema.optional(NonNegativeInt),

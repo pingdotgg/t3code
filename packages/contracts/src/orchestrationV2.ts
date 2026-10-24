@@ -3107,6 +3107,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   stopWorkflow: "orchestration.stopWorkflow",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
+  writeForkNote: "orchestration.writeForkNote",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -3204,6 +3205,16 @@ export const OrchestrationV2ThreadLaunchResult = Schema.Struct({
   resumed: Schema.Boolean,
 });
 export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
+
+export const OrchestrationV2WriteForkNoteInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The machine the fork goes to, so the note can say what changes there. */
+  targetLabel: TrimmedNonEmptyString,
+});
+export type OrchestrationV2WriteForkNoteInput = typeof OrchestrationV2WriteForkNoteInput.Type;
+
+export const OrchestrationV2WriteForkNoteResult = Schema.Struct({ note: Schema.String });
+export type OrchestrationV2WriteForkNoteResult = typeof OrchestrationV2WriteForkNoteResult.Type;
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
@@ -3389,6 +3400,15 @@ export class OrchestrationV2ThreadLaunchError extends Schema.TaggedError<Orchest
   },
 ) {}
 
+export class OrchestrationV2WriteForkNoteError extends Schema.TaggedError<OrchestrationV2WriteForkNoteError>()(
+  "OrchestrationV2WriteForkNoteError",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const OrchestrationV2StopWorkflowInput = Schema.Struct({
   threadId: ThreadId,
   subagentId: NodeId,
@@ -3423,6 +3443,7 @@ export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2WriteForkNoteError,
   OrchestrationV2StopWorkflowError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
@@ -3612,6 +3633,10 @@ export const OrchestrationV2RpcSchemas = {
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
+  },
+  writeForkNote: {
+    input: OrchestrationV2WriteForkNoteInput,
+    output: OrchestrationV2WriteForkNoteResult,
   },
   subscribeArchivedShell: {
     input: Schema.Struct({}),

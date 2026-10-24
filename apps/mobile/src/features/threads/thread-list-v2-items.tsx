@@ -24,10 +24,12 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
+  threadRuntimeIsActive,
 } from "@t3tools/client-runtime/state/models";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useNavigation } from "@react-navigation/native";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -564,6 +566,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
   readonly titleRegenerationSupported: boolean;
+  readonly forkToMachineSupported?: boolean;
   readonly reorderSupported?: boolean;
   readonly onMoveThread?: (
     thread: EnvironmentThreadShell,
@@ -579,6 +582,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
   const { width: windowWidth } = useWindowDimensions();
+  const navigation = useNavigation();
   const {
     thread,
     variant,
@@ -790,6 +794,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : [],
     [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
+  // The sheet it opens checks the targets; a native menu is built ahead of time.
+  const canForkToMachine =
+    props.forkToMachineSupported === true &&
+    thread.branch !== null &&
+    !threadRuntimeIsActive(thread.runtime);
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
       { id: "rename", title: "Rename", image: "square.and.pencil" },
@@ -797,8 +806,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         supported: props.titleRegenerationSupported,
         isRegenerating: thread.titleRegeneration != null,
       }),
+      ...(canForkToMachine
+        ? [{ id: "fork-to-machine", title: "Fork to another machine…", image: "arrow.branch" }]
+        : []),
     ],
-    [props.titleRegenerationSupported, thread.titleRegeneration],
+    [canForkToMachine, props.titleRegenerationSupported, thread.titleRegeneration],
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -876,6 +888,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+      if (nativeEvent.event === "fork-to-machine") {
+        navigation.navigate("ThreadForkToMachine", {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        });
+      }
       if (nativeEvent.event === "copy-thread-id") {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
@@ -900,6 +918,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      navigation,
       thread,
       handleArchive,
       handleDelete,

@@ -22,7 +22,7 @@ export function ThreadHeader(
   const goBack = useWorkspaceBackNavigation("threads");
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
-  const { onOpenTerminal, onMergeBack } = props.gitControls;
+  const { onOpenTerminal, onMergeBack, onForkToMachine } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
@@ -61,6 +61,13 @@ export function ThreadHeader(
         onPress: onMergeBack,
       });
     }
+    if (onForkToMachine) {
+      actions.push({
+        accessibilityLabel: "Fork to another machine",
+        icon: "arrow.branch",
+        onPress: onForkToMachine,
+      });
+    }
     return actions;
   }, [
     props.inspectorMode,
@@ -68,6 +75,7 @@ export function ThreadHeader(
     props.onOpenFilesInspector,
     onOpenTerminal,
     onMergeBack,
+    onForkToMachine,
     props.onOpenGitInspector,
     toggleAuxiliaryPane,
     props.onReturnToThread,

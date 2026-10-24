@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
+  ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
@@ -404,6 +405,15 @@ export function createThreadEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerUploadFeedback,
       scheduler,
       concurrency,
+    }),
+    launch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:launch",
+      tag: ORCHESTRATION_V2_WS_METHODS.launchThread,
+    }),
+    // Off the thread's serial queue: writing the note takes a full agent turn.
+    writeForkNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:write-fork-note",
+      tag: ORCHESTRATION_V2_WS_METHODS.writeForkNote,
     }),
   };
   const optimistic = createOptimisticThreadLifecycle(snapshotAtom);

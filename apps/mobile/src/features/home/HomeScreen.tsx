@@ -465,6 +465,7 @@ export function HomeScreen(props: HomeScreenProps) {
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
+    forkToMachineEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
@@ -676,6 +677,7 @@ export function HomeScreen(props: HomeScreenProps) {
         onRenameThread={handleRenameThread}
         onRegenerateThreadTitle={handleRegenerateThreadTitle}
         titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
+        forkToMachineSupported={forkToMachineEnvironmentIds.has(thread.environmentId)}
         settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
         onSettleThread={handleSettleThread}
         snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}

@@ -1,5 +1,6 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { openForkToMachine } from "../components/ForkToMachineDialog";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -26,6 +27,7 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsForkNote,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
@@ -33,7 +35,7 @@ import {
   readThreadShell,
   useProjects,
 } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -66,6 +68,7 @@ export function useThreadActionMenu(input: {
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const logicalProjectKeyByPhysicalKey = buildPhysicalToLogicalProjectKeyMap({
     projects,
@@ -139,6 +142,10 @@ export function useThreadActionMenu(input: {
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
+        canForkToMachine:
+          thread.branch != null &&
+          environments.length > 1 &&
+          readEnvironmentSupportsForkNote(threadRef.environmentId),
         supports,
         snoozePresets,
       });
@@ -192,6 +199,9 @@ export function useThreadActionMenu(input: {
           });
           return;
         }
+        case "fork-to-machine":
+          openForkToMachine(threadRef);
+          return;
         case "new-thread-on-branch": {
           const result = await settlePromise(() =>
             handleNewThread(scopeProjectRef(threadRef.environmentId, thread.projectId), {

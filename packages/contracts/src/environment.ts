@@ -122,6 +122,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
+  /** Writes a handoff note for forking a thread to another environment. */
+  threadForkNote: Schema.optionalKey(Schema.Boolean),
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),

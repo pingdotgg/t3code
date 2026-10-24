@@ -99,6 +99,10 @@
       "types": "./src/operations/index.ts",
       "default": "./src/operations/index.ts"
     },
+    "./operations/forkToMachine": {
+      "types": "./src/operations/forkToMachine.ts",
+      "default": "./src/operations/forkToMachine.ts"
+    },
     "./operations/projects": {
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
