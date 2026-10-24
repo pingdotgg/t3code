@@ -2467,40 +2467,40 @@ export const layerWithOptions = (
             }
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
-              // Serialized with re-attachment: a thread whose next turn
-              // attaches first stays loaded, and one that attaches during the
-              // unload waits for it, so its resume reloads the native thread.
-              yield* threadAttachment.withLock(
-                threadAttachmentKey(input),
-                Effect.gen(function* () {
-                  const entry = (yield* Ref.get(sessions)).get(key);
-                  if (
-                    entry?.runtime !== detached.value.runtime ||
-                    entry.attachedThreadIds.has(input.threadId)
-                  ) {
-                    return;
-                  }
-                  yield* Effect.forEach(
-                    detachedProviderThreads.filter((thread) => thread.nativeThreadRef !== null),
-                    (providerThread) =>
-                      unloadThread({ providerThread }).pipe(
-                        Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
-                        Effect.catchCause((cause) =>
-                          Effect.logWarning(
-                            "orchestration-v2.driver-session.detach-unload-failed",
-                            {
-                              providerSessionId: input.providerSessionId,
-                              threadId: input.threadId,
-                              providerThreadId: providerThread.id,
-                              cause,
-                            },
-                          ),
-                        ),
+              // The parent's projection includes native children owned by other
+              // app threads. Lock each owner separately so an attached child keeps
+              // its subscription and an attach during unload waits before resuming.
+              // Detached owners already cleared their loaded and idle-unload state.
+              for (const providerThread of detachedProviderThreads) {
+                if (providerThread.nativeThreadRef === null) continue;
+                const ownerThreadId = providerThread.appThreadId ?? input.threadId;
+                yield* threadAttachment.withLock(
+                  threadAttachmentKey({
+                    providerSessionId: input.providerSessionId,
+                    threadId: ownerThreadId,
+                  }),
+                  Effect.gen(function* () {
+                    const entry = (yield* Ref.get(sessions)).get(key);
+                    if (
+                      entry?.runtime !== detached.value.runtime ||
+                      entry.attachedThreadIds.has(ownerThreadId)
+                    ) {
+                      return;
+                    }
+                    yield* unloadThread({ providerThread }).pipe(
+                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
+                          providerSessionId: input.providerSessionId,
+                          threadId: ownerThreadId,
+                          providerThreadId: providerThread.id,
+                          cause,
+                        }),
                       ),
-                    { concurrency: 1, discard: true },
-                  );
-                }),
-              );
+                    );
+                  }),
+                );
+              }
             }
             yield* scheduleIdleRelease(input.providerSessionId);
           },
