@@ -757,6 +757,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           messageEvent("message-1", "streaming"),
           nodeEvent("node-1", "running"),
           itemEvent("item-1", "streaming"),
+          itemEvent("item-middle", "still streaming"),
           ...Array.from({ length: 501 }, (_, index) =>
             threadStateEvent(`history-${index}`, "thread.visited"),
           ),
@@ -804,7 +805,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       `;
 
       const summary = yield* maintenance.compactEventStore;
-      // Superseded state spans several discovery pages. Both turn-item updates
+      // Superseded state spans several discovery pages. First/latest turn-item updates
       // stay, and so do the first message and node events (replay order). The
       // rename stays too: visits are read state and only supersede each other.
       assert.isAtLeast(summary.deletedEventCount, 504);
