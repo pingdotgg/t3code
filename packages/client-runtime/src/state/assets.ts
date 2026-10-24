@@ -129,6 +129,9 @@ export function assetUrlStateFromResult(
   };
 }
 
+/** Client-only cache identity: later messages must re-sign files that may have changed. */
+export type AssetUrlQuery = AssetCreateUrlInput & { readonly scope?: string | undefined };
+
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
   localMediaEnvironment?: Atom.Atom<{
@@ -136,11 +139,11 @@ export function createAssetEnvironmentAtoms<R, E>(
     readonly httpBaseUrl: string;
   } | null>,
 ) {
-  const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
+  const execute = Effect.fn("assets.createUrl")(function* ({ resource }: AssetUrlQuery) {
+    const input = { resource };
     const result = yield* request(WS_METHODS.assetsCreateUrl, input).pipe(Effect.result);
     if (Result.isSuccess(result)) return result.success;
     const error = result.failure;
-    const resource = input.resource;
     const local = localMediaEnvironment
       ? (yield* AtomRegistry.AtomRegistry).get(localMediaEnvironment)
       : null;

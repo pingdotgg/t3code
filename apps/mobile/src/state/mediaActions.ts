@@ -52,6 +52,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
   const refresh = useRefreshAssetUrl(
     source && "environmentId" in source ? source.environmentId : null,
     source && "resource" in source ? source.resource : null,
+    source && "resource" in source ? source.scope : undefined,
   );
   const controller = useRef<AbortController | null>(null);
   const [sharing, setSharing] = useState(false);

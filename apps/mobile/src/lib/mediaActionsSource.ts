@@ -14,5 +14,6 @@ export type MediaActionsSource = {
       readonly environmentId: EnvironmentId;
       readonly threadId?: ThreadId;
       readonly resource: AssetResource;
+      readonly scope?: string | undefined;
     }
 );

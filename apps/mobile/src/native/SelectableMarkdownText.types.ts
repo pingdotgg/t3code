@@ -42,6 +42,7 @@ export type MarkdownImageRenderer = (image: MarkdownImageRequest) => import("rea
 
 export type MarkdownImageSourceResolver = (
   image: MarkdownImageRequest,
+  scope?: string,
 ) =>
   | { uri: string; headers?: Record<string, string> }
   | null

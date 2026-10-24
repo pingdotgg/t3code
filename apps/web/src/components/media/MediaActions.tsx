@@ -36,7 +36,11 @@ export interface MediaActionSource {
   readonly name: string;
   readonly src: string | null;
   readonly reference?: MediaReference;
-  readonly asset?: { readonly environmentId: EnvironmentId; readonly resource: AssetResource };
+  readonly asset?: {
+    readonly environmentId: EnvironmentId;
+    readonly resource: AssetResource;
+    readonly scope?: string | undefined;
+  };
   readonly onOpenFile?: () => void;
 }
 
@@ -83,10 +87,10 @@ export function useMediaActions(source: MediaActionSource) {
       if (!source.src) throw new Error("This media is unavailable. Try reopening the preview.");
       return source.src;
     }
-    const { environmentId, resource } = source.asset;
+    const { environmentId, resource, scope } = source.asset;
     const connection = readPreparedConnection(environmentId);
     if (!connection) throw new Error("Reconnect to this environment and try again.");
-    const result = await createAssetUrl({ environmentId, input: { resource } });
+    const result = await createAssetUrl({ environmentId, input: { resource, scope } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     assertCanReadMedia();
     const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);

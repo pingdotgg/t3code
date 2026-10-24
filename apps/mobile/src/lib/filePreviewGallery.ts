@@ -7,6 +7,7 @@ export function filePreviewKey(source: FilePreviewItem): string {
       Object.entries(source.resource)
         .filter(([key]) => key !== "mimeType" && key !== "fileName")
         .sort(([a], [b]) => a.localeCompare(b)),
+      source.scope ?? null,
     ]);
   if ("attachment" in source) return `attachment:${source.attachment.id}`;
   return source.uri;

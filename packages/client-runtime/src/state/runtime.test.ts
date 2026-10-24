@@ -1,9 +1,10 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   type PreviewEvent,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
+  ThreadId,
   type TerminalMetadataStreamEvent,
   type TerminalSummary,
   WS_METHODS,
@@ -33,6 +34,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
+import { createAssetEnvironmentAtoms } from "./assets.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
@@ -324,6 +326,47 @@ describe("finite environment subscription lifecycle", () => {
 });
 
 describe("environment query lifecycle", () => {
+  it.effect("caches an asset URL per rendering without sending its scope to the server", () =>
+    Effect.gen(function* () {
+      const { runtime, supervisorSession } = yield* makeEnvironmentQueryHarness(Effect.void);
+      const sign = vi
+        .fn()
+        .mockReturnValueOnce(
+          Effect.succeed({ relativeUrl: "/api/assets/first/image.png", expiresAt: 999999 }),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed({ relativeUrl: "/api/assets/updated/image.png", expiresAt: 999999 }),
+        );
+      yield* SubscriptionRef.set(
+        supervisorSession,
+        Option.some({
+          ...QUERY_RPC_SESSION,
+          client: { ...QUERY_RPC_SESSION.client, [WS_METHODS.assetsCreateUrl]: sign },
+        }),
+      );
+      const assets = createAssetEnvironmentAtoms(runtime);
+      const resource = {
+        _tag: "media-file" as const,
+        threadId: ThreadId.make("thread"),
+        path: "image.png",
+      };
+      const query = (scope: string) =>
+        assets.createUrl({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { resource, scope },
+        });
+      const registry = yield* mountEnvironmentQuery(query("message-1"));
+      const url = (scope: string) =>
+        readEnvironmentQuery(registry, query(scope)).pipe(Effect.map((asset) => asset.relativeUrl));
+
+      expect(yield* url("message-1")).toBe("/api/assets/first/image.png");
+      expect(yield* url("message-1")).toBe("/api/assets/first/image.png");
+      expect(yield* url("message-2")).toBe("/api/assets/updated/image.png");
+      expect(yield* url("message-1")).toBe("/api/assets/first/image.png");
+      expect(sign.mock.calls).toEqual([[{ resource }], [{ resource }]]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "terminal metadata waits for snapshots and retains known sessions across restarts",
     () =>

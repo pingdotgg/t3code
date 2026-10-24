@@ -2,15 +2,10 @@ import type { SnapShotSource } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import { type ChatFileAttachment, type ChatImageAttachment, isVideoAttachment } from "../../types";
-import type {
-  AssetCreateUrlResult,
-  AssetResource,
-  EnvironmentId,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { AssetCreateUrlResult, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { resolveAssetUrl, type AssetUrlQuery } from "@t3tools/client-runtime/state/assets";
 import {
   squashAtomCommandFailure,
   type AtomCommandResult,
@@ -44,10 +39,11 @@ export async function resolveMarkdownMediaPreview(input: {
   cwd?: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
   httpBaseUrl?: string | undefined;
+  assetScope?: string | undefined;
   onOpenFile?: ((relativePath: string) => void) | undefined;
   createAssetUrl: (input: {
     environmentId: EnvironmentId;
-    input: { resource: AssetResource };
+    input: AssetUrlQuery;
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, unknown>>;
 }): Promise<ExpandedImagePreview | null> {
   const media = resolveMediaSource(input.source, {
@@ -67,10 +63,14 @@ export async function resolveMarkdownMediaPreview(input: {
     if (media.access === "unavailable" || !input.threadRef || !input.httpBaseUrl) {
       throw new Error("Reconnect to this environment and open the media again.");
     }
-    asset = { environmentId: input.threadRef.environmentId, resource: media.resource };
+    asset = {
+      environmentId: input.threadRef.environmentId,
+      resource: media.resource,
+      scope: input.assetScope,
+    };
     const result = await input.createAssetUrl({
       environmentId: asset.environmentId,
-      input: { resource: asset.resource },
+      input: { resource: asset.resource, scope: asset.scope },
     });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     const assetUrl = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
@@ -150,7 +150,7 @@ export function buildAttachmentVideoPreview(
 export function expandedImageKey(preview: ExpandedImagePreview): string {
   const item = preview.images[preview.index];
   const asset = item?.actionsSource?.asset;
-  return `${item?.src ?? (asset ? JSON.stringify([asset.environmentId, asset.resource]) : "image")}:${preview.index}`;
+  return `${item?.src ?? (asset ? JSON.stringify([asset.environmentId, asset.resource, asset.scope]) : "image")}:${preview.index}`;
 }
 
 export function attachVideoThumbnail(video: HTMLVideoElement, file: File): () => void {

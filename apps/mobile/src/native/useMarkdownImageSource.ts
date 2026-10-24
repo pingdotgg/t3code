@@ -33,7 +33,7 @@ export function useMarkdownImageSource(props: {
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   return useCallback(
-    async (image) => {
+    async (image, scope) => {
       const media = resolveMobileMarkdownMediaSource(image.href, {
         threadId: threadId ?? undefined,
         workspaceRoot,
@@ -52,7 +52,7 @@ export function useMarkdownImageSource(props: {
         connectionPhase === "reconnecting"
       )
         throw new Error("Markdown image is unavailable");
-      const result = await createUrl({ environmentId, input: { resource: media.resource } });
+      const result = await createUrl({ environmentId, input: { resource: media.resource, scope } });
       if (result._tag !== "Success") throw new Error("Could not authorize Markdown image");
       const uri = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
       if (uri === null) throw new Error("Markdown image URL is invalid");

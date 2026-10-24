@@ -35,9 +35,10 @@ function NativeVideoPreview(props: {
   const environmentId =
     source.type === "media" && "environmentId" in source ? source.environmentId : null;
   const resource = source.type === "media" && "resource" in source ? source.resource : null;
+  const scope = "resource" in source ? source.scope : undefined;
   const preparedConnection = usePreparedConnection(environmentId);
-  const assetUrl = useAssetUrlState(environmentId, resource);
-  const refreshAssetUrl = useEffectEvent(useRefreshAssetUrl(environmentId, resource));
+  const assetUrl = useAssetUrlState(environmentId, resource, scope);
+  const refreshAssetUrl = useEffectEvent(useRefreshAssetUrl(environmentId, resource, scope));
   const name = source.type === "media" ? source.name : source.attachment.name;
   // The first minted URL is kept so a background refresh does not restart playback.
   const resolvedUrl =

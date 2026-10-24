@@ -39,6 +39,7 @@ function PreviewItemResolver(props: {
   const refreshAssetUrl = useRefreshAssetUrl(
     environmentId,
     "resource" in source ? source.resource : null,
+    "resource" in source ? source.scope : undefined,
   );
   // Resolve once per presentation; background URL refreshes must not reopen the native viewer.
   const [uri, setUri] = useState<string | null>("uri" in source ? source.uri : null);

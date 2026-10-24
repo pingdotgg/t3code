@@ -10,6 +10,7 @@ export function messageImageGallery(
     environmentId: EnvironmentId;
     threadId: ThreadId;
     workspaceRoot: string | null | undefined;
+    scope?: string | undefined;
   },
 ): FilePreviewItem[] {
   const images: FilePreviewItem[] = [];

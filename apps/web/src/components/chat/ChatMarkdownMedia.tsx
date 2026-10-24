@@ -333,9 +333,10 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly workspaceRoot?: string | undefined;
   readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  readonly assetScope?: string | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource, props.assetScope);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource, props.assetScope);
   const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
   const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
@@ -405,7 +406,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     name: props.alt || (props.kind ?? "image"),
     src,
     ...(fallbackSrc === undefined
-      ? { asset: { environmentId: props.environmentId, resource } }
+      ? { asset: { environmentId: props.environmentId, resource, scope: props.assetScope } }
       : {}),
     ...(reference ? { reference } : {}),
     ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")

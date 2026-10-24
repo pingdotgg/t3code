@@ -37,8 +37,9 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
   const environmentId = "environmentId" in source ? source.environmentId : null;
   const resource = "resource" in source ? source.resource : null;
   const connection = usePreparedConnection(environmentId);
-  const asset = useAssetUrlState(environmentId, resource);
-  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
+  const scope = "resource" in source ? source.scope : undefined;
+  const asset = useAssetUrlState(environmentId, resource, scope);
+  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource, scope);
   const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
   return {
     uri,

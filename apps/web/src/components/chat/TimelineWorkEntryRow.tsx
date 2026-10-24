@@ -128,6 +128,7 @@ export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<Time
           text={entry.detail ?? ""}
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
+          assetScope={entry.id}
           skills={ctx.skills}
           isStreaming={isStreaming(entry)}
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
@@ -504,6 +505,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <ChatMarkdownAssetImage
             environmentId={threadRef.environmentId}
             resource={viewedImage.resource}
+            assetScope={workEntry.id}
             alt={viewedImage.alt}
             srcFragment={viewedImage.srcFragment}
             workspaceRoot={workspaceRoot}

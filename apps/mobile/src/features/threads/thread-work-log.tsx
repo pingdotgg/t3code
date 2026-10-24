@@ -93,7 +93,7 @@ import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/FilePreviewGallery";
-import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
+import { MarkdownImageAssetScopeContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -546,7 +546,11 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     return (
       <ScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
         {props.activities.map((row) => (
-          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
+          <View key={row.id}>
+            <MarkdownImageAssetScopeContext value={row.workEntry.id}>
+              {props.renderReasoning(row.workEntry.detail ?? "")}
+            </MarkdownImageAssetScopeContext>
+          </View>
         ))}
       </ScrollView>
     );
@@ -1190,7 +1194,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           ) : null}
           {viewedImagePath ? (
             <View className="pb-1.5">
-              {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+              <MarkdownImageAssetScopeContext value={row.workEntry.id}>
+                {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+              </MarkdownImageAssetScopeContext>
             </View>
           ) : null}
           <FilePreviewGallery
@@ -1219,7 +1225,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             contentContainerStyle={{ paddingRight: 8 }}
           >
             {reasoning ? (
-              props.renderReasoning(reasoning.text)
+              <MarkdownImageAssetScopeContext value={row.workEntry.id}>
+                {props.renderReasoning(reasoning.text)}
+              </MarkdownImageAssetScopeContext>
             ) : call ? (
               [
                 call.command,

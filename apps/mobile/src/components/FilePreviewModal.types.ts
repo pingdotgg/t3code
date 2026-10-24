@@ -16,7 +16,11 @@ export type FilePreviewItem = FilePreviewMetadata &
   (
     | { readonly uri: string }
     | { readonly attachment: FileBackedComposerAttachment }
-    | { readonly environmentId: EnvironmentId; readonly resource: AssetResource }
+    | {
+        readonly environmentId: EnvironmentId;
+        readonly resource: AssetResource;
+        readonly scope?: string | undefined;
+      }
   );
 
 export type FilePreviewSource = FilePreviewItem & {
