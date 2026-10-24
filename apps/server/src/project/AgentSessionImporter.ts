@@ -34,6 +34,8 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -80,6 +82,18 @@ class AgentSessionThreadModifiedError extends Schema.TaggedError<AgentSessionThr
   override get message(): string {
     return `Imported thread '${this.threadId}' already contains non-imported activity.`;
   }
+}
+
+/**
+ * Whether a thread bound to a native session still lacks its native history.
+ * Once a turn has run, the native session also holds that turn's messages, so
+ * its history can no longer be imported as run-less items.
+ */
+export function isNativeHistoryPending(input: {
+  readonly historyOrigin: OrchestrationV2AppThread["historyOrigin"];
+  readonly hasRun: boolean;
+}): boolean {
+  return input.historyOrigin !== "v1_import" && !input.hasRun;
 }
 
 function dateTime(value: string): DateTime.Utc {
@@ -172,6 +186,8 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+  const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -401,7 +417,112 @@ const make = Effect.gen(function* () {
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;
   });
 
-  return { importRecentAgentThreads };
+  /**
+   * A thread bound to an existing native session starts empty. Loading the
+   * session replays its history only into the adapter's own snapshot, so copy
+   * that snapshot into the thread as run-less history, as transcript imports do.
+   * The `v1_import` origin it sets is what forks read to keep that history, and
+   * marks the import done, so a call after a failed read repairs the thread and
+   * any later call does nothing.
+   */
+  const importNativeHistory = Effect.fn("importNativeHistoryV2")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly workspaceRoot: string;
+  }) {
+    const pendingThread = Effect.map(
+      orchestrator.getThreadRecords(input.threadId, ["providerThreads", "runs", "turnItems"]),
+      (records) =>
+        isNativeHistoryPending({
+          historyOrigin: records.thread.historyOrigin,
+          hasRun: records.runs.length > 0,
+        })
+          ? records
+          : null,
+    );
+    const importedItemPrefix = `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:`;
+    // Thread commands write whole thread rows, so hold their lock from the
+    // re-read through the write to keep both this marker and their changes.
+    const commit = (messages: ReadonlyArray<AgentSessionScanner.AgentSessionThreadMessage>) =>
+      threadCommands.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const current = yield* pendingThread;
+          if (current === null) return 0;
+          // Earlier builds copied the history without the marker. Its ids are
+          // deterministic, so copying it again would collide; add the marker alone.
+          const copied = current.turnItems.some((item) => item.id.startsWith(importedItemPrefix));
+          yield* eventSink.write({
+            events: [
+              ...(copied
+                ? []
+                : messages.flatMap((message, index) =>
+                    messageEvents({ threadId: input.threadId, index, message }),
+                  )),
+              {
+                id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),
+                type: "thread.metadata-updated",
+                threadId: input.threadId,
+                providerInstanceId: current.thread.providerInstanceId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...current.thread, historyOrigin: "v1_import" },
+              },
+            ],
+          });
+          return copied ? 0 : messages.length;
+        }),
+      );
+    const records = yield* pendingThread;
+    if (records === null) return 0;
+    const { thread, providerThreads, turnItems } = records;
+    if (turnItems.some((item) => item.id.startsWith(importedItemPrefix))) return yield* commit([]);
+    const providerThread = providerThreads.find(
+      (candidate) => candidate.appThreadId === input.threadId && candidate.nativeThreadRef !== null,
+    );
+    const nativeThreadId = providerThread?.nativeThreadRef?.nativeId;
+    if (providerThread === undefined || nativeThreadId == null) return 0;
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: providerThread.providerInstanceId,
+      threadId: input.threadId,
+    });
+    // The registry admits this open against sign-in changes, like any other open.
+    const adapter = yield* registry.get(thread.modelSelection.instanceId);
+    const snapshot = yield* adapter
+      .openSession({
+        threadId: input.threadId,
+        providerSessionId,
+        modelSelection: thread.modelSelection,
+        runtimePolicy: {
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          cwd: thread.worktreePath ?? input.workspaceRoot,
+        },
+        initialNativeThreadId: nativeThreadId,
+        ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+          ? {}
+          : {
+              initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
+            }),
+      })
+      .pipe(
+        Effect.flatMap((session) => session.readThreadSnapshot({ providerThread })),
+        Effect.scoped,
+      );
+    const messages = snapshot.messages.flatMap((message) =>
+      (message.role === "user" || message.role === "assistant") && message.text.trim() !== ""
+        ? [
+            {
+              role: message.role,
+              text: message.text,
+              createdAt: DateTime.formatIso(message.createdAt),
+            },
+          ]
+        : [],
+    );
+    // Loading the session can take a while, and the thread is usable meanwhile.
+    return yield* commit(messages);
+  });
+
+  return { importRecentAgentThreads, importNativeHistory };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;

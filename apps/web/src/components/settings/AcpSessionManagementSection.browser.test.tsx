@@ -169,3 +169,30 @@ it("rechecks task access after confirming deletion", async () => {
   await screen.click("Delete");
   expect(commands.delete).not.toHaveBeenCalled();
 });
+
+it("offers to import a pending thread's history but not to delete its session", async () => {
+  setup();
+  commands.list.mockResolvedValue({
+    _tag: "Success",
+    value: {
+      sessions: [
+        {
+          ...session,
+          importedThreadId: ThreadId.make("thread-imported"),
+          nativeHistoryPending: true,
+        },
+      ],
+      nextCursor: null,
+      canLoad: true,
+      canResume: true,
+      canDelete: true,
+    },
+  });
+  await using screen = await renderSection();
+  await screen.click("List sessions");
+  expect(screen.button("Delete").disabled).toBe(true);
+  await screen.click("Import");
+  expect(commands.import).toHaveBeenCalledOnce();
+  expect(screen.button("Imported").disabled).toBe(true);
+  expect(screen.button("Delete").disabled).toBe(true);
+});
