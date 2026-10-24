@@ -258,6 +258,9 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("queuedRunId")), "queued run"),
       );
       break;
+    case "queue-resume":
+      label = phrase("Resumed", "resume", quantity(countEntities(threadIds), "held queue"));
+      break;
     case "queue-reorder":
       label = phrase(
         "Reordered",

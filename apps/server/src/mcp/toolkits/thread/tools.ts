@@ -76,17 +76,19 @@ const queueEntry = Schema.Struct({
   queuedRunId: RunId,
   text: Schema.String,
   truncated: Schema.Boolean,
+  held: Schema.Boolean,
 });
 const QueueListTool = Tool.make("t3_queue_list", {
   ...commandTool,
   description:
-    "List queued messages in delivery order. Results are a live offset page; use t3_thread_read for full thread history.",
+    "List queued messages in delivery order. held=true means the queue stopped after a failed run: nothing queued starts until t3_queue_resume or the user resumes it. Results are a live offset page; use t3_thread_read for full thread history.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     cursor: Schema.optional(NonNegativeInt),
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
   }),
   success: Schema.Struct({
+    held: Schema.Boolean,
     items: Schema.Array(queueEntry),
     nextCursor: Schema.NullOr(NonNegativeInt),
   }),
@@ -114,6 +116,13 @@ const QueueCancelTool = Tool.make("t3_queue_cancel", {
   ...commandTool,
   description: "Cancel a queued run using the existing queue command.",
   parameters: Schema.Struct(queueTarget),
+}).annotate(Tool.Destructive, true);
+const QueueResumeTool = Tool.make("t3_queue_resume", {
+  ...commandTool,
+  description:
+    "Release a held queue so its queued messages start again in order. Omit threadId for this thread. A thread stopped by a provider usage limit cannot resume until that thread continues; the service rejects it.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: Schema.Struct({ released: NonNegativeInt }),
 }).annotate(Tool.Destructive, true);
 const QueueReorderTool = Tool.make("t3_queue_reorder", {
   ...commandTool,
@@ -298,6 +307,7 @@ export const ThreadToolkit = Toolkit.make(
   QueueReadTool,
   QueueEditTool,
   QueueCancelTool,
+  QueueResumeTool,
   QueueReorderTool,
   QueuePromoteTool,
 );

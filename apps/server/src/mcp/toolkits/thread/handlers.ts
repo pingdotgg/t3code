@@ -36,6 +36,7 @@ function queueEntry(
     queuedRunId: run.id,
     text: characters.slice(0, limit).join(""),
     truncated: characters.length > limit,
+    held: run.queueHeld === true,
   };
 }
 const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
@@ -234,6 +235,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const cursor = input.cursor ?? 0;
       const end = cursor + (input.limit ?? 20);
       return {
+        held: runs.some((run) => run.queueHeld === true),
         items: runs.slice(cursor, end).flatMap((run) => {
           const entry = queueEntry(projection, run.id, 1000);
           return entry === undefined ? [] : [entry];
@@ -269,6 +271,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       type: "queued-run.cancel",
       runId: input.queuedRunId,
     })),
+  ),
+  t3_queue_resume: writesThread((input) =>
+    Effect.gen(function* () {
+      const { threads, projection } = yield* readThread(input.threadId, ["runs"]);
+      const released = projection.runs.filter(
+        (run) => run.status === "queued" && run.queueHeld === true,
+      ).length;
+      yield* threads
+        .dispatch({
+          type: "queue.resume",
+          commandId: yield* newCommandId(),
+          threadId: projection.thread.id,
+        })
+        .pipe(Effect.mapError(dispatchFailure));
+      return { released };
+    }),
   ),
   t3_queue_reorder: writesThread((input) =>
     dispatch(input.threadId, (common) => ({
