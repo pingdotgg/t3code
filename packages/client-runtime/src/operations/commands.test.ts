@@ -20,11 +20,14 @@ import {
   type ProjectMutation,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -38,9 +41,11 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   interruptThreadTurn,
+  MessageDispatchUnansweredError,
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
+  type StartThreadTurnInput,
 } from "./commands.ts";
 
 const layerTestCrypto = Layer.succeed(
@@ -66,13 +71,16 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
   readonly advertiseThreadStop?: boolean;
+  readonly neverAnswers?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
         input.commands.push(command);
         return { sequence: input.commands.length };
-      }),
+      }).pipe(
+        Effect.andThen((result) => (input.neverAnswers ? Effect.never : Effect.succeed(result))),
+      ),
     [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (requestInput: {
       readonly threadId: ThreadId;
     }) =>
@@ -88,7 +96,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           projection: input.projection ?? v2Projection,
           resumed: false,
         };
-      }),
+      }).pipe(
+        Effect.andThen((result) => (input.neverAnswers ? Effect.never : Effect.succeed(result))),
+      ),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
         input.projects.push(mutation);
@@ -296,6 +306,68 @@ describe("V2 environment commands", () => {
         });
       }
       expect(projectionRequests).toEqual([]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  const expectUnansweredAfterTwoMinutes = Effect.fn("TestEnvironmentCommands.expectUnanswered")(
+    function* (bootstrap: StartThreadTurnInput["bootstrap"]) {
+      const commands: OrchestrationV2Command[] = [];
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        launches,
+        projects: [],
+        neverAnswers: true,
+      });
+
+      const send = yield* startThreadTurn({
+        commandId: CommandId.make("command-unanswered"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-unanswered"),
+          role: "user",
+          text: "Are you there?",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        ...(bootstrap === undefined ? {} : { bootstrap }),
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("119 seconds");
+      expect(send.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+
+      expect(commands.length + launches.length).toBe(1);
+      const exit = send.pollUnsafe();
+      expect(exit !== undefined && Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit).toEqual(
+        new MessageDispatchUnansweredError({
+          message:
+            "The server did not confirm this message. It may still arrive; check the thread before sending it again.",
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    "fails a message send the server never answers while the connection stays healthy",
+    () => expectUnansweredAfterTwoMinutes(undefined).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("fails a first-message launch the server never answers", () =>
+    expectUnansweredAfterTwoMinutes({
+      createThread: {
+        projectId: ProjectId.make("project-1"),
+        title: "Thread",
+        modelSelection: v2Projection.thread.modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-06-20T00:00:00.000Z",
+      },
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 

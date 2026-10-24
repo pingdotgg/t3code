@@ -14,6 +14,11 @@ import {
   snapshotComposerSend,
   withMessageContext,
   makeThreadErrorSetter,
+  composerDraftContentUnchanged,
+  resolveQueuedComposerSubmit,
+  queueComposerSubmitBehind,
+  settleQueuedComposerSubmit,
+  type QueuedComposerSubmit,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
@@ -43,7 +48,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-import { type SetStateAction, useLayoutEffect, useRef } from "react";
+import { type SetStateAction, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -248,6 +253,15 @@ interface ComposerSendInput {
  * thread, a feedback upload, and resuming an interrupted run. Each path restores the draft
  * when it fails.
  */
+const notifyQueuedSubmitNotSent = () =>
+  toastManager.add(
+    stackedThreadToast({
+      type: "info",
+      title: "Your next message was not sent",
+      description: "It is still in the composer. Send it when you're ready.",
+    }),
+  );
+
 export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
@@ -383,7 +397,8 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
 
-  const onSend = async (
+  // Resolves to true once the turn started; a send that stops earlier resolves otherwise.
+  const sendComposerDraft = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
     submissionIntent: ComposerSubmissionIntent = "foreground",
@@ -861,8 +876,10 @@ export function useComposerSend(input: ComposerSendInput) {
       multipleTargets.push(resolved);
     }
 
+    // onSend reads the generation this claims right after calling, so no await may precede it.
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
+    const draftAtSend = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
     if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
       sendInFlightRef.current = false;
@@ -1150,9 +1167,20 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    // Uploads and the dock transition above are awaited; anything typed meanwhile is the next
+    // message, not this one. A direct annotation writes into the draft as it sends, so it
+    // always clears.
+    if (
+      directAnnotation ||
+      composerDraftContentUnchanged(
+        draftAtSend,
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      )
+    ) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    }
 
     const title = deriveThreadTitleSeed({
       text: messageTextForSend,
@@ -1420,7 +1448,131 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       if (!sendQueuesBehindSetup) resetLocalDispatch();
     }
+    return turnStartSucceeded;
   };
+
+  // Enter pressed while the previous message is still sending. The draft stays in the
+  // composer; once that send starts its turn, this one sends it, unless the user edited it,
+  // left the thread, an approval or question arrived, or the earlier send did not start a
+  // turn (an unanswered send may still have landed, so nothing here retries it). A
+  // multiple-model send never reports a started turn, so a submit behind it is cancelled.
+  // Sends read the ref, since one finishing runs in the closure it started in; the state
+  // only re-renders so the effect below can fire.
+  type QueuedSubmit = QueuedComposerSubmit<ComposerDispatchMode, ComposerSubmissionIntent>;
+  const queuedSubmitRef = useRef<QueuedSubmit | null>(null);
+  const [queuedSubmit, setQueuedSubmitState] = useState<QueuedSubmit | null>(null);
+  // The generation of the send running on each thread. The hook outlives navigation, so a
+  // submit has to wait behind its own thread's send, not whichever send started last.
+  const runningSendsRef = useRef(new Map<string, number>());
+  const setQueuedSubmit = (next: QueuedSubmit | null) => {
+    queuedSubmitRef.current = next;
+    setQueuedSubmitState(next);
+  };
+
+  const onSend: typeof sendComposerDraft = async (
+    e,
+    dispatchMode = "auto",
+    submissionIntent = "foreground",
+    directAnnotation,
+  ) => {
+    const queued =
+      queuedSubmitRef.current?.routeThreadKey === routeThreadKey ? queuedSubmitRef.current : null;
+    const behind = directAnnotation
+      ? null
+      : queueComposerSubmitBehind({
+          routeThreadKey,
+          sendInFlight: sendInFlightRef.current,
+          runningSends: runningSendsRef.current,
+          queued,
+        });
+    if (behind !== null) {
+      e?.preventDefault();
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      setQueuedSubmit(
+        composerDraftHasUserContent(draft)
+          ? {
+              routeThreadKey,
+              draft,
+              // Written as a follow-up to the message still sending, so it waits behind that
+              // turn instead of steering it.
+              dispatchMode: dispatchMode === "auto" ? "queue" : dispatchMode,
+              submissionIntent,
+              ...behind,
+            }
+          : null,
+      );
+      return;
+    }
+    if (queued !== null) setQueuedSubmit(null);
+    const generationBefore = composerSendGenerationRef.current;
+    const sending = sendComposerDraft(e, dispatchMode, submissionIntent, directAnnotation);
+    // The send claims its generation before its first await. Read it now: once this awaits,
+    // a send started on another thread from this same composer moves the counter on.
+    const claimedGeneration = composerSendGenerationRef.current;
+    const sendGeneration = claimedGeneration === generationBefore ? null : claimedGeneration;
+    const runningSends = runningSendsRef.current;
+    if (sendGeneration !== null) runningSends.set(routeThreadKey, sendGeneration);
+    let started: boolean | undefined = false;
+    let failure: { readonly error: unknown } | null = null;
+    try {
+      started = await sending;
+    } catch (error) {
+      failure = { error };
+    }
+    if (sendGeneration !== null && runningSends.get(routeThreadKey) === sendGeneration) {
+      runningSends.delete(routeThreadKey);
+    }
+    const waiting = queuedSubmitRef.current;
+    const settled = settleQueuedComposerSubmit({
+      waiting,
+      sendRouteThreadKey: routeThreadKey,
+      sendGeneration,
+      started: started === true,
+    });
+    if (waiting !== null && settled === "ready") {
+      setQueuedSubmit({ ...waiting, ready: true });
+    } else if (waiting !== null && settled === "cancel") {
+      setQueuedSubmit(null);
+      notifyQueuedSubmitNotSent();
+    }
+    if (failure !== null) throw failure.error;
+    return started;
+  };
+  const onSendRef = useRef(onSend);
+  useLayoutEffect(() => {
+    onSendRef.current = onSend;
+  });
+
+  const queuedSubmitBlocked =
+    (isSendBusy && !sendQueuesBehindSetup) || isConnecting || threadDetailLoading;
+  const pendingRequest = pendingApprovals.length > 0 || Boolean(activePendingProgress);
+  useEffect(() => {
+    const next = queuedSubmit;
+    if (next === null) return;
+    const action = resolveQueuedComposerSubmit({
+      ready: next.ready,
+      leftThread: next.routeThreadKey !== routeThreadKey,
+      sendBlocked: queuedSubmitBlocked || sendInFlightRef.current,
+      pendingRequest: pendingRequest || pendingApprovalsRef.current.length > 0,
+      draftUnchanged: composerDraftContentUnchanged(
+        next.draft,
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      ),
+    });
+    if (action === "wait") return;
+    queuedSubmitRef.current = null;
+    setQueuedSubmitState(null);
+    if (action === "cancel") notifyQueuedSubmitNotSent();
+    if (action === "send")
+      void onSendRef.current(undefined, next.dispatchMode, next.submissionIntent);
+  }, [
+    composerDraftTarget,
+    pendingRequest,
+    queuedSubmit,
+    queuedSubmitBlocked,
+    routeThreadKey,
+    sendInFlightRef,
+  ]);
 
   return { onSend };
 }

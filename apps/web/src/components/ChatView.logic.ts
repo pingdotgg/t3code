@@ -69,6 +69,7 @@ import {
 import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
+  type ComposerThreadDraftState,
   type DraftId,
   type DraftThreadState,
 } from "../composerDraftStore";
@@ -1489,6 +1490,105 @@ export interface ComposerSendContents {
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+}
+
+/**
+ * Whether a draft still holds the message the user submitted. Only its content
+ * counts: the model picker and attachment upload bookkeeping can change without
+ * the user editing the message.
+ */
+export function composerDraftContentUnchanged(
+  submitted: ComposerThreadDraftState | null,
+  current: ComposerThreadDraftState | null,
+): boolean {
+  if (submitted === null || current === null) return submitted === current;
+  const ids = (attachments: ReadonlyArray<{ readonly id: string }>) =>
+    attachments.map((attachment) => attachment.id).join("\n");
+  return (
+    submitted.prompt === current.prompt &&
+    ids(submitted.images) === ids(current.images) &&
+    ids(submitted.files) === ids(current.files) &&
+    submitted.terminalContexts === current.terminalContexts &&
+    submitted.previewAnnotations === current.previewAnnotations &&
+    submitted.reviewComments === current.reviewComments &&
+    submitted.threadContexts === current.threadContexts
+  );
+}
+
+/** A draft the user pressed Enter on while their previous message was still sending. */
+export interface QueuedComposerSubmit<Mode, Intent> {
+  readonly routeThreadKey: string;
+  readonly draft: ComposerThreadDraftState | null;
+  readonly dispatchMode: Mode;
+  readonly submissionIntent: Intent;
+  /** The send generation it waits behind. */
+  readonly afterSend: number;
+  readonly ready: boolean;
+}
+
+/**
+ * Where Enter goes while a message may still be sending: null sends now, otherwise the
+ * submit waits behind the send running on this thread. `runningSends` holds each thread's
+ * running send generation, since one composer sends on several threads as the user moves.
+ * A queued submit no send on this thread will settle is stale and gives way to the new Enter.
+ */
+export function queueComposerSubmitBehind(input: {
+  readonly routeThreadKey: string;
+  /** Whether this thread's send is still in flight, rather than finishing up. */
+  readonly sendInFlight: boolean;
+  readonly runningSends: ReadonlyMap<string, number>;
+  readonly queued: { readonly afterSend: number; readonly ready: boolean } | null;
+}): { readonly afterSend: number; readonly ready: boolean } | null {
+  const { queued } = input;
+  if (queued?.ready) return queued;
+  const running = input.sendInFlight ? input.runningSends.get(input.routeThreadKey) : undefined;
+  return running === undefined ? null : { afterSend: running, ready: false };
+}
+
+/**
+ * What a finished send does to the submit waiting behind it. Only the send it waits behind,
+ * on the same thread, settles it: another thread's send finishing says nothing about this one.
+ */
+export function settleQueuedComposerSubmit(input: {
+  readonly waiting: {
+    readonly routeThreadKey: string;
+    readonly afterSend: number;
+    readonly ready: boolean;
+  } | null;
+  readonly sendRouteThreadKey: string;
+  /** The generation the finished send claimed, or null if it stopped before claiming one. */
+  readonly sendGeneration: number | null;
+  readonly started: boolean;
+}): "unrelated" | "ready" | "cancel" {
+  const { waiting, sendGeneration } = input;
+  if (
+    sendGeneration === null ||
+    waiting === null ||
+    waiting.ready ||
+    waiting.routeThreadKey !== input.sendRouteThreadKey ||
+    waiting.afterSend !== sendGeneration
+  ) {
+    return "unrelated";
+  }
+  return input.started ? "ready" : "cancel";
+}
+
+/**
+ * Whether a ready queued submit sends now. It is the user's earlier Enter, so it only sends
+ * as the plain message they wrote: an approval or question that arrived meanwhile would turn
+ * it into an answer they never saw, so it is cancelled instead.
+ */
+export function resolveQueuedComposerSubmit(input: {
+  readonly ready: boolean;
+  readonly leftThread: boolean;
+  readonly sendBlocked: boolean;
+  readonly pendingRequest: boolean;
+  readonly draftUnchanged: boolean;
+}): "wait" | "send" | "drop" | "cancel" {
+  if (input.leftThread) return "drop";
+  if (!input.ready || input.sendBlocked) return "wait";
+  if (!input.draftUnchanged) return "drop";
+  return input.pendingRequest ? "cancel" : "send";
 }
 
 /**

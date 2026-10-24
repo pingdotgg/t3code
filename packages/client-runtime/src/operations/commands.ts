@@ -32,6 +32,7 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { getInitialServerConfig, request } from "../rpc/client.ts";
 
@@ -269,6 +270,34 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
+
+export class MessageDispatchUnansweredError extends Schema.TaggedError<MessageDispatchUnansweredError>()(
+  "MessageDispatchUnansweredError",
+  { message: Schema.String },
+) {}
+
+// The server answers a message dispatch or thread launch once it commits the command; worktree
+// preparation runs after that answer. A healthy socket that stays silent this long means a
+// stalled pipeline. The server may still commit later, so the error says so instead of
+// retrying, which could duplicate the message.
+const MESSAGE_DISPATCH_ANSWER_TIMEOUT = "2 minutes";
+
+const requireMessageAnswer = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_ANSWER_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new MessageDispatchUnansweredError({
+            message:
+              "The server did not confirm this message. It may still arrive; check the thread before sending it again.",
+          }),
+        ),
+    }),
+  );
+
+const dispatchMessage = (command: OrchestrationV2Command) =>
+  requireMessageAnswer(dispatch(command));
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
@@ -669,30 +698,32 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                 ? {}
                 : { branch: bootstrap.branch }),
             };
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
-      commandId,
-      creationSource: input.creationSource ?? "web",
-      threadId: input.threadId,
-      ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
-      projectId: thread.projectId,
-      title: input.titleSeed ?? thread.title,
-      generateTitle: input.titleSeed !== undefined,
-      modelSelection: input.modelSelection ?? thread.modelSelection,
-      runtimeMode: input.runtimeMode,
-      interactionMode: input.interactionMode,
-      workspaceStrategy,
-      initialMessage: {
-        messageId: input.message.messageId,
-        text: input.message.text,
-        ...(context ? { context } : {}),
-        attachments,
-      },
-    });
+    return yield* requireMessageAnswer(
+      request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+        commandId,
+        creationSource: input.creationSource ?? "web",
+        threadId: input.threadId,
+        ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
+        projectId: thread.projectId,
+        title: input.titleSeed ?? thread.title,
+        generateTitle: input.titleSeed !== undefined,
+        modelSelection: input.modelSelection ?? thread.modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        workspaceStrategy,
+        initialMessage: {
+          messageId: input.message.messageId,
+          text: input.message.text,
+          ...(context ? { context } : {}),
+          attachments,
+        },
+      }),
+    );
   }
 
   const requestedMode = input.dispatchMode ?? "auto";
   if (requestedMode === "start") {
-    return yield* dispatch({
+    return yield* dispatchMessage({
       type: "message.dispatch",
       commandId,
       createdBy: "user",
@@ -756,7 +787,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   const shouldSendTitleSeed =
     input.titleSeed !== undefined &&
     (serverResolvesCommandContext || projection?.messages.length === 0);
-  return yield* dispatch({
+  return yield* dispatchMessage({
     type: "message.dispatch",
     commandId,
     createdBy: "user",
