@@ -20,22 +20,18 @@ export function SettingsDragHandle(props: {
   const onEnd = useEffectEvent((translation: number, cancelled: boolean) =>
     props.onEnd(translation, cancelled),
   );
-  const [gesture] = useState(() => {
-    let translation = 0;
-    return Gesture.Pan()
+  // Gesture callbacks become worklets that each copy their closure, so state
+  // shared between them through a local variable never updates; the final
+  // event carries the translation instead.
+  const [gesture] = useState(() =>
+    Gesture.Pan()
       .minDistance(0)
       .shouldCancelWhenOutside(false)
       .runOnJS(true)
-      .onStart(() => {
-        translation = 0;
-        onStart();
-      })
-      .onUpdate((event) => {
-        translation = event.translationY;
-        onMove(event.translationY);
-      })
-      .onFinalize((_, success) => onEnd(translation, !success));
-  });
+      .onStart(() => onStart())
+      .onUpdate((event) => onMove(event.translationY))
+      .onFinalize((event, success) => onEnd(event.translationY, !success)),
+  );
   return (
     <GestureDetector gesture={gesture}>
       <View
