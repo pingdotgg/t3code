@@ -224,6 +224,41 @@ it.effect(
     }),
 );
 
+it.effect("returns one adapter per instance build, and a new one after a rebuild", () =>
+  Effect.gen(function* () {
+    const unused = () => Effect.die("unused auth operation");
+    const auth: ProviderAuthController = {
+      isChangingCredentials: Effect.succeed(false),
+      start: unused,
+      complete: unused,
+      cancel: unused,
+      logout: unused,
+      subscribe: () => Stream.empty,
+    };
+    let current: ProviderInstance = { ...instances[0], auth };
+    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+      Effect.provide(
+        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.sync(() => current),
+              listInstances: Effect.sync(() => [current]),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const first = yield* registry.get(personalId);
+    assert.strictEqual(yield* registry.get(personalId), first);
+
+    current = { ...instances[0], orchestrationAdapter: makeAdapter(personalId), auth };
+    const second = yield* registry.get(personalId);
+    assert.notStrictEqual(second, first);
+    assert.strictEqual(yield* registry.get(personalId), second);
+  }),
+);
+
 it.effect("interrupts admitted session startup when a shared peer signs out", () =>
   Effect.gen(function* () {
     const entered = yield* Deferred.make<void>();

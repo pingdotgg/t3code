@@ -487,6 +487,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly layerRegistry?: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -498,32 +499,34 @@ function layerTest(input: {
           : input.failReleaseEventWrites
             ? layerFailingReleaseEventSink
             : layerTestEventSink;
-  const layerRegistry = Layer.unwrap(
-    makeProviderAdapter(input.state, {
-      failEventStream: input.failEventStream ?? false,
-      ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
-      ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
-      ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
-      ...(input.hasPendingBackgroundWork === undefined
-        ? {}
-        : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
-      ...(input.hasPendingBackgroundWorkForThread === undefined
-        ? {}
-        : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
-      ...(input.backgroundTasksEndWithProcess === undefined
-        ? {}
-        : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
-      ...(input.hangSessionScopeClose === undefined
-        ? {}
-        : { hangSessionScopeClose: input.hangSessionScopeClose }),
-      ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
-      ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
-      ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
-      ...(input.scopeCloseReached === undefined
-        ? {}
-        : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
-  );
+  const layerRegistry =
+    input.layerRegistry ??
+    Layer.unwrap(
+      makeProviderAdapter(input.state, {
+        failEventStream: input.failEventStream ?? false,
+        ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+        ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+        ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+        ...(input.hasPendingBackgroundWork === undefined
+          ? {}
+          : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+        ...(input.hasPendingBackgroundWorkForThread === undefined
+          ? {}
+          : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+        ...(input.backgroundTasksEndWithProcess === undefined
+          ? {}
+          : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
+        ...(input.hangSessionScopeClose === undefined
+          ? {}
+          : { hangSessionScopeClose: input.hangSessionScopeClose }),
+        ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+        ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+        ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
+        ...(input.scopeCloseReached === undefined
+          ? {}
+          : { scopeCloseReached: input.scopeCloseReached }),
+      }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
       ? layerTestMcpRegistry
@@ -953,6 +956,280 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 replaces rebuilt adapters when idle despite release write failures, deferring for background work",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const rebuiltState = yield* Ref.make(emptyState);
+      const pending = yield* Ref.make(false);
+      const flaky: FlakyReleaseWrites = {
+        failing: yield* Ref.make<"none" | "session" | "session-and-requests">("none"),
+        failures: yield* Queue.unbounded<void>(),
+      };
+      const adapter = yield* Ref.make(
+        yield* makeProviderAdapter(state, { capabilities: ExclusiveCapabilities }),
+      );
+      const layerRegistry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        get: () => Ref.get(adapter),
+      });
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-rebuilt-instance");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        const first = yield* open;
+        assert.strictEqual(yield* open, first);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        yield* Ref.set(
+          adapter,
+          yield* makeProviderAdapter(rebuiltState, {
+            capabilities: ExclusiveCapabilities,
+            hasPendingBackgroundWork: Ref.get(pending),
+          }),
+        );
+        yield* Ref.set(flaky.failing, "session");
+        const second = yield* open;
+        yield* Queue.take(flaky.failures);
+        yield* Ref.set(flaky.failing, "none");
+        assert.notStrictEqual(second, first);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.equal((yield* Ref.get(rebuiltState)).openCount, 1);
+        assert.strictEqual(yield* open, second);
+
+        yield* Ref.set(pending, true);
+        yield* Ref.set(
+          adapter,
+          yield* makeProviderAdapter(rebuiltState, { capabilities: ExclusiveCapabilities }),
+        );
+        assert.strictEqual(yield* open, second);
+        assert.equal((yield* Ref.get(rebuiltState)).closeCount, 0);
+
+        yield* Ref.set(pending, false);
+        const third = yield* open;
+        assert.notStrictEqual(third, second);
+        assert.equal((yield* Ref.get(rebuiltState)).openCount, 2);
+        assert.equal((yield* Ref.get(rebuiltState)).closeCount, 1);
+        assert.strictEqual(yield* open, third);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, layerRegistry, flakyReleaseWrites: flaky }),
+        ),
+      );
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 preserves a turn starting during a rebuild check until it ends",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const rebuiltState = yield* Ref.make(emptyState);
+      const firstProbe = yield* Ref.make(true);
+      const probeEntered = yield* Deferred.make<void>();
+      const probeGate = yield* Deferred.make<void>();
+      const adapter = yield* Ref.make(
+        yield* makeProviderAdapter(state, {
+          capabilities: ExclusiveCapabilities,
+          // Park the idle check so startTurn can race with session replacement.
+          hasPendingBackgroundWork: Effect.gen(function* () {
+            if (yield* Ref.getAndSet(firstProbe, false)) {
+              yield* Deferred.succeed(probeEntered, undefined);
+              yield* Deferred.await(probeGate);
+            }
+            return false;
+          }),
+        }),
+      );
+      const layerRegistry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        get: () => Ref.get(adapter),
+      });
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-rebuild-race");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const first = yield* open;
+        const turnEnded = yield* Deferred.make<void>();
+        yield* first.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "turn.terminal" ? Deferred.succeed(turnEnded, undefined) : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+
+        yield* Ref.set(
+          adapter,
+          yield* makeProviderAdapter(rebuiltState, {
+            capabilities: ExclusiveCapabilities,
+          }),
+        );
+        const reopen = yield* open.pipe(Effect.forkScoped);
+        yield* Deferred.await(probeEntered);
+        yield* first.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Deferred.succeed(probeGate, undefined);
+
+        assert.strictEqual(yield* Fiber.join(reopen), first);
+        assert.strictEqual(yield* open, first);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(rebuiltState)).openCount, 0);
+
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        yield* Queue.offer(queue!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-rebuild-race",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Deferred.await(turnEnded);
+        assert.notStrictEqual(yield* open, first);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.equal((yield* Ref.get(rebuiltState)).openCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, layerRegistry })),
+      );
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a session shared with another thread after a rebuild",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const probeEntered = yield* Deferred.make<void>();
+      const probeGate = yield* Deferred.make<void>();
+      const attachArmed = yield* Ref.make(false);
+      const attachPaused = yield* Deferred.make<void>();
+      const adapter = yield* Ref.make(
+        yield* makeProviderAdapter(state, {
+          hasPendingBackgroundWork: Deferred.succeed(probeEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(probeGate)),
+            Effect.as(false),
+          ),
+        }),
+      );
+      const layerRegistry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        get: () => Ref.get(adapter),
+      });
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const firstThreadId = ThreadId.make("thread-provider-session-manager-shared-rebuild-a");
+        const secondThreadId = ThreadId.make("thread-provider-session-manager-shared-rebuild-b");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: firstThreadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+          ],
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const first = yield* open(firstThreadId);
+        yield* Ref.set(adapter, yield* makeProviderAdapter(state));
+        const reopen = yield* open(firstThreadId).pipe(Effect.forkScoped);
+        yield* Deferred.await(probeEntered);
+        yield* Ref.set(attachArmed, true);
+        // Attach before activity updates the idle generation.
+        const attaching = yield* first
+          .resumeThread({
+            threadId: secondThreadId,
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: secondThreadId,
+              providerSessionId,
+              now,
+            }),
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(attachPaused);
+        yield* Deferred.succeed(probeGate, undefined);
+        assert.strictEqual(yield* Fiber.join(reopen), first);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        yield* Fiber.interrupt(attaching);
+
+        assert.strictEqual(yield* open(secondThreadId), first);
+        assert.strictEqual(yield* open(firstThreadId), first);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            layerRegistry,
+            pauseAttachWrite: { armed: attachArmed, paused: attachPaused },
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>

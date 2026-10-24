@@ -198,6 +198,7 @@ interface LiveSessionEntry {
    */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -921,6 +922,7 @@ export const layerWithOptions = (
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
+          readonly onlyIfAttachedTo?: ThreadId;
         }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
@@ -937,6 +939,12 @@ export const layerWithOptions = (
                 input.onlyIfIdleGeneration !== undefined &&
                 (existing.busyTurns.size > 0 ||
                   existing.idleGeneration !== input.onlyIfIdleGeneration)
+              ) {
+                return ["kept", current] as const;
+              }
+              if (
+                input.onlyIfAttachedTo !== undefined &&
+                [...existing.attachedThreadIds].some((id) => id !== input.onlyIfAttachedTo)
               ) {
                 return ["kept", current] as const;
               }
@@ -998,6 +1006,7 @@ export const layerWithOptions = (
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfAttachedTo?: ThreadId;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -2118,7 +2127,32 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              const live = (yield* Ref.get(sessions)).get(key);
+              // A peer may hold the runtime between open and startTurn. Only
+              // the sole attached thread can replace it; its effects run serially.
+              const outdated =
+                live !== undefined &&
+                live.busyTurns.size === 0 &&
+                [...live.attachedThreadIds].every((threadId) => threadId === input.threadId) &&
+                (yield* registry.get(live.runtime.instanceId).pipe(
+                  Effect.map((current) => current !== live.adapter),
+                  Effect.orElseSucceed(() => false),
+                )) &&
+                !(yield* (live.runtime.hasPendingBackgroundWork ?? Effect.succeed(false)).pipe(
+                  Effect.catchCause(() => Effect.succeed(false)),
+                ));
+              if (outdated) {
+                // Registry and background-work checks yield, so revalidate
+                // activity and attachments when removing the entry.
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: `Provider instance ${live.runtime.instanceId} settings changed.`,
+                  onlyIfIdleGeneration: live.idleGeneration,
+                  onlyIfAttachedTo: input.threadId,
+                }).pipe(logReleaseFailure(input.providerSessionId));
+              }
+              const existing = outdated ? (yield* Ref.get(sessions)).get(key) : live;
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
@@ -2230,6 +2264,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                adapter,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
