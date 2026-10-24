@@ -9,11 +9,15 @@ import { observeResize } from "~/lib/observeResize";
 
 // Match the duration-220 exit transition before removing a dismissed notice.
 const DISMISS_TRANSITION_MS = 220;
+// How long a revealed notice stays open before tucking behind the front banner.
+const REVEAL_MS = 5_000;
 
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
   readonly priority?: "urgent" | "activity" | "notice";
+  /** The user asked for this notice, so it opens the stack when it lands behind another banner. */
+  readonly reveal?: boolean;
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
@@ -73,6 +77,27 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     setStackExpanded(false);
   }
 
+  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
+  const stackedItems = orderedItems.slice(1);
+  const revealItemId =
+    stackedItems.find((item) => "reveal" in item && item.reveal === true)?.id ?? null;
+  const [revealedItemId, setRevealedItemId] = useState<string | null>(null);
+  if (revealItemId !== null && revealItemId !== revealedItemId) {
+    setRevealedItemId(revealItemId);
+    setStackExpanded(true);
+  }
+
+  // Tuck the revealed notice away unless the user is reading it; leaving it collapses as usual.
+  useEffect(() => {
+    if (revealedItemId === null) return;
+    const timeout = setTimeout(() => {
+      const notices = noticesRef.current;
+      if (notices?.matches(":hover") || notices?.contains(document.activeElement)) return;
+      setStackExpanded(false);
+    }, REVEAL_MS);
+    return () => clearTimeout(timeout);
+  }, [revealedItemId]);
+
   useLayoutEffect(() => {
     if (stackExpanded && pendingFocusRef.current === "notice") {
       pendingFocusRef.current = null;
@@ -86,7 +111,6 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }
   }, [stackExpanded]);
 
-  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
   const frontItem = orderedItems[0];
   if (!frontItem) {
     return (
@@ -97,7 +121,6 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
       </>
     );
   }
-  const stackedItems = orderedItems.slice(1);
   const hasStack = stackedItems.length > 0;
   const showCollapsedStackCap = hasStack && exitingItemId !== frontItem.id;
   const firstStackedItem = stackedItems[0];
