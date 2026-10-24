@@ -7,7 +7,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -50,7 +52,7 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
     readonly cgroupRoot: string;
-    readonly manager: { stalled: boolean };
+    readonly manager: { stalled: boolean; timeout: Effect.Effect<void> };
   }) => Effect.Effect<A, E>,
   // A user manager older than systemd 253 rejects OOMPolicy on scopes.
   {
@@ -71,7 +73,7 @@ const withFakeSystemd = <A, E>(
     const cgroupRoot = NodePath.join(bin, "cgroup");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
-    const manager = { stalled };
+    const manager = { stalled, timeout: Effect.void };
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -85,12 +87,16 @@ const withFakeSystemd = <A, E>(
     const runner = ProcessRunner.ProcessRunner.of({
       run: ({ command, args }) =>
         manager.stalled
-          ? Effect.fail(
-              new ProcessRunner.ProcessTimeoutError({
-                command,
-                argumentCount: args.length,
-                timeoutMs: 5_000,
-              }),
+          ? manager.timeout.pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ProcessRunner.ProcessTimeoutError({
+                    command,
+                    argumentCount: args.length,
+                    timeoutMs: 5_000,
+                  }),
+                ),
+              ),
             )
           : Effect.sync(() => {
               calls.push(args);
@@ -335,6 +341,34 @@ describe("AgentScope service", () => {
           });
           expect(unitOf(second)).not.toBe("");
           expect(second.args).toContain("--property=OOMPolicy=stop");
+        }),
+      { stalled: true },
+    ),
+  );
+
+  it.effect("keeps a recovered detection when another launch hears the old failure late", () =>
+    withFakeSystemd(
+      ({ scope, units, calls, stateDir, manager }) =>
+        Effect.gen(function* () {
+          const timedOut = yield* Deferred.make<void>();
+          manager.timeout = Deferred.await(timedOut);
+          const launch = (threadId: string) =>
+            scope.wrap({ command: "agent", args: [], name: "t", threadId });
+          // Both launches share the stalled probe. The first one launches again,
+          // and finds systemd answering, before the second sees the failure.
+          const first = yield* launch("a").pipe(
+            Effect.andThen(Effect.sync(() => (manager.stalled = false))),
+            Effect.andThen(launch("a")),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          const second = yield* launch("b").pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.succeed(timedOut, undefined);
+          expect(sliceOf(yield* Fiber.join(first))).toBe(ownedAgentSlice(stateDir));
+          expect(unitOf(yield* Fiber.join(second))).toBe("");
+
+          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
+          yield* launch("c");
+          expect(stopsOf(calls)).toEqual([]);
         }),
       { stalled: true },
     ),

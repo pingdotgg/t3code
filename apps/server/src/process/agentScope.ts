@@ -12,6 +12,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -155,7 +156,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const [detectSystemd, redetectSystemd] = yield* Effect.cachedInvalidateWithTTL(
+  const detectSystemd = yield* Effect.cachedWithTTL(
     Effect.gen(function* () {
       const runtimeDir = hostEnvironment.XDG_RUNTIME_DIR;
       if (runtimeDir === undefined || runtimeDir.length === 0) return undefined;
@@ -222,12 +223,13 @@ export const make = Effect.gen(function* () {
         supportsOomPolicy,
       };
     }),
-    Duration.infinity,
+    // Callers sharing a failed probe hear it at different times, so the cache
+    // expires failures itself; a late caller cannot clear a newer success.
+    (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
   );
   const systemd = detectSystemd.pipe(
     Effect.catch((cause) =>
-      redetectSystemd.pipe(
-        Effect.andThen(Effect.logWarning("Agent scopes are off until systemd answers", { cause })),
+      Effect.logWarning("Agent scopes are off until systemd answers", { cause }).pipe(
         Effect.as(undefined),
       ),
     ),
