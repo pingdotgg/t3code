@@ -46,6 +46,7 @@ export class GitWorkflowService extends Context.Service<
       readonly cwd: string;
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
+    readonly hasAnyRef: (cwd: string) => Effect.Effect<boolean, GitCommandError>;
     readonly status: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
@@ -343,6 +344,17 @@ export const make = Effect.gen(function* () {
             ),
             Effect.map((result) => result.stdout.trim().length > 0),
           ),
+    hasAnyRef: (cwd) =>
+      ensureGitCommand("GitWorkflowService.hasAnyRef", cwd).pipe(
+        Effect.andThen(
+          git.execute({
+            operation: "GitWorkflowService.hasAnyRef",
+            cwd,
+            args: ["for-each-ref", "--count=1", "--format=%(refname)"],
+          }),
+        ),
+        Effect.map((result) => result.stdout.trim().length > 0),
+      ),
     status: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>

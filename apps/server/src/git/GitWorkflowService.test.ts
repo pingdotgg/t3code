@@ -12,7 +12,48 @@ import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
+function realGitLayer(prefix: string) {
+  return GitWorkflowService.layer.pipe(
+    Layer.provide(
+      Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+        resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+      }),
+    ),
+    Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provideMerge(GitVcsDriver.layer),
+    Layer.provideMerge(VcsProcess.layer),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), { prefix }).pipe(Layer.provide(NodeServices.layer)),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+}
+
 it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
+  it.effect("finds a ref only once the repository has a commit", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-any-ref-" });
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const git = (args: string[]) => driver.execute({ operation: "test.setupRepo", cwd, args });
+      yield* git(["init", "-b", "main"]);
+      assert.isFalse(yield* workflow.hasAnyRef(cwd));
+      yield* git([
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+      ]);
+      yield* git(["checkout", "--orphan", "unborn"]);
+      assert.isTrue(yield* workflow.hasAnyRef(cwd));
+    }).pipe(Effect.scoped, Effect.provide(realGitLayer("t3-any-ref-"))),
+  );
+
   it.effect("finds a name among the refs of every namespace", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -33,26 +74,6 @@ it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
         (refName) => workflow.hasRefNamed({ cwd, refName }),
       );
       assert.deepEqual(found, [true, true, true, true, false, false]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        GitWorkflowService.layer.pipe(
-          Layer.provide(
-            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-              resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
-            }),
-          ),
-          Layer.provide(Layer.mock(GitManager.GitManager)({})),
-          Layer.provideMerge(GitVcsDriver.layer),
-          Layer.provideMerge(VcsProcess.layer),
-          Layer.provideMerge(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-ref-named-" }).pipe(
-              Layer.provide(NodeServices.layer),
-            ),
-          ),
-          Layer.provideMerge(NodeServices.layer),
-        ),
-      ),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(realGitLayer("t3-ref-named-"))),
   );
 });

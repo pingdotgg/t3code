@@ -197,7 +197,7 @@ function makeHarness(options: HarnessOptions = {}) {
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
-      hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      hasCommit: options.hasCommit ?? (({ refName }) => Effect.succeed(refName === "HEAD")),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
@@ -1017,6 +1017,79 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
     assert.equal(harness.createWorktree.mock.calls.length, 0);
   }).pipe(Effect.provide(harness.layer));
 });
+
+it.effect(
+  "runs a new worktree thread in the project folder when the repository has no commits",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        hasCommit: () => Effect.succeed(false),
+        git: { hasAnyRef: () => Effect.succeed(false) },
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const input = launchInput({
+          command: "command:launch:empty-repo",
+          thread: "thread:launch:empty-repo",
+          message: "Build the feature",
+          workspace: { type: "worktree", baseRef: "main" },
+        });
+        const launched = yield* launches.launch(input);
+        yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+          Stream.takeUntil(
+            (stored) =>
+              stored.commandId === CommandId.make(`${input.commandId}:release`) &&
+              stored.event.type === "run.updated",
+          ),
+          Stream.runDrain,
+        );
+        const { thread, runs } = yield* threads.getThreadProjection(launched.threadId);
+        assert.isNull(thread.worktreePath);
+        assert.isNull(thread.branch);
+        assert.equal(harness.createWorktree.mock.calls.length, 0);
+        // The orchestrator reads a worktree preparation without a worktree as
+        // failed setup and holds the queue behind it.
+        assert.deepEqual(runs[0]?.workspacePreparation, { type: "root" });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect.each([
+  { name: "the base is fetched from origin", startFromOrigin: true, hasAnyRef: false },
+  { name: "another ref has a commit", startFromOrigin: false, hasAnyRef: true },
+])("keeps the worktree when HEAD has no commit but $name", (testCase) =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      hasCommit: ({ refName }) => Effect.succeed(refName === "remote-main-sha"),
+      git: { hasAnyRef: () => Effect.succeed(testCase.hasAnyRef) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: `command:launch:empty-repo-${testCase.startFromOrigin}`,
+        thread: `thread:launch:empty-repo-${testCase.startFromOrigin}`,
+        message: "Build the feature",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: testCase.startFromOrigin },
+      });
+      const launched = yield* launches.launch(input);
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.takeUntil(
+          (stored) =>
+            stored.commandId === CommandId.make(`${input.commandId}:release`) &&
+            stored.event.type === "run.updated",
+        ),
+        Stream.runDrain,
+      );
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
+      assert.equal(
+        harness.createWorktree.mock.calls[0]?.[0]?.refName,
+        testCase.startFromOrigin ? "remote-main-sha" : "main",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
 it.effect.each(["stable", "upstream/release"])(
   "launches from %s with the fetched commit and remote PR base",
