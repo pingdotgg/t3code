@@ -1218,6 +1218,7 @@ export function PullRequestDetailPanel({
     return (
       <PullRequestDetailGhost
         seed={matchingListEntry}
+        environmentId={environmentId}
         summary={sharedSummary}
         checkoutCommand={checkoutCommand}
         onCheckoutError={reportCheckoutCommandError}
@@ -1407,6 +1408,7 @@ export function PullRequestDetailPanel({
                   <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
                     <PullRequestActorLabel
                       actor={detail.author}
+                      environmentId={environmentId}
                       profileUrl={authorProfileUrl}
                       variant="avatar"
                       className="shrink-0"
@@ -1496,7 +1498,11 @@ export function PullRequestDetailPanel({
                   />
                 }
                 author={
-                  <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
+                  <PullRequestActorLabel
+                    actor={detail.author}
+                    environmentId={environmentId}
+                    profileUrl={authorProfileUrl}
+                  />
                 }
                 updated={
                   <span>

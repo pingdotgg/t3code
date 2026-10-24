@@ -55,6 +55,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./azureDevOpsAvatar": {
+      "types": "./src/azureDevOpsAvatar.ts",
+      "import": "./src/azureDevOpsAvatar.ts"
+    },
     "./githubMedia": {
       "types": "./src/githubMedia.ts",
       "import": "./src/githubMedia.ts"

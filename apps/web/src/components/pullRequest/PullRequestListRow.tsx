@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   PullRequestActor,
   PullRequestMergeability,
   PullRequestState,
@@ -106,10 +107,12 @@ export function PullRequestRowLines({
 
 export function PullRequestRowAuthor({
   actor,
+  environmentId,
   className,
   labelClassName,
 }: {
   actor: PullRequestActor | null;
+  environmentId: EnvironmentId;
   className?: string;
   labelClassName?: string;
 }) {
@@ -119,7 +122,7 @@ export function PullRequestRowAuthor({
       <TooltipTrigger
         render={<span className={cn("inline-flex min-w-0 items-center gap-1", className)} />}
       >
-        <PullRequestActorAvatar actor={actor} className="size-3.5" />
+        <PullRequestActorAvatar actor={actor} environmentId={environmentId} className="size-3.5" />
         <span className={cn("truncate", labelClassName)}>{login}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">
