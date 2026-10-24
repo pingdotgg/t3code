@@ -134,6 +134,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverInstallation: ForwardCompatibleOptional(ServerInstallation),
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
+  /** Server honors the `automaticUpdates` setting. Older servers drop the key on write. */
+  automaticUpdates: Schema.optionalKey(Schema.Boolean),
   /**
    * Clients skip seeding a Live Activity when
       this is false — no update would ever repaint it. Absent on older
