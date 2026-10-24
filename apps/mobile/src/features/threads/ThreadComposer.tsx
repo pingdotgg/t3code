@@ -31,6 +31,7 @@ import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Keyboard, Platform, View, type ViewStyle } from "react-native";
+import { KeyboardController, KeyboardEvents } from "react-native-keyboard-controller";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -140,9 +141,20 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+export function useCompactComposerEditor(
+  text: ScaledTextRole,
+  value: string,
+  opensOnFocus: boolean,
+  yieldsModelLabel: boolean,
+) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [compactWidth, setCompactWidth] = useState(0);
+  const [compactSlot, setCompactSlot] = useState({ width: 0, labelYielded: false });
+  const [labelYielded, setLabelYielded] = useState(false);
+  const [measuredRowWidth, setMeasuredRowWidth] = useState(0);
+  const [editorLayoutWidth, setEditorLayoutWidth] = useState(0);
+  if (labelYielded && value.length === 0) setLabelYielded(false);
+  const compactWidth =
+    !yieldsModelLabel || compactSlot.labelYielded === labelYielded ? compactSlot.width : 0;
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
@@ -150,16 +162,26 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   const inset =
     Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
-  const height = Math.max(
-    minimum,
-    Math.min(text.lineHeight * 4 + 2 * inset, contentHeight + 2 * inset),
-  );
+  const wraps = contentHeight > text.lineHeight * 1.5;
+  const wrapIsSettled =
+    !yieldsModelLabel ||
+    (labelYielded && compactSlot.labelYielded && editorLayoutWidth >= compactSlot.width - 1);
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
+    opensOnFocus ||
+    (value.length > 0 &&
+      ((wraps && wrapIsSettled) || (compactWidth > 0 && contentSize.width > compactWidth)));
+  const visibleHeight = wraps && !isExpanded ? text.lineHeight : contentHeight;
+  const height = Math.max(
+    minimum,
+    Math.min(text.lineHeight * 4 + 2 * inset, visibleHeight + 2 * inset),
+  );
+  const nearsModelLabel =
+    yieldsModelLabel &&
     value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
+    (wraps || (compactWidth > 0 && contentSize.width > compactWidth - text.fontSize));
+  if (nearsModelLabel && !labelYielded) setLabelYielded(true);
   const compactRowHeight = Math.max(44, minimum);
   const animatedHeight = useSharedValue(height);
   const surfaceHeight = useSharedValue(compactRowHeight);
@@ -202,10 +224,16 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   }));
   return {
     isExpanded,
+    labelYielded: labelYielded && value.length > 0,
     containerStyle,
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
-      rowWidth.set(event.nativeEvent.layout.width);
+      const width = event.nativeEvent.layout.width;
+      rowWidth.set(width);
+      if (width !== measuredRowWidth) {
+        setMeasuredRowWidth(width);
+        setCompactSlot({ width: 0, labelYielded });
+      }
     },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
       // The expanded toolbar gives this slot to the model control. Keep the
@@ -213,8 +241,11 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       if (!isExpanded) {
         editorX.set(event.nativeEvent.layout.x);
         editorWidth.set(event.nativeEvent.layout.width);
-        setCompactWidth(Math.max(0, event.nativeEvent.layout.width - 8));
+        setCompactSlot({ width: Math.max(0, event.nativeEvent.layout.width - 8), labelYielded });
       }
+    },
+    onEditorFrameLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
+      if (event.nativeEvent.layout.width > 0) setEditorLayoutWidth(event.nativeEvent.layout.width);
     },
     editorProps: {
       singleLineCentered: !isExpanded,
@@ -440,6 +471,19 @@ export function ComposerSurface(props: {
   );
 }
 
+function useKeyboardShowing() {
+  const [showing, setShowing] = useState(KeyboardController.isVisible);
+  useEffect(() => {
+    const show = KeyboardEvents.addListener("keyboardWillShow", () => setShowing(true));
+    const hide = KeyboardEvents.addListener("keyboardWillHide", () => setShowing(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return showing;
+}
+
 /** Space below the composer pill, inside the bottom inset it is given. */
 export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
 
@@ -453,6 +497,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const keyboardVisible = useKeyboardShowing();
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const pendingNativeImagePasteCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
@@ -601,8 +646,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
   const [compactRowWidth, setCompactRowWidth] = useState(0);
-  const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const isWideRow = compactRowWidth >= 500;
+  const compactAttachmentLimit = isWideRow ? 3 : 1;
+  const opensCard =
+    (isFocused && (Platform.OS !== "android" || keyboardVisible)) ||
+    settingsSheetPresentation.keepsComposerExpanded;
+  const compactEditor = useCompactComposerEditor(
+    bodyText,
+    draftMessage,
+    opensCard && compactRowWidth > 0 && !isWideRow,
+    isWideRow && stripAttachments.length === 0,
+  );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -860,7 +914,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={!compactEditor.isExpanded}
+        iconOnly={
+          !compactEditor.isExpanded &&
+          (!isWideRow || compactEditor.labelYielded || stripAttachments.length > 0)
+        }
         onPress={openSettings}
       />
     </View>
@@ -1047,6 +1104,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               </View>
             </ComposerDictationDraftContent>
             <Animated.View
+              onLayout={compactEditor.onEditorFrameLayout}
               style={[
                 compactEditor.editorStyle,
                 showsCompactDictation ? { display: "none" } : undefined,
