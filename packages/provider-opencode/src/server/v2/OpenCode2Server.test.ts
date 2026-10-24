@@ -207,8 +207,12 @@ describe("OpenCode2Server spawned server", () => {
       assert.strictEqual(first.version, "2.0.18");
       assert.strictEqual(first.external, false);
       assert.strictEqual(second.client, first.client);
+      if (first.processExit === undefined)
+        return yield* Effect.die("Missing owned process lifetime");
+      return first.processExit;
     }).pipe(
       Effect.scoped,
+      Effect.flatMap((exited) => exited),
       Effect.provide(
         Layer.mergeAll(
           OpenCode2Client.layer,
