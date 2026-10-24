@@ -8,27 +8,17 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 
 import {
-  shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
+  terminalContextMenuItems,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
-  it("does not let an old selection popup cancel its replacement right-click menu", () => {
-    expect(
-      shouldClearTerminalSelectionAction({
-        actionPending: false,
-        openMenuRequestId: 3,
-        currentRequestId: 4,
-      }),
-    ).toBe(false);
-    expect(
-      shouldClearTerminalSelectionAction({
-        actionPending: false,
-        openMenuRequestId: null,
-        currentRequestId: 4,
-      }),
-    ).toBe(false);
+  it("offers Add to chat, Copy and Paste from the right-click menu over a selection", () => {
+    const enabled = terminalContextMenuItems({ hasSelection: true })
+      .filter((item) => !item.disabled)
+      .map((item) => item.id);
+    expect(enabled).toEqual(expect.arrayContaining(["add-to-chat", "copy", "paste"]));
   });
 
   it("handles an exit that lands while the terminal surface is still loading", () => {
