@@ -23,7 +23,7 @@ const {
     clientSettings: { browserRecordingFrameRate: 30 as 30 | 60 },
     events,
     getDisplayMedia: vi.fn(),
-    requestDisplayMediaCapture: vi.fn((_tabId: string) => undefined),
+    requestDisplayMediaCapture: vi.fn(async (_tabId: string) => {}),
     registrySet: vi.fn((_atom: unknown, value: { readonly tabIds: ReadonlySet<string> }) => {
       events.push(
         value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
@@ -79,6 +79,7 @@ vi.mock("~/hooks/useSettings", () => ({
 }));
 
 import {
+  BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS,
   BrowserRecordingConflictError,
   findActiveBrowserRecordingRuntimeTabId,
   readActiveBrowserRecordingTabIds,
@@ -157,9 +158,9 @@ describe("browser recording", () => {
       getVideoTracks: () => [],
       getTracks: () => [{ stop: vi.fn() }],
     });
-    requestDisplayMediaCapture.mockImplementation((tabId: string) => {
+    requestDisplayMediaCapture.mockImplementation(async (tabId: string) => {
       const trigger = Reflect.get(globalThis, DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER);
-      if (typeof trigger !== "function" || trigger(tabId) !== true) {
+      if (typeof trigger !== "function" || (await trigger(tabId)) !== true) {
         throw new Error(`No pending display-media capture for ${tabId}.`);
       }
     });
@@ -233,9 +234,11 @@ describe("browser recording", () => {
     expect(stopTrack).toHaveBeenCalledOnce();
   });
 
-  it("releases the native capture lease when stream acquisition fails", async () => {
-    const cause = new Error("capture failed");
-    cause.name = "NotReadableError";
+  it.each([
+    new Error("capture failed"),
+    new DOMException("denied", "NotAllowedError"),
+    { name: "NotReadableError" },
+  ])("preserves non-acquisition failures: %s", async (cause) => {
     getDisplayMedia.mockRejectedValueOnce(cause);
 
     await expect(startBrowserRecording("recording-tab")).rejects.toMatchObject({
@@ -249,6 +252,113 @@ describe("browser recording", () => {
     expect(events.at(-1)).toBe("clear");
   });
 
+  const deferred = <T>() => {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    const promise = new Promise<T>((res) => (resolve = res));
+    return { promise, resolve };
+  };
+  const fallback = (tabId = "fallback") => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const id = deferred<string>();
+    const track = { stop: vi.fn(), requestFrame: vi.fn(), getSettings: () => ({ frameRate: 0 }) };
+    const canvas = {
+      getContext: () => ({ drawImage: vi.fn() }),
+      captureStream: () => ({ getTracks: () => [track], getVideoTracks: () => [track] }),
+    };
+    const video = {
+      srcObject: null,
+      requestVideoFrameCallback: vi.fn((_callback: () => void) => 1),
+      cancelVideoFrameCallback: vi.fn(),
+      play: vi.fn(async () => video.requestVideoFrameCallback.mock.calls[0]?.[0]()),
+      pause: vi.fn(),
+    };
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => (tag === "video" ? video : canvas),
+    });
+    const decode = vi.fn(async (_blob: Blob) => ({ width: 1280, height: 720, close: vi.fn() }));
+    vi.stubGlobal("createImageBitmap", decode);
+    const trigger = Reflect.get(globalThis, DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER);
+    requestDisplayMediaCapture.mockImplementationOnce((tab) => trigger(tab).then(id.resolve));
+    getDisplayMedia.mockRejectedValueOnce(new DOMException("unreadable", "NotReadableError"));
+    return {
+      request: id.promise,
+      start: startBrowserRecording(tabId),
+      frame: (data: string, id: string) => trigger.frame(tabId, id, btoa(data)),
+      end: (id: string) => trigger.end(tabId, id),
+      decode,
+      video,
+    };
+  };
+  it.each("frame timeout decode end end-timeout drain".split(" "))("STOP %s", async (mode) => {
+    const f = fallback();
+    const rejects = mode === "timeout" || mode === "drain";
+    const request = await f.request;
+    expect(await f.frame("stale", request + "old")).toBe(false);
+    void f.frame("first", request);
+    void f.frame("discarded", request);
+    const last = f.frame("last", request);
+    await f.start;
+    await vi.advanceTimersByTimeAsync(67);
+    expect(await last).toBe(true);
+    expect(await f.decode.mock.calls[1]?.[0]?.text()).toBe("last");
+    const bitmap = deferred<Awaited<ReturnType<typeof f.decode>>>();
+    const close = vi.fn();
+    const recorder = FakeMediaRecorder.instances[0]!;
+    expect(f.end(request + "old")).toBe(false);
+    if (mode.startsWith("end")) {
+      expect(f.end(request)).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.end(request) && f.video.srcObject).toBe(recorder.stream);
+    }
+    if (mode === "decode" || rejects) {
+      f.decode.mockReturnValueOnce(bitmap.promise);
+      void f.frame("pending", request);
+      if (!rejects) vi.spyOn(recorder, "stop").mockImplementationOnce(vi.fn());
+    }
+    const draining = mode === "drain" ? stopBrowserRecording("fallback") : undefined;
+    if (rejects) {
+      bitmap.resolve(Promise.reject(new Error("decode")));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.video.srcObject).toBe(recorder.stream);
+    }
+    const stopped = draining ?? stopBrowserRecording("fallback");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeMediaRecorder.instances[0]?.state).toBe("recording");
+    expect(stopScreencast).not.toHaveBeenCalled();
+    if (/^(frame|end|drain)$/.test(mode)) {
+      f.video.requestVideoFrameCallback.mock.lastCall?.[0]();
+      await stopped;
+    } else {
+      const failed = expect(stopped).rejects.toMatchObject({ operation: "stop-media-recorder" });
+      await vi.advanceTimersByTimeAsync(BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS);
+      if (mode === "decode") {
+        bitmap.resolve({ width: 1280, height: 720, close });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(f.video.play).not.toHaveBeenCalled();
+        expect(f.video.requestVideoFrameCallback).not.toHaveBeenCalled();
+        expect(close).toHaveBeenCalledOnce();
+        FakeMediaRecorder.prototype.stop.call(recorder);
+      }
+      await failed;
+    }
+    expect(stopScreencast).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledTimes(/^(frame|end|drain)$/.test(mode) ? 1 : 0);
+    expect(f.video.srcObject).toBeNull();
+    expect([recorder.state, ...readActiveBrowserRecordingTabIds()]).toEqual(["inactive"]);
+  });
+  it.each([false, true])("bounds fallback readiness or end: %s", async (ended) => {
+    const native = deferred<MediaStream>();
+    const f = fallback();
+    getDisplayMedia.mockReset().mockReturnValueOnce(native.promise);
+    await vi.advanceTimersByTimeAsync(4000);
+    native.resolve(Promise.reject(new DOMException("unreadable", "NotReadableError")));
+    const request = await f.request;
+    const failed = expect(f.start).rejects.toThrow(ended ? /capture/ : /5000ms/);
+    if (ended) expect(f.end(request)).toBe(true);
+    await vi.advanceTimersByTimeAsync(ended ? 0 : 1000);
+    expect(readActiveBrowserRecordingTabIds().size).toBe(0);
+    await failed;
+  });
   it("records separate tabs concurrently", async () => {
     const firstThreadRef = {
       environmentId: EnvironmentId.make("environment-recording"),

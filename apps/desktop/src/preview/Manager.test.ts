@@ -1863,6 +1863,50 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect.each([false, true])("seeds and coalesces frames until timeout: %s", (expires) =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = (value: string) => ({
+          isEmpty: () => false,
+          getSize: () => ({ width: 800, height: 600 }),
+          toJPEG: vi.fn(() => Buffer.from(value)),
+        });
+        const host = makeTestHostWebContents();
+        const frames = yield* Queue.unbounded<string>();
+        let ack = Promise.withResolvers<boolean>();
+        let receive!: (frame: ReturnType<typeof image>) => void;
+        host.executeJavaScript.mockImplementation(async (js: string) =>
+          /\?\.(frame|end)\?\./.test(js) && Queue.offerUnsafe(frames, js) ? ack.promise : "capture",
+        );
+        const guest = makeTestPreviewWebContents(async () => image("static"), 42, host);
+        Object.assign(guest, {
+          beginFrameSubscription: (_dirty: boolean, cb: typeof receive) => (receive = cb),
+          endFrameSubscription: vi.fn(),
+        });
+        fromId.mockImplementation((id) => (id === 42 ? guest : null));
+        yield* manager.createTab("fallback");
+        yield* manager.registerWebview("fallback", 42);
+        yield* manager.startRecording("fallback");
+        expect(yield* Queue.take(frames)).toContain(Buffer.from("static").toString("base64"));
+        const middle = image("middle");
+        receive(middle);
+        receive(image("last"));
+        ack.resolve(true);
+        ack = Promise.withResolvers<boolean>();
+        expect(yield* Queue.take(frames)).toContain(Buffer.from("last").toString("base64"));
+        receive(middle);
+        yield* expires ? TestClock.adjust(5_000) : manager.stopRecording("fallback");
+        if (expires) expect(yield* Queue.take(frames)).toContain("?.end?.");
+        ack.resolve(true);
+        yield* TestClock.adjust(0);
+        expect(guest.endFrameSubscription).toHaveBeenCalledOnce();
+        expect(guest.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+        expect(yield* Queue.size(frames)).toBe(0);
+        expect(middle.toJPEG).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   effectIt.effect("only lets the host frame that armed a recording claim its stream", () =>
     withManager((manager) =>
       Effect.gen(function* () {
