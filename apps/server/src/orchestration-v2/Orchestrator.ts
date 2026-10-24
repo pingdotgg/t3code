@@ -722,9 +722,14 @@ function usageLimitHoldsQueue(
       latestSession = session;
     }
   }
+  // Only this provider's runs say whether its limit still applies. A later turn
+  // on another provider does not clear it.
   return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
-      ?.providerInstanceId === providerInstanceId
+    usageLimitBlockedRun(
+      projection.runs.filter((run) => run.providerInstanceId === providerInstanceId),
+      projection.turnItems,
+      latestSession?.lastError ?? null,
+    ) !== null
   );
 }
 
