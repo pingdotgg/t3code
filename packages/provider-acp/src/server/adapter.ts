@@ -225,6 +225,14 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
 
 export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  /**
+   * Runs before attachment paths, T3 instructions and native slash-command detection,
+   * so a rewrite can turn the user's text into a native command.
+   */
+  readonly rewriteUserText?: (
+    text: string,
+    turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
@@ -7162,12 +7170,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const compactionMarker = (yield* Ref.get(compactionMarkers)).get(sessionId);
+          const userText =
+            flavor.rewriteUserText === undefined
+              ? turnInput.message.text
+              : yield* flavor
+                  .rewriteUserText(turnInput.message.text, turnInput)
+                  .pipe(
+                    Effect.provideService(
+                      ChildProcessSpawner.ChildProcessSpawner,
+                      childProcessSpawner,
+                    ),
+                  );
           const messageText = providerMessageTextWithAttachmentPaths({
-            text: turnInput.message.text,
+            text: userText,
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
           });
-          const isNativeSlashCommand = turnInput.message.text.trimStart().startsWith("/");
+          const isNativeSlashCommand = userText.trimStart().startsWith("/");
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,
             state: instructionState,
