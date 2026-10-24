@@ -398,6 +398,51 @@ export interface ProjectionTimelinePage {
   readonly hasMore: boolean;
 }
 
+export type SideChatSource = Pick<
+  OrchestrationV2ThreadProjection,
+  "thread" | "visibleTurnItems"
+> & {
+  readonly omittedItems?: number;
+};
+
+// Bound payload decoding before the byte-budget selector. Keep its priority
+// anchors even when they fall outside the recent window; older items remain
+// available through t3_thread_read. Metadata still follows normal fork visibility.
+const SIDE_CHAT_HISTORY_ITEMS = 256;
+function selectSideChatRows<T extends { readonly item: Pick<OrchestrationV2TurnItem, "type"> }>(
+  rows: ReadonlyArray<T>,
+) {
+  const eligible = rows.filter(({ item }) =>
+    [
+      "user_message",
+      "assistant_message",
+      "command_execution",
+      "error",
+      "run_interrupt_result",
+      "file_change",
+      "proposed_plan",
+    ].includes(item.type),
+  );
+  const selected = new Set<number>();
+  for (const index of [
+    eligible.findIndex(({ item }) => item.type === "user_message"),
+    eligible.findLastIndex(({ item }) => item.type === "user_message"),
+    eligible.findLastIndex(({ item }) => item.type !== "user_message"),
+  ])
+    if (index >= 0) selected.add(index);
+  for (
+    let index = eligible.length - 1;
+    index >= 0 && selected.size < SIDE_CHAT_HISTORY_ITEMS;
+    index--
+  ) {
+    selected.add(index);
+  }
+  return {
+    rows: eligible.filter((_, index) => selected.has(index)),
+    omittedItems: eligible.length - selected.size,
+  };
+}
+
 export interface ShellSnapshotOptions {
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
@@ -420,6 +465,9 @@ export interface ProjectionStoreV2Shape {
     throughEntryId?: string,
     conversationOnly?: boolean,
   ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, ProjectionStoreV2Error>;
+  readonly getSideChatSource: (
+    threadId: ThreadId,
+  ) => Effect.Effect<SideChatSource, ProjectionStoreV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
     options: ProjectionTimelinePageOptions,
@@ -1619,6 +1667,9 @@ export function threadShellFromProjection(
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
+    ...(projection.thread.sideChatOf === undefined
+      ? {}
+      : { sideChatOf: projection.thread.sideChatOf }),
     lineage: projection.thread.lineage,
     forkedFrom: projection.thread.forkedFrom,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
@@ -1878,6 +1929,9 @@ function shellFromState(input: {
     ...(input.state.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
+    ...(input.state.thread.sideChatOf === undefined
+      ? {}
+      : { sideChatOf: input.state.thread.sideChatOf }),
     lineage: input.state.thread.lineage,
     forkedFrom: input.state.thread.forkedFrom,
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
@@ -5546,6 +5600,48 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getSideChatSource: ProjectionStoreV2Shape["getSideChatSource"] = (threadId) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const index = yield* readTimelineIndex(threadId, new Set());
+            const selected = selectSideChatRows(
+              index.visible.map((row, position) => ({ ...row, position })),
+            );
+            const sources = yield* encodeTimelineSources(
+              selected.rows.map((row) => ({
+                threadId: row.sourceThreadId,
+                id: row.sourceItemId,
+              })),
+            );
+            const payloads = yield* sql<{
+              thread_id: string;
+              turn_item_id: string;
+              payload_json: string;
+            }>`
+          SELECT item.thread_id, item.turn_item_id, item.payload_json
+          FROM orchestration_v2_projection_turn_items item JOIN json_each(${sources}) wanted
+          ON item.thread_id = json_extract(wanted.value, '$.threadId')
+            AND item.turn_item_id = json_extract(wanted.value, '$.id')`;
+            const byIdentity = new Map(
+              payloads.map((row) => [`${row.thread_id}:${row.turn_item_id}`, row.payload_json]),
+            );
+            const visibleTurnItems = yield* Effect.forEach(selected.rows, (row) =>
+              Effect.gen(function* () {
+                const payload = byIdentity.get(`${row.sourceThreadId}:${row.sourceItemId}`);
+                if (payload === undefined) return yield* new ProjectionStoreReadError({ threadId });
+                return { ...row, item: yield* decodeTurnItemPayload(payload) };
+              }),
+            );
+            return {
+              thread: index.records.thread,
+              visibleTurnItems,
+              omittedItems: selected.omittedItems,
+            };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const getTimelinePage: ProjectionStoreV2Shape["getTimelinePage"] = (threadId, options) =>
       sql
         .withTransaction(
@@ -6598,6 +6694,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadSnapshot: readOnReader(getThreadSnapshot),
       getThreadSnapshotWindow: readOnReader(getThreadSnapshotWindow),
       getTimelinePage: readOnReader(getTimelinePage),
+      getSideChatSource: readOnReader(getSideChatSource),
       getThreadHistoryPage: readOnReader(getThreadHistoryPage),
       searchThread: readOnReader(searchThread),
       searchThreadStream,
@@ -7361,6 +7458,17 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               });
             }),
           ),
+        ),
+      getSideChatSource: (threadId) =>
+        service.getThreadProjection(threadId).pipe(
+          Effect.map((projection) => {
+            const selected = selectSideChatRows(projection.visibleTurnItems);
+            return {
+              thread: projection.thread,
+              visibleTurnItems: selected.rows,
+              omittedItems: selected.omittedItems,
+            };
+          }),
         ),
       getTimelinePage: (threadId, options) =>
         service.getThreadProjection(threadId).pipe(

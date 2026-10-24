@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   MessageId,
+  ContextTransferId,
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
@@ -98,6 +99,71 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       });
       assert.include(providerMessage, handoff.summaryText);
       assert.include(providerMessage, "User message:\nContinue from there.");
+    }),
+  );
+
+  it.effect("retains the frozen main snapshot and side-local history when changing providers", () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const initial = yield* service.prepareLegacyImport({
+        threadId: ThreadId.make("side"),
+        targetRunId: RunId.make("side-first"),
+        toProviderThreadId: ProviderThreadId.make("side-codex"),
+        toProviderInstanceId: ProviderInstanceId.make("codex"),
+        items: [
+          importedItem({
+            role: "assistant",
+            id: "snapshot",
+            text: "FROZEN_MAIN_PARTIAL",
+            ordinal: 1,
+          }),
+        ],
+        createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+      });
+      const snapshotHistory = {
+        ...initial.history!,
+        coverage: "Frozen snapshot of main; recover omitted items from main.",
+      };
+      const handoff = yield* service.prepareProviderHandoff({
+        threadId: ThreadId.make("side"),
+        targetRunId: RunId.make("side-next"),
+        transferId: ContextTransferId.make("side-switch"),
+        fromProviderThreadIds: [ProviderThreadId.make("side-codex")],
+        toProviderThreadId: ProviderThreadId.make("side-claude"),
+        fromProviderInstanceId: ProviderInstanceId.make("codex"),
+        toProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
+        coveredRunOrdinals: { from: 1, to: 1 },
+        strategy: "full_thread_summary",
+        initialHistory: snapshotHistory,
+        items: [
+          importedItem({
+            role: "user",
+            id: "side-question",
+            text: "SIDE_LOCAL_QUESTION",
+            ordinal: 1,
+          }),
+        ],
+        createdAt: DateTime.makeUnsafe("2026-01-03T00:00:00.000Z"),
+      });
+      assert.include(handoff.summaryText, "FROZEN_MAIN_PARTIAL");
+      assert.include(handoff.summaryText, "SIDE_LOCAL_QUESTION");
+      assert.include(handoff.history!.coverage, snapshotHistory.coverage);
+      assert.deepEqual(snapshotHistory.messages, initial.history!.messages);
+      const delta = yield* service.prepareProviderHandoff({
+        ...handoff,
+        transferId: handoff.transferId,
+        strategy: "delta_since_target_last_seen",
+        initialHistory: snapshotHistory,
+        fromProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
+        toProviderInstanceId: ProviderInstanceId.make("codex"),
+        items: [
+          importedItem({ role: "user", id: "new-question", text: "NEW_SIDE_QUESTION", ordinal: 2 }),
+        ],
+        createdAt: DateTime.makeUnsafe("2026-01-04T00:00:00.000Z"),
+      });
+      assert.include(delta.summaryText, "NEW_SIDE_QUESTION");
+      assert.notInclude(delta.summaryText, "FROZEN_MAIN_PARTIAL");
+      assert.notInclude(delta.history!.coverage, snapshotHistory.coverage);
     }),
   );
 

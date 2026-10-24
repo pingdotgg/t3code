@@ -538,3 +538,99 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     expect(stopped.code).toBe("parent_not_active");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("a side chat can discover its main thread and send requested context without bypassing mode limits", async () => {
+  const main = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Main",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [],
+    messages: [],
+    runtimeRequests: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const side = {
+    thread: {
+      ...baseThread({
+        threadId: childThreadId,
+        title: "Side",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      sideChatOf: parentThreadId,
+      lineage: { parentThreadId, rootThreadId: parentThreadId, relationshipToParent: "fork" },
+    },
+    runs: [makeRun({ id: childRunId, ordinal: 1, status: "running" })],
+    messages: [],
+    runtimeRequests: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const scope = { ...makeScope(), thread: { ...makeScope().thread!, threadId: childThreadId } };
+  const sends: Array<
+    Parameters<ThreadManagementService.ThreadManagementService["Service"]["sendToThread"]>[0]
+  > = [];
+  const projection = (id: ThreadId) => (id === childThreadId ? side : main);
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (id) => Effect.succeed(projection(id)),
+          getThreadShell: (id) =>
+            Effect.succeed(projection(id).thread as unknown as OrchestrationV2ThreadShell),
+          getProjectThreadRecords: ({ threadId }) => Effect.succeed(projection(threadId)),
+          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          sendToThread: (input) =>
+            Effect.sync(() => {
+              sends.push(input);
+              return {
+                run: { id: activeRunId, status: "running" },
+                delivery: "steered",
+              } as unknown as ThreadManagementService.ThreadManagementSendResult;
+            }),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const self = yield* service.readThread(scope, { threadId: childThreadId });
+    expect(self.thread.parentThreadId).toBe(parentThreadId);
+    const request = {
+      threadId: self.thread.parentThreadId!,
+      message: "Requested context: chosen approach and remaining work.",
+      mode: "auto" as const,
+      clientRequestId: "share-context-once",
+    };
+    const sent = yield* service.sendToThread(scope, request);
+    expect(sent.delivery).toBe("steered");
+    expect(sends[0]).toMatchObject({
+      threadId: parentThreadId,
+      senderThreadId: childThreadId,
+      text: request.message,
+      mode: "auto",
+    });
+    yield* service.sendToThread(scope, request);
+    expect(sends[1]!.commandId).toBe(sends[0]!.commandId);
+    expect(sends[1]!.messageId).toBe(sends[0]!.messageId);
+    Object.assign(side.thread, { runtimeMode: "approval-required" });
+    const denied = yield* service.sendToThread(scope, request).pipe(Effect.flip);
+    expect(denied.message).toContain("broader");
+    expect(sends).toHaveLength(2);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});

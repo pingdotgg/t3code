@@ -43,6 +43,8 @@ export type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.T
 
 export interface ContextHandoffServiceV2Shape {
   readonly prepareLegacyImport: (input: {
+    readonly snapshotHistory?: OrchestrationV2ContextHandoff["history"];
+    readonly transferId?: OrchestrationV2ContextHandoff["transferId"];
     readonly threadId: ThreadId;
     readonly targetRunId: RunId;
     readonly toProviderThreadId: ProviderThreadId;
@@ -79,6 +81,7 @@ export interface ContextHandoffServiceV2Shape {
     readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    readonly initialHistory?: OrchestrationV2ContextHandoff["history"];
     readonly strategy: Extract<
       OrchestrationV2ContextHandoff["strategy"],
       "delta_since_target_last_seen" | "full_thread_summary"
@@ -235,6 +238,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
 
     const prepareLegacyImport = Effect.fn("orchestrationV2.contextHandoff.prepareLegacyImport")(
       function* (input: {
+        readonly snapshotHistory?: OrchestrationV2ContextHandoff["history"];
+        readonly transferId?: OrchestrationV2ContextHandoff["transferId"];
         readonly threadId: ThreadId;
         readonly targetRunId: RunId;
         readonly toProviderThreadId: ProviderThreadId;
@@ -271,7 +276,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         });
         return {
           id: handoffId,
-          transferId: null,
+          transferId: input.transferId ?? null,
           threadId: input.threadId,
           targetRunId: input.targetRunId,
           fromProviderThreadIds: [],
@@ -280,8 +285,10 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           strategy: "manual_context",
           status: "ready",
           summaryMessageId: null,
-          summaryText: makeLegacyImportSummary(input.items),
-          history: {
+          summaryText: input.snapshotHistory
+            ? renderHistory(input.snapshotHistory.messages, input.snapshotHistory.coverage)
+            : makeLegacyImportSummary(input.items),
+          history: input.snapshotHistory ?? {
             messages: selected.messages,
             coverage,
             omittedItems: selected.omittedItems,
@@ -419,6 +426,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       readonly toProviderInstanceId: ProviderInstanceId;
       readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
       readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+      readonly initialHistory?: OrchestrationV2ContextHandoff["history"];
       readonly strategy: Extract<
         OrchestrationV2ContextHandoff["strategy"],
         "delta_since_target_last_seen" | "full_thread_summary"
@@ -445,20 +453,28 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const initialHistory =
+        input.strategy === "full_thread_summary" ? input.initialHistory : undefined;
+      const coverage = initialHistory
+        ? `${initialHistory.coverage}\n${handoffCoverage(input)}`
+        : handoffCoverage(input);
       const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
-          return message === null
-            ? []
-            : [
-                {
-                  ...message,
-                  ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
-                },
-              ];
-        }),
+        messages: [
+          ...(initialHistory?.messages ?? []),
+          ...input.items.flatMap((item) => {
+            const message = historicalMessage(item);
+            return message === null
+              ? []
+              : [
+                  {
+                    ...message,
+                    ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
+                  },
+                ];
+          }),
+        ],
         coverage,
+        omittedItems: initialHistory?.omittedItems ?? 0,
         budget: tokenCap,
       });
       return {

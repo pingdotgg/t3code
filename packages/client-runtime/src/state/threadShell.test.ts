@@ -53,6 +53,27 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("hides temporary side chats from navigation while keeping direct subscriptions and Keep available", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const main = { ...v2ThreadShell, id: ThreadId.make("main") };
+    const side = { ...v2ThreadShell, id: ThreadId.make("side"), sideChatOf: main.id };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [main, side] });
+    const dispose = registry.mount(threads.threadRefsAtom);
+    expect(registry.get(threads.threadRefsAtom).map((ref) => ref.threadId)).toEqual([main.id]);
+    expect(
+      registry.get(threads.environmentThreadIndexAtom(environmentId)).get(side.id)?.sideChatOf,
+    ).toBe(main.id);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [main, { ...side, sideChatOf: null }],
+    });
+    expect(registry.get(threads.threadRefsAtom).map((ref) => ref.threadId)).toEqual([
+      main.id,
+      side.id,
+    ]);
+    dispose();
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {
@@ -200,6 +221,17 @@ describe("v2 thread shell lists", () => {
     });
     expect(registry.get(parent)?.pendingSubagentRequest).toBe("approval");
     expect(isThreadWorking(registry.get(parent)!)).toBe(false);
+    const side = { ...v2ThreadShell, id: ThreadId.make("temporary-side"), sideChatOf: root.id };
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, child, { ...grandchild, pendingRuntimeRequest: approval }, side],
+    });
+    const shells = registry.get(threads.threadShellsAtom);
+    expect(shells.some((thread) => thread.id === side.id)).toBe(false);
+    expect(shells.find((thread) => thread.id === root.id)?.pendingSubagentRequest).toBe("approval");
+    expect(registry.get(threads.threadShellAtom({ environmentId, threadId: side.id }))?.id).toBe(
+      side.id,
+    );
     const asking = registry.get(inputs);
     expect(asking.map((thread) => thread.id)).toEqual([grandchild.id]);
     expect(childThreadInputsTitle(asking)).toBe("Subagent needs approval");

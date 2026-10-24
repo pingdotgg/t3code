@@ -45,6 +45,7 @@ export interface ChatShortcutsInput {
  */
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.target instanceof Element && event.target.closest("[data-side-chat]")) return;
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
       event.stopPropagation();
@@ -84,6 +85,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.stopPropagation();
   });
   const dismissFind = useEffectEvent((event: KeyboardEvent) => {
+    if (event.target instanceof Element && event.target.closest("[data-side-chat]")) return;
     if (
       event.key !== "Escape" ||
       !input.threadFindActive ||

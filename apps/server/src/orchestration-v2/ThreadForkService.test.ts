@@ -242,3 +242,34 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
     }
   }),
 );
+
+it.effect("native branching from a side chat creates a normal thread with upstream lineage", () =>
+  Effect.gen(function* () {
+    const service = yield* ThreadForkService.ThreadForkServiceV2;
+    const sourceRun = makeSourceRun("completed");
+    const sourceProjection = makeSourceProjection(sourceRun);
+    const result = yield* service.plan({
+      sourceProjection: {
+        ...sourceProjection,
+        thread: { ...sourceProjection.thread, sideChatOf: ThreadId.make("main-thread") },
+      },
+      sourceRun,
+      sourceProviderThread: undefined,
+      canonicalSourcePoint: { threadId: sourceThreadId, runId: sourceRunId },
+      transferId: ContextTransferId.make("native-fork-from-side"),
+      targetThreadId,
+      title: "Native branch",
+      createdBy: "user",
+      creationSource: "web",
+      createdAt: forkCreatedAt,
+    });
+    assert.isNull(result.targetThread.sideChatOf);
+    assert.equal(result.targetThread.branch, sourceProjection.thread.branch);
+    assert.equal(result.targetThread.worktreePath, sourceProjection.thread.worktreePath);
+    assert.equal(result.targetThread.lineage.parentThreadId, sourceThreadId);
+    assert.equal(result.targetThread.lineage.relationshipToParent, "fork");
+    assert.equal(result.transfer.type, "fork");
+    assert.deepEqual(result.transfer.sourcePoint, { threadId: sourceThreadId, runId: sourceRunId });
+    assert.isUndefined(result.transfer.snapshotHistory);
+  }).pipe(Effect.provide(ThreadForkService.layer)),
+);

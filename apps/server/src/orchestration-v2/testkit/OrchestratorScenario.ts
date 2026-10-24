@@ -130,6 +130,7 @@ export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<Orchestr
 
 function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
   switch (command.type) {
+    case "thread.side-chat.keep":
     case "thread.create":
     case "thread.stop":
     case "thread.archive":
@@ -183,6 +184,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "delegated_task.completion-delivery.dispose":
     case "thread.created.record":
       return [command.parentThreadId];
+    case "thread.side-chat.create":
     case "thread.fork":
     case "thread.merge_back":
       return [command.sourceThreadId, command.targetThreadId];

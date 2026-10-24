@@ -970,6 +970,34 @@ export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSessio
   return result;
 });
 
+export interface CreateSideChatInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+}
+
+export const createSideChat = Effect.fn("EnvironmentCommands.createSideChat")(function* (
+  input: CreateSideChatInput,
+) {
+  return yield* dispatch({
+    type: "thread.side-chat.create",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+  });
+});
+
+export const keepSideChat = Effect.fn("EnvironmentCommands.keepSideChat")(function* (
+  input: ThreadCommandInput,
+) {
+  return yield* dispatch({
+    type: "thread.side-chat.keep",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
 export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRun")(function* (
   input: ForkThreadFromRunInput,
 ) {

@@ -349,3 +349,24 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Side chats
+
+On web and desktop, open the right panel and choose **Side chat**. You can also
+press **Ctrl+Alt+S** or send `/side` followed by a question. Each temporary tab
+captures the main conversation when it opens, including partial streamed output.
+Later messages in the main thread do not update that snapshot.
+
+New side chats inherit the main thread's model and reasoning settings. Each has
+its own provider session, model/access controls, drafts and attachments. Messages
+sent during active work steer that side chat; idle sends start a new turn.
+
+Ask the side-chat agent to send a summary back to the main thread when you want
+to share context. Native thread tools enforce the agent's current permissions.
+Close a side tab to delete that temporary conversation; hiding the panel preserves
+its tabs. The panel initially uses half the available row and remembers resizing
+separately from file/browser panels. **Agents** shows the current thread's subagents.
+
+Side chats share the project's files; their independent sessions are not isolated
+worktrees. Remote use requires a server with SideChat support. Native mobile does
+not yet offer the SideChat panel.

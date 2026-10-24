@@ -32,6 +32,7 @@ interface ComposerPrimaryActionsProps {
   isRunning: boolean;
   canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
+  allowAlternateFollowUp?: boolean;
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -87,6 +88,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isRunning,
   canInterrupt,
   followUpBehavior = "steer",
+  allowAlternateFollowUp = true,
   canSteer = true,
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
@@ -120,7 +122,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
       canSteer,
-      alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
+      alternateModifier:
+        allowAlternateFollowUp && (shortcutModifiers.metaKey || shortcutModifiers.ctrlKey),
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
@@ -302,7 +305,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     submitStatus ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
-      : isRunning && !isEditingQueuedMessage && canSteer
+      : isRunning && !isEditingQueuedMessage && allowAlternateFollowUp && canSteer
         ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 

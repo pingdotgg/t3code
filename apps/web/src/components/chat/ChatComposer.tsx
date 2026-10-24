@@ -4,8 +4,10 @@ import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { buildMessageContext } from "../../lib/composerContextRecords";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
+import { parseSideChatPrompt } from "../../composer-logic";
 import {
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
@@ -490,6 +492,7 @@ export interface ChatComposerProps {
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
 
   onCompactContext: () => void;
+  onSideChat?: ((prompt?: string) => void) | undefined;
   onSend: (
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
@@ -619,6 +622,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onCompactContext,
     onSend,
     onResume,
+    onSideChat,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -1209,6 +1213,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadPullRequests,
     planModeUiEnabled,
     compactSlashCommandAvailable,
+    sideChatAvailable: Boolean(onSideChat),
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -1946,6 +1951,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "slash-command") {
+      if (item.command === "side" && onSideChat) {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          onSideChat();
+        }
+        return;
+      }
       if (item.command === "model") {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -2121,6 +2137,49 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
+      return;
+    }
+    const side = parseSideChatPrompt(
+      promptRef.current,
+      [],
+      activePendingProgress ? "pending-user-input" : "provider-turn",
+    );
+    if (side !== null && onSideChat) {
+      event?.preventDefault();
+      if (
+        composerFilesRef.current.length > 0 ||
+        composerImagesRef.current.length > 0 ||
+        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0 ||
+        pendingDraftWork.has(attachmentTargetKey)
+      ) {
+        toastManager.add({
+          type: "info",
+          title: "Open Side chat before attaching files.",
+          description: "Your draft is unchanged. Attach files in the side composer.",
+        });
+        return;
+      }
+      const prompt = promptRef.current;
+      const records = buildMessageContext({
+        terminalContexts: composerTerminalContexts,
+        reviewComments: composerReviewComments,
+        previewAnnotations: composerPreviewAnnotations,
+        threadContexts: composerThreadContexts,
+      })?.records;
+      if (
+        applyPromptReplacement(0, prompt.length, "", {
+          expectedText: prompt,
+          focusEditorAfterReplace: false,
+        })
+      ) {
+        setComposerDraftTerminalContexts(composerDraftTarget, []);
+        setComposerDraftThreadContexts(attachmentDraftTarget, []);
+        for (const comment of composerReviewComments)
+          removeComposerDraftReviewComment(composerDraftTarget, comment.id);
+        for (const annotation of composerPreviewAnnotations)
+          removeComposerDraftPreviewAnnotation(composerDraftTarget, annotation.id);
+        onSideChat(parseSideChatPrompt(prompt, records) ?? side);
+      }
       return;
     }
     // A send while a pasted image is still compressing would strand that image:

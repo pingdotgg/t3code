@@ -19,7 +19,9 @@ export function ThreadDetailsCard({
   handle,
   onPresentationChange,
   children,
+  popoverOnly = false,
 }: {
+  popoverOnly?: boolean | undefined;
   threadRef: ScopedThreadRef;
   anchor: RefObject<Element | null>;
   handle: ReturnType<typeof PopoverCreateHandle>;
@@ -27,23 +29,25 @@ export function ThreadDetailsCard({
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
   const canvas = useChatCanvas();
-  const preferredPlacement = canvas
-    ? resolveThreadDetailsCardLayout({
-        container: canvas.container,
-        lane: canvas.lane,
-        frame: null,
-        topInset: canvas.detailsCardTopInset,
-      })
-    : null;
-  const placement = canvas
-    ? resolveThreadDetailsCardLayout({
-        container: canvas.container,
-        lane: canvas.lane,
-        frame: canvas.layout.frame,
-        overlapsDetailsCard: canvas.layout.overlapsDetailsCard,
-        topInset: canvas.detailsCardTopInset,
-      })
-    : null;
+  const preferredPlacement =
+    canvas && !popoverOnly
+      ? resolveThreadDetailsCardLayout({
+          container: canvas.container,
+          lane: canvas.lane,
+          frame: null,
+          topInset: canvas.detailsCardTopInset,
+        })
+      : null;
+  const placement =
+    canvas && !popoverOnly
+      ? resolveThreadDetailsCardLayout({
+          container: canvas.container,
+          lane: canvas.lane,
+          frame: canvas.layout.frame,
+          overlapsDetailsCard: canvas.layout.overlapsDetailsCard,
+          topInset: canvas.detailsCardTopInset,
+        })
+      : null;
   const mode = placement ? "inline" : "popover";
   const topInset = canvas?.detailsCardTopInset ?? 0;
   const inlineOpen = useRightPanelStore((state) =>

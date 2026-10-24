@@ -135,4 +135,47 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
       assert.equal(retried._tag, "OrchestratorDispatchError");
     }),
   );
+  it.effect(
+    "side chats preserve source mode limits and can retry after the source is lowered",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const sourceThreadId = ThreadId.make("thread:limit-side-source");
+        const targetThreadId = ThreadId.make("thread:limit-side-target");
+        yield* createThread(sourceThreadId);
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("raise-side-source"),
+          threadId: sourceThreadId,
+          runtimeMode: "full-access",
+        });
+        const command = {
+          type: "thread.side-chat.create",
+          commandId: CommandId.make("limited-side-chat"),
+          sourceThreadId,
+          targetThreadId,
+          createdBy: "user",
+          creationSource: "web",
+        } as const;
+        const refused = yield* orchestrator
+          .dispatch(command)
+          .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+        assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
+        assert.isNull(yield* projections.getThreadShell(targetThreadId));
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("lower-side-source"),
+          threadId: sourceThreadId,
+          runtimeMode: "approval-required",
+        });
+        yield* orchestrator
+          .dispatch(command)
+          .pipe(Effect.provideService(DispatchModeLimit, supervised));
+        assert.equal(
+          (yield* projections.getThreadShell(targetThreadId))?.runtimeMode,
+          "approval-required",
+        );
+      }),
+  );
 });

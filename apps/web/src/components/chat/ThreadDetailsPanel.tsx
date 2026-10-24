@@ -27,7 +27,7 @@ const GitActionsControl = memo(BaseGitActionsControl);
 
 export interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
-  "anchor" | "handle" | "onPresentationChange"
+  "anchor" | "handle" | "onPresentationChange" | "popoverOnly"
 > {
   forceNewWorktree?: boolean;
   environmentId: EnvironmentId;
@@ -106,6 +106,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       anchor={props.anchor}
       handle={props.handle}
       onPresentationChange={props.onPresentationChange}
+      popoverOnly={props.popoverOnly}
     >
       {(density) => (
         <>

@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadShellSnapshot,
+  OrchestrationV2ThreadShell,
   NodeId,
   PlanId,
   ProjectId,
@@ -32,6 +33,9 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
+import { historicalMessage } from "@t3tools/provider-core/server/handoffBudget";
+import { sideChatSnapshot } from "./ThreadForkService.ts";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -183,6 +187,44 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
 
   return threadId;
 });
+
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)("%s shells preserve optional side-chat metadata across JSON", ([, layer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = yield* addRolledBackRecoveryCandidate("shell-side-chat");
+    const { thread } = yield* store.getThreadProjection(sourceId);
+    const codec = Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadShell));
+    for (const [index, sideChatOf] of [undefined, null, sourceId].entries()) {
+      const threadId = ThreadId.make(`shell-side-chat:${index}`);
+      yield* store.apply({
+        id: EventId.make(`event:shell-side-chat:${index}`),
+        type: "thread.created",
+        threadId,
+        occurredAt: thread.createdAt,
+        payload: {
+          ...thread,
+          id: threadId,
+          ...(sideChatOf === undefined ? {} : { sideChatOf }),
+        },
+      });
+      const projection = yield* store.getThreadProjection(threadId);
+      const listed = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId);
+      for (const shell of [
+        yield* store.getThreadShell(threadId),
+        listed,
+        ProjectionStore.threadShellFromProjection(projection),
+      ]) {
+        assert.isDefined(shell);
+        assert.strictEqual(shell!.sideChatOf, sideChatOf);
+        const encoded = yield* Schema.encodeEffect(codec)(shell!);
+        assert.deepEqual(yield* Schema.decodeUnknownEffect(codec)(encoded), shell);
+      }
+    }
+  }).pipe(Effect.provide(layer)),
+);
 
 it.effect.each([
   ["memory", ProjectionStore.layerMemory],
@@ -4923,6 +4965,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]) {
         assert.equal(shell?.visibleItemCount, targetAfterRollback.visibleTurnItems.length);
       }
+      const sideChatSource = yield* projectionStore.getSideChatSource(targetThreadId);
+      assert.deepEqual(
+        sideChatSource.visibleTurnItems,
+        targetAfterRollback.visibleTurnItems.filter(({ item }) => historicalMessage(item) !== null),
+      );
+      assert.equal(sideChatSource.omittedItems, 0);
       const forwardPage = yield* projectionStore.getTimelinePage(targetThreadId, {
         view: "activity",
         limit: 2,
@@ -5838,3 +5886,112 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)("%s SideChat reads keep priority context and count only omitted history", ([, layer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("sidechat-window");
+    const initial = yield* store.getThreadProjection(threadId);
+    const now = initial.updatedAt;
+    for (let index = 0; index < 320; index++) {
+      const common = {
+        id: TurnItemId.make(`sidechat-window:${index}`),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: index + 2,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      yield* store.apply({
+        id: EventId.make(`sidechat-window:${index}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload:
+          index < 2
+            ? {
+                ...common,
+                type: "user_message",
+                createdBy: "user",
+                creationSource: "web",
+                inputIntent: "turn_start",
+                messageId: MessageId.make(`sidechat-window:${index}`),
+                text: index === 0 ? "FIRST_REQUEST" : "LATEST_REQUEST",
+                attachments: [],
+              }
+            : index === 319
+              ? {
+                  ...common,
+                  type: "reasoning",
+                  text: "not imported",
+                  streaming: false,
+                }
+              : {
+                  ...common,
+                  type: "command_execution",
+                  input: `command ${index}`,
+                  output: "output",
+                },
+      });
+    }
+    const full = yield* store.getThreadProjection(threadId);
+    const source = yield* store.getSideChatSource(threadId);
+    const eligible = full.visibleTurnItems.filter(({ item }) => historicalMessage(item) !== null);
+    assert.isAtMost(source.visibleTurnItems.length, 256);
+    assert.isBelow(source.visibleTurnItems.length, eligible.length);
+    assert.includeMembers(
+      source.visibleTurnItems.map(({ item }) => item.id),
+      [
+        TurnItemId.make("sidechat-window:0"),
+        TurnItemId.make("sidechat-window:1"),
+        TurnItemId.make("sidechat-window:318"),
+      ],
+    );
+    assert.deepEqual(
+      source.visibleTurnItems,
+      full.visibleTurnItems.filter((row) =>
+        source.visibleTurnItems.some((selected) => selected.sourceItemId === row.sourceItemId),
+      ),
+    );
+    assert.equal(source.omittedItems, eligible.length - source.visibleTurnItems.length);
+    const snapshot = sideChatSnapshot(source);
+    assert.equal(snapshot.omittedItems, eligible.length - snapshot.messages.length);
+    assert.include(snapshot.coverage, `omitted ${snapshot.omittedItems} items`);
+    assert.include(snapshot.messages.map((message) => message.text).join("\n"), "FIRST_REQUEST");
+    assert.include(snapshot.messages.map((message) => message.text).join("\n"), "LATEST_REQUEST");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("SQL SideChat skips decoding invisible payloads", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = yield* addRolledBackRecoveryCandidate("sidechat-decode");
+    // Valid JSON with an invalid schema catches accidental full-projection reads.
+    yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}' WHERE thread_id = ${threadId}`;
+    // The index can inspect metadata, but unrelated payload categories must not load.
+    const { statements, tracer } = traceSqlStatements();
+    const source = yield* store.getSideChatSource(threadId).pipe(Effect.withTracer(tracer));
+    assert.isFalse(
+      statements.some((query) =>
+        /FROM orchestration_v2_projection_(messages|provider_sessions|provider_turns|context_handoffs)/u.test(
+          query,
+        ),
+      ),
+    );
+    assert.deepEqual(source.visibleTurnItems, []);
+    assert.equal(source.omittedItems, 0);
+    yield* store.getThreadProjection(threadId).pipe(Effect.flip);
+  }).pipe(Effect.provide(layerTest)),
+);

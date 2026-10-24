@@ -26,6 +26,8 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  Bot,
+  MessageCirclePlus,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -124,6 +126,8 @@ export interface RightPanelTabsProps {
   onCloseAllSurfaces: () => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
+  onAddSideChat?: (() => void) | undefined;
+  onAddAgents?: (() => void) | undefined;
   onAddBrowser: () => void;
   /**
    * Separate from `onAddBrowser` on purpose: that one is passed directly as a
@@ -163,6 +167,8 @@ function shouldOpenDefaultBrowserProfileFromMenuClick(pointerType: string | unde
 }
 
 const SURFACE_DISABLED_REASONS = {
+  sideChat: "Side chats are available from a saved thread.",
+  agents: "Agents are available from a saved thread.",
   browser: "Browser previews are only available in the T3 Code desktop app.",
   terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
@@ -187,6 +193,8 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   .join(",");
 
 const SURFACE_UNAVAILABLE_HINTS = {
+  sideChat: "Available from a saved thread.",
+  agents: "Available from a saved thread.",
   browser: "Only available in the desktop app.",
   terminal: "Available when a project is open.",
   files: "Available when a project is open.",
@@ -306,6 +314,8 @@ function SurfaceMenuItem(props: {
 }
 
 function RightPanelEmptyState(props: {
+  onAddSideChat?: (() => void) | undefined;
+  onAddAgents?: (() => void) | undefined;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -326,6 +336,22 @@ function RightPanelEmptyState(props: {
   const [highlight, setHighlight] = useState(-1);
 
   const actions = [
+    {
+      label: "Side chat",
+      icon: MessageCirclePlus,
+      shortcut: "S",
+      available: props.onAddSideChat !== undefined,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.sideChat,
+      onClick: () => props.onAddSideChat?.(),
+    },
+    {
+      label: "Agents",
+      icon: Bot,
+      shortcut: "A",
+      available: props.onAddAgents !== undefined,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
+      onClick: () => props.onAddAgents?.(),
+    },
     {
       label: "Browser",
       icon: Globe2,
@@ -548,6 +574,10 @@ function surfaceTitle(
   terminalLabelsById: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
+    case "side-chat":
+      return "Side chat";
+    case "agents":
+      return "Agents";
     case "diff":
       return "Diff";
     case "files":
@@ -628,6 +658,10 @@ function SurfaceIcon({
   pullRequestStatusSeed: PullRequestTabStatusSeed | undefined;
 }) {
   switch (surface.kind) {
+    case "side-chat":
+      return <MessageCirclePlus className="size-3 shrink-0" />;
+    case "agents":
+      return <Bot className="size-3 shrink-0" />;
     case "preview":
       return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
     case "diff":
@@ -1028,6 +1062,22 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   };
 
   const addSurfaceActions = [
+    {
+      label: "Side chat",
+      icon: MessageCirclePlus,
+      shortcut: "S",
+      available: props.onAddSideChat !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.sideChat,
+      onClick: () => props.onAddSideChat?.(),
+    },
+    {
+      label: "Agents",
+      icon: Bot,
+      shortcut: "A",
+      available: props.onAddAgents !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.agents,
+      onClick: () => props.onAddAgents?.(),
+    },
     {
       label: "Browser",
       icon: Globe2,
@@ -1448,6 +1498,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            onAddSideChat={props.onAddSideChat}
+            onAddAgents={props.onAddAgents}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}

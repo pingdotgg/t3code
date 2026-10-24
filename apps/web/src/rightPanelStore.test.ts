@@ -631,45 +631,44 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it.each([
-    { kind: "plan", isOpen: true },
-    { kind: "agents", isOpen: true },
-    { kind: "agents", isOpen: false },
-  ])("drops $kind with isOpen=$isOpen and falls back", ({ kind, isOpen }) => {
-    expect(
-      migratePersistedRightPanelState({
+  it.each([{ kind: "plan", isOpen: true }])(
+    "drops $kind with isOpen=$isOpen and falls back",
+    ({ kind, isOpen }) => {
+      expect(
+        migratePersistedRightPanelState({
+          byThreadKey: {
+            "env-1:thread-A": {
+              isOpen,
+              activeSurfaceId: kind,
+              surfaces: [{ id: kind, kind }],
+            },
+            "env-1:thread-B": {
+              isOpen,
+              activeSurfaceId: kind,
+              surfaces: [
+                { id: kind, kind },
+                { id: "diff", kind: "diff" },
+              ],
+            },
+          },
+        }),
+      ).toEqual({
         byThreadKey: {
           "env-1:thread-A": {
-            isOpen,
-            activeSurfaceId: kind,
-            surfaces: [{ id: kind, kind }],
+            isOpen: false,
+            activeSurfaceId: null,
+            surfaces: [],
           },
           "env-1:thread-B": {
             isOpen,
-            activeSurfaceId: kind,
-            surfaces: [
-              { id: kind, kind },
-              { id: "diff", kind: "diff" },
-            ],
+            activeSurfaceId: "diff",
+            surfaces: [{ id: "diff", kind: "diff" }],
           },
         },
-      }),
-    ).toEqual({
-      byThreadKey: {
-        "env-1:thread-A": {
-          isOpen: false,
-          activeSurfaceId: null,
-          surfaces: [],
-        },
-        "env-1:thread-B": {
-          isOpen,
-          activeSurfaceId: "diff",
-          surfaces: [{ id: "diff", kind: "diff" }],
-        },
-      },
-      threadPanelVisibilityByThreadKey: {},
-    });
-  });
+        threadPanelVisibilityByThreadKey: {},
+      });
+    },
+  );
 
   it("persists inline preference without restoring an open popover", () => {
     expect(
@@ -1204,5 +1203,76 @@ describe("rightPanelStore", () => {
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+});
+
+describe("thread tool surfaces", () => {
+  it("preserves reordered tools and native surfaces when reopening the panel", () => {
+    const store = useRightPanelStore.getState();
+    store.showThreadTools(refA);
+    store.openBrowser(refA, "tab-a");
+    store.openTerminal(refA, "term-1");
+    store.open(refA, "files");
+    store.open(refA, "diff");
+    store.openPullRequest(
+      refA,
+      pullRequestSurface({
+        projectId: "project-a",
+        repository: "pingdotgg/t3code",
+        number: 42,
+      }),
+    );
+    store.open(refA, "device");
+    store.moveSurface(refA, "agents", 4);
+    store.moveSurface(refA, "side-chat", 6);
+    const before = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    store.close(refA);
+    store.showThreadTools(refA);
+    store.reconcileBrowserSurfaces(refA, ["tab-a"]);
+    const after = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(after.surfaces).toEqual(before.surfaces);
+    expect(after.activeSurfaceId).toBe(before.activeSurfaceId);
+    expect(after.isOpen).toBe(true);
+    store.closeSurface(refA, "side-chat");
+    const remaining = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    store.open(refA, "side-chat");
+    store.open(refA, "side-chat");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([...remaining.surfaces, { id: "side-chat", kind: "side-chat" }]);
+  });
+
+  it("opens Side chat and Agents together without duplicating or dropping existing surfaces", () => {
+    const store = useRightPanelStore.getState();
+    store.showThreadTools(refA);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "side-chat",
+    );
+    store.openBrowser(refA, "existing-browser");
+    store.close(refA);
+    store.showThreadTools(refA);
+    store.showThreadTools(refA);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "side-chat",
+      "agents",
+      "browser:existing-browser",
+    ]);
+    expect(state.activeSurfaceId).toBe("browser:existing-browser");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
+    store.open(refA, "agents");
+    store.close(refA);
+    store.showThreadTools(refA);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("agents");
+  });
+
+  it("retains tool surfaces across persisted-state migration", () => {
+    useRightPanelStore.getState().showThreadTools(refA);
+    const migrated = migratePersistedRightPanelState(useRightPanelStore.getState());
+    expect(
+      selectThreadRightPanelState(migrated.byThreadKey, refA).surfaces.map((s) => s.kind),
+    ).toEqual(["side-chat", "agents"]);
   });
 });
