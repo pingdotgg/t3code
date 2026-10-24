@@ -588,6 +588,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
     description: "Prompt executed on every scheduled run.",
   }),
   schedule: OrchestratorMcpSchedule,
+  target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
   enabled: Schema.optional(
     Schema.Boolean.annotate({ description: "Whether the schedule starts enabled; defaults true." }),
@@ -647,6 +648,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),
   schedule: Schema.optional(OrchestratorMcpSchedule),
+  target: Schema.optional(OrchestratorMcpTarget),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
 });
