@@ -221,10 +221,15 @@ it.effect.each([{}, { includeImage: false }])(
 );
 
 it.effect.each([
-  { mode: "default", input: {}, images: false },
-  { mode: "explicit image", input: { includeImage: true }, images: true },
-  { mode: "text only", input: { includeImage: false }, images: false },
-])("returns fresh $mode snapshots on repeated MCP calls", ({ input, images }) =>
+  { mode: "default", input: {}, images: false, hostInput: { screenshot: false } },
+  { mode: "explicit image", input: { includeImage: true }, images: true, hostInput: {} },
+  {
+    mode: "text only",
+    input: { includeImage: false },
+    images: false,
+    hostInput: { screenshot: false },
+  },
+])("returns fresh $mode snapshots on repeated MCP calls", ({ input, images, hostInput }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
@@ -255,6 +260,7 @@ it.effect.each([
       };
       const screenshot = { mimeType: "image/png", width: 1, height: 1 };
       let requests = 0;
+      const hostInputs: Array<unknown> = [];
       const events = yield* broker.connect({ clientId: "mcp-image-option-client", environmentId });
       yield* Stream.runForEach(events, (event) => {
         if (event.type === "connected") return Deferred.succeed(connected, undefined);
@@ -264,16 +270,19 @@ it.effect.each([
           tabId: alternateTabId,
           threadId,
         });
-        expect(event.request.input).toEqual({});
+        hostInputs.push(event.request.input);
         return broker.respond({
           clientId: "mcp-image-option-client",
           connectionId: event.connectionId,
           requestId: event.request.requestId,
           ok: true,
+          // Like the server browser, the host captures only when it is asked to.
           result: {
             ...page,
             title: `Snapshot ${requests}`,
-            screenshot: { ...screenshot, data: png },
+            ...((event.request.input as { screenshot?: boolean }).screenshot === false
+              ? {}
+              : { screenshot: { ...screenshot, data: png } }),
           },
         });
       }).pipe(Effect.forkScoped);
@@ -289,7 +298,7 @@ it.effect.each([
             Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
             Effect.provideService(McpSchema.McpServerClient, client),
           );
-        const metadata = { ...page, title: `Snapshot ${call}`, screenshot };
+        const metadata = { ...page, title: `Snapshot ${call}`, ...(images ? { screenshot } : {}) };
         const { accessibilityTree: _tree, ...boundedMetadata } = metadata;
         expect(snapshot.isError).toBe(false);
         expect(snapshot.structuredContent).toEqual({
@@ -328,9 +337,12 @@ it.effect.each([
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(nextDefault.content.map((content) => content.type)).toEqual(["text", "text", "text"]);
-      expect(nextDefault.structuredContent).toMatchObject({ title: "Snapshot 7", screenshot });
+      expect(nextDefault.structuredContent).toMatchObject({ title: "Snapshot 7" });
+      expect(nextDefault.structuredContent).not.toHaveProperty("screenshot");
       expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
       expect(requests).toBe(7);
+      // Only a call that shows or saves the image asks the host to capture one.
+      expect(hostInputs).toEqual([...Array(6).fill(hostInput), { screenshot: false }]);
     }),
   ).pipe(Effect.provide(layerTest)),
 );

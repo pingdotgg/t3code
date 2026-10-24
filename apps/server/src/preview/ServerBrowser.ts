@@ -1973,12 +1973,14 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
+        const screenshot = (input as { readonly screenshot?: boolean }).screenshot !== false;
+        const take = () =>
           ServerBrowserPage.snapshot({
             ...tab,
             renderScale: tab.desktop ? "display" : RENDER_SCALE,
-          }),
-        );
+            screenshot,
+          });
+        return screenshot ? withScreencastsPaused(tab, take) : take();
       }
       case "click": {
         const clickInput = input as PreviewAutomationClickInput;

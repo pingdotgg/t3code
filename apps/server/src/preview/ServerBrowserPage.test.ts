@@ -214,6 +214,32 @@ describe("server browser element refs", () => {
     expect(tree).not.toContain("PAYLOAD");
   });
 
+  it("reads a page that draws no frames when no screenshot is wanted", async () => {
+    await page.setContent("<button>continue</button>");
+    const methods: Array<string> = [];
+    // A desktop tab parked offscreen draws no frames, so Chromium never answers its screenshot.
+    const drawsNothing = {
+      send: (...[method, params]: Parameters<CDPSession["send"]>) => {
+        methods.push(method);
+        return method === "Page.captureScreenshot"
+          ? new Promise<never>(() => {})
+          : cdp.send(method, params);
+      },
+    } as CDPSession;
+    const result = await ServerBrowserPage.snapshot({
+      page,
+      cdp: drawsNothing,
+      renderScale: 1,
+      screenshot: false,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+    buttonLocator(result.accessibilityTree, "continue");
+    expect(result.screenshot).toBeUndefined();
+    expect(methods).not.toContain("Page.captureScreenshot");
+  });
+
   it("rejects refs from another tab", async () => {
     await page.setContent("<button>same label</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "same label");

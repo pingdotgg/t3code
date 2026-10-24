@@ -202,8 +202,14 @@ const handlers = {
     invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
   ),
   preview_snapshot: McpToolAccess.readsAsCaller((input) => {
-    const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
-    return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
+    const { includeImage, save, ...operationInput } = input ?? {};
+    // A hidden desktop tab draws no frames, so a screenshot nobody reads could only stall.
+    return invokeTargeted<PreviewAutomationSnapshot>(
+      "snapshot",
+      includeImage === true || save === true
+        ? operationInput
+        : { ...operationInput, screenshot: false },
+    );
   }),
   preview_click: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<object>("click", input, input.timeoutMs),
