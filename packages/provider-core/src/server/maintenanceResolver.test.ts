@@ -302,6 +302,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
             ],
             lockKey: `npm-global:${normalizeCommandPath(tempDir)}`,
           },
+          lookupLatestVersion: expect.anything(),
         });
       }),
   );
@@ -705,6 +706,83 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         );
         expect(provider.versionAdvisory).toMatchObject({
           status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: fixture.expected,
+        });
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.each([
+    {
+      case: "the configured registry's release",
+      stdout: '"1.1.0"\n',
+      exitCode: 0,
+      expected: "1.1.0",
+    },
+    {
+      case: "npm 12's array-wrapped release",
+      stdout: '[\n  "1.1.0"\n]\n',
+      exitCode: 0,
+      expected: "1.1.0",
+    },
+    {
+      case: "the npm fallback when the npm probe fails",
+      stdout: "",
+      exitCode: 1,
+      expected: "9.9.9",
+    },
+  ])(
+    "advertises $case for npm-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-latest");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const link = linkIntoPackage(tempDir, "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        const probes: Array<ReadonlyArray<string>> = [];
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: link, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (_command, args) => {
+                probes.push(args);
+                return fixture.stdout;
+              },
+              () => fixture.exitCode,
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm version is already cached")),
+          ),
+        );
+        // The update installs into this prefix, so the lookup reads the same global npmrc.
+        expect(probes).toEqual([
+          ["view", "--prefix", tempDir, "--json", "@example/package-tool@latest", "version"],
+        ]);
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "behind_latest",
           currentVersion: "1.0.0",
           latestVersion: fixture.expected,
         });

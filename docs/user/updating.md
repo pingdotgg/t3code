@@ -116,7 +116,9 @@ directory and pair with the running server.
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
 at once. Hover it to see which providers it will update. Providers that only
-offer a manual update command are not included.
+offer a manual update command are not included. Providers installed with npm or
+pnpm are checked against the registry in your npm or pnpm configuration, so a
+company registry or mirror works.
 
 After a successful provider CLI update, T3 Code refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected
