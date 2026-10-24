@@ -15,7 +15,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 import { runMigrations } from "./Migrations.ts";
-import { initializeV2Database } from "./initializeV2Database.ts";
+import { initializeV2Database, replaceStaleV2Database } from "./initializeV2Database.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -115,6 +115,176 @@ it.effect(
       ),
     );
   },
+);
+
+const makeStaleCopy = Effect.fn(function* (name: string) {
+  const directory = yield* Effect.acquireRelease(
+    Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), `t3-v1-v2-${name}-`))),
+    (directory) => Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+  );
+  const sourcePath = NodePath.join(directory, "state.sqlite");
+  const destinationPath = NodePath.join(directory, "statev2.sqlite");
+  yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations({ toMigrationInclusive: 52 });
+    yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+    VALUES ('project-a', 'Project A', '/tmp/project-a', '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
+    yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+    VALUES ('thread-a', 'project-a', 'First V1 thread', '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
+    yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
+    VALUES ('session-a', 'phone', '[]', 'browser-session-cookie', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z')`;
+    yield* sql`INSERT INTO auth_pairing_links (id, credential, method, scopes, subject, created_at, expires_at)
+    VALUES ('link-a', 'credential-a', 'desktop-bootstrap', '[]', 'phone', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z')`;
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: sourcePath })));
+
+  const services = ServerConfig.layerTest(directory, directory).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  );
+  const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(services));
+  const layerDatabase = SqlitePersistence.layerConfig.pipe(
+    Layer.provide(ServerConfig.layer({ ...config, dbPath: destinationPath })),
+  );
+  const layerStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
+    Layer.provideMerge(layerDatabase),
+  );
+  const layerSink = EventSink.layer.pipe(Layer.provide(layerStores));
+  const layerImporter = LegacyV1ThreadImporter.layer.pipe(
+    Layer.provideMerge(Layer.mergeAll(layerStores, layerSink)),
+  );
+  const startV2 = Effect.gen(function* () {
+    yield* replaceStaleV2Database(destinationPath);
+    return yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).reconcileShells;
+      const rows =
+        yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`;
+      return rows.map((row) => row.thread_id);
+    }).pipe(Effect.provide(layerImporter));
+  }).pipe(Effect.provide(services));
+  const inV2 = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+    effect.pipe(Effect.provide(layerDatabase.pipe(Layer.provide(services))));
+
+  assert.deepEqual(yield* startV2, ["thread-a"]);
+  return { directory, startV2, inV2 };
+});
+
+const addNewerV1Thread = (directory: string) =>
+  Effect.sync(() => {
+    const v1 = new NodeSqlite.DatabaseSync(NodePath.join(directory, "state.sqlite"));
+    try {
+      v1.exec(`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES ('project-b', 'Project B', '/tmp/project-b', '[]', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
+        INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+        VALUES ('thread-b', 'project-b', 'Newer V1 thread', '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z');`);
+    } finally {
+      v1.close();
+    }
+  });
+
+const backups = (directory: string) =>
+  NodeFS.readdirSync(directory)
+    .filter((name) => name.includes(".stale"))
+    .toSorted();
+
+it.effect("re-seeds a V2 store without V2 work when V1 gained threads after the copy", () =>
+  Effect.gen(function* () {
+    const { directory, startV2, inV2 } = yield* makeStaleCopy("stale");
+    // Opening a client records visits and the server settles threads on its own within a
+    // minute; neither is V2 work worth keeping a stale copy for.
+    yield* inV2(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`CREATE TEMP TABLE server_events AS
+            SELECT * FROM orchestration_events WHERE application_event_version = 2 LIMIT 1`;
+        yield* sql`INSERT INTO server_events SELECT * FROM server_events`;
+        yield* sql`UPDATE server_events SET
+            sequence = NULL,
+            event_id = 'event-' || rowid,
+            stream_version = stream_version + 1000 + rowid,
+            event_type = CASE rowid WHEN 1 THEN 'thread.visited' ELSE 'thread.settled' END,
+            command_id = CASE rowid WHEN 1 THEN 'client:visit' ELSE 'server:auto-settle:thread-a' END`;
+        yield* sql`INSERT INTO orchestration_events SELECT * FROM server_events`;
+      }),
+    );
+    NodeFS.writeFileSync(NodePath.join(directory, "statev2.sqlite.stale"), "older backup");
+    NodeFS.writeFileSync(NodePath.join(directory, "statev2.sqlite.stale-wal"), "older backup");
+    yield* addNewerV1Thread(directory);
+
+    assert.deepEqual(yield* startV2, ["thread-a", "thread-b"]);
+    assert.deepEqual(yield* startV2, ["thread-a", "thread-b"]);
+    // The checkpoint leaves no sidecars to move, and the older backup's are gone.
+    assert.deepEqual(backups(directory), ["statev2.sqlite.stale"]);
+    const backup = new NodeSqlite.DatabaseSync(NodePath.join(directory, "statev2.sqlite.stale"), {
+      readOnly: true,
+    });
+    try {
+      assert.equal(
+        backup.prepare("SELECT count(*) AS count FROM projection_threads").get()?.count,
+        1,
+      );
+    } finally {
+      backup.close();
+    }
+  }).pipe(Effect.scoped),
+);
+
+it.effect("re-seeds a V2 store without V2 work when V1 only updated an existing thread", () =>
+  Effect.gen(function* () {
+    const { directory, startV2, inV2 } = yield* makeStaleCopy("updated");
+    const v1 = new NodeSqlite.DatabaseSync(NodePath.join(directory, "state.sqlite"));
+    try {
+      v1.exec(
+        `UPDATE projection_threads SET title = 'Renamed in V1', updated_at = '2026-01-02T00:00:00.000Z'`,
+      );
+    } finally {
+      v1.close();
+    }
+
+    assert.deepEqual(yield* startV2, ["thread-a"]);
+    assert.include(backups(directory), "statev2.sqlite.stale");
+    const rows = yield* inV2(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* sql`SELECT title FROM projection_threads`;
+      }),
+    );
+    assert.deepEqual(
+      rows.map((row) => row.title),
+      ["Renamed in V1"],
+    );
+  }).pipe(Effect.scoped),
+);
+
+const v2Work = {
+  "a V2 thread without messages": `INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+    VALUES ('v2-thread', 'project-a', 'V2 thread', 'codex', 'full-access', 'default', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z', '{}')`,
+  "V2 messages": `INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+    VALUES ('v2-message', 'thread-a', 'user', 0, '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z', '{}')`,
+  "a V2 scheduled task": `INSERT INTO scheduled_tasks (task_id, title, prompt, enabled, schedule_json, project_id, workspace_strategy_json, model_selection_json, runtime_mode, interaction_mode, created_by, creation_source, created_at, updated_at, last_run_status, run_count)
+    VALUES ('v2-task', 'Daily', 'Check CI', 1, '{}', 'project-a', '{}', '{}', 'full-access', 'default', 'user', 'ui', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z', 'never', 0)`,
+  "a session revoked in V2": `UPDATE auth_sessions SET revoked_at = '2026-01-03T00:00:00.000Z' WHERE session_id = 'session-a'`,
+  "a pairing link consumed in V2": `UPDATE auth_pairing_links SET consumed_at = '2026-01-03T00:00:00.000Z' WHERE id = 'link-a'`,
+  "a V2 project": `INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+    VALUES ('v2-project', 'V2 project', '/tmp/v2-project', '[]', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z')`,
+};
+
+it.effect.each(Object.entries(v2Work))(
+  "keeps a V2 store with %s even when V1 gained threads after the copy",
+  ([, statement]) =>
+    Effect.gen(function* () {
+      const { directory, startV2, inV2 } = yield* makeStaleCopy("kept");
+      yield* inV2(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql.unsafe(statement);
+        }),
+      );
+      yield* addNewerV1Thread(directory);
+
+      const threads = yield* startV2;
+      assert.notInclude(threads, "thread-b");
+      assert.deepEqual(backups(directory), []);
+    }).pipe(Effect.scoped),
 );
 
 it.effect("includes committed WAL data and does not publish a failed snapshot", () => {
