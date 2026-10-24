@@ -399,6 +399,22 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   });
 }
 
+/** Physical duplicates must resolve through the group's winning saved metadata. */
+export function resolveProjectGroup<TProject extends EnvironmentProject>(
+  project: EnvironmentProject,
+  projects: ReadonlyArray<TProject>,
+  settings: ProjectGroupingSettings,
+): ProjectGroup<TProject> | undefined {
+  const groups = buildProjectGroups({ projects, settings });
+  const physicalKey = derivePhysicalProjectKey(project);
+  return (
+    groups.find((group) =>
+      group.members.some((member) => member.physicalProjectKey === physicalKey),
+    ) ??
+    groups.find((group) => group.key === deriveLogicalProjectKeyFromSettings(project, settings))
+  );
+}
+
 export function sortProjectsByGroupOrder<
   TProject extends { readonly id: string; readonly environmentId: string },
 >(
