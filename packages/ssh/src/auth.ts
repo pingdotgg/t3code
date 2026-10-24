@@ -32,6 +32,8 @@ export interface SshAuthOptions {
   readonly authSecret?: string | null;
   readonly batchMode?: "yes" | "no";
   readonly interactiveAuth?: boolean;
+  /** Receives the approval link while Tailscale SSH holds the session for a check. */
+  readonly onTailscaleCheck?: (url: string) => Effect.Effect<void>;
 }
 
 export interface SshPasswordPromptShape {
@@ -39,6 +41,8 @@ export interface SshPasswordPromptShape {
   readonly request: (
     request: SshPasswordRequest,
   ) => Effect.Effect<string | null, SshPasswordPromptError>;
+  /** Shows an approval link that SSH printed while it waits for the user. */
+  readonly openApprovalUrl: (url: string) => Effect.Effect<void>;
 }
 
 export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPasswordPromptShape>()(
@@ -49,6 +53,7 @@ export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPas
     SshPasswordPrompt.of({
       isAvailable: false,
       request: () => Effect.succeed(null),
+      openApprovalUrl: () => Effect.void,
     }),
   );
 }

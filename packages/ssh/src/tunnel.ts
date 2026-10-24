@@ -895,6 +895,9 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+      ...(input?.onTailscaleCheck === undefined
+        ? {}
+        : { onTailscaleCheck: input.onTailscaleCheck }),
     });
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
@@ -954,6 +957,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+    ...(input?.onTailscaleCheck === undefined ? {} : { onTailscaleCheck: input.onTailscaleCheck }),
   });
   if (!getLastNonEmptyOutputLine(result.stdout)) {
     return yield* new SshPairingError({
@@ -1359,6 +1363,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
+  // Approval links for Tailscale SSH sessions that are waiting on the user.
+  const tailscaleChecks = new Map<string, string>();
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
@@ -1484,21 +1490,34 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     input: SshAuthAttemptInput<T>,
   ): Effect.fn.Return<T, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     const promptService = yield* SshAuth.SshPasswordPrompt;
+    const onTailscaleCheck = Effect.fn("ssh/tunnel.runWithSshAuthAttempt.onTailscaleCheck")(
+      function* (url: string) {
+        tailscaleChecks.set(input.key, url);
+        yield* Effect.logInfo("ssh.auth.tailscaleCheck", {
+          ...sshTargetLogFields(input.target),
+          key: input.key,
+        });
+        yield* promptService.openApprovalUrl(url);
+      },
+    );
     const authOptions =
       input.authSecret === null
         ? {
             batchMode: promptService.isAvailable ? ("yes" as const) : ("no" as const),
             interactiveAuth: !promptService.isAvailable,
+            onTailscaleCheck,
           }
         : {
             authSecret: input.authSecret,
             batchMode: "no" as const,
             interactiveAuth: true,
+            onTailscaleCheck,
           };
 
-    return yield* input
-      .operation(authOptions)
-      .pipe(Effect.catch((error) => handleSshAuthFailure({ ...input, error })));
+    return yield* input.operation(authOptions).pipe(
+      Effect.ensuring(Effect.sync(() => tailscaleChecks.delete(input.key))),
+      Effect.catch((error) => handleSshAuthFailure({ ...input, error })),
+    );
   });
 
   const runWithSshAuth = Effect.fn("ssh/tunnel.runWithSshAuth")(function* <T>(
@@ -1703,6 +1722,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(resolvedTarget),
       key,
     });
+    // The held session outlasts a client's setup timeout, so a retry gets the
+    // approval link now instead of queuing behind that session.
+    const tailscaleCheck = tailscaleChecks.get(key);
+    if (tailscaleCheck !== undefined) {
+      return yield* new SshCommandError({
+        command: ["ssh"],
+        exitCode: null,
+        stderr: "",
+        message: `Tailscale SSH needs you to approve the connection to ${resolvedTarget.alias}: ${tailscaleCheck}`,
+      });
+    }
     const runner =
       options.resolveCliRunner === undefined ? undefined : yield* options.resolveCliRunner;
     yield* Effect.logDebug("ssh.environment.runner.resolved", {

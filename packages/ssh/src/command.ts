@@ -135,6 +135,31 @@ const collectProcessOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.E
     ),
   );
 
+// Tailscale SSH "check" mode prints this link and holds the session open until
+// someone approves it, so stderr must be read while ssh is still running.
+const TAILSCALE_CHECK_URL_PATTERN =
+  /To authenticate, visit: (https:\/\/login\.tailscale\.com\/a\/[\w-]+)\r?\n/u;
+
+const collectSshStderr = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+  onTailscaleCheck: ((url: string) => Effect.Effect<void>) | undefined,
+): Effect.Effect<string, E> =>
+  onTailscaleCheck === undefined
+    ? collectProcessOutput(stream)
+    : stream.pipe(
+        Stream.decodeText(),
+        Stream.runFoldEffect(
+          () => "",
+          (acc, chunk) => {
+            const output = acc + chunk;
+            const url = TAILSCALE_CHECK_URL_PATTERN.exec(output)?.[1];
+            return url === undefined || TAILSCALE_CHECK_URL_PATTERN.test(acc)
+              ? Effect.succeed(output)
+              : onTailscaleCheck(url).pipe(Effect.as(output));
+          },
+        ),
+      );
+
 function redactSshErrorOutput(output: string, keepTail = false): string {
   const redacted = output.replace(
     /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+(")/giu,
@@ -246,7 +271,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
       collectProcessOutput(child.stdout),
-      collectProcessOutput(child.stderr),
+      collectSshStderr(child.stderr, input.onTailscaleCheck),
       child.exitCode.pipe(Effect.map(Number)),
     ],
     { concurrency: "unbounded" },

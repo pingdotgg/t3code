@@ -156,6 +156,70 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it.effect("opens the Tailscale SSH check link and hands it to retries while approval waits", () =>
+    Effect.gen(function* () {
+      const url = "https://login.tailscale.com/a/1a2b3c4d5e6f";
+      const stderrRead = yield* Deferred.make<void>();
+      const approved = yield* Deferred.make<void>();
+      const opened: Array<string> = [];
+      let launches = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-N")) return makeRunningProcess(() => {});
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            launches += 1;
+            // Tailscale SSH prints the link, then holds the session until it is approved.
+            return {
+              ...makeSuccessfulProcess('{"remotePort":3773}\n'),
+              stderr: Stream.make(
+                new TextEncoder().encode(
+                  `# Tailscale SSH requires an additional check.\n# To authenticate, visit: ${url}\n`,
+                ),
+              ).pipe(Stream.ensuring(Deferred.succeed(stderrRead, undefined))),
+              exitCode: Deferred.await(approved).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            };
+          }
+          return makeSuccessfulProcess("");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        Layer.succeed(
+          SshAuth.SshPasswordPrompt,
+          SshAuth.SshPasswordPrompt.of({
+            isAvailable: true,
+            request: () => Effect.die("unexpected password prompt"),
+            openApprovalUrl: (link) => Effect.sync(() => opened.push(link)),
+          }),
+        ),
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+        const first = yield* Effect.forkChild(manager.ensureEnvironment(target));
+        yield* Deferred.await(stderrRead);
+        assert.deepEqual(opened, [url]);
+
+        const retry = yield* Effect.result(manager.ensureEnvironment(target));
+        assert.isTrue(Result.isFailure(retry));
+        if (Result.isFailure(retry)) {
+          assert.include(retry.failure.message, url);
+        }
+
+        yield* Deferred.succeed(approved, undefined);
+        yield* Fiber.join(first);
+        yield* manager.ensureEnvironment(target);
+        assert.equal(launches, 1);
+        assert.deepEqual(opened, [url]);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
       const diagnostic = "Connection refused: café";

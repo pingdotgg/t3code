@@ -26,6 +26,7 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 export type DesktopSshEnvironmentRuntimeServices =
@@ -119,18 +120,28 @@ function toSshPasswordPromptError(
 
 const makePasswordPrompt = (
   prompts: DesktopSshPasswordPrompts.DesktopSshPasswordPrompts["Service"],
+  shell: ElectronShell.ElectronShell["Service"],
 ): SshAuth.SshPasswordPrompt["Service"] => ({
   isAvailable: true,
   request: (request: SshAuth.SshPasswordRequest) =>
     prompts.request(request).pipe(Effect.mapError(toSshPasswordPromptError)),
+  openApprovalUrl: (url) =>
+    shell
+      .openExternal(url)
+      .pipe(
+        Effect.flatMap((opened) =>
+          opened ? Effect.void : Effect.logWarning("desktop.ssh.approvalUrl.openFailed"),
+        ),
+      ),
 });
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
+  const shell = yield* ElectronShell.ElectronShell;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
-  const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
+  const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts, shell));
 
   return DesktopSshEnvironment.of({
     discoverHosts: (input) =>
