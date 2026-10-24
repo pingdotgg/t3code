@@ -26,6 +26,7 @@ export function PullRequestSavedViewsMenu({
   if (selectedId === null && selectedView) setSelectedId(selectedView.id);
   const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, scope);
 
+  // These avoid `finally`, which the React Compiler cannot lower; every path clears `busy`.
   async function applyView(view: PullRequestSavedView) {
     setBusy(true);
     try {
@@ -33,9 +34,8 @@ export function PullRequestSavedViewsMenu({
       setSelectedId(view.id);
     } catch {
       Alert.alert("Could not apply PR view", "The device could not save your filters. Try again.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
 
   async function persist(
@@ -44,15 +44,15 @@ export function PullRequestSavedViewsMenu({
     ) => ReadonlyArray<PullRequestSavedView>,
   ) {
     setBusy(true);
+    let saved = true;
     try {
       await update(transform);
-      return true;
     } catch {
       Alert.alert("Could not save PR views", "The device could not save your views. Try again.");
-      return false;
-    } finally {
-      setBusy(false);
+      saved = false;
     }
+    setBusy(false);
+    return saved;
   }
 
   function editName(view?: PullRequestSavedView) {
