@@ -308,6 +308,14 @@ export function useEnvironmentSupportsServerBrowser(environmentId: EnvironmentId
   );
 }
 
+export function useEnvironmentHasDesktopBrowser(environmentId: EnvironmentId | null): boolean {
+  const configs = useServerConfigs();
+  return (
+    environmentId !== null &&
+    configs.get(environmentId)?.environment.capabilities.desktopBrowser === true
+  );
+}
+
 export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

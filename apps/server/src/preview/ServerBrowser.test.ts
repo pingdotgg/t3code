@@ -336,6 +336,9 @@ const dependencies = Layer.mergeAll(
         Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
       ),
     pointer: () => Effect.void,
+    acceptsSocket: false,
+    authorizesSocket: () => false,
+    serveSocket: () => Effect.void,
   }),
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),

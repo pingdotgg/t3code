@@ -11,6 +11,7 @@ import {
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -61,7 +62,11 @@ export class DesktopBrowserHost extends Context.Service<
   DesktopBrowserHost,
   {
     readonly events: Stream.Stream<Uint8Array>;
-    readonly handleCommandLine: (line: string) => Effect.Effect<void>;
+    /** `serverPath` maps a path on the server's disk to one this app can write, as for WSL. */
+    readonly handleCommandLine: (
+      line: string,
+      serverPath?: (path: string) => string,
+    ) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
@@ -122,7 +127,7 @@ export const make = Effect.gen(function* () {
       else tab.waitingScreenshots.push(start);
     });
 
-  const relayFor = (tab: AttachedTab) => {
+  const relayFor = (tab: AttachedTab, serverPath: (path: string) => string) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee } = tab.debuggee;
     const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
@@ -142,6 +147,7 @@ export const make = Effect.gen(function* () {
         url: () => webContents.getURL(),
         title: () => webContents.getTitle(),
         userAgent: () => webContents.getUserAgent(),
+        serverPath,
         setDownloadDirectory: (directory) => {
           tab.downloadDirectory = directory;
         },
@@ -213,7 +219,7 @@ export const make = Effect.gen(function* () {
     emit({ type: "attached", ...key });
   };
 
-  const handleCommandLine = (line: string) =>
+  const handleCommandLine = (line: string, serverPath: (path: string) => string = identity) =>
     Effect.sync(() => {
       const command = decodeCommand(line);
       if (Option.isNone(command)) return;
@@ -229,7 +235,7 @@ export const make = Effect.gen(function* () {
         return;
       }
       if (AGENT_INPUT_COMMAND.test(command.value.message)) tab.agentInputAt = performance.now();
-      relayFor(tab).receive(command.value.message);
+      relayFor(tab, serverPath).receive(command.value.message);
     });
 
   const humanStartedDownload = (source: Electron.WebContents) => {

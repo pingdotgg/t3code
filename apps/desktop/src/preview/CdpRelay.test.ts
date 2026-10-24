@@ -5,12 +5,14 @@ import { createCdpRelayConnection, type CdpRelayTarget } from "./CdpRelay.ts";
 const makeTarget = (
   send: CdpRelayTarget["send"],
   setDownloadDirectory: CdpRelayTarget["setDownloadDirectory"] = () => {},
+  serverPath: CdpRelayTarget["serverPath"] = (path) => path,
 ): CdpRelayTarget => ({
   send,
   targetId: async () => "GUEST-TARGET",
   url: () => "http://localhost:4719/",
   title: () => "Fixture",
   userAgent: () => "Electron",
+  serverPath,
   setDownloadDirectory,
 });
 
@@ -189,5 +191,36 @@ describe("CDP relay downloads", () => {
     expect(written).toEqual([
       { method: "Browser.downloadWillBegin", params: { guid: "g1", suggestedFilename: "r.csv" } },
     ]);
+  });
+
+  it("saves downloads where this app reaches a WSL server's directory", async () => {
+    const send = vi.fn(async () => ({}));
+    const directories: Array<string | null> = [];
+    const relay = createCdpRelayConnection(
+      makeTarget(
+        send,
+        (directory) => directories.push(directory),
+        (path) => `\\\\wsl.localhost\\Ubuntu${path.replaceAll("/", "\\")}`,
+      ),
+      () => {},
+    );
+    relay.receive(
+      JSON.stringify({
+        id: 1,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "allowAndName", downloadPath: "/tmp/artifacts", eventsEnabled: true },
+      }),
+    );
+    await settle();
+    expect(directories).toEqual(["\\\\wsl.localhost\\Ubuntu\\tmp\\artifacts"]);
+    expect(send).toHaveBeenCalledWith(
+      "Browser.setDownloadBehavior",
+      {
+        behavior: "allowAndName",
+        downloadPath: "\\\\wsl.localhost\\Ubuntu\\tmp\\artifacts",
+        eventsEnabled: true,
+      },
+      undefined,
+    );
   });
 });
