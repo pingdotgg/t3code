@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 
 import type { ServerInstallation } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -164,8 +164,24 @@ const resolveInstallLauncher = Effect.gen(function* () {
 });
 
 /**
+ * A `t3` on PATH runs whichever install put it there, which may be an older npm global rather
+ * than the desktop app that owns this server. It is this install's own only when it resolves to
+ * the app's launcher; without a launcher to compare to, it is assumed to be.
+ */
+const pathCommandIsOtherInstall = Effect.fn("invocation.pathCommandIsOtherInstall")(function* (
+  pathCommand: string,
+) {
+  const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
+  if (!shim) return false;
+  const fs = yield* FileSystem.FileSystem;
+  const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => null));
+  const shimReal = yield* real(shim);
+  return shimReal !== null && shimReal !== (yield* real(pathCommand));
+});
+
+/**
  * `t3 <subcommand> <args>` for a person to run on this host: `t3` when it is
- * on PATH, the package runner this process came from, or else the absolute
+ * on PATH and is this install, the package runner this process came from, or else the absolute
  * path of the launcher for this install, such as the one the desktop app
  * installs. `args` are quoted for the host's shell: POSIX, or PowerShell on
  * Windows.
@@ -179,7 +195,10 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
     [prefix, ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
   const command = yield* resolveCliCommand(subcommand);
   if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
-  if (yield* isCommandAvailable("t3")) return { command: withArgs(command), launcher: false };
+  const onPath = yield* resolveCommandPath("t3");
+  if (onPath !== null && !(yield* pathCommandIsOtherInstall(onPath))) {
+    return { command: withArgs(command), launcher: false };
+  }
   const launcher = yield* resolveInstallLauncher;
   if (Option.isNone(launcher)) return { command: withArgs(command), launcher: false };
   // PowerShell runs a quoted path only through the call operator.
