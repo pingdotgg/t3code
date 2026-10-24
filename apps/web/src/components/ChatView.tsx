@@ -108,6 +108,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
+import {
+  PanelHostContext,
+  threadBoundAnnotationSender,
+  type PanelHost,
+  type ThreadAnnotationSender,
+} from "~/panels/panelHost";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -3051,6 +3057,35 @@ export default function ChatView(props: ChatViewProps) {
     pendingSidebarFileDrops,
   ]);
 
+  // Plain server threads share one ChatView, so the sender carries its thread
+  // and a host only forwards to a sender for the thread it was built for.
+  // Updated after commit so a discarded render cannot lend its `onSend`.
+  const annotationSenderRef = useRef<ThreadAnnotationSender | null>(null);
+  useLayoutEffect(() => {
+    annotationSenderRef.current = activeThreadKey
+      ? {
+          threadKey: activeThreadKey,
+          send: (annotation, image) => {
+            void onSend(undefined, "auto", "foreground", { annotation, image });
+          },
+        }
+      : null;
+  });
+  const panelHost: PanelHost | null = activeThreadRef
+    ? {
+        threadRef: activeThreadRef,
+        visible: rightPanelOpen,
+        composerDraftTarget,
+        workspaceMutationId,
+        sendAnnotation: (annotation, image) => {
+          threadBoundAnnotationSender(
+            () => annotationSenderRef.current,
+            scopedThreadKey(activeThreadRef),
+          )(annotation, image);
+        },
+      }
+    : null;
+
   const addDroppedFilesToComposer = useStableCallback(
     (files: Parameters<ChatComposerHandle["addDroppedFiles"]>[0]) =>
       composerRef.current?.addDroppedFiles(files),
@@ -3064,7 +3099,7 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const rightPanelContent = activeThreadRef ? (
+  const rightPanelSurfaceContent = activeThreadRef ? (
     <RightPanelSurfaceContent
       surface={renderedRightPanelSurface}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
@@ -3115,6 +3150,21 @@ export default function ChatView(props: ChatViewProps) {
       }}
     />
   ) : null;
+  const rightPanelContent = (
+    <PanelHostContext value={panelHost}>{rightPanelSurfaceContent}</PanelHostContext>
+  );
+  const sidePanelLaunchers = {
+    preview: {
+      available: canOperatePreview && browserAvailable,
+      onOpen: createBrowserSurfaceStable,
+    },
+    diff: { available: isServerThread && isGitRepo, onOpen: addDiffSurfaceStable },
+    terminal: {
+      available: activeProject !== null && canOperateTerminal,
+      onOpen: addTerminalSurfaceStable,
+    },
+    device: { available: activeThreadRef !== null, onOpen: addDeviceSurfaceStable },
+  };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
     terminalOpen: terminalUiState.terminalOpen,
@@ -3886,21 +3936,14 @@ export default function ChatView(props: ChatViewProps) {
           onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
           onMoveSurface={moveRightPanelSurfaceStable}
           onCopyFilePath={copyRightPanelFilePathStable}
-          onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurfaceStable}
-          onAddTerminal={addTerminalSurfaceStable}
-          onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
-          onAddDevice={addDeviceSurfaceStable}
-          browserAvailable={canOperatePreview && browserAvailable}
-          terminalAvailable={activeProject !== null && canOperateTerminal}
-          diffAvailable={isServerThread && isGitRepo}
+          panels={sidePanelLaunchers}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
-          deviceAvailable={activeThreadRef !== null}
         >
           {rightPanelContent}
         </ChatRightPanel>
