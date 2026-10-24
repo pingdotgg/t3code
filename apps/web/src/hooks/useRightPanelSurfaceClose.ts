@@ -62,7 +62,7 @@ export function useRightPanelSurfaceClose(input: {
     ) {
       for (const terminalId of surface.terminalIds) {
         storeCloseTerminal(ref, terminalId);
-        terminalActions.closeTerminalSession(terminalId);
+        terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
   };

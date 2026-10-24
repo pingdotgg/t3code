@@ -19,7 +19,7 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import { useProject, useQuietThreadShell } from "../state/entities";
-import { useEnvironmentScope } from "../state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
@@ -233,12 +233,14 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     bumpFocusRequestId();
   };
 
-  const closeTerminal = useStableCallback((terminalId: string) => {
-    if (!terminalActions.canWrite()) return;
-    terminalActions.closeTerminalSession(terminalId);
-    storeCloseTerminal(threadRef, terminalId);
-    bumpFocusRequestId();
-  });
+  const closeTerminal = useStableCallback(
+    (terminalId: string, target: ScopedThreadRef = threadRef) => {
+      if (!readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
+      terminalActions.closeTerminalSession(terminalId, target);
+      storeCloseTerminal(target, terminalId);
+      bumpFocusRequestId();
+    },
+  );
 
   const handleAddTerminalContext = (selection: TerminalContextSelection) => {
     if (!visible) {
@@ -309,7 +311,7 @@ export interface PersistentThreadTerminalPanelProps {
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
   onActiveTerminalChange: (terminalId: string) => void;
-  onCloseTerminal: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
