@@ -77,6 +77,8 @@ export interface AcpPatchedProtocolOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocolLogEvent) => Effect.Effect<void, never>;
+  /** Checked synchronously with queue admission, after outgoing logging. */
+  readonly isRequestCancelled?: (method: string) => boolean;
   readonly onIncomingRequest?: (
     requestId: string,
     method: string,
@@ -334,16 +336,26 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       if (options.testHooks?.onOutgoingWriteAdmitted !== undefined) {
         yield* options.testHooks.onOutgoingWriteAdmitted();
       }
-      yield* Queue.offer(outgoing, {
-        payload: encoded,
-        ...(acknowledgement === undefined ? {} : { acknowledgement }),
+      yield* Effect.sync(() => {
+        if (method !== undefined && options.isRequestCancelled?.(method)) {
+          return "cancelled";
+        }
+        // No yield may separate cancellation validation from FIFO admission.
+        return Queue.offerUnsafe(outgoing, {
+          payload: encoded,
+          ...(acknowledgement === undefined ? {} : { acknowledgement }),
+        });
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AcpError.AcpTransportError({
-              detail: "Failed to queue an outgoing ACP message",
-              cause,
-            }),
+        Effect.flatMap((accepted) =>
+          accepted === "cancelled"
+            ? Effect.fail(
+                new AcpError.AcpRequestError({
+                  code: -32800,
+                  errorMessage: "The ACP request was cancelled before dispatch.",
+                  ...(method === undefined ? {} : { method }),
+                }),
+              )
+            : Effect.succeed(accepted),
         ),
         Effect.filterOrFail(
           (accepted) => accepted,
@@ -879,6 +891,21 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       ),
     send: (_clientId, request) =>
       offerOutgoing(request).pipe(
+        // RpcClient registers before sending. A correlated failure releases those
+        // registrations; a failed send leaves them pending until the client closes.
+        Effect.catchTags({
+          AcpRequestError: (error) =>
+            request._tag === "Request" && error.code === -32800
+              ? Queue.offer(clientQueue, {
+                  _tag: "Exit",
+                  requestId: request.id,
+                  exit: {
+                    _tag: "Failure",
+                    cause: [{ _tag: "Fail", error: error.toProtocolError() }],
+                  },
+                }).pipe(Effect.asVoid)
+              : Effect.fail(error),
+        }),
         Effect.mapError(
           (error) =>
             new RpcClientError.RpcClientError({

@@ -92,6 +92,7 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const rejectBusyPrompt = process.env.T3_ACP_REJECT_BUSY_PROMPT === "1";
 const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
@@ -962,6 +963,11 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+      if (rejectBusyPrompt) {
+        return yield* AcpError.AcpRequestError.internalError(
+          "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+        );
+      }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")
@@ -2567,15 +2573,21 @@ const program = Effect.gen(function* () {
     return Effect.succeed({});
   });
 
-  yield* agent.handleUnknownExtNotification((method, params) =>
-    method === "_test/exit"
-      ? Effect.sync(() => {
-          const code =
-            typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
-          process.exit(typeof code === "number" ? code : 19);
-        })
-      : Effect.void,
-  );
+  yield* agent.handleUnknownExtNotification((method, params) => {
+    if (method === "_test/exit") {
+      return Effect.sync(() => {
+        const code =
+          typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
+        process.exit(typeof code === "number" ? code : 19);
+      });
+    }
+    if (method === "_test/malformed-output") {
+      return Effect.sync(() => {
+        process.stdout.write("{invalid-json}\n");
+      });
+    }
+    return Effect.void;
+  });
 
   return yield* Effect.never;
 }).pipe(

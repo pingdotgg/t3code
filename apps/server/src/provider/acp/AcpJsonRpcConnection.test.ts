@@ -251,6 +251,89 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect.each([
+    {
+      name: "agent exit",
+      method: "_test/exit",
+      stop: false,
+      error: { _tag: "AcpProcessExitedError", code: 19 },
+    },
+    {
+      name: "malformed stdout",
+      method: "_test/malformed-output",
+      stop: false,
+      error: { _tag: "AcpProtocolParseError", operation: "decode-wire-message" },
+    },
+    {
+      name: "agent exit after Stop",
+      method: "_test/exit",
+      stop: true,
+      error: { _tag: "AcpProcessExitedError", code: 19 },
+    },
+  ])("settles a queued busy prompt on $name", (testCase) =>
+    Effect.gen(function* () {
+      const busy = yield* Deferred.make<number>();
+      const holdBusy = yield* Deferred.make<void>();
+      const termination = yield* Deferred.make<EffectAcpErrors.AcpError>();
+      let promptRequests = 0;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_REJECT_BUSY_PROMPT: "1" },
+        },
+        requestLogger: (event) =>
+          Effect.sync(() => {
+            if (event.method === "session/prompt" && event.status === "started")
+              promptRequests += 1;
+          }),
+      });
+      yield* runtime.getEvents().pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "EventStreamBarrier") {
+            return Deferred.succeed(event.acknowledge, undefined);
+          }
+          return event._tag === "ConnectionTerminated"
+            ? Deferred.succeed(termination, event.error)
+            : Effect.void;
+        }),
+        Effect.forkChild,
+      );
+      yield* runtime.start();
+      const prompt = yield* runtime
+        .prompt(
+          { prompt: [{ type: "text", text: "queued prompt" }] },
+          {
+            onBusy: (retry) =>
+              Deferred.succeed(busy, retry.retryDelayMs).pipe(
+                Effect.andThen(testCase.stop ? Deferred.await(holdBusy) : Effect.void),
+                Effect.asVoid,
+              ),
+          },
+        )
+        .pipe(Effect.result, Effect.forkChild);
+      expect(yield* Deferred.await(busy)).toBe(1_000);
+      if (testCase.stop) yield* runtime.cancel;
+      yield* runtime.notify(testCase.method, { code: 19 });
+      const error = yield* Deferred.await(termination);
+      expect(error).toMatchObject(testCase.error);
+      const result = yield* Fiber.join(prompt);
+      if (testCase.stop) {
+        if (Result.isFailure(result)) return assert.fail("Stop must remain cancelled");
+        expect(result.success).toEqual({ stopReason: "cancelled" });
+      } else {
+        if (Result.isSuccess(result)) return assert.fail("Agent termination must fail the prompt");
+        expect(result.failure).toBe(error);
+      }
+      expect(promptRequests).toBe(1);
+      expect(
+        yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "must not run" }] })
+          .pipe(Effect.flip),
+      ).toBe(error);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("retires a native runtime when its prompt caller is interrupted", () =>
     Effect.gen(function* () {
       const dispatched = yield* Deferred.make<void>();

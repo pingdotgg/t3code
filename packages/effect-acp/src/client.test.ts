@@ -59,6 +59,9 @@ const DieResponse = Schema.Struct({
   }),
 });
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
+const decodeInitializeRequestV1Line = Schema.decodeEffect(
+  Schema.fromJsonString(InitializeRequestV1),
+);
 const XAiPromptCompleteNotification = jsonRpcNotification(
   "_x.ai/session/prompt_complete",
   Schema.Struct({
@@ -787,6 +790,92 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       assert.equal((yield* Fiber.join(sessionFiber)).sessionId, "session-1");
       yield* Scope.close(scope, Exit.void);
     }),
+  );
+
+  it.effect.each([1, 2])(
+    "reuses the v%s client after repeated local prompt cancellations",
+    (version) =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        let cancelled = false;
+        const acp = yield* AcpClient.make(stdio, {
+          isRequestCancelled: (method) => method === "session/prompt" && cancelled,
+        });
+        const initializing = yield* acp.agent
+          .initialize({ protocolVersion: version })
+          .pipe(Effect.forkScoped);
+        const initialize = yield* Queue.take(output).pipe(
+          Effect.flatMap(decodeInitializeRequestV1Line),
+        );
+        yield* Queue.offer(
+          input,
+          version === 1
+            ? yield* encodeJsonl(InitializeResponseV1, {
+                jsonrpc: "2.0",
+                id: initialize.id,
+                result: { ...antigravityInitialize, protocolVersion: 1 },
+              })
+            : yield* encodeJsonl(InitializeResponse, {
+                jsonrpc: "2.0",
+                id: initialize.id,
+                result: {
+                  protocolVersion: 2,
+                  capabilities: {},
+                  info: { name: "mock-agent", version: "0.0.0" },
+                },
+              }),
+        );
+        assert.equal((yield* Fiber.join(initializing)).protocolVersion, version);
+
+        cancelled = true;
+        for (const text of ["first cancelled prompt", "second cancelled prompt"]) {
+          const error = yield* acp.agent
+            .prompt({ sessionId: "session-1", prompt: [{ type: "text", text }] })
+            .pipe(Effect.flip);
+          assert.instanceOf(error, AcpError.AcpRequestError);
+          assert.deepInclude(error, { code: -32800, method: "session/prompt" });
+          assert.equal(yield* Queue.size(output), 0);
+        }
+
+        cancelled = false;
+        const freshPrompt = yield* acp.agent
+          .prompt({
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "fresh prompt" }],
+          })
+          .pipe(Effect.forkScoped);
+        const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+        assert.deepEqual(request.params.prompt, [{ type: "text", text: "fresh prompt" }]);
+        yield* Queue.offer(
+          input,
+          version === 1
+            ? yield* encodeJsonl(PromptResponseV1, {
+                jsonrpc: "2.0",
+                id: request.id,
+                result: { stopReason: "end_turn" },
+              })
+            : yield* encodeJsonl(PromptResponse, {
+                jsonrpc: "2.0",
+                id: request.id,
+                result: {},
+              }),
+        );
+        if (version === 2) {
+          yield* Queue.offer(
+            input,
+            yield* encodeJsonl(SessionUpdateNotification, {
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "session-1",
+                update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
+              },
+            }),
+          );
+        }
+        assert.deepEqual(yield* Fiber.join(freshPrompt), { stopReason: "end_turn" });
+        assert.equal(yield* Queue.size(output), 0);
+      }),
   );
 
   it.effect.each([1, 2])("keeps legacy wire behavior with version %s", (protocolVersion) =>

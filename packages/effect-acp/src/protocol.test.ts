@@ -13,6 +13,7 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
+import type * as RpcMessage from "effect/rpc/RpcMessage";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -307,6 +308,66 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
             '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
         },
       ]);
+    }),
+  );
+
+  it.effect("correlates cancellation during outgoing logging without failing transport send", () =>
+    Effect.gen(function* () {
+      const { stdio, output } = yield* makeInMemoryStdio();
+      const logging = yield* Deferred.make<void>();
+      const releaseLog = yield* Deferred.make<void>();
+      let cancelled = false;
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        isRequestCancelled: (method) => method === "session/prompt" && cancelled,
+        logOutgoing: true,
+        logger: (event) =>
+          event.stage === "raw" &&
+          typeof event.payload === "string" &&
+          event.payload.includes('"method":"session/prompt"')
+            ? Deferred.succeed(logging, undefined).pipe(Effect.andThen(Deferred.await(releaseLog)))
+            : Effect.void,
+      });
+      const response = yield* Deferred.make<RpcMessage.FromServerEncoded>();
+      yield* transport.clientProtocol
+        .run(0, (message) => Deferred.succeed(response, message).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+      const prompt = (id: number) =>
+        transport.clientProtocol.send(0, {
+          _tag: "Request",
+          id,
+          tag: "session/prompt",
+          payload: { sessionId: "session-1", prompt: [{ type: "text", text: "hello" }] },
+          headers: [],
+        });
+      const dispatch = yield* prompt(1).pipe(Effect.forkScoped);
+      yield* Deferred.await(logging);
+      cancelled = true;
+      yield* transport.notify("session/cancel", { sessionId: "session-1" });
+      yield* Deferred.succeed(releaseLog, undefined);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.await(dispatch)));
+      assert.deepEqual(yield* Deferred.await(response), {
+        _tag: "Exit",
+        requestId: 1,
+        exit: {
+          _tag: "Failure",
+          cause: [
+            {
+              _tag: "Fail",
+              error: {
+                code: -32800,
+                message: "The ACP request was cancelled before dispatch.",
+              },
+            },
+          ],
+        },
+      });
+      assert.include(yield* Queue.take(output), '"method":"session/cancel"');
+      assert.equal(yield* Queue.size(output), 0);
+      cancelled = false;
+      yield* prompt(2);
+      assert.include(yield* Queue.take(output), '"id":2');
     }),
   );
 
