@@ -5,11 +5,17 @@ export interface WorktreeSetupSheetProps {
   children: ReactElement;
   height: number;
   onClose: () => void;
+  /** Defaults to "Worktree setup". */
+  title?: string;
 }
 
-export function WorktreeSetupSheet({ children, onClose }: WorktreeSetupSheetProps) {
+export function WorktreeSetupSheet({
+  children,
+  onClose,
+  title = "Worktree setup",
+}: WorktreeSetupSheetProps) {
   return (
-    <Sheet title="Worktree setup" onClose={onClose}>
+    <Sheet title={title} onClose={onClose}>
       {children}
     </Sheet>
   );

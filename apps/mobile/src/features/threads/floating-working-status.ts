@@ -32,7 +32,7 @@ export type FloatingWorkingStatus =
       readonly action: FloatingStatusAction;
     }
   | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }
-  | { readonly kind: "preparing"; readonly label: string }
+  | { readonly kind: "preparing"; readonly label: string; readonly onPress?: () => void }
   | {
       readonly kind: "connection";
       readonly tone: "reconnecting" | "unavailable";
