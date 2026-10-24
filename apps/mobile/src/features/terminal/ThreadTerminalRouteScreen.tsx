@@ -17,7 +17,7 @@ import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
-import { hasNativeTerminalSurface } from "./nativeTerminalModule";
+import { hasNativeTerminalSurface, supportsNativeTerminalOutput } from "./nativeTerminalModule";
 import * as Clipboard from "expo-clipboard";
 import * as Schema from "effect/Schema";
 import {
@@ -451,7 +451,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
   const observingTerminal =
     !canOperateTerminal && canReadTerminal && selectedThread !== null && hasTerminalTarget;
+  const streamingOutput = supportsNativeTerminalOutput();
   const terminal = useAttachedTerminalSession({
+    materializeBuffer: !streamingOutput,
     environmentId: selectedThread?.environmentId ?? null,
     terminal: canOperateTerminal
       ? terminalAttachInput
@@ -1248,6 +1250,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   autoFocus={canOperateTerminal && terminalAutoFocus}
                   readOnly={!canOperateTerminal}
                   buffer={terminal.version === 0 ? null : terminalSurfaceBuffer}
+                  output={terminal.version === 0 ? null : terminal.output}
                   fontSize={fontSize}
                   isRunning={isRunning}
                   keyboardFocusRequest={keyboardFocusRequest}
