@@ -56,7 +56,7 @@ export const T3ProjectFileScript = Schema.Struct({
   previewUrl: Schema.optionalKey(
     trimmedNonEmpty({
       description:
-        "URL opened in the in-app browser preview when this script runs. Only honored on the desktop build.",
+        "URL opened in the in-app browser preview when this script runs. Use ${T3CODE_PREVIEW_PORT} to assign a port for this action and checkout and expose it to the command. Only honored on the desktop build.",
     }),
   ),
   autoOpenPreview: Schema.optionalKey(

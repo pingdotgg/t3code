@@ -156,6 +156,12 @@ checkouts and removal. Actions belong to a project: editing them creates the pro
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
+For a dev server that needs a different port in each worktree, use
+`http://localhost:${T3CODE_PREVIEW_PORT}` as the action's Preview URL. T3 Code assigns a port per
+action and checkout and passes it to the command as `T3CODE_PREVIEW_PORT`. In Bash, use
+`vite --port "$T3CODE_PREVIEW_PORT" --strictPort`; adapt the port option for your dev server.
+In PowerShell, use `$env:T3CODE_PREVIEW_PORT` in the command instead.
+
 Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `t3.json`, then the
 built-in default. Leave a setting on **Inherit** to let the next tier decide.

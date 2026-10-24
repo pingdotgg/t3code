@@ -504,7 +504,8 @@ function ProjectScriptEditorForm({
                 onChange={(event) => setPreviewUrl(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Open this URL in the in-app preview when this action runs.
+                Use <code>{"${T3CODE_PREVIEW_PORT}"}</code> for a port per checkout, available to
+                the command as <code>T3CODE_PREVIEW_PORT</code>.
               </p>
             </div>
             <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">

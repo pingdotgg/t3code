@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * The server picks the location in its managed worktrees folder.
@@ -95,6 +95,16 @@ export const WorktreeMcpStatusResult = Schema.Struct({
   }),
   defaultStartFromOrigin: Schema.Boolean.annotate({
     description: "Server default used by t3_worktree_handoff when startFromOrigin is omitted.",
+  }),
+  scriptPreviews: Schema.Array(
+    Schema.Struct({
+      scriptId: TrimmedNonEmptyString,
+      name: TrimmedNonEmptyString,
+      port: PortSchema,
+      url: TrimmedNonEmptyString,
+    }),
+  ).annotate({
+    description: "Reserved preview ports and resolved URLs for this thread's project scripts.",
   }),
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;

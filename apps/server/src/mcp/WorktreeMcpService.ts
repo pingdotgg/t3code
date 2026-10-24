@@ -9,6 +9,12 @@ import {
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
 } from "@t3tools/contracts";
+import {
+  projectScriptCwd,
+  projectScriptPreviewUrl,
+  projectScriptReservesPort,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -19,6 +25,7 @@ import * as Option from "effect/Option";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectScriptPorts from "../project/ProjectScriptPorts.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -59,6 +66,7 @@ const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const scriptPorts = yield* ProjectScriptPorts.ProjectScriptPorts;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -434,14 +442,44 @@ const make = Effect.gen(function* () {
       const projection = yield* loadThread(scope);
       const project = yield* loadProject(scope, projection.thread.projectId);
 
-      const defaultStartFromOrigin = yield* readDefaultStartFromOrigin;
+      const settings = yield* serverSettings.getSettings.pipe(
+        asOperationFailed("Unable to read server settings"),
+      );
+      const scriptPreviews = yield* Effect.forEach(
+        resolveProjectScripts(settings, project).filter(projectScriptReservesPort),
+        (script) =>
+          scriptPorts
+            .reserve({
+              cwd: projectScriptCwd({
+                project: { cwd: project.workspaceRoot },
+                worktreePath: projection.thread.worktreePath,
+              }),
+              scriptId: script.id,
+            })
+            .pipe(
+              Effect.map((port) => ({
+                scriptId: script.id,
+                name: script.name,
+                port,
+                url: projectScriptPreviewUrl(script.previewUrl, port),
+              })),
+              Effect.catch((error) =>
+                Effect.logWarning("Unable to reserve a preview port", {
+                  scriptId: script.id,
+                  startPort: error.startPort,
+                  attempts: error.attempts,
+                }).pipe(Effect.as(undefined)),
+              ),
+            ),
+      );
 
       const result: WorktreeMcpStatusResult = {
         attached: projection.thread.worktreePath !== null,
         worktreePath: projection.thread.worktreePath,
         branch: projection.thread.branch,
         projectWorkspaceRoot: project.workspaceRoot,
-        defaultStartFromOrigin,
+        defaultStartFromOrigin: settings.newWorktreesStartFromOrigin,
+        scriptPreviews: scriptPreviews.filter((preview) => preview !== undefined),
       };
       return result;
     },
@@ -456,6 +494,7 @@ export const layer: Layer.Layer<
   | Crypto.Crypto
   | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
+  | ProjectScriptPorts.ProjectScriptPorts
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner

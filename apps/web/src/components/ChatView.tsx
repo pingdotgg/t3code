@@ -99,7 +99,12 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptCwd,
+  projectScriptReservesPort,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
+import { projectEnvironment } from "../state/projects";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -1102,7 +1107,27 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const handleFilePendingChangeStable = useStableCallback(handleFilePendingChange);
-  const configuredPreviewUrls = getConfiguredPreviewUrls(activeProjectScripts);
+  const previewScriptIds = activeProjectScripts
+    .filter(projectScriptReservesPort)
+    .map((script) => script.id);
+  const scriptPorts = useEnvironmentQuery(
+    canOperateTerminal && activeThreadRef && activeProject && previewScriptIds.length > 0
+      ? projectEnvironment.scriptPorts({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            cwd: projectScriptCwd({
+              project: { cwd: activeProject.workspaceRoot },
+              worktreePath: activeThread?.worktreePath ?? null,
+            }),
+            scriptIds: previewScriptIds,
+          },
+        })
+      : null,
+  );
+  const configuredPreviewUrls = getConfiguredPreviewUrls(
+    activeProjectScripts,
+    scriptPorts.data?.ports,
+  );
 
   useEffect(() => {
     if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
@@ -1856,6 +1881,8 @@ export default function ChatView(props: ChatViewProps) {
     toggleTerminalVisibilityStable,
     shortcuts: terminalShortcuts,
   } = useChatTerminalActions({
+    routeThreadKey,
+    currentRouteThreadKeyRef,
     environmentId,
     composerRef,
     terminalUiState,
