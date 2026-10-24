@@ -610,6 +610,11 @@ export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed())
   Schema.isNonEmpty(),
 );
 
+export interface DesktopPreviewServerTabKey {
+  threadId: string;
+  tabId: string;
+}
+
 export interface DesktopPreviewPointerEvent {
   tabId: string;
   phase: "move" | "click";
@@ -1217,6 +1222,8 @@ export interface DesktopPreviewBridge {
   };
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
+  /** The server is capturing this server tab, so it must draw even while hidden. */
+  onCaptureRequest: (listener: (key: DesktopPreviewServerTabKey) => void) => () => void;
   onOpenLink: (listener: (event: DesktopPreviewOpenLinkEvent) => void) => () => void;
 }
 

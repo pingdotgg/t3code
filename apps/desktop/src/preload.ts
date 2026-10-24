@@ -2,6 +2,7 @@ import type {
   DesktopBridge,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
+  DesktopPreviewServerTabKey,
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -430,6 +431,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
+    },
+    onCaptureRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, key: unknown) => {
+        if (typeof key !== "object" || key === null) return;
+        listener(key as DesktopPreviewServerTabKey);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_CAPTURE_REQUEST_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_CAPTURE_REQUEST_CHANNEL, wrappedListener);
     },
     onOpenLink: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, linkEvent: unknown) => {

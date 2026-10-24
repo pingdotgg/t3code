@@ -2,6 +2,7 @@ import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
   type DesktopPreviewOpenLinkEvent,
+  type DesktopPreviewServerTabKey,
   FILL_PREVIEW_VIEWPORT,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -20,6 +21,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
+import { holdFramesForCapture } from "./captureFrames";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
@@ -111,6 +113,21 @@ export function ElectronBrowserHost() {
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
     return preview.onOpenLink(onOpenLink);
+  }, []);
+
+  const onCaptureRequest = useEffectEvent(({ threadId, tabId }: DesktopPreviewServerTabKey) => {
+    const session = sessions.find(
+      (candidate) =>
+        candidate.threadRef.environmentId === primaryEnvironmentId &&
+        candidate.threadRef.threadId === threadId &&
+        candidate.snapshot.tabId === tabId,
+    );
+    if (session) holdFramesForCapture(session.runtimeTabId, session.threadRef);
+  });
+  useEffect(() => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return;
+    return preview.onCaptureRequest(onCaptureRequest);
   }, []);
 
   if (!isElectron) return null;
