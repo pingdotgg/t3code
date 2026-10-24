@@ -81,6 +81,7 @@ export type AssetUrlState =
       readonly sourcePath?: string;
       readonly imageDimensions?: AssetImageDimensions;
       readonly fileRevision?: string;
+      readonly accessScope?: string;
     };
 
 export const MISSING_FILE_ACCESS_MESSAGE =
@@ -126,6 +127,7 @@ export function assetUrlStateFromResult(
       ? { imageDimensions: result.value.imageDimensions }
       : {}),
     ...(result.value.fileRevision !== undefined ? { fileRevision: result.value.fileRevision } : {}),
+    ...(result.value.accessScope !== undefined ? { accessScope: result.value.accessScope } : {}),
   };
 }
 

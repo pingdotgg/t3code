@@ -116,6 +116,9 @@ const layerTest = Layer.mergeAll(
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
+  Layer.mock(GitHubCredentials.GitHubCredentials)({
+    get: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+  }),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
@@ -187,7 +190,9 @@ describe("AssetAccess", () => {
         cwd: "/repo",
         expiresAt: Number.MAX_SAFE_INTEGER,
       };
-      expect((yield* githubMediaResponse(asset, {})).status).toBe(404);
+      const signedOut = yield* githubMediaResponse(asset, {});
+      expect(signedOut.status).toBe(404);
+      expect(signedOut.headers["cache-control"]).toBe("private, no-store");
       expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
       expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
       expect(lookups).toBe(3);
@@ -222,6 +227,7 @@ describe("AssetAccess", () => {
         }),
       ),
       Effect.scoped,
+      Effect.provide(NodeServices.layer),
     );
   });
 
@@ -640,6 +646,29 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("versions workspace files across mints and after a same-size edit within 1 ms", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-workspace-revision-" });
+      const filePath = path.join(root, "shot.png");
+      const revision = issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: "shot.png" },
+        workspaceRoot: root,
+      }).pipe(Effect.map((result) => result.fileRevision));
+      yield* fs.writeFileString(filePath, "first");
+      yield* Effect.promise(() => NodeFSP.utimes(filePath, 1_000.0001, 1_000.0001));
+
+      const first = yield* revision;
+      expect(first).toEqual(expect.any(String));
+      expect(yield* revision).toBe(first);
+
+      yield* fs.writeFileString(filePath, "secnd");
+      yield* Effect.promise(() => NodeFSP.utimes(filePath, 1_000.0002, 1_000.0002));
+      expect(yield* revision).not.toBe(first);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -688,6 +717,88 @@ describe("AssetAccess", () => {
         ),
       ).toBeNull();
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "refuses bound image URLs once the file differs from the signed revision",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-signed-revision-" });
+        const first = path.join(root, "a.png");
+        const second = path.join(root, "b.png");
+        const link = path.join(root, "shot.png");
+        yield* fs.writeFileString(first, "image A");
+        yield* fs.writeFileString(second, "image B");
+        yield* fs.symlink(first, link);
+        const threadId = ThreadId.make("thread-1");
+        const resolveIssued = (relativeUrl: string) => {
+          const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+        };
+        const servedText = (relativeUrl: string) =>
+          Effect.gen(function* () {
+            const asset = yield* resolveIssued(relativeUrl);
+            if (asset?.kind !== "file") throw new Error("Expected a file asset");
+            const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+            return yield* Effect.promise(() => response.text());
+          });
+        const issueBoth = (input: Parameters<typeof issueAssetUrl>[0]) =>
+          Effect.all({
+            bound: issueAssetUrl({ ...input, bindVersion: true }),
+            unbound: issueAssetUrl(input),
+          });
+
+        const workspace = yield* issueBoth({
+          resource: { _tag: "workspace-file", threadId, path: "shot.png" },
+          workspaceRoot: root,
+        });
+        expect(workspace.unbound.fileRevision).toBe(workspace.bound.fileRevision);
+        expect(yield* servedText(workspace.bound.relativeUrl)).toBe("image A");
+        yield* fs.remove(link);
+        yield* fs.symlink(second, link);
+        expect(yield* resolveIssued(workspace.bound.relativeUrl)).toBeNull();
+        expect(yield* servedText(workspace.unbound.relativeUrl)).toBe("image B");
+
+        const media = yield* issueBoth({
+          resource: { _tag: "media-file", threadId, path: second },
+        });
+        expect(yield* servedText(media.bound.relativeUrl)).toBe("image B");
+        yield* fs.writeFileString(second, "image C");
+        yield* Effect.promise(() => NodeFSP.utimes(second, 2_000, 2_000));
+        expect(yield* resolveIssued(media.bound.relativeUrl)).toBeNull();
+        expect(yield* servedText(media.unbound.relativeUrl)).toBe("image C");
+
+        const config = yield* ServerConfig.ServerConfig;
+        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+        // An image the client sent as a generic file keeps its extension in the id.
+        for (const [attachmentId, fileName] of [
+          [
+            "thread-1-00000000-0000-4000-8000-000000000041",
+            "thread-1-00000000-0000-4000-8000-000000000041.png",
+          ],
+          [
+            "thread-1-00000000-0000-4000-8000-000000000042-png",
+            "thread-1-00000000-0000-4000-8000-000000000042-png.png",
+          ],
+        ] as const) {
+          const attachmentPath = path.join(config.attachmentsDir, fileName);
+          yield* fs.writeFileString(attachmentPath, "image D");
+          const resource = { _tag: "attachment", attachmentId } as const;
+          const attachment = yield* issueBoth({ resource });
+          expect(attachment.bound.fileRevision).toBeDefined();
+          expect(yield* servedText(attachment.bound.relativeUrl)).toBe("image D");
+          yield* fs.writeFileString(attachmentPath, "image E");
+          yield* Effect.promise(() => NodeFSP.utimes(attachmentPath, 2_000, 2_000));
+          expect(yield* resolveIssued(attachment.bound.relativeUrl)).toBeNull();
+          expect(yield* servedText(attachment.unbound.relativeUrl)).toBe("image E");
+          const reissued = yield* issueAssetUrl({ resource, bindVersion: true });
+          expect(reissued.fileRevision).not.toBe(attachment.bound.fileRevision);
+          expect(yield* servedText(reissued.relativeUrl)).toBe("image E");
+        }
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
@@ -788,7 +899,10 @@ describe("AssetAccess", () => {
         const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
         const token = suffix.slice(0, suffix.indexOf("/"));
 
-        expect(yield* resolveAsset(token, name)).toEqual({ kind: "file", path: canonicalFile });
+        expect(yield* resolveAsset(token, name)).toMatchObject({
+          kind: "file",
+          path: canonicalFile,
+        });
         if (name.endsWith(".png")) {
           expect(yield* resolveAsset(token, "other.png")).toBeNull();
         }
@@ -991,6 +1105,82 @@ describe("AssetAccess", () => {
 
       expect(result.sourcePath).toBe(path.join("brand", "saved.svg"));
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-saved\.svg$/);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("scopes GitHub media URLs to the credential that reads them", () =>
+    Effect.gen(function* () {
+      const resource = {
+        _tag: "github-media",
+        cwd: "/repo",
+        url: "https://github.com/user-attachments/assets/1a1842fb",
+      } as const;
+      const issue = issueAssetUrl({ resource, bindVersion: true });
+      const asAccount = (fingerprint: string) =>
+        Effect.provide(
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) =>
+              Effect.succeed({
+                host,
+                token: Redacted.make("token"),
+                source: "gh" as const,
+                fingerprint,
+              }),
+          }),
+        );
+      const serve = (relativeUrl: string) =>
+        Effect.gen(function* () {
+          const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          const asset = yield* resolveAsset(
+            suffix.slice(0, separator),
+            suffix.slice(separator + 1),
+          );
+          if (asset?.kind !== "github-media") return null;
+          return yield* githubMediaResponse(asset, {});
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(null, { headers: { "content-type": "image/png" } }),
+                ),
+              ),
+            ),
+          ),
+          Effect.scoped,
+        );
+
+      const accountA = yield* issue.pipe(asAccount("github.com:account-a"));
+      const anonymous = yield* issue;
+      expect(accountA.accessScope).toBeDefined();
+      expect(anonymous.accessScope).toBeDefined();
+      expect((yield* issue.pipe(asAccount("github.com:account-a"))).accessScope).toBe(
+        accountA.accessScope,
+      );
+      expect((yield* issue.pipe(asAccount("github.com:account-b"))).accessScope).not.toBe(
+        accountA.accessScope,
+      );
+      expect(anonymous.accessScope).not.toBe(accountA.accessScope);
+
+      expect(
+        (yield* serve(accountA.relativeUrl).pipe(asAccount("github.com:account-a")))?.status,
+      ).toBe(200);
+      for (const switched of [
+        serve(accountA.relativeUrl).pipe(asAccount("github.com:account-b")),
+        serve(anonymous.relativeUrl).pipe(asAccount("github.com:account-a")),
+      ]) {
+        const refused = yield* switched;
+        expect(refused?.status).toBe(404);
+        expect(refused?.headers["cache-control"]).toBe("private, no-store");
+      }
+      const unbound = yield* issueAssetUrl({ resource }).pipe(asAccount("github.com:account-a"));
+      expect(unbound.accessScope).toBe(accountA.accessScope);
+      expect(
+        (yield* serve(unbound.relativeUrl).pipe(asAccount("github.com:account-b")))?.status,
+      ).toBe(200);
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -32,6 +32,7 @@ import {
 } from "@t3tools/shared/imageDimensions";
 import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
+import { imageMimeType } from "@t3tools/shared/image";
 import {
   isProjectFaviconPath,
   PROJECT_FAVICON_FALLBACK_MARKER,
@@ -66,6 +67,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+import { githubMediaAccessScope } from "./GitHubMediaFetch.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -111,6 +113,7 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file-exact"),
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
+    fileRevision: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -119,6 +122,7 @@ const AssetClaimsSchema = Schema.Union([
     filePath: Schema.String,
     device: Schema.String,
     inode: Schema.String,
+    fileRevision: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -129,6 +133,7 @@ const AssetClaimsSchema = Schema.Union([
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
+    fileRevision: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -164,6 +169,7 @@ const AssetClaimsSchema = Schema.Union([
     /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
     url: Schema.String,
     cwd: Schema.String,
+    accessScope: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
 ]);
@@ -192,6 +198,7 @@ export type ResolvedAsset =
       readonly kind: "github-media";
       readonly url: string;
       readonly cwd: string;
+      readonly accessScope?: string;
       readonly expiresAt: number;
     };
 
@@ -335,17 +342,58 @@ const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) 
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
+const mediaFileRevision = ({ info }: OpenMediaFile) =>
+  `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+
 /**
  * Opens through `openMediaFile` so a path swapped for a FIFO cannot block the
  * request; a regular open would wait for a writer that never comes.
  */
-const readImageDimensionsFromHeader = (filePath: string) =>
+const inspectImageFile = (filePath: string) =>
   openMediaFile(filePath).pipe(
     Effect.flatMap((file) =>
-      file === null ? Effect.succeed(null) : readImageDimensionsFromOpenFile(filePath, file),
+      file === null
+        ? Effect.succeed(null)
+        : Effect.map(readImageDimensionsFromOpenFile(filePath, file), (dimensions) => ({
+            dimensions,
+            fileRevision: mediaFileRevision(file),
+          })),
     ),
     Effect.scoped,
-    Effect.orElseSucceed((): ImageDimensions | null => null),
+    Effect.orElseSucceed(() => null),
+  );
+
+const isImageMimeType = (mimeType: string | null) => mimeType?.startsWith("image/") === true;
+
+/**
+ * Clients cache an image under the `fileRevision` returned at mint, so serving
+ * different bytes on that URL would store them under the old key for good.
+ * A changed file is refused instead; error responses are never cached.
+ */
+const openSignedRevision = (
+  filePath: string,
+  claims: {
+    readonly device?: string;
+    readonly inode?: string;
+    readonly fileRevision?: string;
+  },
+) =>
+  openMediaFile(
+    filePath,
+    claims.device !== undefined && claims.inode !== undefined
+      ? { device: claims.device, inode: claims.inode }
+      : undefined,
+  ).pipe(
+    Effect.map((file) =>
+      file !== null &&
+      (claims.fileRevision === undefined || mediaFileRevision(file) === claims.fileRevision)
+        ? file
+        : null,
+    ),
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to open canonical media file.", { filePath, cause }),
+    ),
+    Effect.orElseSucceed(() => null),
   );
 
 const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMediaFileAsset")(
@@ -396,7 +444,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
                 : Effect.succeed(null),
               (dimensions) => ({
                 identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
-                fileRevision: `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`,
+                fileRevision: mediaFileRevision(file),
                 dimensions,
               }),
             ),
@@ -418,6 +466,9 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         kind: "media-file-exact" as const,
         filePath: canonicalFile,
         ...opened.identity,
+        ...(isImageMimeType(hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)))
+          ? { fileRevision: opened.fileRevision }
+          : {}),
         expiresAt: input.expiresAt,
       },
       fileName: path.basename(canonicalFile),
@@ -482,11 +533,26 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           }),
       ),
     );
-    const imageDimensions = HEADER_IMAGE_EXTENSIONS.has(
+    const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(
       path.extname(resolved.relativePath).toLowerCase(),
-    )
-      ? yield* readImageDimensionsFromHeader(canonicalFile)
-      : null;
+    );
+    const opened = yield* openMediaFile(canonicalFile).pipe(
+      Effect.flatMap((file) =>
+        file === null
+          ? Effect.succeed(null)
+          : Effect.map(
+              wantsDimensions
+                ? readImageDimensionsFromOpenFile(canonicalFile, file)
+                : Effect.succeed(null),
+              (imageDimensions) => ({
+                imageDimensions,
+                fileRevision: mediaFileRevision(file),
+              }),
+            ),
+      ),
+      Effect.scoped,
+      Effect.orElseSucceed(() => null),
+    );
     return {
       claims: isWorkspaceImagePreviewPath(resolved.relativePath)
         ? {
@@ -494,6 +560,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             kind: "workspace-file-exact" as const,
             workspaceRoot: canonicalWorkspaceRoot,
             relativePath: resolved.relativePath,
+            ...(opened ? { fileRevision: opened.fileRevision } : {}),
             expiresAt: input.expiresAt,
           }
         : {
@@ -504,13 +571,33 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             expiresAt: input.expiresAt,
           },
       fileName: path.basename(resolved.relativePath),
-      imageDimensions,
+      imageDimensions: opened?.imageDimensions ?? null,
+      fileRevision: opened?.fileRevision,
     };
   },
 );
 
+// Clients that never re-sign after a load error keep loading a URL whose file changed, so
+// they need it to serve the current bytes.
+const withoutVersionBinding = (claims: AssetClaims): AssetClaims => {
+  if (claims.kind === "github-media") {
+    const { accessScope: _accessScope, ...unbound } = claims;
+    return unbound;
+  }
+  if (
+    claims.kind === "attachment" ||
+    claims.kind === "media-file-exact" ||
+    claims.kind === "workspace-file-exact"
+  ) {
+    const { fileRevision: _fileRevision, ...unbound } = claims;
+    return unbound;
+  }
+  return claims;
+};
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
+  readonly bindVersion?: boolean | undefined;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
   /** Where a cloned project's checkout stands, while the clone tracker still knows it. */
@@ -525,6 +612,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let sourcePath: string | undefined;
   let imageDimensions: ImageDimensions | null = null;
   let fileRevision: string | undefined;
+  let accessScope: string | undefined;
 
   switch (input.resource._tag) {
     case "media-file": {
@@ -579,6 +667,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
       break;
     }
     case "draft-workspace-file": {
@@ -617,6 +706,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
       break;
     }
     case "attachment": {
@@ -632,14 +722,25 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       const extension = parseAttachmentFileExtension(input.resource.attachmentId);
       const isGenericFile = extension !== null;
+      const isImage =
+        !isGenericFile ||
+        imageMimeType({
+          name: `attachment.${extension}`,
+          mimeType: input.resource.mimeType ?? "",
+        }) !== null;
       const videoMimeType = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
       const isVideo = INLINE_VIDEO_MIME_TYPE_PATTERN.test(videoMimeType);
       const inlinePreviewMimeType =
         input.resource.disposition === "inline" && extension !== null
           ? inlinePreviewMimeTypeForExtension(extension)
           : undefined;
-      if (!isGenericFile) {
-        imageDimensions = yield* readImageDimensionsFromHeader(attachmentPath);
+      if (isImage) {
+        const canonicalFile = yield* resolveCanonicalFile(attachmentPath).pipe(
+          Effect.orElseSucceed(() => null),
+        );
+        const inspected = canonicalFile ? yield* inspectImageFile(canonicalFile) : null;
+        imageDimensions = inspected?.dimensions ?? null;
+        fileRevision = inspected?.fileRevision;
       }
       claims = {
         version: 1,
@@ -657,6 +758,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ...(input.resource.renderIntent === "mcp-app" && inlinePreviewMimeType === "text/html"
           ? { renderIntent: "mcp-app" as const }
           : {}),
+        ...(fileRevision !== undefined ? { fileRevision } : {}),
         expiresAt,
       };
       fileName = input.resource.fileName ?? path.basename(attachmentPath);
@@ -808,11 +910,13 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (fetchUrl === null) {
         return yield* new AssetGitHubMediaUrlValidationError({});
       }
+      accessScope = yield* githubMediaAccessScope.pipe(Effect.orElseSucceed(() => undefined));
       claims = {
         version: 1,
         kind: "github-media",
         url: fetchUrl,
         cwd: input.resource.cwd,
+        ...(accessScope !== undefined ? { accessScope } : {}),
         expiresAt,
       };
       fileName = githubMediaFileName(fetchUrl);
@@ -845,6 +949,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       Math.ceil(expiresAt / HTML_ATTACHMENT_TOKEN_BUCKET_MS) * HTML_ATTACHMENT_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
+  if (!input.bindVersion) claims = withoutVersionBinding(claims);
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
   return {
@@ -853,6 +958,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     ...(sourcePath !== undefined ? { sourcePath } : {}),
     ...(imageDimensions !== null ? { imageDimensions } : {}),
     ...(fileRevision !== undefined ? { fileRevision } : {}),
+    ...(accessScope !== undefined ? { accessScope } : {}),
   };
 });
 
@@ -881,6 +987,28 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       attachmentId: claims.attachmentId,
     });
     if (!attachmentPath) return null;
+    const attachmentAsset = {
+      ...(claims.download ? { download: true } : {}),
+      ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
+      ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+      ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
+    };
+    if (claims.fileRevision !== undefined) {
+      const canonicalFile = yield* resolveCanonicalFile(attachmentPath).pipe(
+        Effect.tapError((cause) =>
+          Effect.logError("Failed to resolve canonical attachment path.", {
+            attachmentId: claims.attachmentId,
+            path: attachmentPath,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+      const file = canonicalFile ? yield* openSignedRevision(canonicalFile, claims) : null;
+      return canonicalFile && file
+        ? ({ kind: "file", path: canonicalFile, file, ...attachmentAsset } satisfies ResolvedAsset)
+        : null;
+    }
     const fileSystem = yield* FileSystem.FileSystem;
     const info = yield* optionOnNotFound(fileSystem.stat(attachmentPath)).pipe(
       Effect.tapError((cause) =>
@@ -893,14 +1021,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => Option.none()),
     );
     return Option.isSome(info) && info.value.type === "File"
-      ? ({
-          kind: "file",
-          path: attachmentPath,
-          ...(claims.download ? { download: true } : {}),
-          ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
-          ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
-          ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
-        } satisfies ResolvedAsset)
+      ? ({ kind: "file", path: attachmentPath, ...attachmentAsset } satisfies ResolvedAsset)
       : null;
   }
 
@@ -931,6 +1052,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       kind: "github-media",
       url: claims.url,
       cwd: claims.cwd,
+      ...(claims.accessScope !== undefined ? { accessScope: claims.accessScope } : {}),
       expiresAt: claims.expiresAt,
     } satisfies ResolvedAsset;
   }
@@ -972,12 +1094,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     if (canonicalFile !== claims.filePath) return null;
     const mimeType = hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
     if (!mimeType) return null;
-    const file = yield* openMediaFile(canonicalFile, claims).pipe(
-      Effect.tapError((cause) =>
-        Effect.logError("Failed to open canonical media file.", { filePath: canonicalFile, cause }),
-      ),
-      Effect.orElseSucceed(() => null),
-    );
+    const file = yield* openSignedRevision(canonicalFile, claims);
     return file
       ? ({ kind: "file", path: canonicalFile, mimeType, file } satisfies ResolvedAsset)
       : null;
@@ -988,9 +1105,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
-    return exactWorkspaceFile
-      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
-      : null;
+    if (!exactWorkspaceFile) return null;
+    if (claims.fileRevision === undefined) {
+      return { kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset;
+    }
+    const file = yield* openSignedRevision(exactWorkspaceFile, claims);
+    return file ? ({ kind: "file", path: exactWorkspaceFile, file } satisfies ResolvedAsset) : null;
   }
   const segments = decodedPath.split(/[\\/]/);
   if (

@@ -403,6 +403,10 @@ const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
 
+// A 404 is cacheable by default, and a signed URL that fails now may serve once the file is back.
+const assetErrorResponse = (body: string, status: number) =>
+  HttpServerResponse.text(body, { status, headers: { "cache-control": "private, no-store" } });
+
 export const layerAssetRoute = HttpRouter.add(
   "GET",
   `${ASSET_ROUTE_PREFIX}/*`,
@@ -410,13 +414,13 @@ export const layerAssetRoute = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) {
-      return HttpServerResponse.text("Bad Request", { status: 400 });
+      return assetErrorResponse("Bad Request", 400);
     }
 
     const suffix = url.value.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
     const separatorIndex = suffix.indexOf("/");
     if (separatorIndex <= 0) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
+      return assetErrorResponse("Not Found", 404);
     }
 
     const asset = yield* resolveAsset(
@@ -424,7 +428,7 @@ export const layerAssetRoute = HttpRouter.add(
       suffix.slice(separatorIndex + 1),
     );
     if (!asset) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
+      return assetErrorResponse("Not Found", 404);
     }
     if (asset.kind === "bytes") {
       return HttpServerResponse.uint8Array(asset.bytes, {
@@ -450,9 +454,7 @@ export const layerAssetRoute = HttpRouter.add(
       request.method === "GET" ? request.headers.range : undefined,
       request.headers["if-range"],
       request.method === "HEAD" ? "HEAD" : "GET",
-    ).pipe(
-      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
-    );
+    ).pipe(Effect.orElseSucceed(() => assetErrorResponse("Internal Server Error", 500)));
   }),
 );
 

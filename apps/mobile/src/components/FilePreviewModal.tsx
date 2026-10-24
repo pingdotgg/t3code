@@ -11,8 +11,9 @@ import {
 } from "react";
 import { Keyboard } from "react-native";
 
+import { assetImageCacheKey } from "../lib/assetImageSource";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
-import { useRefreshAssetUrl } from "../state/assets";
+import { usePreviewAssetUrl } from "../state/assets";
 import { filePreviewGallery, filePreviewKey, filePreviewName } from "../lib/filePreviewGallery";
 import { FilePreviewGallery } from "./FilePreviewGallery";
 import { FilePreview } from "./FilePreview";
@@ -36,12 +37,16 @@ function PreviewItemResolver(props: {
 }) {
   const { source } = props;
   const environmentId = "environmentId" in source ? source.environmentId : null;
-  const refreshAssetUrl = useRefreshAssetUrl(
+  const resolveAssetUrl = usePreviewAssetUrl(
     environmentId,
     "resource" in source ? source.resource : null,
   );
   // Resolve once per presentation; background URL refreshes must not reopen the native viewer.
   const [uri, setUri] = useState<string | null>("uri" in source ? source.uri : null);
+  // Thumbnails without a stable key are cached under their URL.
+  const [imageCacheKey, setImageCacheKey] = useState<string | undefined>(
+    "uri" in source && /^https?:/i.test(source.uri) ? source.uri : undefined,
+  );
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onResolutionError = useEffectEvent((error: unknown, fallbackMessage: string) => {
     if (props.onOpenError) props.onOpenError(error);
@@ -54,11 +59,20 @@ function PreviewItemResolver(props: {
     let cancelled = false;
     // A cached URL may have expired while the app was suspended. Await reauthorization
     // before handing a URL to Quick Look or ACTION_VIEW, which retain that URL.
-    void refreshAssetUrl()
-      .then((url) => {
+    void resolveAssetUrl()
+      .then((asset) => {
         if (cancelled) return;
-        if (!url) throw new Error("Reconnect to this environment and try again.");
-        setUri(url + (source.srcFragment ?? ""));
+        if (!asset) throw new Error("Reconnect to this environment and try again.");
+        const resolvedUri = asset.url + (source.srcFragment ?? "");
+        // Without a revision an attachment key survives edits, so a cached thumbnail could be stale.
+        const reusesThumbnail =
+          "resource" in source &&
+          (source.resource._tag !== "attachment" || asset.fileRevision !== undefined);
+        setImageCacheKey(
+          (reusesThumbnail && assetImageCacheKey(environmentId, source.resource, asset)) ||
+            resolvedUri,
+        );
+        setUri(resolvedUri);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -70,7 +84,7 @@ function PreviewItemResolver(props: {
     return () => {
       cancelled = true;
     };
-  }, [environmentId, uri, refreshAssetUrl, source.srcFragment]);
+  }, [environmentId, uri, resolveAssetUrl, source]);
   useEffect(() => {
     if (!("attachment" in source)) return;
     const controller = new AbortController();
@@ -97,8 +111,14 @@ function PreviewItemResolver(props: {
 
   const onResolved = useEffectEvent(props.onResolved);
   useEffect(() => {
-    if (uri !== null) onResolved({ ...source, name: filePreviewName(source), uri });
-  }, [uri, source]);
+    if (uri !== null)
+      onResolved({
+        ...source,
+        name: filePreviewName(source),
+        uri,
+        ...(imageCacheKey !== undefined ? { imageCacheKey } : {}),
+      });
+  }, [uri, imageCacheKey, source]);
   return null;
 }
 

@@ -62,8 +62,10 @@ function MarkdownImage(props: {
     <ThreadMarkdownImageView
       uri={media.uri}
       sourceKey={props.href}
+      cacheKey={media.cacheKey}
       unavailable={media.unavailable || !/^https?:\/\//i.test(props.href)}
       alt={props.alt}
+      refreshUri={media.refresh}
       onPressPreview={(source) =>
         props.onPreview(
           withGallery({
