@@ -19,23 +19,19 @@ import {
   resolveSpawnCommand,
   withPathDirectoryListings,
 } from "@t3tools/shared/shell";
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
 export {
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -471,19 +467,7 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
   },
 );
 
-// Callers apply a timeout (`resolveAvailableEditorsForConfig`) and disconnect
-// mid-connect; neither may cancel a scan other connects are waiting on, or
-// throw away work a slow host (a busy server at startup, a long PATH) needs
-// more than one connect to finish. Expiry uses the monotonic clock
-// (Clock.monotonicTimeNanos), matching the command-resolution cache in
-// @t3tools/shared/shell, so a backward wall-clock adjustment cannot keep an
-// expired entry alive.
-const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
-
-interface EditorDiscoveryCacheEntry {
-  readonly scan: Deferred.Deferred<ReadonlyArray<EditorId>>;
-  readonly expiresAtNanos: bigint | undefined;
-}
+const EDITOR_DISCOVERY_CACHE_TTL = "60 seconds";
 
 export class ExternalLauncher extends Context.Service<
   ExternalLauncher,
@@ -803,65 +787,22 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  const scope = yield* Scope.Scope;
-  const editorDiscoveryCache = yield* Ref.make<Option.Option<EditorDiscoveryCacheEntry>>(
-    Option.none(),
-  );
-  const runEditorDiscovery = (scan: Deferred.Deferred<ReadonlyArray<EditorId>>) =>
+  const cachedAvailableEditors = yield* makeStaleWhileRevalidate(
     provideCommandResolutionServices(resolveAvailableEditors()).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.onExit((exit) =>
-        Effect.gen(function* () {
-          const expiresAtNanos =
-            (yield* Clock.monotonicTimeNanos) + EDITOR_DISCOVERY_CACHE_TTL_NANOS;
-          yield* Ref.update(editorDiscoveryCache, (current) =>
-            Option.isNone(current) || current.value.scan !== scan
-              ? current
-              : Exit.isSuccess(exit)
-                ? Option.some({ scan, expiresAtNanos })
-                : Option.none(),
-          );
-          yield* Deferred.done(scan, exit);
-        }),
-      ),
-      Effect.interruptible,
-      Effect.forkIn(scope),
-    );
-  // Claiming the cache entry and starting its scan must not be split by an
-  // interrupt, or the entry would wait on a scan that never runs.
-  const acquireEditorDiscovery = Effect.gen(function* () {
-    const nowNanos = yield* Clock.monotonicTimeNanos;
-    const [scan, isNewScan] = yield* Ref.modify(
-      editorDiscoveryCache,
-      (
-        current,
-      ): [
-        [EditorDiscoveryCacheEntry["scan"], boolean],
-        Option.Option<EditorDiscoveryCacheEntry>,
-      ] => {
-        if (
-          Option.isSome(current) &&
-          (current.value.expiresAtNanos === undefined || current.value.expiresAtNanos > nowNanos)
-        ) {
-          return [[current.value.scan, false], current];
-        }
-        const scan = Deferred.makeUnsafe<ReadonlyArray<EditorId>>();
-        return [[scan, true], Option.some({ scan, expiresAtNanos: undefined })];
-      },
-    );
-    if (isNewScan) {
-      yield* runEditorDiscovery(scan);
-    }
-    return scan;
-  }).pipe(Effect.uninterruptible);
-  const cachedAvailableEditors = Effect.flatMap(acquireEditorDiscovery, Deferred.await);
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
+  const cachedFileManagerRevealKind = yield* makeStaleWhileRevalidate(
+    provideCommandResolutionServices(resolveFileManagerRevealKind()).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
 
   return ExternalLauncher.of({
     resolveAvailableEditors: () => cachedAvailableEditors,
-    resolveFileManagerRevealKind: () =>
-      provideCommandResolutionServices(resolveFileManagerRevealKind()).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ),
+    resolveFileManagerRevealKind: () => cachedFileManagerRevealKind,
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
