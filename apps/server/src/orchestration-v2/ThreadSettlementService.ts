@@ -552,7 +552,15 @@ export const make = Effect.gen(function* () {
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeIdle({ threadId });
       const worktreePath = settled.worktreePath;
-      if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      if (worktreePath === null) return;
+      // A subagent sharing its parent's worktree does not own it: the parent
+      // may still be working there and runs the settle script when it settles.
+      const { lineage } = settled;
+      if (lineage.relationshipToParent === "subagent" && lineage.parentThreadId !== null) {
+        const parent = yield* projections.getThread(lineage.parentThreadId);
+        if (parent.worktreePath === worktreePath) return;
+      }
+      if (!(yield* fileSystem.exists(worktreePath))) return;
       // Closing and the worktree check wait on I/O. A thread re-engaged
       // meanwhile is working again, so its worktree is no place for cleanup.
       const thread = yield* projections.getThread(threadId);

@@ -979,6 +979,38 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
+  it.effect("runs the settle script for the worktree's owner, not a subagent sharing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const parent = appThread("parent-thread", "settled", "/worktrees/parent");
+        const child: OrchestrationV2AppThread = {
+          ...appThread("delegated-child-thread", "settled", "/worktrees/parent"),
+          creationSource: "mcp",
+          lineage: {
+            parentThreadId: parent.id,
+            relationshipToParent: "subagent",
+            rootThreadId: parent.id,
+          },
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [parent, child],
+          existingWorktreePaths: ["/worktrees/parent"],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(child));
+          yield* fixture.publishEvent(settledEvent(parent));
+          const run = yield* Queue.take(fixture.scriptRuns);
+          assert.strictEqual(run.threadId, parent.id);
+          assert.strictEqual(run.worktreePath, "/worktrees/parent");
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("skips the settle script for a thread re-engaged while its shells close", () =>
     Effect.scoped(
       Effect.gen(function* () {
