@@ -141,6 +141,18 @@ function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>)
     : `${organization}.visualstudio.com/${project}/_git/${repository}`;
 }
 
+/**
+ * Forges publish a second SSH-only host (for networks that block port 22) that serves the same
+ * repositories as their web host, so both must key to the one a pull request URL arrives under.
+ */
+const FORGE_SSH_WEB_HOSTS: ReadonlyMap<string, string> = new Map([
+  ["ssh.github.com", "github.com"],
+  ["ssh.bitbucket.org", "bitbucket.org"],
+  ["altssh.gitlab.com", "gitlab.com"],
+]);
+
+export const webHost = (host: string): string => FORGE_SSH_WEB_HOSTS.get(host) ?? host;
+
 export function normalizeGitRemoteUrl(value: string): string {
   const normalized = value
     .trim()
@@ -155,7 +167,7 @@ export function normalizeGitRemoteUrl(value: string): string {
       if (url.hostname && repositorySegments.length > 1) {
         return (
           azureDevOpsRepositoryKey(url.hostname, repositorySegments) ??
-          `${url.hostname}/${repositorySegments.join("/")}`
+          `${webHost(url.hostname)}/${repositorySegments.join("/")}`
         );
       }
     } catch {
@@ -170,7 +182,9 @@ export function normalizeGitRemoteUrl(value: string): string {
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (scpHost && scpPath) {
-    return azureDevOpsRepositoryKey(scpHost, scpPath.split("/")) ?? `${scpHost}/${scpPath}`;
+    return (
+      azureDevOpsRepositoryKey(scpHost, scpPath.split("/")) ?? `${webHost(scpHost)}/${scpPath}`
+    );
   }
 
   return normalized;

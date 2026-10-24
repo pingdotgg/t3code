@@ -63,6 +63,20 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
   });
 
+  it("keys a forge's SSH-only host the same as its web host", () => {
+    expect(normalizeGitRemoteUrl("git@ssh.bitbucket.org:Owner/Repo.git")).toBe(
+      "bitbucket.org/owner/repo",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@ssh.github.com:443/Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
+    expect(normalizeGitRemoteUrl("git@altssh.gitlab.com:Group/Sub/Repo.git")).toBe(
+      "gitlab.com/group/sub/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com/Owner/Repo")).toBe("github.com/owner/repo");
+    expect(normalizeGitRemoteUrl("git@constructor:Owner/Repo.git")).toBe("constructor/owner/repo");
+  });
+
   it("gives an Azure DevOps repository the same key over SSH as over HTTPS", () => {
     expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code")).toBe(
       "dev.azure.com/t3tools/platform/_git/t3code",
