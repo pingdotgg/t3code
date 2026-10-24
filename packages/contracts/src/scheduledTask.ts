@@ -1,3 +1,5 @@
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -23,6 +25,23 @@ const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
 ).annotate({ description: "Local wall-clock time in 24-hour HH:MM form, such as 09:30." });
 
+/** Whether this runtime's Intl data knows the time zone. */
+export function isValidTimeZone(value: string): boolean {
+  return Option.isSome(DateTime.zoneMakeNamed(value));
+}
+
+/**
+ * Stored zones are read without the Intl check, so a client whose time zone
+ * data lacks one still lists the task.
+ */
+const ScheduledTaskTimeZone = TrimmedNonEmptyString.annotate({
+  description: "IANA time zone name, such as America/Chicago.",
+});
+
+const WritableTimeZone = ScheduledTaskTimeZone.check(
+  Schema.makeFilter((value) => isValidTimeZone(value) || `Unknown time zone: ${value}`),
+);
+
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
 const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0)).annotate({
@@ -38,7 +57,7 @@ const ScheduledTaskIntervalSchedule = Schema.Struct({
   description: "Run repeatedly after a fixed number of milliseconds.",
 });
 
-const ScheduledTaskFixedTimeSchedule = Schema.Struct({
+const ScheduledTaskFixedTimeFields = {
   type: Schema.Literal("fixed_time").annotate({
     description: "Select a fixed local wall-clock time.",
   }),
@@ -52,8 +71,25 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
       description: "Optional weekdays; omit to run every day.",
     }),
   ),
+};
+
+const ScheduledTaskFixedTimeSchedule = Schema.Struct({
+  ...ScheduledTaskFixedTimeFields,
+  timeZone: Schema.optional(ScheduledTaskTimeZone),
 }).annotate({
-  description: "Run at a fixed local wall-clock time on selected weekdays.",
+  description:
+    "Run at a fixed wall-clock time on selected weekdays, in timeZone or the environment's local time.",
+});
+
+const ScheduledTaskUpsertFixedTimeSchedule = Schema.Struct({
+  ...ScheduledTaskFixedTimeFields,
+  timeZone: Schema.optional(Schema.NullOr(WritableTimeZone)).annotate({
+    description:
+      "IANA time zone for timeOfDay, such as America/Chicago. Without one, the time is the environment's local time. Omit to keep the stored zone; null removes it.",
+  }),
+}).annotate({
+  description:
+    "Run at a fixed wall-clock time on selected weekdays, in timeZone or the environment's local time.",
 });
 
 const ScheduledTaskWebhookSignatureFields = {
@@ -214,7 +250,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   }).annotate({
     description: "Run repeatedly after a fixed number of milliseconds.",
   }),
-  ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskUpsertFixedTimeSchedule,
   ScheduledTaskUpsertWebhookSchedule,
 ]).annotate({
   description: "Writable trigger. Pass an object with type 'interval', 'fixed_time' or 'webhook'.",

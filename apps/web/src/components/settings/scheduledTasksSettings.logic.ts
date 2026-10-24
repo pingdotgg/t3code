@@ -18,6 +18,7 @@ import {
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { timeZoneForSave } from "@t3tools/client-runtime/scheduled-task-schedule";
 
 import {
   resolveProjectSettings,
@@ -64,6 +65,10 @@ export interface DraftState {
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
   readonly weekdays: ReadonlySet<number>;
+  /** Blank runs at the environment's local time. */
+  readonly timeZone: string;
+  /** The zone the form opened with. */
+  readonly savedTimeZone: string;
   readonly projectId: string;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
@@ -99,8 +104,22 @@ export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signaturePrefix: "sha256=",
 } as const;
 
-export function webhookDraftErrors(draft: DraftState) {
-  if (draft.scheduleMode !== "webhook") return [];
+export function scheduleDraftErrors(draft: DraftState) {
+  if (draft.scheduleMode === "webhook") return webhookDraftErrors(draft);
+  if (
+    draft.scheduleMode === "fixed" &&
+    timeZoneForSave(draft.timeZone, draft.savedTimeZone) === undefined
+  )
+    return [
+      {
+        title: "Unknown time zone",
+        description: "Pick a time zone such as America/Chicago, or leave it blank.",
+      },
+    ];
+  return [];
+}
+
+function webhookDraftErrors(draft: DraftState) {
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
     return [
       {
@@ -147,8 +166,8 @@ export function webhookDeliveryLabel(delivery: {
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
+  if (scheduleDraftErrors(draft).length > 0) return null;
   if (draft.scheduleMode === "webhook") {
-    if (webhookDraftErrors(draft).length > 0) return null;
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     const replayKey = draft.replayKey.trim();
     const coalesceKey = draft.coalesceKey.trim();
@@ -194,6 +213,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+    ...timeZoneForSave(draft.timeZone, draft.savedTimeZone),
   };
 }
 
@@ -215,6 +235,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     weekdays,
+    timeZone: schedule.type === "fixed_time" ? (schedule.timeZone ?? "") : "",
+    savedTimeZone: schedule.type === "fixed_time" ? (schedule.timeZone ?? "") : "",
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     workspaceMode: task.workspaceStrategy.type,

@@ -49,7 +49,12 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import {
+  isMissedFixedTimeRun,
+  isSameSchedule,
+  nextScheduledRunAt,
+  timerScheduleToStore,
+} from "./Schedule.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -1114,7 +1119,7 @@ export const layer = Layer.effect(
                     : undefined),
               ),
             }
-          : input.schedule;
+          : timerScheduleToStore(input.schedule, existingTask?.schedule);
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {

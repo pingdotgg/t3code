@@ -167,3 +167,69 @@ it.effect("keeps the task list order when a toggle or edit rewrites updated_at",
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+const serviceLayer = ScheduledTaskService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    ),
+  ),
+);
+
+const taskInput = (schedule: unknown, extra: Record<string, unknown> = {}) =>
+  decodeUpsertInput({
+    id: "scheduled-task:schedule-controls",
+    title: "Review",
+    prompt: "Review the open pull requests.",
+    enabled: true,
+    schedule,
+    projectId: "project-schedule-controls",
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    ...extra,
+  });
+
+/** Pins the clock before the service starts, then runs `body` against it. */
+const withService = <A, E>(
+  at: string,
+  body: Effect.Effect<A, E, ScheduledTaskService.ScheduledTaskService>,
+) =>
+  TestClock.setTime(Date.parse(at)).pipe(
+    Effect.andThen(body.pipe(Effect.provide(serviceLayer))),
+    Effect.provide(SqlitePersistence.layerMemory),
+  );
+
+it.effect("keeps a stored time zone when a save omits it and removes it on null", () =>
+  withService(
+    "2026-07-03T10:00:00.000Z",
+    Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const zoned = { type: "fixed_time", timeOfDay: "09:00", timeZone: "America/Chicago" };
+      const created = yield* service.upsert(yield* taskInput(zoned));
+      expect(created.task.schedule).toEqual(zoned);
+      expect(created.task.nextRunAt).toBe("2026-07-03T14:00:00.000Z");
+
+      // A client that predates time zones sends the schedule without one.
+      const kept = yield* service.upsert(
+        yield* taskInput({ type: "fixed_time", timeOfDay: "09:00" }, { title: "Renamed" }),
+      );
+      expect(kept.task.schedule).toEqual(zoned);
+      expect(kept.task.nextRunAt).toBe("2026-07-03T14:00:00.000Z");
+
+      const cleared = yield* service.upsert(
+        yield* taskInput({ type: "fixed_time", timeOfDay: "09:00", timeZone: null }),
+      );
+      expect(cleared.task.schedule).toEqual({ type: "fixed_time", timeOfDay: "09:00" });
+    }),
+  ),
+);

@@ -22,6 +22,23 @@ describe("ScheduledTaskSchedule", () => {
       everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS - 1,
     });
   });
+
+  it("checks a written time zone against Intl but reads any stored one", () => {
+    const fixed = { type: "fixed_time", timeOfDay: "09:00" };
+    expect(decodeUpsertSchedule({ ...fixed, timeZone: "America/Chicago" })).toEqual({
+      ...fixed,
+      timeZone: "America/Chicago",
+    });
+    expect(decodeUpsertSchedule({ ...fixed, timeZone: null })).toEqual({
+      ...fixed,
+      timeZone: null,
+    });
+    expect(() => decodeUpsertSchedule({ ...fixed, timeZone: "Mars/Olympus_Mons" })).toThrow();
+    expect(decodeSchedule({ ...fixed, timeZone: "Mars/Olympus_Mons" })).toEqual({
+      ...fixed,
+      timeZone: "Mars/Olympus_Mons",
+    });
+  });
 });
 
 it.each(["literal", " ", "\t\n", "{{body.bad", "{{unknown.field}}"])(

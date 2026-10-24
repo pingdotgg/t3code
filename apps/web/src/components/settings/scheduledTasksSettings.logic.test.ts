@@ -151,6 +151,35 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+describe("timed schedule settings", () => {
+  it("round-trips a fixed time's zone, clears it when blank, and rejects an unknown one", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "09:00", timeZone: "America/Chicago" },
+    });
+    expect(draft.timeZone).toBe("America/Chicago");
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      timeZone: "America/Chicago",
+    });
+    expect(scheduleFromDraft({ ...draft, timeZone: " " })).toMatchObject({ timeZone: null });
+    expect(scheduleFromDraft({ ...draft, timeZone: "Chicago" })).toBeNull();
+  });
+
+  it("keeps a stored zone this client's time zone data lacks when other fields change", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "09:00", timeZone: "Mars/Olympus_Mons" },
+    });
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "10:00" })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "10:00",
+    });
+    expect(scheduleFromDraft({ ...draft, timeZone: "Mars/Tharsis" })).toBeNull();
+  });
+});
+
 describe("webhook scheduled tasks", () => {
   const signature = { header: "x-signature", encoding: "base64", prefix: "" } as const;
   const webhookTask: ScheduledTask = {

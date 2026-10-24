@@ -1,5 +1,10 @@
-import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
+import {
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
+  type ScheduledTaskSchedule,
+  type ScheduledTaskUpsertSchedule,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 const MINUTE_MS = 60_000;
 
@@ -7,6 +12,12 @@ function parseTimeOfDay(value: string): { hour: number; minute: number } | null 
   const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
   if (!match) return null;
   return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
+/** Without a zone, `from` keeps the environment's local zone it was read in. */
+function inTimeZone(from: DateTime.DateTime, timeZone: string | undefined) {
+  if (timeZone === undefined) return from;
+  return Option.getOrNull(DateTime.setZoneNamed(from, timeZone));
 }
 
 export function nextScheduledRunAt(
@@ -23,10 +34,14 @@ export function nextScheduledRunAt(
 
   const time = parseTimeOfDay(schedule.timeOfDay);
   if (time === null) return null;
+  const zoned = inTimeZone(from, schedule.timeZone);
+  if (zoned === null) return null;
   const weekdays =
     schedule.weekdays && schedule.weekdays.length > 0 ? new Set(schedule.weekdays) : null;
+  // A wall-clock time skipped by a daylight-saving jump runs that much later;
+  // a repeated one runs at its first occurrence only.
   for (let offset = 0; offset <= 7; offset += 1) {
-    const candidate = DateTime.setParts(DateTime.add(from, { days: offset }), {
+    const candidate = DateTime.setParts(DateTime.add(zoned, { days: offset }), {
       hour: time.hour,
       minute: time.minute,
       second: 0,
@@ -37,6 +52,31 @@ export function nextScheduledRunAt(
     return candidate;
   }
   return null;
+}
+
+/**
+ * An omitted optional field keeps its stored value, so a client that predates
+ * the field can re-save a task without clearing it. Null clears it.
+ */
+function kept<A>(value: A | null | undefined, stored: A | undefined): A | undefined {
+  return value === undefined ? stored : (value ?? undefined);
+}
+
+export function timerScheduleToStore(
+  input: Exclude<ScheduledTaskUpsertSchedule, { readonly type: "webhook" }>,
+  stored: ScheduledTaskSchedule | undefined,
+): ScheduledTaskSchedule {
+  if (input.type === "interval") return input;
+  const timeZone = kept(
+    input.timeZone,
+    stored?.type === "fixed_time" ? stored.timeZone : undefined,
+  );
+  return {
+    type: "fixed_time",
+    timeOfDay: input.timeOfDay,
+    ...(input.weekdays === undefined ? {} : { weekdays: input.weekdays }),
+    ...(timeZone === undefined ? {} : { timeZone }),
+  };
 }
 
 function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
@@ -61,7 +101,8 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     bTime !== null &&
     aTime.hour === bTime.hour &&
     aTime.minute === bTime.minute &&
-    weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
+    weekdayKey(a.weekdays) === weekdayKey(b.weekdays) &&
+    a.timeZone === b.timeZone
   );
 }
 

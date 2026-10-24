@@ -51,6 +51,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
+import { localTimeZone, timeZoneForSave } from "@t3tools/client-runtime/scheduled-task-schedule";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
@@ -106,7 +107,8 @@ function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
+  const zone = task.schedule.timeZone ? ` (${task.schedule.timeZone})` : "";
+  return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone}`;
 }
 
 function formatTime(value: string): string {
@@ -148,6 +150,8 @@ function FormField(props: {
   readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly borderTop?: boolean;
+  /** For identifiers such as time zone names, which autocorrect would mangle. */
+  readonly literal?: boolean;
 }) {
   return (
     <View
@@ -163,6 +167,8 @@ function FormField(props: {
         onChangeText={props.onChange}
         textAlignVertical="center"
         keyboardType={props.keyboardType}
+        autoCapitalize={props.literal ? "none" : undefined}
+        autoCorrect={props.literal ? false : undefined}
         placeholder={props.placeholder}
         placeholderTextColorClassName="accent-foreground-muted"
         className="min-h-8 font-sans text-base text-foreground"
@@ -711,6 +717,16 @@ function TaskForm({
       );
       return;
     }
+    if (
+      draft.schedule.mode === "fixed_time" &&
+      timeZoneForSave(draft.schedule.timeZone, draft.schedule.savedTimeZone) === undefined
+    ) {
+      Dialog.alert(
+        "Unknown time zone",
+        "Enter a time zone such as America/Chicago, or leave it blank.",
+      );
+      return;
+    }
     const parsedFilters = parseWebhookFilterDrafts(draft.schedule.filters);
     if (draft.schedule.mode === "webhook" && "error" in parsedFilters) {
       Dialog.alert("Invalid filter", parsedFilters.error);
@@ -1034,6 +1050,17 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
                 }}
               />
+              <FormField
+                label="Time zone"
+                value={draft.schedule.timeZone}
+                placeholder="Environment's time zone"
+                disabled={saving}
+                borderTop
+                literal
+                onChange={(timeZone) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, timeZone } })
+                }
+              />
             </>
           ) : draft.schedule.mode === "webhook" ? (
             <>
@@ -1139,7 +1166,8 @@ function TaskForm({
         </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">
-            Time uses the environment's time zone, which may differ from your phone's.
+            Enter an IANA time zone such as {localTimeZone()}, this phone's. Left blank, the time
+            uses the environment's time zone, which may differ from your phone's.
           </Text>
         ) : null}
       </View>

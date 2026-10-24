@@ -56,6 +56,7 @@ import {
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
+import { timeZoneSuggestions } from "@t3tools/client-runtime/scheduled-task-schedule";
 import { Link } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -80,7 +81,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
-  webhookDraftErrors,
+  scheduleDraftErrors,
   webhookDeliveryLabel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
@@ -139,6 +140,8 @@ const EMPTY_DRAFT: DraftState = {
   intervalMinutes: "15",
   timeOfDay: "09:00",
   weekdays: new Set([1, 2, 3, 4, 5]),
+  timeZone: "",
+  savedTimeZone: "",
   projectId: "",
   threadId: "",
   workspaceMode: "worktree",
@@ -277,6 +280,43 @@ function Field({
   );
 }
 
+const TIME_ZONE_LIST_ID = "scheduled-task-time-zones";
+
+function TimeZoneOptions() {
+  return (
+    <datalist id={TIME_ZONE_LIST_ID}>
+      {timeZoneSuggestions().map((zone) => (
+        <option key={zone} value={zone} />
+      ))}
+    </datalist>
+  );
+}
+
+/** Blank means the environment's local time, which may differ from this browser's. */
+function TimeZoneField(props: {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex w-full items-center gap-2">
+      <Label htmlFor={props.id}>{props.label}</Label>
+      <Input
+        id={props.id}
+        nativeInput
+        list={TIME_ZONE_LIST_ID}
+        className="min-w-0 flex-1"
+        placeholder="Environment's time zone"
+        autoComplete="off"
+        spellCheck={false}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
 function splitModelKey(value: string): ModelSelection | null {
   const index = value.indexOf(":");
   if (index <= 0 || index === value.length - 1) return null;
@@ -301,7 +341,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
       : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
         ? "Weekdays"
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  return `${days} at ${schedule.timeOfDay}`;
+  return `${days} at ${schedule.timeOfDay}${schedule.timeZone ? ` (${schedule.timeZone})` : ""}`;
 }
 
 /**
@@ -1199,7 +1239,7 @@ function ScheduledTaskEditorForm({
     }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
-      for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
+      for (const error of scheduleDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
     }
     if (
@@ -1719,6 +1759,12 @@ function ScheduledTaskEditorForm({
                     </Toggle>
                   ))}
                 </ToggleGroup>
+                <TimeZoneField
+                  id="scheduled-task-time-zone"
+                  label="Time zone"
+                  value={draft.timeZone}
+                  onChange={(timeZone) => setDraft((current) => ({ ...current, timeZone }))}
+                />
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -1754,6 +1800,7 @@ function ScheduledTaskEditorForm({
               onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
             />
           </div>
+          <TimeZoneOptions />
         </fieldset>
       </DialogPanel>
 

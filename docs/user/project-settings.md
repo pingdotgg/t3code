@@ -66,7 +66,8 @@ Open **Settings → Scheduled tasks** to create recurring tasks or manage existi
 ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that
-environment's time zone, which may differ from your phone's.
+environment's time zone, which may differ from your phone's, unless the task
+sets its own.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
@@ -75,6 +76,14 @@ You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.
 Leaving an edited form asks before discarding unsaved changes.
+
+## Scheduled task timing
+
+A task that runs **At a time** uses the environment's clock unless you set a
+**Time zone**, such as `America/Chicago`. It then keeps that local time when
+daylight saving starts or ends. A time skipped when clocks move forward runs
+later by the size of the change, and a time that repeats when they move back
+runs once.
 
 ## Webhook automations
 
