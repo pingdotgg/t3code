@@ -15,6 +15,7 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { toastManager } from "../components/ui/toast";
 import {
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
@@ -81,8 +82,8 @@ export function useNewThreadHandler() {
     // Read at call time: every provider status push replaces the config map, and
     // subscribing would hand every sidebar row a new handler.
     const environmentServerConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const targetServerSettings =
-      environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
+    const targetServerConfig = environmentServerConfigs.get(projectRef.environmentId);
+    const targetServerSettings = targetServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
     const {
       getComposerDraft,
       getDraftSessionByLogicalProjectKey,
@@ -139,7 +140,15 @@ export function useNewThreadHandler() {
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
-    const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+    const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode | null> => {
+      if (targetServerConfig === undefined) {
+        toastManager.add({
+          type: "warning",
+          title: "Environment settings are still loading",
+          description: "Wait for this environment to finish connecting, then try again.",
+        });
+        return null;
+      }
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
       const consultProjectFile =
@@ -210,7 +219,7 @@ export function useNewThreadHandler() {
           workspaceContext = pickExplicitWorkspaceOptions(options);
         } else if (!isDraftAlreadyOpen) {
           const defaultEnvMode = await resolveDefaultEnvMode();
-          if (abandonedSinceRequest()) {
+          if (defaultEnvMode === null || abandonedSinceRequest()) {
             return null;
           }
           // If the draft was opened (a concurrent invocation's navigation
@@ -333,7 +342,7 @@ export function useNewThreadHandler() {
     const createdAt = new Date().toISOString();
     return (async () => {
       const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
-      if (abandonedSinceRequest()) {
+      if (initialEnvMode === null || abandonedSinceRequest()) {
         return null;
       }
       // The await yields, so a concurrent invocation may have registered a
