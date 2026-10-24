@@ -25,7 +25,8 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import {
-  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
+  getTextGenerationProviders,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
@@ -107,9 +108,7 @@ export function SourceControlWritingSettingsSection() {
     style.mode !== defaults.mode ||
     style.customInstructions !== defaults.customInstructions;
 
-  const textGenerationProviders = serverProviders.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const textGenerationProviders = getTextGenerationProviders(serverProviders);
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(textGenerationProviders),
@@ -145,7 +144,7 @@ export function SourceControlWritingSettingsSection() {
     (entry) =>
       entry.instanceId === defaultModelSelection.instanceId && entry.enabled && entry.isAvailable,
   );
-  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+  const modelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
@@ -167,7 +166,7 @@ export function SourceControlWritingSettingsSection() {
     },
     textGenerationProviders,
   );
-  const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
+  const reviewGuideModelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     textGenerationProviders,
     reviewGuideSelection.instanceId,

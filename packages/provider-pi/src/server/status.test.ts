@@ -2,6 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -52,7 +55,7 @@ function piProbeSpawner(version: string) {
   });
 }
 
-const piDiscoverySpawner = (inventory: unknown) =>
+const piRpcProcess = (inventory: unknown, onModelRequest: Effect.Effect<void> = Effect.void) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     let stdinBuffer = "";
@@ -66,6 +69,10 @@ const piDiscoverySpawner = (inventory: unknown) =>
           stdinBuffer = stdinBuffer.slice(newline + 1);
           if (line.length === 0) continue;
           const request = decodeRpcRequest(line);
+          if (request.type === "get_available_models") {
+            yield* onModelRequest;
+            if (inventory === null) continue;
+          }
           const data =
             request.type === "get_available_models"
               ? inventory
@@ -81,21 +88,32 @@ const piDiscoverySpawner = (inventory: unknown) =>
         }
       }),
     );
-    return ChildProcessSpawner.make((command) => {
-      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
-      return Effect.succeed(
-        args.includes("--version")
-          ? processHandle({ stdout: "pi 0.84.3\n" })
-          : ChildProcessSpawner.makeHandle({
-              ...processHandle({}),
-              exitCode: Effect.never,
-              isRunning: Effect.succeed(true),
-              stdin,
-              stdout: Stream.fromQueue(stdout),
-            }),
-      );
+    return ChildProcessSpawner.makeHandle({
+      ...processHandle({}),
+      exitCode: Effect.never,
+      isRunning: Effect.succeed(true),
+      stdin,
+      stdout: Stream.fromQueue(stdout),
     });
   });
+
+// Text generation lists models with --no-extensions, so its inventory can differ.
+const piDiscoverySpawner = (
+  inventory: unknown,
+  extensionFreeInventory: unknown = inventory,
+  onExtensionFreeModelRequest: Effect.Effect<void> = Effect.void,
+) =>
+  Effect.succeed(
+    ChildProcessSpawner.make((command) => {
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      return args.includes("--version")
+        ? Effect.succeed(processHandle({ stdout: "pi 0.84.3\n" }))
+        : piRpcProcess(
+            args.includes("--no-extensions") ? extensionFreeInventory : inventory,
+            args.includes("--no-extensions") ? onExtensionFreeModelRequest : Effect.void,
+          );
+    }),
+  );
 
 const settings = {
   enabled: true,
@@ -142,6 +160,63 @@ describe("PiProvider", () => {
       assert.deepEqual(
         snapshot.models.map((model) => model.slug),
         ["default"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("marks models that only load with Pi extensions as unusable for text generation", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "anthropic", id: "claude-sonnet-4" },
+            { provider: "demo", id: "demo-model" },
+          ],
+        },
+        { models: [{ provider: "anthropic", id: "claude-sonnet-4" }] },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.supportsTextGeneration]),
+        [
+          ["default", undefined],
+          ["anthropic/claude-sonnet-4", undefined],
+          ["demo/demo-model", false],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves normal discovery when the extension-free model listing times out", () =>
+    Effect.gen(function* () {
+      const modelRequested = yield* Deferred.make<void>();
+      const spawner = yield* piDiscoverySpawner(
+        { models: [{ provider: "demo", id: "demo-model" }] },
+        null,
+        Deferred.succeed(modelRequested, undefined).pipe(Effect.asVoid),
+      );
+      const fiber = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(modelRequested);
+      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("25 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.supportsTextGeneration]),
+        [
+          ["default", undefined],
+          ["demo/demo-model", undefined],
+        ],
+      );
+      assert.include(
+        snapshot.slashCommands.map((command) => command.name),
+        "compact",
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );

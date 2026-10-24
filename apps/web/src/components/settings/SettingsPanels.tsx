@@ -57,7 +57,8 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
-  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
+  getTextGenerationProviders,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
@@ -820,9 +821,7 @@ export function GeneralSettingsPanel() {
       (target) => target.serverConfig?.environment.capabilities.threadRestartContinuation === true,
     );
 
-  const textGenerationProviders = serverProviders.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const textGenerationProviders = getTextGenerationProviders(serverProviders);
   const textGenerationModelSelection = resolveAppModelSelectionState(
     settings,
     textGenerationProviders,
@@ -845,7 +844,7 @@ export function GeneralSettingsPanel() {
   );
   const textGenProvider: ProviderDriverKind =
     textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
-  const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
+  const textGenerationModelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     textGenerationProviders,
     textGenInstanceId,

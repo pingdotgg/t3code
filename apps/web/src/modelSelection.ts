@@ -317,6 +317,47 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+/** An absent `supportsTextGeneration` means supported. */
+export function getTextGenerationProviders(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return providers.filter((provider) => provider.supportsTextGeneration !== false);
+}
+
+function getTextGenerationModelOptionsForInstance(
+  settings: UnifiedSettings,
+  entry: ProviderInstanceEntry,
+  selectedModel?: string | null,
+): AppModelOption[] {
+  const unsupported = new Set(
+    entry.models
+      .filter((model) => model.supportsTextGeneration === false)
+      .map((model) => model.slug),
+  );
+  // Filter after custom entries are rebuilt so a display-name override cannot restore a model.
+  return getAppModelOptionsForInstance(settings, entry, selectedModel).filter(
+    (option) => !unsupported.has(option.slug),
+  );
+}
+
+export function getTextGenerationModelOptionsByInstance(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  selectedInstanceId?: ProviderInstanceId | null,
+  selectedModel?: string | null,
+): ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>> {
+  return new Map(
+    deriveProviderInstanceEntries(getTextGenerationProviders(providers)).map((entry) => [
+      entry.instanceId,
+      getTextGenerationModelOptionsForInstance(
+        settings,
+        entry,
+        entry.instanceId === selectedInstanceId ? selectedModel : null,
+      ),
+    ]),
+  );
+}
+
 export function selectsPlanAgent(options: ModelSelection["options"]): boolean {
   return options?.some((option) => option.id === "agent" && option.value === "plan") ?? false;
 }
@@ -329,9 +370,7 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const supportedProviders = providers.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const supportedProviders = getTextGenerationProviders(providers);
   const entries = deriveProviderInstanceEntries(supportedProviders);
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
@@ -343,7 +382,7 @@ export function resolveAppModelSelectionState(
     // A saved model the catalog no longer lists, or a new fallback instance,
     // gets the driver's cheap text generation default. The catalog's own
     // default is the flagship chat model, which is too expensive here.
-    const options = getAppModelOptionsForInstance(settings, entry);
+    const options = getTextGenerationModelOptionsForInstance(settings, entry);
     const model =
       resolveSelectableModel(entry.driverKind, selectedModel, options) ??
       resolveSelectableModel(
@@ -351,13 +390,9 @@ export function resolveAppModelSelectionState(
         DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
         options,
       ) ??
-      resolveAppModelSelectionForInstance(
-        entry.instanceId,
-        settings,
-        supportedProviders,
-        selectedModel,
-      ) ??
-      entry.models[0]?.slug ??
+      options.find((option) => option.isDefault)?.slug ??
+      options[0]?.slug ??
+      entry.models.find((model) => model.supportsTextGeneration !== false)?.slug ??
       DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
