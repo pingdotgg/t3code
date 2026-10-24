@@ -96,8 +96,11 @@ const unitTestProject = {
 // Vitest's fixed browser API port (63315) collides when two checkouts run
 // browser tests at once, and `server.strictPort` above is inherited, so the
 // second run fails instead of moving on. Hash the checkout path like
-// scripts/dev-runner.ts does, into 61000-64999 (above Linux's ephemeral range).
-const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
+// scripts/dev-runner.ts does, into 20000-23999: below the Linux (32768+) and
+// Windows/macOS (49152+) ephemeral ranges. Hyper-V and WSL reserve blocks inside
+// Windows' range, and binding a reserved port fails with EACCES, which
+// strictPort: false does not skip.
+const browserTestApiPort = 20_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
 
 const browserTestProject = {
   extends: true,
