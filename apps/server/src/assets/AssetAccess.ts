@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetAzureDevOpsAvatarUrlValidationError,
   AssetGitHubMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
@@ -30,6 +31,7 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
+import { azureDevOpsAvatarIdentity } from "@t3tools/shared/azureDevOpsAvatar";
 import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import {
@@ -166,6 +168,13 @@ const AssetClaimsSchema = Schema.Union([
     cwd: Schema.String,
     expiresAt: Schema.Number,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("azure-devops-avatar"),
+    organizationUrl: Schema.String,
+    identityId: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -192,6 +201,12 @@ export type ResolvedAsset =
       readonly kind: "github-media";
       readonly url: string;
       readonly cwd: string;
+      readonly expiresAt: number;
+    }
+  | {
+      readonly kind: "azure-devops-avatar";
+      readonly organizationUrl: string;
+      readonly identityId: string;
       readonly expiresAt: number;
     };
 
@@ -818,6 +833,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = githubMediaFileName(fetchUrl);
       break;
     }
+    case "azure-devops-avatar": {
+      const identity = azureDevOpsAvatarIdentity(input.resource.url);
+      if (identity === null) {
+        return yield* new AssetAzureDevOpsAvatarUrlValidationError({});
+      }
+      claims = { version: 1, kind: "azure-devops-avatar", ...identity, expiresAt };
+      fileName = "avatar";
+      break;
+    }
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -931,6 +955,15 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       kind: "github-media",
       url: claims.url,
       cwd: claims.cwd,
+      expiresAt: claims.expiresAt,
+    } satisfies ResolvedAsset;
+  }
+
+  if (claims.kind === "azure-devops-avatar") {
+    return {
+      kind: "azure-devops-avatar",
+      organizationUrl: claims.organizationUrl,
+      identityId: claims.identityId,
       expiresAt: claims.expiresAt,
     } satisfies ResolvedAsset;
   }

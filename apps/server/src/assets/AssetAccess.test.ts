@@ -1045,4 +1045,26 @@ describe("AssetAccess", () => {
       }
     }).pipe(Effect.provide(layerTest)),
   );
+
+  it.effect("signs Azure DevOps identity images down to the organization and identity", () =>
+    Effect.gen(function* () {
+      const issue = (url: string) =>
+        issueAssetUrl({ resource: { _tag: "azure-devops-avatar", url } });
+
+      const avatar = yield* issue(
+        "https://dev.azure.com/acme/_api/_common/identityImage?id=15f0488e-b980-68ca-9d71-8a387c166d09",
+      );
+      const suffix = avatar.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1))).toEqual({
+        kind: "azure-devops-avatar",
+        organizationUrl: "https://dev.azure.com/acme",
+        identityId: "15f0488e-b980-68ca-9d71-8a387c166d09",
+        expiresAt: avatar.expiresAt,
+      });
+
+      const error = yield* issue("https://avatars.githubusercontent.com/u/1").pipe(Effect.flip);
+      expect(error._tag).toBe("AssetAzureDevOpsAvatarUrlValidationError");
+    }).pipe(Effect.provide(layerTest)),
+  );
 });

@@ -1,5 +1,6 @@
 import { Spinner } from "~/components/ui/spinner";
 import type {
+  EnvironmentId,
   PullRequestActor,
   PullRequestCheck,
   PullRequestCheckStatus,
@@ -10,6 +11,7 @@ import type {
   PullRequestState,
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { azureDevOpsAvatarIdentity } from "@t3tools/shared/azureDevOpsAvatar";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
@@ -22,6 +24,7 @@ import {
 } from "lucide-react";
 import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
@@ -375,15 +378,61 @@ export function PullRequestReviewOutcomeBadge({
 
 export function PullRequestActorAvatar({
   actor,
+  environmentId,
   className,
 }: {
   actor: PullRequestActor | null;
+  /** Needed for Azure DevOps, whose images only the environment's `az` credential can read. */
+  environmentId?: EnvironmentId | null | undefined;
   className?: string;
 }) {
   const login = actor?.login ?? "ghost";
   const avatarUrl = actor?.avatarUrl ?? null;
-  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
-  return avatarUrl === null || failedAvatarUrl === avatarUrl ? (
+  if (avatarUrl !== null && azureDevOpsAvatarIdentity(avatarUrl) !== null) {
+    return (
+      <AzureDevOpsActorAvatar
+        login={login}
+        avatarUrl={avatarUrl}
+        environmentId={environmentId ?? null}
+        className={className}
+      />
+    );
+  }
+  return <ActorAvatarImage login={login} src={avatarUrl} className={className} />;
+}
+
+function AzureDevOpsActorAvatar({
+  login,
+  avatarUrl,
+  environmentId,
+  className,
+}: {
+  login: string;
+  avatarUrl: string;
+  environmentId: EnvironmentId | null;
+  className: string | undefined;
+}) {
+  const asset = useAssetUrlState(environmentId, { _tag: "azure-devops-avatar", url: avatarUrl });
+  return (
+    <ActorAvatarImage
+      login={login}
+      src={asset._tag === "Success" ? asset.url : null}
+      className={className}
+    />
+  );
+}
+
+function ActorAvatarImage({
+  login,
+  src,
+  className,
+}: {
+  login: string;
+  src: string | null;
+  className: string | undefined;
+}) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  return src === null || failedSrc === src ? (
     <span
       aria-hidden
       className={cn(
@@ -397,22 +446,24 @@ export function PullRequestActorAvatar({
     <img
       aria-hidden
       alt=""
-      src={avatarUrl}
+      src={src}
       loading="lazy"
       className={cn("size-4 shrink-0 rounded-full bg-muted object-cover", className)}
-      onError={() => setFailedAvatarUrl(avatarUrl)}
+      onError={() => setFailedSrc(src)}
     />
   );
 }
 
 export function PullRequestActorLabel({
   actor,
+  environmentId,
   className,
   variant = "label",
   tooltip = true,
   profileUrl,
 }: {
   actor: PullRequestActor | null;
+  environmentId?: EnvironmentId | null | undefined;
   className?: string;
   variant?: "label" | "avatar";
   tooltip?: boolean;
@@ -422,7 +473,7 @@ export function PullRequestActorLabel({
   // Let the name supply the group's baseline while the avatar stays vertically centered.
   const label = (
     <span className={cn("flex min-w-0 items-baseline", variant === "label" && "gap-1.5")}>
-      <PullRequestActorAvatar actor={actor} className="self-center" />
+      <PullRequestActorAvatar actor={actor} environmentId={environmentId} className="self-center" />
       <span className={variant === "label" ? "truncate font-medium text-foreground" : "sr-only"}>
         {login}
       </span>

@@ -1,7 +1,7 @@
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import type { PullRequestAction, PullRequestDetail } from "@t3tools/contracts";
+import { EnvironmentId, type PullRequestAction, type PullRequestDetail } from "@t3tools/contracts";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT, PR_DISCLOSURE_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
 import { useState } from "react";
@@ -289,7 +289,11 @@ export function PullRequestReviewersRow(props: RowProps) {
                       : "accent-icon-muted"
                 }
               />
-              <PullRequestAvatar actor={review.author} size={32} />
+              <PullRequestAvatar
+                actor={review.author}
+                environmentId={EnvironmentId.make(props.params.environmentId)}
+                size={32}
+              />
               <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
                 {review.author?.login ?? "Unknown reviewer"}
               </Text>
@@ -307,7 +311,11 @@ export function PullRequestReviewersRow(props: RowProps) {
                 className="min-h-14 flex-row items-center gap-3 px-4 py-2"
               >
                 <SymbolView name="clock" size={18} tintColorClassName="accent-icon-muted" />
-                <PullRequestAvatar actor={reviewer} size={32} />
+                <PullRequestAvatar
+                  actor={reviewer}
+                  environmentId={EnvironmentId.make(props.params.environmentId)}
+                  size={32}
+                />
                 <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
                   {reviewer.login}
                 </Text>

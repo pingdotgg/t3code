@@ -31,6 +31,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
+import { azureDevOpsAvatarResponse } from "./assets/AzureDevOpsAvatarFetch.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -444,6 +445,9 @@ export const layerAssetRoute = HttpRouter.add(
           }),
         ),
       );
+    }
+    if (asset.kind === "azure-devops-avatar") {
+      return yield* azureDevOpsAvatarResponse(asset);
     }
     return yield* assetFileResponse(
       asset,

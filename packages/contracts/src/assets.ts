@@ -54,6 +54,11 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
+  // An Azure DevOps identity image. Azure answers these only to a signed-in request, so the server
+  // fetches them through `az`, with whichever credential `az devops` would use.
+  Schema.TaggedStruct("azure-devops-avatar", {
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
@@ -301,6 +306,15 @@ export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<Asset
   }
 }
 
+export class AssetAzureDevOpsAvatarUrlValidationError extends Schema.TaggedError<AssetAzureDevOpsAvatarUrlValidationError>()(
+  "AssetAzureDevOpsAvatarUrlValidationError",
+  {},
+) {
+  override get message(): string {
+    return "Only Azure DevOps identity images can be fetched with an Azure DevOps credential.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -315,6 +329,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
   AssetGitHubMediaUrlValidationError,
+  AssetAzureDevOpsAvatarUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;
