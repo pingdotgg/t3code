@@ -99,6 +99,7 @@ function AccountSegment({
 }) {
   const patternId = useId().replace(/:/g, "");
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const refill = Math.min(100 - remaining, refillPercent);
   return (
     <View
       pointerEvents="none"
@@ -111,22 +112,29 @@ function AccountSegment({
       }}
     >
       {size.width > 0 && size.height > 0 ? (
-        // Numeric canvas dimensions clear Android SVG geometry cached before a segment resized.
+        // Points, not percentages: react-native-svg caches a shape's percentage geometry against
+        // the canvas it first drew on, so a segment that resizes (an iPad sidebar opening, an
+        // environment filter) would keep its old fill. New numbers invalidate the shape.
         <Svg width={size.width} height={size.height} accessible={false}>
           <Defs>
             <Pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse">
               <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke={color} strokeWidth={1} opacity={0.22} />
             </Pattern>
           </Defs>
-          {refillPercent > 0 ? (
+          {refill > 0 ? (
             <Rect
-              x={`${100 - Math.min(100 - remaining, refillPercent)}%`}
-              width={`${Math.min(100 - remaining, refillPercent)}%`}
-              height="100%"
+              x={(size.width * (100 - refill)) / 100}
+              width={(size.width * refill) / 100}
+              height={size.height}
               fill={`url(#${patternId})`}
             />
           ) : null}
-          <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
+          <Rect
+            width={(size.width * remaining) / 100}
+            height={size.height}
+            fill={color}
+            opacity={0.35}
+          />
         </Svg>
       ) : null}
     </View>
