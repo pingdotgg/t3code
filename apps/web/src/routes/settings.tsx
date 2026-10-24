@@ -3,6 +3,10 @@ import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import {
+  ExportDeviceSettingsButton,
+  ImportDeviceSettingsButton,
+} from "../components/settings/DeviceSettingsFileActions";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -126,6 +130,10 @@ function SettingsContentLayout() {
             <SettingsBreadcrumb pathname={location.pathname} />
             {location.pathname === "/settings/general" ? (
               <div className="ms-auto flex shrink-0 items-center">
+                <ExportDeviceSettingsButton />
+                <ImportDeviceSettingsButton
+                  onImported={() => setRestoreSignal((value) => value + 1)}
+                />
                 <RestoreDeviceDefaultsButton
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />

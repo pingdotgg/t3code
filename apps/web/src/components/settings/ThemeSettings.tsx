@@ -77,7 +77,7 @@ function collectionVariantLabels(themes: ReadonlyArray<ThemeDefinition>): Readon
   });
 }
 
-function downloadThemeFile(filename: string, contents: string): void {
+export function downloadJsonFile(filename: string, contents: string): void {
   const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -799,7 +799,7 @@ export function ThemeLibrary({
             activeModesFor={pickedModesFor}
             key={collectionId}
             onDownload={(customTheme) =>
-              downloadThemeFile(`${customTheme.id}.json`, serializeThemeFile(customTheme))
+              downloadJsonFile(`${customTheme.id}.json`, serializeThemeFile(customTheme))
             }
             onDuplicate={(customTheme) =>
               openThemeEditor({
