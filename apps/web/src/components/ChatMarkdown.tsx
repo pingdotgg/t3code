@@ -38,6 +38,7 @@ import {
 import {
   AssetWorkspaceAssetNotFoundError,
   AuthPreviewOperateScope,
+  editorOpensFiles,
   type EditorId,
   type EnvironmentId,
   type ServerConfig,
@@ -401,7 +402,8 @@ type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
 function markdownServerConfigFields(config: ServerConfig | null) {
   return {
     pullRequestsEnabled: config?.environment.capabilities.pullRequests === true,
-    availableEditors: config?.availableEditors ?? NO_MARKDOWN_EDITORS,
+    // Markdown opens linked files, which terminals and git clients cannot.
+    availableEditors: config?.availableEditors.filter(editorOpensFiles) ?? NO_MARKDOWN_EDITORS,
     revealInFileManagerLabel:
       config?.shellRevealInFileManager === true && config.availableEditors.includes("file-manager")
         ? config.shellRevealInFileManagerKind === undefined

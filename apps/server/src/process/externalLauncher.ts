@@ -12,7 +12,11 @@ import {
   type FileManagerRevealKind,
   type LaunchEditorInput,
 } from "@t3tools/contracts";
-import { resolveEditorCommand } from "@t3tools/shared/editor";
+import {
+  macBundleIdsOf,
+  resolveEditorInstall,
+  resolveMacApplications,
+} from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   isCommandAvailable,
@@ -157,6 +161,11 @@ function resolveCommandEditorArgs(
       return [target];
     case "goto":
       return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+    case "line":
+      return Option.match(parsedTarget, {
+        onNone: () => [target],
+        onSome: ({ path, line }) => ["--line", line, path],
+      });
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
@@ -431,17 +440,17 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   const available: EditorId[] = [];
+  const macApps = yield* resolveMacApplications(EDITORS.flatMap(macBundleIdsOf), env);
 
   for (const editor of EDITORS) {
-    if (editor.commands === null) {
+    if (editor.id === "file-manager") {
       if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
         available.push(editor.id);
       }
       continue;
     }
 
-    const command = yield* resolveEditorCommand(editor, env);
-    if (Option.isSome(command)) {
+    if (Option.isSome(yield* resolveEditorInstall(editor, env, macApps))) {
       available.push(editor.id);
     }
   }
@@ -500,6 +509,20 @@ export class ExternalLauncher extends Context.Service<
   }
 >()("t3/process/externalLauncher") {}
 
+// Terminals run a script they are handed, so folder-only apps get the folder,
+// and apps that only run executable files get the folder of those.
+const folderOf = Effect.fn("externalLauncher.folderOf")(function* (
+  target: string,
+  only: "files" | "executables",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(target).pipe(Effect.option);
+  if (Option.isNone(info) || info.value.type === "Directory") return target;
+  if (only === "executables" && (info.value.mode & 0o111) === 0) return target;
+  const path = yield* Path.Path;
+  return path.dirname(target);
+});
+
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
 ): Effect.fn.Return<
@@ -519,24 +542,40 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
-  if (editorDef.commands) {
-    const { command, baseArgs } = Option.getOrElse(
-      yield* resolveEditorCommand(editorDef, env),
-      () => ({
-        command: editorDef.commands[0],
-        baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
-      }),
-    );
+  if (editorDef.id !== "file-manager") {
+    const macApps = yield* resolveMacApplications(macBundleIdsOf(editorDef), env);
+    const install = Option.getOrUndefined(yield* resolveEditorInstall(editorDef, env, macApps));
+    const targetPath = Option.match(parseTargetPathAndPosition(input.cwd), {
+      onNone: () => input.cwd,
+      onSome: ({ path }) => path,
+    });
+    const folderTarget =
+      "foldersOnly" in editorDef
+        ? yield* folderOf(targetPath, "files")
+        : "runsExecutables" in editorDef
+          ? yield* folderOf(targetPath, "executables")
+          : undefined;
+    if (install?.kind === "mac-app") {
+      return {
+        editor: editorDef.id,
+        target: input.cwd,
+        command: "open",
+        args: ["-b", install.bundleId, folderTarget ?? targetPath],
+      };
+    }
+    if (!editorDef.commands) {
+      return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+    }
+    const { command, baseArgs } = install ?? {
+      command: editorDef.commands[0],
+      baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
+    };
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, folderTarget ?? input.cwd)],
     };
-  }
-
-  if (editorDef.id !== "file-manager") {
-    return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
   const command = yield* resolveUsableFileManagerCommand(platform, env);

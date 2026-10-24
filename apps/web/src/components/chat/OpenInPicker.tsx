@@ -3,6 +3,7 @@ import {
   AuthOrchestrationOperateScope,
   buildRemoteOpenUrl,
   EditorId,
+  editorOpensFiles,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
@@ -32,16 +33,31 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import {
+  AndroidStudioIcon,
   AntigravityIcon,
+  BBEditIcon,
   CursorIcon,
+  DevinIcon,
   FileExplorerIcon,
   FinderIcon,
+  ForkIcon,
+  GhosttyIcon,
+  GitHubDesktopIcon,
   Icon,
+  ITerm2Icon,
   KiroIcon,
+  KittyIcon,
+  NovaIcon,
+  SourcetreeIcon,
+  SublimeTextIcon,
+  TerminalAppIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
   VSCodium,
+  WarpIcon,
+  WezTermIcon,
+  XcodeIcon,
   Zed,
 } from "../Icons";
 import {
@@ -111,8 +127,33 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
       kind: "brand",
     },
     {
+      Icon: DevinIcon,
+      value: "devin-desktop",
+      kind: "brand",
+    },
+    {
       Icon: Zed,
       value: "zed",
+      kind: "brand",
+    },
+    {
+      Icon: XcodeIcon,
+      value: "xcode",
+      kind: "brand",
+    },
+    {
+      Icon: SublimeTextIcon,
+      value: "sublime-text",
+      kind: "brand",
+    },
+    {
+      Icon: NovaIcon,
+      value: "nova",
+      kind: "brand",
+    },
+    {
+      Icon: BBEditIcon,
+      value: "bbedit",
       kind: "brand",
     },
     {
@@ -181,6 +222,20 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
       kind: "brand",
     },
     {
+      Icon: AndroidStudioIcon,
+      value: "android-studio",
+      kind: "brand",
+    },
+    { Icon: TerminalAppIcon, value: "terminal", kind: "brand" },
+    { Icon: ITerm2Icon, value: "iterm2", kind: "brand" },
+    { Icon: GhosttyIcon, value: "ghostty", kind: "brand" },
+    { Icon: KittyIcon, value: "kitty", kind: "brand" },
+    { Icon: WezTermIcon, value: "wezterm", kind: "brand" },
+    { Icon: WarpIcon, value: "warp", kind: "brand" },
+    { Icon: GitHubDesktopIcon, value: "github-desktop", kind: "brand" },
+    { Icon: ForkIcon, value: "fork", kind: "brand" },
+    { Icon: SourcetreeIcon, value: "sourcetree", kind: "brand" },
+    {
       Icon: isMacPlatform(platform)
         ? FinderIcon
         : isWindowsPlatform(platform)
@@ -237,7 +292,9 @@ export const OpenInPicker = memo(function OpenInPicker({
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
   // Remote mode ignores the server's PATH probe: what matters is what runs on
   // the viewing machine, which only the desktop app can probe.
-  const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
+  const effectiveEditors = (
+    remote.mode === "local-exec" ? availableEditors : remoteCapableEditors
+  ).filter((editor) => !openInCwdIsFile || editorOpensFiles(editor));
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 
   const openInEditor = (editorId: EditorId | null) => {

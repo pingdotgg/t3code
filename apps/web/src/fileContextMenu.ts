@@ -1,5 +1,6 @@
 import {
   EDITORS,
+  editorOpensFiles,
   type ContextMenuItem,
   type EditorId,
   type EnvironmentId,
@@ -103,7 +104,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
         : undefined,
     canOpenDefault: availableEditors.includes("file-manager"),
-    editorIds: availableEditors,
+    editorIds: availableEditors.filter(editorOpensFiles),
   };
 
   const activate = async (

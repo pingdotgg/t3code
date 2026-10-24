@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line", "line-column"]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
@@ -12,6 +12,24 @@ type EditorDefinition = {
   readonly launchStyle: EditorLaunchStyle;
   readonly remoteScheme?: string;
   readonly jetbrainsProductCode?: string;
+  /**
+   * macOS bundle identifiers, checked through LaunchServices. On macOS the
+   * editor counts as installed when one of these apps is registered or when its
+   * CLI resolves into an `.app` bundle. A CLI outside any app, such as the
+   * Cursor Agent `cursor` shim or `/usr/bin/xed`, does not count. An editor
+   * without `commands` opens through `open -b`.
+   */
+  readonly macBundleIds?: readonly [string, ...string[]];
+  /** The CLI's path inside the app bundle's `Contents`, when it is not `Resources/app/bin`. */
+  readonly macBundleCli?: string;
+  /**
+   * Terminals and git clients open folders. Terminals also run a script they
+   * are handed, so a file target opens its folder instead, and file actions do
+   * not offer these apps.
+   */
+  readonly foldersOnly?: true;
+  /** Opens files but runs an executable one, so an executable target opens its folder. */
+  readonly runsExecutables?: true;
 };
 
 export const EDITORS = [
@@ -23,15 +41,30 @@ export const EDITORS = [
     baseArgs: ["--classic"],
     launchStyle: "goto",
     remoteScheme: "cursor",
+    macBundleIds: ["com.todesktop.230313mzl4w4u92"],
   },
-  { id: "trae", label: "Trae", commands: ["trae"], launchStyle: "goto" },
-  { id: "kiro", label: "Kiro", commands: ["kiro"], baseArgs: ["ide"], launchStyle: "goto" },
+  {
+    id: "trae",
+    label: "Trae",
+    commands: ["trae"],
+    launchStyle: "goto",
+    macBundleIds: ["com.trae.app", "cn.trae.app"],
+  },
+  {
+    id: "kiro",
+    label: "Kiro",
+    commands: ["kiro"],
+    baseArgs: ["ide"],
+    launchStyle: "goto",
+    macBundleIds: ["dev.kiro.desktop"],
+  },
   {
     id: "vscode",
     label: "VS Code",
     commands: ["code"],
     launchStyle: "goto",
     remoteScheme: "vscode",
+    macBundleIds: ["com.microsoft.VSCode"],
   },
   {
     id: "vscode-insiders",
@@ -39,6 +72,7 @@ export const EDITORS = [
     commands: ["code-insiders"],
     launchStyle: "goto",
     remoteScheme: "vscode-insiders",
+    macBundleIds: ["com.microsoft.VSCodeInsiders"],
   },
   {
     id: "vscodium",
@@ -46,6 +80,16 @@ export const EDITORS = [
     commands: ["codium"],
     launchStyle: "goto",
     remoteScheme: "vscodium",
+    macBundleIds: ["com.vscodium"],
+  },
+  {
+    id: "devin-desktop",
+    label: "Devin Desktop",
+    // Windsurf became Devin Desktop and kept its bundle id; older installs
+    // still ship the `windsurf` CLI.
+    commands: ["devin-desktop", "windsurf"],
+    launchStyle: "goto",
+    macBundleIds: ["com.exafunction.windsurf"],
   },
   {
     id: "zed",
@@ -53,6 +97,40 @@ export const EDITORS = [
     commands: ["zed", "zeditor"],
     launchStyle: "direct-path",
     remoteScheme: "zed",
+    macBundleIds: ["dev.zed.Zed", "dev.zed.Zed-Preview", "dev.zed.Zed-Nightly"],
+    macBundleCli: "MacOS/cli",
+  },
+  {
+    id: "xcode",
+    label: "Xcode",
+    // `xed` opens the Xcode chosen with `xcode-select`, which matters when
+    // several Xcode versions are installed.
+    commands: ["xed"],
+    launchStyle: "line",
+    macBundleIds: ["com.apple.dt.Xcode"],
+  },
+  {
+    id: "sublime-text",
+    label: "Sublime Text",
+    // `subl` reads a `path:line:column` suffix itself.
+    commands: ["subl"],
+    launchStyle: "direct-path",
+    macBundleIds: ["com.sublimetext.4", "com.sublimetext.3"],
+    macBundleCli: "SharedSupport/bin/subl",
+  },
+  {
+    id: "nova",
+    label: "Nova",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.panic.Nova"],
+  },
+  {
+    id: "bbedit",
+    label: "BBEdit",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.barebones.bbedit"],
   },
   {
     id: "antigravity",
@@ -61,13 +139,21 @@ export const EDITORS = [
     // ships `antigravity-ide`, so it comes first for install-folder lookups.
     commands: ["antigravity-ide", "agy-ide"],
     launchStyle: "goto",
+    // `com.google.antigravity` is the separate Hub app.
+    macBundleIds: ["com.google.antigravity-ide"],
   },
+  // JetBrains EAP builds use the release bundle id with an `-EAP` suffix.
   {
     id: "idea",
     label: "IntelliJ IDEA",
     commands: ["idea"],
     launchStyle: "line-column",
     jetbrainsProductCode: "IU",
+    macBundleIds: [
+      "com.jetbrains.intellij",
+      "com.jetbrains.intellij.ce",
+      "com.jetbrains.intellij-EAP",
+    ],
   },
   {
     id: "aqua",
@@ -75,6 +161,7 @@ export const EDITORS = [
     commands: ["aqua"],
     launchStyle: "line-column",
     jetbrainsProductCode: "QA",
+    macBundleIds: ["com.jetbrains.aqua", "com.jetbrains.aqua-EAP"],
   },
   {
     id: "clion",
@@ -82,6 +169,7 @@ export const EDITORS = [
     commands: ["clion"],
     launchStyle: "line-column",
     jetbrainsProductCode: "CL",
+    macBundleIds: ["com.jetbrains.CLion", "com.jetbrains.CLion-EAP"],
   },
   {
     id: "datagrip",
@@ -89,6 +177,7 @@ export const EDITORS = [
     commands: ["datagrip"],
     launchStyle: "line-column",
     jetbrainsProductCode: "DB",
+    macBundleIds: ["com.jetbrains.datagrip", "com.jetbrains.datagrip-EAP"],
   },
   {
     id: "dataspell",
@@ -96,6 +185,7 @@ export const EDITORS = [
     commands: ["dataspell"],
     launchStyle: "line-column",
     jetbrainsProductCode: "DS",
+    macBundleIds: ["com.jetbrains.dataspell", "com.jetbrains.dataspell-EAP"],
   },
   {
     id: "goland",
@@ -103,6 +193,7 @@ export const EDITORS = [
     commands: ["goland"],
     launchStyle: "line-column",
     jetbrainsProductCode: "GO",
+    macBundleIds: ["com.jetbrains.goland", "com.jetbrains.goland-EAP"],
   },
   {
     id: "phpstorm",
@@ -110,6 +201,7 @@ export const EDITORS = [
     commands: ["phpstorm"],
     launchStyle: "line-column",
     jetbrainsProductCode: "PS",
+    macBundleIds: ["com.jetbrains.PhpStorm", "com.jetbrains.PhpStorm-EAP"],
   },
   {
     id: "pycharm",
@@ -117,6 +209,11 @@ export const EDITORS = [
     commands: ["pycharm"],
     launchStyle: "line-column",
     jetbrainsProductCode: "PY",
+    macBundleIds: [
+      "com.jetbrains.pycharm",
+      "com.jetbrains.pycharm.ce",
+      "com.jetbrains.pycharm-EAP",
+    ],
   },
   {
     id: "rider",
@@ -124,6 +221,7 @@ export const EDITORS = [
     commands: ["rider"],
     launchStyle: "line-column",
     jetbrainsProductCode: "RD",
+    macBundleIds: ["com.jetbrains.rider", "com.jetbrains.rider-EAP"],
   },
   {
     id: "rubymine",
@@ -131,6 +229,7 @@ export const EDITORS = [
     commands: ["rubymine"],
     launchStyle: "line-column",
     jetbrainsProductCode: "RM",
+    macBundleIds: ["com.jetbrains.rubymine", "com.jetbrains.rubymine-EAP"],
   },
   {
     id: "rustrover",
@@ -138,6 +237,7 @@ export const EDITORS = [
     commands: ["rustrover"],
     launchStyle: "line-column",
     jetbrainsProductCode: "RR",
+    macBundleIds: ["com.jetbrains.rustrover", "com.jetbrains.rustrover-EAP"],
   },
   {
     id: "webstorm",
@@ -145,12 +245,105 @@ export const EDITORS = [
     commands: ["webstorm"],
     launchStyle: "line-column",
     jetbrainsProductCode: "WS",
+    macBundleIds: ["com.jetbrains.WebStorm", "com.jetbrains.WebStorm-EAP"],
+  },
+  {
+    id: "android-studio",
+    label: "Android Studio",
+    commands: ["studio"],
+    launchStyle: "line-column",
+    macBundleIds: ["com.google.android.studio"],
   },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
+  // Terminals and git clients follow the file manager, so the default Open
+  // target on a Mac without an editor stays Finder rather than Terminal.
+  {
+    id: "terminal",
+    label: "Terminal",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.apple.Terminal"],
+    foldersOnly: true,
+  },
+  {
+    id: "iterm2",
+    label: "iTerm2",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.googlecode.iterm2"],
+    foldersOnly: true,
+  },
+  {
+    id: "ghostty",
+    label: "Ghostty",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.mitchellh.ghostty"],
+    foldersOnly: true,
+  },
+  {
+    id: "kitty",
+    label: "kitty",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["net.kovidgoyal.kitty"],
+    foldersOnly: true,
+  },
+  {
+    id: "wezterm",
+    label: "WezTerm",
+    // WezTerm ignores a folder handed over by LaunchServices and opens in the
+    // home folder, so it starts through its CLI.
+    commands: ["wezterm"],
+    baseArgs: ["start", "--cwd"],
+    launchStyle: "direct-path",
+    macBundleIds: ["com.github.wez.wezterm"],
+    macBundleCli: "MacOS/wezterm",
+    foldersOnly: true,
+  },
+  {
+    id: "warp",
+    label: "Warp",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["dev.warp.Warp-Stable", "dev.warp.Warp-Preview"],
+    // Warp edits files in its own editor, but runs a file with the executable bit.
+    runsExecutables: true,
+  },
+  {
+    id: "github-desktop",
+    label: "GitHub Desktop",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.github.GitHubClient"],
+    foldersOnly: true,
+  },
+  {
+    id: "fork",
+    label: "Fork",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.DanPristupov.Fork"],
+    foldersOnly: true,
+  },
+  {
+    id: "sourcetree",
+    label: "Sourcetree",
+    commands: null,
+    launchStyle: "direct-path",
+    macBundleIds: ["com.torusknot.SourceTreeNotMAS"],
+    foldersOnly: true,
+  },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));
 export type EditorId = typeof EditorId.Type;
+
+const FOLDER_ONLY_EDITOR_IDS: ReadonlySet<EditorId> = new Set(
+  EDITORS.flatMap((editor) => ("foldersOnly" in editor ? [editor.id] : [])),
+);
+
+export const editorOpensFiles = (id: EditorId): boolean => !FOLDER_ONLY_EDITOR_IDS.has(id);
 
 export const FileManagerRevealKind = Schema.Literals(["finder", "file-explorer", "files"]);
 export type FileManagerRevealKind = typeof FileManagerRevealKind.Type;

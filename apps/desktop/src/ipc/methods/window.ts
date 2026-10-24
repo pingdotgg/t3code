@@ -14,7 +14,11 @@ import {
   type PickedThemeFile,
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
-import { resolveEditorCommand } from "@t3tools/shared/editor";
+import {
+  macBundleIdsOf,
+  resolveEditorInstall,
+  resolveMacApplications,
+} from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
@@ -325,10 +329,11 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
     const available: Array<EditorId> = [];
     const env = yield* HostProcess.Environment;
-    for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
-      const editor = EDITORS.find((editor) => editor.id === editorId);
-      if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
-        available.push(editorId);
+    const editors = EDITORS.filter((editor) => REMOTE_CAPABLE_EDITOR_IDS.includes(editor.id));
+    const macApps = yield* resolveMacApplications(editors.flatMap(macBundleIdsOf), env);
+    for (const editor of editors) {
+      if (Option.isSome(yield* resolveEditorInstall(editor, env, macApps))) {
+        available.push(editor.id);
       }
     }
     return available;

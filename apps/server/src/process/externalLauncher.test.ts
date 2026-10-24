@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the Windows launch smoke tests use filesystem notifications to observe real PowerShell launches.
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Cause from "effect/Cause";
@@ -755,3 +755,342 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
     );
   }),
 );
+
+const writeExecutable = Effect.fn("test.writeExecutable")(function* (filePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
+  yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+  yield* fileSystem.chmod(filePath, 0o755);
+});
+
+const launchServicesResult =
+  (apps: Record<string, string>, exitCode = 0) =>
+  (command: ChildProcess.StandardCommand): MockSpawnResult | undefined =>
+    command.command === "osascript" ? { stdout: JSON.stringify(apps), exitCode } : undefined;
+
+describe("macOS editor discovery through LaunchServices", () => {
+  it.effect.skipIf(windowsHost)("offers only editors whose app is registered", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      // The Cursor Agent CLI installs a `cursor` shim without the IDE.
+      for (const name of ["osascript", "open", "cursor", "code", "xed"]) {
+        yield* writeExecutable(path.join(binDir, name));
+      }
+
+      const probes: ChildProcess.StandardCommand[] = [];
+      const editors = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* launcher.resolveAvailableEditors();
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: binDir },
+            onSpawn: (command) => probes.push(command),
+            spawnResult: launchServicesResult({
+              "com.microsoft.VSCode": "/Applications/Visual Studio Code.app",
+              "com.apple.dt.Xcode": "/Applications/Xcode-27.1.0.app",
+              "dev.warp.Warp-Stable": "/Applications/Warp.app",
+            }),
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        ["cursor", "vscode", "zed", "xcode", "warp", "file-manager"].filter((id) =>
+          editors.includes(id as never),
+        ),
+        ["vscode", "xcode", "warp", "file-manager"],
+      );
+      assert.equal(probes.filter((command) => command.command === "osascript").length, 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "accepts a CLI that resolves into an app LaunchServices missed",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+        const binDir = path.join(root, "bin");
+        const bundledCode = path.join(
+          root,
+          "Visual Studio Code.app/Contents/Resources/app/bin/code",
+        );
+        for (const file of [
+          path.join(binDir, "osascript"),
+          path.join(binDir, "cursor"),
+          path.join(binDir, "xed"),
+          bundledCode,
+        ]) {
+          yield* writeExecutable(file);
+        }
+        yield* fileSystem.symlink(bundledCode, path.join(binDir, "code"));
+
+        const editors = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          return yield* launcher.resolveAvailableEditors();
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "darwin",
+              env: { PATH: binDir },
+              spawnResult: launchServicesResult({}),
+            }),
+          ),
+        );
+
+        assert.deepEqual(
+          ["cursor", "vscode", "xcode"].filter((id) => editors.includes(id as never)),
+          ["vscode"],
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)("falls back to PATH discovery when LaunchServices fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      for (const name of ["osascript", "open", "cursor"]) {
+        yield* writeExecutable(path.join(binDir, name));
+      }
+
+      const editors = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* launcher.resolveAvailableEditors();
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: binDir },
+            spawnResult: launchServicesResult({}, 1),
+          }),
+        ),
+      );
+
+      assert.equal(editors.includes("cursor"), true);
+      assert.equal(editors.includes("warp"), false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)("launches the registered app's own CLI before a PATH shim", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const binDir = path.join(root, "bin");
+      const appPath = path.join(root, "Cursor.app");
+      const bundleCli = path.join(appPath, "Contents/Resources/app/bin/cursor");
+      for (const file of [path.join(binDir, "osascript"), path.join(binDir, "cursor"), bundleCli]) {
+        yield* writeExecutable(file);
+      }
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "cursor", cwd: "/workspace/src/index.ts:12" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: binDir },
+            onSpawn: (command) => {
+              if (command.command !== "osascript") spawned = command;
+            },
+            spawnResult: launchServicesResult({ "com.todesktop.230313mzl4w4u92": appPath }),
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.equal(spawned.command, bundleCli);
+      assert.deepEqual(spawned.args, ["--classic", "--goto", "/workspace/src/index.ts:12"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)("opens terminals on folders and Xcode through xed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const binDir = path.join(root, "bin");
+      const project = path.join(root, "project");
+      const script = path.join(project, "deploy.sh");
+      const source = path.join(project, "main.ts");
+      const weztermApp = path.join(root, "WezTerm.app");
+      const wezterm = path.join(weztermApp, "Contents/MacOS/wezterm");
+      for (const name of ["osascript", "open", "xed"]) {
+        yield* writeExecutable(path.join(binDir, name));
+      }
+      // Terminals run a script handed to them, so a file must open its folder.
+      yield* writeExecutable(script);
+      yield* fileSystem.writeFileString(source, "export {};\n");
+      yield* writeExecutable(wezterm);
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        for (const editor of ["warp", "terminal", "wezterm", "xcode"] as const) {
+          for (const cwd of [project, `${script}:12:4`]) {
+            yield* launcher.launchEditor({ editor, cwd });
+          }
+        }
+        // Warp edits a file that is not executable.
+        yield* launcher.launchEditor({ editor: "warp", cwd: `${source}:3` });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: binDir },
+            onSpawn: (command) => {
+              if (command.command !== "osascript") spawned.push(command);
+            },
+            spawnResult: launchServicesResult({
+              "dev.warp.Warp-Preview": "/Applications/WarpPreview.app",
+              "com.apple.Terminal": "/System/Applications/Utilities/Terminal.app",
+              "com.github.wez.wezterm": weztermApp,
+              "com.apple.dt.Xcode": "/Applications/Xcode.app",
+            }),
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        spawned.map((command) => [command.command, ...command.args]),
+        [
+          ["open", "-b", "dev.warp.Warp-Preview", project],
+          ["open", "-b", "dev.warp.Warp-Preview", project],
+          ["open", "-b", "com.apple.Terminal", project],
+          ["open", "-b", "com.apple.Terminal", project],
+          [wezterm, "start", "--cwd", project],
+          [wezterm, "start", "--cwd", project],
+          ["xed", project],
+          ["xed", "--line", "12", script],
+          ["open", "-b", "dev.warp.Warp-Preview", source],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)("launches each app's bundled CLI with its line syntax", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const binDir = path.join(root, "bin");
+      const sublimeApp = path.join(root, "Sublime Text.app");
+      const devinApp = path.join(root, "Devin.app");
+      const studioApp = path.join(root, "Android Studio.app");
+      const subl = path.join(sublimeApp, "Contents/SharedSupport/bin/subl");
+      const devin = path.join(devinApp, "Contents/Resources/app/bin/devin-desktop");
+      const studio = path.join(studioApp, "Contents/MacOS/studio");
+      for (const file of [
+        path.join(binDir, "osascript"),
+        path.join(binDir, "open"),
+        subl,
+        devin,
+        studio,
+      ]) {
+        yield* writeExecutable(file);
+      }
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        for (const editor of [
+          "sublime-text",
+          "devin-desktop",
+          "android-studio",
+          "nova",
+          "bbedit",
+        ] as const) {
+          yield* launcher.launchEditor({ editor, cwd: "/workspace/src/index.ts:12:4" });
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: binDir },
+            onSpawn: (command) => {
+              if (command.command !== "osascript") spawned.push(command);
+            },
+            spawnResult: launchServicesResult({
+              "com.sublimetext.4": sublimeApp,
+              "com.exafunction.windsurf": devinApp,
+              "com.google.android.studio": studioApp,
+              "com.panic.Nova": "/Applications/Nova.app",
+              "com.barebones.bbedit": "/Applications/BBEdit.app",
+            }),
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        spawned.map((command) => [command.command, ...command.args]),
+        [
+          [subl, "/workspace/src/index.ts:12:4"],
+          [devin, "--goto", "/workspace/src/index.ts:12:4"],
+          [studio, "--line", "12", "--column", "4", "/workspace/src/index.ts"],
+          ["open", "-b", "com.panic.Nova", "/workspace/src/index.ts"],
+          ["open", "-b", "com.barebones.bbedit", "/workspace/src/index.ts"],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "finds JetBrains EAP builds and passes Kiro's subcommand only to PATH",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+        const binDir = path.join(root, "bin");
+        const ideaApp = path.join(root, "IntelliJ IDEA.app");
+        const idea = path.join(ideaApp, "Contents/MacOS/idea");
+        const kiroApp = path.join(root, "Kiro.app");
+        for (const file of [path.join(binDir, "osascript"), path.join(binDir, "kiro"), idea]) {
+          yield* writeExecutable(file);
+        }
+
+        const spawned: ChildProcess.StandardCommand[] = [];
+        const editors = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/src/Main.kt:12:4" });
+          yield* launcher.launchEditor({ editor: "kiro", cwd: "/workspace" });
+          return yield* launcher.resolveAvailableEditors();
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "darwin",
+              env: { PATH: binDir },
+              onSpawn: (command) => {
+                if (command.command !== "osascript") spawned.push(command);
+              },
+              spawnResult: launchServicesResult({
+                "com.jetbrains.intellij-EAP": ideaApp,
+                "dev.kiro.desktop": kiroApp,
+              }),
+            }),
+          ),
+        );
+
+        assert.deepEqual(
+          ["idea", "kiro", "pycharm"].filter((id) => editors.includes(id as never)),
+          ["idea", "kiro"],
+        );
+        assert.deepEqual(
+          spawned.map((command) => [command.command, ...command.args]),
+          [
+            [idea, "--line", "12", "--column", "4", "/workspace/src/Main.kt"],
+            ["kiro", "ide", "/workspace"],
+          ],
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
