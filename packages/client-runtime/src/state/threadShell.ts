@@ -26,6 +26,7 @@ const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> = new Map();
 const EMPTY_SUBAGENT_REQUESTS: ReadonlyMap<ThreadId, PendingSubagentRequest> = new Map();
+const EMPTY_UNFINISHED_SUBAGENT_PARENTS: ReadonlySet<ThreadId> = new Set();
 const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ProjectId,
   ReadonlyArray<ScopedThreadRef>
@@ -81,6 +82,35 @@ export function pendingSubagentRequestsByThread(
     }
   }
   return requests.size === 0 ? EMPTY_SUBAGENT_REQUESTS : requests;
+}
+
+function parentsWithUnfinishedSubagents(
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+): ReadonlySet<ThreadId> {
+  const parents = new Set<ThreadId>();
+  let byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> | undefined;
+  for (const child of threads) {
+    // Mirrors the server's hasPendingChildRuns. Shell status is the latest
+    // unheld run, so a stopped queue waiting for the user does not count.
+    if (
+      child.lineage.relationshipToParent !== "subagent" ||
+      isProviderNativeSubagentThread(child) ||
+      !(isChildRunLive(child) || child.status === "queued")
+    ) {
+      continue;
+    }
+    byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
+    const seen = new Set<ThreadId>([child.id]);
+    let current: OrchestrationV2ThreadShell | undefined = child;
+    while (current?.lineage.relationshipToParent === "subagent") {
+      const parentId: ThreadId | null = current.lineage.parentThreadId;
+      if (parentId === null || seen.has(parentId)) break;
+      seen.add(parentId);
+      parents.add(parentId);
+      current = byId.get(parentId);
+    }
+  }
+  return parents.size === 0 ? EMPTY_UNFINISHED_SUBAGENT_PARENTS : parents;
 }
 
 export function childThreadInputsTitle(
@@ -144,6 +174,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     environmentId: EnvironmentId,
     thread: OrchestrationV2ThreadShell,
     subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest>,
+    unfinishedSubagentParents: ReadonlySet<ThreadId>,
   ) => {
     let byEnvironment = scopedThreads.get(thread);
     if (byEnvironment === undefined) {
@@ -151,10 +182,11 @@ export function createEnvironmentThreadShellAtoms(input: {
       scopedThreads.set(thread, byEnvironment);
     }
     const request = subagentRequests.get(thread.id) ?? null;
-    const key = request === null ? environmentId : `${environmentId}:${request}`;
+    const hasUnfinishedSubagents = unfinishedSubagentParents.has(thread.id);
+    const key = `${environmentId}:${request ?? ""}${hasUnfinishedSubagents ? ":subagents" : ""}`;
     let value = byEnvironment.get(key);
     if (value === undefined) {
-      value = presentThreadShell(environmentId, thread, request);
+      value = presentThreadShell(environmentId, thread, request, hasUnfinishedSubagents);
       byEnvironment.set(key, value);
     }
     return value;
@@ -190,6 +222,18 @@ export function createEnvironmentThreadShellAtoms(input: {
       previous = next;
       return next;
     }).pipe(Atom.withLabel(`environment-pending-subagent-requests:${environmentId}`));
+  });
+
+  const unfinishedSubagentParentsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous = EMPTY_UNFINISHED_SUBAGENT_PARENTS;
+    return Atom.make((get) => {
+      const next = parentsWithUnfinishedSubagents(get(environmentThreadsAtom(environmentId)));
+      if (next.size === previous.size && [...next].every((threadId) => previous.has(threadId))) {
+        return previous;
+      }
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(`environment-unfinished-subagent-parents:${environmentId}`));
   });
 
   const environmentThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
@@ -260,6 +304,7 @@ export function createEnvironmentThreadShellAtoms(input: {
             ref.environmentId,
             source,
             get(pendingSubagentRequestsAtom(ref.environmentId)),
+            get(unfinishedSubagentParentsAtom(ref.environmentId)),
           );
     }).pipe(Atom.withLabel(`environment-thread-shell:${key}`));
   });
@@ -294,6 +339,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         else children.set(parent, [thread]);
       }
       const subagentRequests = get(pendingSubagentRequestsAtom(ref.environmentId));
+      const unfinishedSubagentParents = get(unfinishedSubagentParentsAtom(ref.environmentId));
       const seen = new Set<ThreadId>([ref.threadId]);
       const pending = [ref.threadId];
       const next: EnvironmentThreadShell[] = [];
@@ -303,7 +349,9 @@ export function createEnvironmentThreadShellAtoms(input: {
           seen.add(child.id);
           pending.push(child.id);
           if (subagentRequest(child) !== null) {
-            next.push(scopedThread(ref.environmentId, child, subagentRequests));
+            next.push(
+              scopedThread(ref.environmentId, child, subagentRequests, unfinishedSubagentParents),
+            );
           }
         }
       }
@@ -339,6 +387,9 @@ export function createEnvironmentThreadShellAtoms(input: {
         if (refs.length === 0) continue;
         const threads = get(environmentThreadIndexAtom(projectRef.environmentId));
         const subagentRequests = get(pendingSubagentRequestsAtom(projectRef.environmentId));
+        const unfinishedSubagentParents = get(
+          unfinishedSubagentParentsAtom(projectRef.environmentId),
+        );
         for (const ref of refs) {
           const key = threadKey(ref);
           if (seen.has(key)) {
@@ -347,7 +398,9 @@ export function createEnvironmentThreadShellAtoms(input: {
           seen.add(key);
           const thread = threads.get(ref.threadId);
           if (thread !== undefined) {
-            next.push(scopedThread(ref.environmentId, thread, subagentRequests));
+            next.push(
+              scopedThread(ref.environmentId, thread, subagentRequests, unfinishedSubagentParents),
+            );
           }
         }
       }
@@ -377,8 +430,9 @@ export function createEnvironmentThreadShellAtoms(input: {
     const next: EnvironmentThreadShell[] = [];
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const subagentRequests = get(pendingSubagentRequestsAtom(environmentId));
+      const unfinishedSubagentParents = get(unfinishedSubagentParentsAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
-        next.push(scopedThread(environmentId, thread, subagentRequests));
+        next.push(scopedThread(environmentId, thread, subagentRequests, unfinishedSubagentParents));
       }
     }
     if (arrayElementsEqual(previousThreadShells, next)) {
@@ -407,10 +461,11 @@ export function createEnvironmentThreadShellAtoms(input: {
     const next: EnvironmentThreadShell[] = [];
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const subagentRequests = get(pendingSubagentRequestsAtom(environmentId));
+      const unfinishedSubagentParents = get(unfinishedSubagentParentsAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
           continue;
-        next.push(scopedThread(environmentId, thread, subagentRequests));
+        next.push(scopedThread(environmentId, thread, subagentRequests, unfinishedSubagentParents));
       }
     }
     if (arrayElementsEqual(previousNavigationShells, next)) return previousNavigationShells;

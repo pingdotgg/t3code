@@ -212,10 +212,23 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // Only work that wakes the agent holds it: commands it left running, such as a
 // dev server, present the run's own status (#14872). The server suppresses the
 // roster while an interruptible activity run exists, so a remaining roster is
-// stronger than checkpoint-oriented waiting.
-function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
+// stronger than checkpoint-oriented waiting. Unfinished delegated children hold
+// it too, but never over the thread's own live run.
+function shellRuntime(
+  thread: OrchestrationV2ThreadShell,
+  hasUnfinishedSubagents: boolean,
+): ThreadRuntimeSummary | null {
+  const ownRunLive =
+    thread.activityRunStatus != null ||
+    (thread.activityRunStatus === undefined &&
+      (thread.status === "preparing" ||
+        thread.status === "queued" ||
+        thread.status === "starting" ||
+        thread.status === "running" ||
+        thread.status === "waiting"));
   const parkAtIdle =
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
+    (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
+      (hasUnfinishedSubagents && !ownRunLive)) &&
     thread.status !== "failed";
   if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
     return null;
@@ -251,6 +264,7 @@ export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,
   pendingSubagentRequest: PendingSubagentRequest | null = null,
+  hasUnfinishedSubagents = false,
 ): EnvironmentThreadShell {
   const updatedAt = iso(thread.updatedAt);
   const latestRun =
@@ -269,7 +283,7 @@ export function presentThreadShell(
               : nullableIso(thread.latestRunCompletedAt),
           assistantMessageId: null,
         } satisfies ThreadRunSummary);
-  const runtime = shellRuntime(thread);
+  const runtime = shellRuntime(thread, hasUnfinishedSubagents);
   // Waiting runs have ended their provider turn and are only draining effects.
   const runtimeIsWorking =
     runtime?.status === "preparing" ||

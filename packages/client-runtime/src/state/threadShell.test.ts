@@ -52,7 +52,227 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
   };
 }
 
+function parentShell() {
+  return {
+    ...v2ThreadShell,
+    latestRunId: RunId.make("parent-run"),
+    activeRunId: null,
+    status: "completed" as const,
+    activityRunStatus: null,
+    pendingBackgroundTasks: [],
+  };
+}
+
+function delegatedChild(
+  parent: OrchestrationV2ThreadShell,
+  id = "child",
+  status: OrchestrationV2ThreadShell["status"] = "running",
+) {
+  return {
+    ...v2ThreadShell,
+    id: ThreadId.make(id),
+    creationSource: "mcp" as const,
+    latestRunId: RunId.make(`${id}-run`),
+    activeRunId: status === "running" ? RunId.make(`${id}-run`) : null,
+    status,
+    activityRunStatus: status === "running" ? ("running" as const) : null,
+    pendingBackgroundTasks: [],
+    lineage: {
+      ...v2ThreadShell.lineage,
+      parentThreadId: parent.id,
+      relationshipToParent: "subagent" as const,
+    },
+  };
+}
+
 describe("v2 thread shell lists", () => {
+  it("keeps a completed parent working after async delegation while its child runs or queues", () => {
+    const harness = makeHarness();
+    const parent = parentShell();
+    const child = delegatedChild(parent);
+    const ref = { environmentId, threadId: parent.id };
+    const parentAtom = harness.threads.threadShellAtom(ref);
+    const dispose = harness.registry.mount(parentAtom);
+    try {
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [parent, child],
+      });
+      expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(true);
+      expect(harness.registry.get(parentAtom)?.runtime?.status).toBe("idle");
+
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          parent,
+          { ...child, status: "queued", activityRunStatus: null, activeRunId: null },
+        ],
+      });
+      expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(true);
+      expect(harness.registry.get(parentAtom)?.runtime?.status).toBe("idle");
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
+  it("parks a timed-out wait at idle without hiding the parent's own live run", () => {
+    const harness = makeHarness();
+    const parent = parentShell();
+    const child = delegatedChild(parent);
+    const ref = { environmentId, threadId: parent.id };
+    const parentAtom = harness.threads.threadShellAtom(ref);
+    const dispose = harness.registry.mount(parentAtom);
+    try {
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [parent, child],
+      });
+      expect(harness.registry.get(parentAtom)?.runtime?.status).toBe("idle");
+      expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(true);
+
+      const ownRunId = RunId.make("parent-follow-up");
+      const liveParent = {
+        ...parent,
+        activeRunId: ownRunId,
+        latestRunId: ownRunId,
+        status: "running" as const,
+        activityRunStatus: "running" as const,
+      };
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [liveParent, child],
+      });
+      expect(harness.registry.get(parentAtom)?.runtime?.status).toBe("running");
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
+  it("reprojects a mounted parent when only its child shell changes", () => {
+    const harness = makeHarness();
+    const parent = parentShell();
+    const child = delegatedChild(parent);
+    const ref = { environmentId, threadId: parent.id };
+    const parentAtom = harness.threads.threadShellAtom(ref);
+    const dispose = harness.registry.mount(parentAtom);
+    try {
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [parent, child],
+      });
+      expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(true);
+      const before = harness.registry.get(parentAtom);
+
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          parent,
+          { ...child, status: "completed", activityRunStatus: null, activeRunId: null },
+        ],
+      });
+      const after = harness.registry.get(parentAtom);
+      expect(after).not.toBe(before);
+      expect(isThreadWorking(after!)).toBe(false);
+      expect(after?.runtime?.status).not.toBe("idle");
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
+  it.each(["completed", "cancelled", "failed", "interrupted"] as const)(
+    "releases the parent when the child is %s",
+    (status) => {
+      const harness = makeHarness();
+      const parent = parentShell();
+      const child = delegatedChild(parent);
+      const parentAtom = harness.threads.threadShellAtom({ environmentId, threadId: parent.id });
+      const dispose = harness.registry.mount(parentAtom);
+      try {
+        harness.registry.set(harness.snapshotAtom(environmentId), {
+          ...v2ShellSnapshot,
+          threads: [parent, child],
+        });
+        expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(true);
+        harness.registry.set(harness.snapshotAtom(environmentId), {
+          ...v2ShellSnapshot,
+          threads: [parent, { ...child, status, activityRunStatus: null, activeRunId: null }],
+        });
+        expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(false);
+      } finally {
+        dispose();
+        harness.registry.dispose();
+      }
+    },
+  );
+
+  it("does not hold the parent for a child waiting in a stopped queue", () => {
+    const harness = makeHarness();
+    const parent = parentShell();
+    const child = delegatedChild(parent);
+    const parentAtom = harness.threads.threadShellAtom({ environmentId, threadId: parent.id });
+    const dispose = harness.registry.mount(parentAtom);
+    try {
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          parent,
+          { ...child, status: "completed", activityRunStatus: null, activeRunId: null },
+        ],
+      });
+      expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(false);
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
+  it("keeps the root working for a running grandchild", () => {
+    const harness = makeHarness();
+    const root = parentShell();
+    const child = delegatedChild(root);
+    const completedChild = {
+      ...child,
+      status: "completed" as const,
+      activityRunStatus: null,
+      activeRunId: null,
+    };
+    const grandchild = delegatedChild(completedChild, "grandchild");
+    const parentAtom = harness.threads.threadShellAtom({ environmentId, threadId: root.id });
+    const dispose = harness.registry.mount(parentAtom);
+    try {
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [root, completedChild, grandchild],
+      });
+      expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(true);
+      expect(harness.registry.get(parentAtom)?.runtime?.status).toBe("idle");
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
+  it("does not hold the parent for provider-native subagents", () => {
+    const harness = makeHarness();
+    const parent = parentShell();
+    const child = { ...delegatedChild(parent), creationSource: "provider" as const };
+    const parentAtom = harness.threads.threadShellAtom({ environmentId, threadId: parent.id });
+    const dispose = harness.registry.mount(parentAtom);
+    try {
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [parent, child],
+      });
+      expect(isThreadWorking(harness.registry.get(parentAtom)!)).toBe(false);
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {
