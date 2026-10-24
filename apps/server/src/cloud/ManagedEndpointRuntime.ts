@@ -133,14 +133,21 @@ function needsPinnedRelayClient(executable: RelayClient.RelayClientStatus): bool
   );
 }
 
-export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
+export function classifyRelayClientOutput(
+  line: string,
+): "connected" | "unregistered" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
   }
   // cloudflared uses zerolog level tokens. FTL (fatal) and PNC (panic) are more
   // severe than ERR, so they must surface at least as loudly — without them a
   // fatal connector failure would be logged at debug and hidden.
-  return /\b(?:ERR|WRN|FTL|PNC)\b/u.test(line) ? "warning" : "debug";
+  if (/\b(?:ERR|WRN|FTL|PNC)\b/u.test(line)) {
+    return "warning";
+  }
+  // The INF counterpart of a registration. Other INF lines stay at debug, but a
+  // connection flap is invisible without this one.
+  return /\bINF\b.*\bUnregistered tunnel connection\b/u.test(line) ? "unregistered" : "debug";
 }
 
 /**
@@ -540,6 +547,8 @@ export const make = Effect.gen(function* () {
               ),
               Effect.asVoid,
             );
+          case "unregistered":
+            return Effect.logInfo("Relay client tunnel connection unregistered", attributes);
           case "warning":
             if (/\btimeout: no recent network activity\b/u.test(line)) {
               return noteQuicStall(connector).pipe(
