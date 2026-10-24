@@ -116,6 +116,11 @@ longer starts at login. If agent work cannot access Desktop, Documents, or
 Downloads, it may need Full Disk Access for the `t3` executable listed in
 `ProgramArguments` in
 `~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
+The service uses `<T3 home>/runtime/launcher/t3` at a fixed path across updates.
+To migrate an older service, first update the CLI, then run `t3 service install`
+once with that updated CLI. Updating only the server does not migrate the
+installed launcher. Approve the fixed executable if macOS asks; an existing
+grant for a versioned executable does not move to the new path.
 
 For failures after signing in to T3 Connect, see
 [connection troubleshooting](./t3-connect-troubleshooting.md).
