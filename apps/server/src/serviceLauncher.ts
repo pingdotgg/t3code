@@ -557,6 +557,24 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  async #writeState(next: ServiceState): Promise<void> {
+    // `t3 update` without a restart repoints the unit and records its launcher
+    // runtime while this launcher keeps running, so what the file says wins.
+    const current = await NodeFSP.readFile(this.#statePath, "utf8").then(
+      parseServiceState,
+      () => undefined,
+    );
+    const { launcherVersion } = current ?? next;
+    const state: ServiceState = {
+      protocol: next.protocol,
+      activeVersion: next.activeVersion,
+      ...(launcherVersion === undefined ? {} : { launcherVersion }),
+      ...(next.update === undefined ? {} : { update: next.update }),
+    };
+    await writeServiceState(this.#statePath, state);
+    this.#state = state;
+  }
+
   async #recover(): Promise<void> {
     // A fresh launcher means servers are running again: any stop marker from
     // a previous explicit stop is stale and must not make a future update
@@ -724,8 +742,7 @@ export class Launcher {
       status: "pending",
     };
     const next: ServiceState = { ...this.#state, update: pending };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    await this.#writeState(next);
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }
@@ -762,8 +779,7 @@ export class Launcher {
       activeVersion: pending.targetVersion,
       update: committed,
     };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    await this.#writeState(next);
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
@@ -826,8 +842,7 @@ export class Launcher {
         activeVersion: pending.fromVersion,
         update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
       };
-      await writeServiceState(this.#statePath, next);
-      this.#state = next;
+      await this.#writeState(next);
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     }
     // Signal listeners alone do not keep Node alive.
@@ -854,8 +869,7 @@ export class Launcher {
       activeVersion: pending.fromVersion,
       update: outcome,
     };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    await this.#writeState(next);
     await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     await this.#startChild(next.activeVersion, "active", outcome);
   }

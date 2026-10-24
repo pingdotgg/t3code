@@ -551,6 +551,7 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
     const state = parseServiceState(stateText.value);
     if (state === undefined) return pruned;
     keep.add(state.activeVersion);
+    if (state.launcherVersion !== undefined) keep.add(state.launcherVersion);
     if (state.update !== undefined) {
       keep.add(state.update.fromVersion);
       keep.add(state.update.targetVersion);
@@ -600,9 +601,9 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
 /**
  * Every update publishes a new immutable runtime, so without pruning they pile up. Removes
  * completed runtimes nothing can start again and keeps: the caller's versions, everything the
- * service state references (active, rollback, pending), and runtimes that a running process
- * executes, a `t3` launcher points at, or `references` (such as the service unit) name, plus
- * anything published within the last hour. Staging directories, symlinks, and unexpected entries
+ * service state references (active, launcher, rollback, pending), and runtimes that a running
+ * process executes, a `t3` launcher points at, or `references` (such as the service unit) name,
+ * plus anything published within the last hour. Staging directories, symlinks, and unexpected entries
  * are never touched. Returns the versions removed.
  */
 export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {

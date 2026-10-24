@@ -869,6 +869,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           {
             protocol: SERVICE_LAUNCHER_PROTOCOL,
             activeVersion: input.cliVersion,
+            launcherVersion: input.cliVersion,
           } satisfies ServiceState,
           null,
           2,

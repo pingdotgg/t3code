@@ -29,6 +29,10 @@ export type ServiceUpdateRecord = PendingServiceUpdate | ServerSelfUpdateOutcome
 export interface ServiceState {
   readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
   readonly activeVersion: string;
+  /** The runtime the installed unit starts the launcher from. Remote updates move
+      `activeVersion` on without touching the unit, so cleanup has to keep this one.
+      Absent in state written by older installers, and launchers before it drop it. */
+  readonly launcherVersion?: string;
   readonly update?: ServiceUpdateRecord;
 }
 
@@ -152,6 +156,9 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
     value.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
     typeof value.activeVersion !== "string" ||
     !isExactServiceVersion(value.activeVersion) ||
+    (value.launcherVersion !== undefined &&
+      (typeof value.launcherVersion !== "string" ||
+        !isExactServiceVersion(value.launcherVersion))) ||
     (value.update !== undefined && update === undefined) ||
     (update !== undefined &&
       compareExactServiceVersions(update.targetVersion, update.fromVersion) <= 0) ||
@@ -165,6 +172,9 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
   return {
     protocol: SERVICE_LAUNCHER_PROTOCOL,
     activeVersion: value.activeVersion,
+    ...(typeof value.launcherVersion === "string"
+      ? { launcherVersion: value.launcherVersion }
+      : {}),
     ...(update === undefined ? {} : { update }),
   };
 }

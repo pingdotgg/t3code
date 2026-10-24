@@ -300,9 +300,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const { service, fs, statePath, timeouts, runtime } = yield* makeHarness();
       const plan = yield* service.install();
 
+      // The unit runs the launcher from this runtime even after remote updates move
+      // activeVersion on, so state has to record it for anything that cleans up runtimes.
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
+        launcherVersion: "1.2.3",
       });
       expect(plan.program).toEqual([runtime.entryPath, "__service-launcher"]);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
@@ -468,6 +471,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.2.4",
+          launcherVersion: "1.2.4",
         });
         expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
         expect(
@@ -763,6 +767,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
+        launcherVersion: "1.2.3",
       });
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         `    <string>${runtime.entryPath}</string>\n    <string>__service-launcher</string>`,

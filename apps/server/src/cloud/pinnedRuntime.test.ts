@@ -428,6 +428,35 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
     }),
   );
 
+  it.effect("keeps the runtime the service state records as the launcher", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir } = yield* setup(["0.1.1", "0.1.2", "0.1.3"]);
+      // Installed from 0.1.1, then updated remotely twice. The service is stopped, so nothing
+      // runs 0.1.1, but its unit will start the launcher from it.
+      yield* fs.writeFileString(
+        path.join(baseDir, "runtime", "service-state.json"),
+        JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "0.1.3",
+          launcherVersion: "0.1.1",
+          update: { id: "u", fromVersion: "0.1.2", targetVersion: "0.1.3", status: "committed" },
+        }),
+      );
+
+      const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["0.1.3"] }).pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          lsofRunner("p1\nftxt\nn/sbin/launchd\n"),
+        ),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.Environment, { T3CODE_INSTALL_BIN_DIR: baseDir }),
+      );
+      assert.deepEqual(removed, []);
+    }),
+  );
+
   it.effect("matches a Windows shim whatever its casing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
