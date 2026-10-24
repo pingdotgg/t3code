@@ -65,6 +65,11 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment, usePullRequestTurnRefresh } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
+import {
+  EMPTY_CODE_VIEW,
+  pullRequestCodeViewKey,
+  usePullRequestReviewStore,
+} from "./pullRequestReviewStore";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -327,14 +332,18 @@ export function PullRequestDetailPanel({
     onTabChange?.(next);
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
-  const [codeCommitScope, setCodeCommitScope] = useState<{
-    readonly pullRequestKey: string;
-    readonly oid: string | null;
-  }>(() => ({ pullRequestKey, oid: null }));
-  const selectedCodeCommitOid =
-    codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
+  const codeViewKey = pullRequestCodeViewKey(environmentId, threadRef?.threadId ?? null, reference);
+  const selectedCodeCommitOid = usePullRequestReviewStore(
+    (store) => (store.codeViews[codeViewKey] ?? EMPTY_CODE_VIEW).selectedCommitOid,
+  );
   const selectCodeCommit = (oid: string | null) => {
-    setCodeCommitScope({ pullRequestKey, oid });
+    usePullRequestReviewStore
+      .getState()
+      .updateCodeView(codeViewKey, (current) =>
+        current.selectedCommitOid === oid
+          ? current
+          : { ...EMPTY_CODE_VIEW, selectedCommitOid: oid },
+      );
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);
@@ -376,7 +385,10 @@ export function PullRequestDetailPanel({
   const [condensedByTab, setCondensedByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
   >({});
-  const condensed = condensedByTab[tab] ?? false;
+  const codeChromeCondensed = usePullRequestReviewStore(
+    (store) => (store.codeViews[codeViewKey] ?? EMPTY_CODE_VIEW).chromeCondensed,
+  );
+  const condensed = tab === "code" ? codeChromeCondensed : (condensedByTab[tab] ?? false);
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLDivElement | null>>>({});
   // Fresh ref callbacks would detach and reattach every scroller on each render.
   const [scrollerRefs] = useState(() => ({
@@ -1671,7 +1683,7 @@ export function PullRequestDetailPanel({
           if (event.target !== scroller || scroller === null || scroller === undefined) return;
           const top = scroller.scrollTop;
           // Decided here, not in a state updater, which React may run during render.
-          const previous = condensedByTab[tab] ?? false;
+          const previous = condensed;
           const foldHeight = foldRef.current?.scrollHeight ?? 0;
           let next = previous;
           if (previous) {
@@ -1681,7 +1693,16 @@ export function PullRequestDetailPanel({
             compensationRef.current = { tab, scroller, target: top - chromeDelta };
             next = true;
           }
-          if (next !== previous) setCondensedByTab({ ...condensedByTab, [tab]: next });
+          if (next !== previous) {
+            if (tab === "code") {
+              usePullRequestReviewStore.getState().updateCodeView(codeViewKey, (current) => ({
+                ...current,
+                chromeCondensed: next,
+              }));
+            } else {
+              setCondensedByTab({ ...condensedByTab, [tab]: next });
+            }
+          }
         }}
       >
         {detailQuery.error && !detail ? (
@@ -1778,6 +1799,7 @@ export function PullRequestDetailPanel({
                     environmentId={environmentId}
                     reference={reference}
                     detail={detail}
+                    codeViewKey={codeViewKey}
                     selectedCommitOid={selectedCodeCommitOid}
                     onSelectedCommitChange={selectCodeCommit}
                     pendingFinding={handoff}

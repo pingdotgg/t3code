@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+const [url, out] = process.argv.slice(2);
+const b = await chromium.launch();
+const ctx = await b.newContext();
+const p = await ctx.newPage();
+await p.goto(url);
+await p.waitForURL((u) => !u.pathname.startsWith("/pair"), { timeout: 120000 });
+await ctx.storageState({ path: out });
+await b.close();
+console.log("paired", out);

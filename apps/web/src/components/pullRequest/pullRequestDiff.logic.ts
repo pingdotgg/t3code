@@ -1,5 +1,5 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { PullRequestDiffSide } from "@t3tools/contracts";
+import type { PullRequestDiffSide, PullRequestOmittedFileStat } from "@t3tools/contracts";
 
 /**
  * A thread naming a file is not the same as a thread the diff can show: its line may have moved
@@ -48,4 +48,57 @@ export function toggleFileDiffFoldForViewed(
   if (next.has(fileKey)) next.delete(fileKey);
   else next.add(fileKey);
   return next;
+}
+
+export interface DiffSlice {
+  readonly cursor: string | null;
+  readonly patch: string;
+  readonly truncated: boolean;
+  readonly nextCursor: string | null;
+  readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+}
+
+export function restartPullRequestDiffPagination(
+  key: string,
+  slices: ReadonlyArray<DiffSlice>,
+  refreshPage: (cursor: string | null) => void,
+) {
+  // Invalidate every loaded cursor, including cached pages inside their stale window.
+  // They are consumed again in order, since a refreshed response may change the cursors.
+  for (const cursor of new Set([null, ...slices.map((slice) => slice.cursor)])) {
+    refreshPage(cursor);
+  }
+  return { key, cursor: null, slices: [] as ReadonlyArray<DiffSlice> };
+}
+
+export function mergePullRequestDiffSlices(
+  slices: ReadonlyArray<DiffSlice>,
+  next: DiffSlice,
+): ReadonlyArray<DiffSlice> {
+  const index = slices.findIndex((slice) => slice.cursor === next.cursor);
+  if (index === -1) {
+    return [...slices, next];
+  }
+  const existing = slices[index];
+  if (
+    existing !== undefined &&
+    existing.patch === next.patch &&
+    existing.truncated === next.truncated &&
+    existing.nextCursor === next.nextCursor &&
+    existing.omittedFileStats.length === next.omittedFileStats.length &&
+    existing.omittedFileStats.every((file, index) => {
+      const refreshed = next.omittedFileStats[index];
+      return (
+        refreshed !== undefined &&
+        refreshed.path === file.path &&
+        refreshed.additions === file.additions &&
+        refreshed.deletions === file.deletions
+      );
+    })
+  ) {
+    return slices;
+  }
+  // A page that came back different means the diff moved under the review. The slices
+  // after it go with the replacement: their cursors were positions in the old diff.
+  return [...slices.slice(0, index), next];
 }

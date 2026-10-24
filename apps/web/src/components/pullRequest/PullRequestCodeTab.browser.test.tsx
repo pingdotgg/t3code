@@ -103,6 +103,7 @@ const detail: PullRequestDetailView = {
 const tab = (refreshToken: number) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
+    codeViewKey="code-view"
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
     detail={detail}
