@@ -1,7 +1,9 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
@@ -41,26 +43,39 @@ const decodePersistedServerRuntimeState = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersistedServerRuntimeState),
 );
 
+const isLiteralOrLocalhost = (host: string): boolean =>
+  host === "localhost" ||
+  Result.isSuccess(NetAddress.ipFromString(host)) ||
+  NetAddress.isScopedIpv6Literal(host);
+
+/**
+ * CLI commands send bearer tokens over plain HTTP to this origin. A DNS host name can
+ * resolve somewhere else by the time they do, so name the address the server bound to.
+ */
 const runtimeOriginForConfig = (
   config: Pick<ServerConfig.ServerConfig["Service"], "host">,
-  port: number,
+  address: NetAddress.InetAddress,
 ): PersistedServerRuntimeState["origin"] => {
   const hostname =
-    config.host && !isWildcardHost(config.host) ? formatHostForUrl(config.host) : "127.0.0.1";
-  return `http://${hostname}:${port}`;
+    !config.host || isWildcardHost(config.host)
+      ? "127.0.0.1"
+      : isLiteralOrLocalhost(config.host)
+        ? formatHostForUrl(config.host)
+        : NetAddress.formatUrlHost(address.address);
+  return `http://${hostname}:${address.port}`;
 };
 
 export const makePersistedServerRuntimeState = (input: {
   readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
-  readonly port: number;
+  readonly address: NetAddress.InetAddress;
   readonly serviceManaged?: boolean;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
     version: 1,
     pid: process.pid,
     ...(input.config.host ? { host: input.config.host } : {}),
-    port: input.port,
-    origin: runtimeOriginForConfig(input.config, input.port),
+    port: input.address.port,
+    origin: runtimeOriginForConfig(input.config, input.address),
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
     startedAt: DateTime.formatIso(now),
     ...(input.serviceManaged ? { serviceManaged: true } : {}),

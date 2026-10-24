@@ -768,7 +768,7 @@ const layerMakeServer = Layer.unwrap(
         const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
         const state = yield* makePersistedServerRuntimeState({
           config,
-          port: address.port,
+          address,
           serviceManaged: launcher.managed,
         });
         yield* ownership

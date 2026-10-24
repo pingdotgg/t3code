@@ -1,10 +1,18 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAccessReadScope,
+  AuthSessionId,
+  AuthStandardClientScopes,
+  EnvironmentHttpApi,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
@@ -15,6 +23,7 @@ import {
   formatSessionList,
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
+import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import {
   authLocationFlags,
@@ -23,9 +32,12 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E, R>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (
+    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+    config: ServerConfig.ServerConfig["Service"],
+  ) => Effect.Effect<A, E, R>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -35,13 +47,67 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
   const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    return yield* run(environmentAuth);
+    return yield* run(environmentAuth, config);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
         Layer.provide(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
+    ),
+  );
+});
+
+const AUTH_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
+const AUTH_CLI_LIVE_SERVER_SESSION_TTL = Duration.minutes(1);
+
+/**
+ * Connection state lives only in the running server's memory, so this process's own
+ * session store reports every session as disconnected. Ask the running server through a
+ * short-lived `access:read` session instead, and return `None` when no server answers.
+ */
+const readLiveConnectedSessionIds = Effect.fn("auth.cli.readLiveConnectedSessionIds")(function* (
+  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+  config: ServerConfig.ServerConfig["Service"],
+) {
+  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  if (Option.isNone(runtimeState)) {
+    return Option.none<ReadonlySet<AuthSessionId>>();
+  }
+
+  const attempted = yield* Effect.result(
+    Effect.acquireUseRelease(
+      environmentAuth.issueSession({
+        scopes: [AuthAccessReadScope],
+        subject: "auth-cli",
+        label: "t3 auth cli",
+        ttl: AUTH_CLI_LIVE_SERVER_SESSION_TTL,
+      }),
+      (issued) =>
+        HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
+          Effect.flatMap((client) =>
+            client.auth.clients({ headers: { authorization: `Bearer ${issued.token}` } }),
+          ),
+          Effect.timeout(AUTH_CLI_LIVE_SERVER_TIMEOUT),
+          Effect.provide(FetchHttpClient.layer),
+        ),
+      (issued) =>
+        environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+    ),
+  );
+  if (attempted._tag === "Failure") {
+    yield* Effect.logDebug("Failed to read connection state from the running server.", {
+      origin: runtimeState.value.origin,
+      cause: attempted.failure,
+    });
+    return Option.none<ReadonlySet<AuthSessionId>>();
+  }
+
+  return Option.some<ReadonlySet<AuthSessionId>>(
+    new Set(
+      attempted.success
+        .filter((clientSession) => clientSession.connected)
+        .map((clientSession) => clientSession.sessionId),
     ),
   );
 });
@@ -199,10 +265,21 @@ const sessionListCommand = Command.make("list", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(
       flags,
-      (environmentAuth) =>
+      (environmentAuth, config) =>
         Effect.gen(function* () {
           const sessions = yield* environmentAuth.listSessions();
-          yield* Console.log(formatSessionList(sessions, { json: flags.json }));
+          const liveConnected = yield* readLiveConnectedSessionIds(environmentAuth, config);
+          yield* Console.log(
+            formatSessionList(
+              sessions.map((session) => ({
+                ...session,
+                connected: Option.isSome(liveConnected)
+                  ? liveConnected.value.has(session.sessionId)
+                  : null,
+              })),
+              { json: flags.json },
+            ),
+          );
         }),
       {
         quietLogs: flags.json,

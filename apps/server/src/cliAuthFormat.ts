@@ -143,8 +143,16 @@ export function formatIssuedSession(
   );
 }
 
+/**
+ * One row of `t3 auth session list`. Only the running server knows which sessions hold a
+ * live connection, so `connected` is `null` when no running server answered.
+ */
+export type CliSessionListEntry = Omit<AuthClientSession, "connected"> & {
+  readonly connected: boolean | null;
+};
+
 export function formatSessionList(
-  sessions: ReadonlyArray<AuthClientSession>,
+  sessions: ReadonlyArray<CliSessionListEntry>,
   options?: {
     readonly json?: boolean;
   },
@@ -171,11 +179,16 @@ export function formatSessionList(
     return `No active sessions.${newline}`;
   }
 
+  const connectionStateNote = sessions.some((session) => session.connected === null)
+    ? `Connection state unknown: no running server answered.${newline}${newline}`
+    : "";
+
   return (
+    connectionStateNote +
     sessions
       .map((session) =>
         [
-          `${session.sessionId}${session.connected ? " connected" : ""}`,
+          `${session.sessionId}${session.connected === true ? " connected" : ""}`,
           `  scopes: ${session.scopes.join(" ")}`,
           `  method: ${session.method}`,
           `  subject: ${session.subject}`,
@@ -187,6 +200,7 @@ export function formatSessionList(
           `  expires: ${toIsoString(session.expiresAt)}`,
         ].join(newline),
       )
-      .join(`${newline}${newline}`) + newline
+      .join(`${newline}${newline}`) +
+    newline
   );
 }

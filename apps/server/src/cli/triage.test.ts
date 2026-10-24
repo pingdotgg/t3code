@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -21,7 +22,7 @@ it.effect("reports the version the running server recorded, not the CLI's", () =
     );
     const state = yield* makePersistedServerRuntimeState({
       config: { host: undefined, devUrl: undefined },
-      port: 3773,
+      address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
     });
     yield* persistServerRuntimeState({ path: statePath, state });
 

@@ -4,6 +4,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Runtime from "effect/Runtime";
@@ -127,6 +128,26 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   return { result, t3Home };
 });
 
+describe("server runtime state origin", () => {
+  const originFor = (host: string | undefined, boundIp: string) =>
+    ServerRuntimeState.makePersistedServerRuntimeState({
+      config: { host, devUrl: undefined },
+      address: NetAddress.inetAddressFromIpStringUnsafe(boundIp, 3773),
+    }).pipe(Effect.map((state) => state.origin));
+
+  it.effect("names the bound address instead of a host name that can re-resolve", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* originFor("t3.example.test", "192.168.1.20"), "http://192.168.1.20:3773");
+      assert.equal(yield* originFor("t3.example.test", "fd00::20"), "http://[fd00::20]:3773");
+      assert.equal(yield* originFor("192.168.1.20", "192.168.1.20"), "http://192.168.1.20:3773");
+      assert.equal(yield* originFor("::1", "::1"), "http://[::1]:3773");
+      assert.equal(yield* originFor("localhost", "::1"), "http://localhost:3773");
+      assert.equal(yield* originFor("0.0.0.0", "0.0.0.0"), "http://127.0.0.1:3773");
+      assert.equal(yield* originFor(undefined, "127.0.0.1"), "http://127.0.0.1:3773");
+    }),
+  );
+});
+
 describe("server ownership", () => {
   // An empty home, so no boot service unit installed on this machine is read.
   const layerOwnership = Layer.mergeAll(
@@ -141,7 +162,7 @@ describe("server ownership", () => {
   ).pipe(Layer.provideMerge(NodeServices.layer));
   const makeState = ServerRuntimeState.makePersistedServerRuntimeState({
     config: { host: undefined, devUrl: undefined },
-    port: 3773,
+    address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
   });
 
   it.effect("lets only one of two racing starts own a state directory", () =>
