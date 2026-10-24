@@ -494,6 +494,26 @@ describe("GhosttyTerminalSurface visibility", () => {
       expect(harness.renderedSnapshot.rowData[0]?.text).toContain("ready");
     },
   );
+
+  it("copies OSC 52 only from live output of the focused terminal", async () => {
+    const harness = createHarness();
+    const copy = vi.fn();
+    const surface = await harness.create({ onClipboardWrite: copy });
+    const sequence = "\x1b]52;c;aGVsbG8=\x07";
+
+    surface.write(sequence);
+    surface.focus();
+    surface.resetAndWrite(sequence);
+    surface.write("\x1b]52;c;aGVs");
+    surface.resetAndWrite("replayed history");
+    surface.write("bG8=\x07");
+    surface.write("\x1b]52;c;?\x07");
+    expect(copy).not.toHaveBeenCalled();
+    expect(harness.onData).not.toHaveBeenCalled();
+
+    surface.write(sequence);
+    expect(copy.mock.calls).toEqual([["hello"]]);
+  });
 });
 
 const cell = (text: string): GhosttyCell => ({

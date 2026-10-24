@@ -14,6 +14,7 @@ import {
   type GhosttyCellRange,
   type GhosttyCellMetrics,
 } from "./renderer";
+import { Osc52Scanner } from "./osc52";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
@@ -510,6 +511,12 @@ export interface GhosttyTerminalSurfaceOptions {
    * whose Paste entry can never reach a canvas terminal.
    */
   readonly onContextMenu?: (event: MouseEvent) => void;
+  /**
+   * Text a program copied with OSC 52. Only live output from the focused
+   * terminal counts, so replayed history and background terminals never
+   * overwrite the clipboard.
+   */
+  readonly onClipboardWrite?: (text: string) => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -576,6 +583,9 @@ export class GhosttyTerminalSurface {
   private selectionMoved = false;
   private composing = false;
   private focused = false;
+  private readonly osc52 = new Osc52Scanner((text) => {
+    if (this.focused && this.visible) this.options.onClipboardWrite?.(text);
+  });
   private resizeNotified = false;
   private canvasConfigured = false;
   private canvasDevicePixelRatio = 0;
@@ -737,6 +747,7 @@ export class GhosttyTerminalSurface {
         ? undefined
         : () => this.cancelSynchronizedRenderTimer(),
     );
+    if (this.options.onClipboardWrite) this.osc52.write(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.scrollbarDirty = true;
@@ -747,6 +758,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
+    this.osc52.reset();
     this.core.resetAndWrite(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;

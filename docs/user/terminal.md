@@ -17,6 +17,12 @@ then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
 
+On web and desktop, programs that copy through the terminal with OSC 52, such
+as tmux, Vim, or Claude Code's `/copy`, write to your clipboard while that
+terminal has focus. Copies from a terminal you are not focused on are ignored,
+and programs cannot read your clipboard this way. Some browsers block a copy
+that does not directly follow a click or key press.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal
