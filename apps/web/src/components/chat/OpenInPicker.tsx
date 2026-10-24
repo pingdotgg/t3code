@@ -20,6 +20,7 @@ import { useEnvironment } from "../../state/environments";
 import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   Menu,
   MenuItem,
@@ -310,7 +311,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   // Derived after the shortcut effect so the compiler can cache the resolved editor list.
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
-  const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
+  const openInLabel = `Open in ${primaryOption?.label ?? "editor"}`;
+  const primaryLabel = isPanel ? openInLabel : "Open";
 
   const editorItems = (
     <>
@@ -390,63 +392,81 @@ export const OpenInPicker = memo(function OpenInPicker({
         ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
         : {})}
     >
-      <ThreadDetailsControl
-        aria-label={compact ? "Open file in preferred editor" : primaryLabel}
-        size={isPanel ? "sm" : "xs"}
-        variant={isPanel ? "ghost" : "outline"}
-        part="primary"
-        panel={isPanel}
-        disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-        onClick={() => openInEditor(preferredEditor)}
-      >
-        {primaryOption?.Icon ? (
-          <primaryOption.Icon
-            aria-hidden="true"
-            className={cn(
-              isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
-              getOpenInIconClass(primaryOption.kind),
-            )}
-          />
-        ) : isPanel ? (
-          <SquareArrowOutUpRightIcon
-            aria-hidden="true"
-            className={THREAD_DETAILS_PANEL_ICON_CLASS}
-          />
-        ) : null}
-        <span
-          className={cn(
-            compact
-              ? "sr-only"
-              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-            isPanel && cn("not-sr-only ml-0 min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
-          )}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ThreadDetailsControl
+              aria-label={compact ? "Open file in preferred editor" : primaryLabel}
+              size={isPanel ? "sm" : "xs"}
+              variant={isPanel ? "ghost" : "outline"}
+              part="primary"
+              panel={isPanel}
+              // The tooltip wrapper replaces data-slot="button", so themed
+              // toolbar styling needs its own hook.
+              data-toolbar-control=""
+              disabled={!preferredEditor || !openInCwd || !canOpenEditor}
+              onClick={() => openInEditor(preferredEditor)}
+            />
+          }
         >
-          {primaryLabel}
-        </span>
-      </ThreadDetailsControl>
+          {primaryOption?.Icon ? (
+            <primaryOption.Icon
+              aria-hidden="true"
+              className={cn(
+                isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
+                getOpenInIconClass(primaryOption.kind),
+              )}
+            />
+          ) : isPanel ? (
+            <SquareArrowOutUpRightIcon
+              aria-hidden="true"
+              className={THREAD_DETAILS_PANEL_ICON_CLASS}
+            />
+          ) : null}
+          <span
+            className={cn(
+              compact
+                ? "sr-only"
+                : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+              isPanel && cn("not-sr-only ml-0 min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+            )}
+          >
+            {primaryLabel}
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup>{openInLabel}</TooltipPopup>
+      </Tooltip>
       {isPanel ? (
         <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
       ) : (
         <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       )}
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-        <MenuTrigger
-          disabled={isHostEditorDenied}
-          render={
-            <ThreadDetailsControl
-              aria-label="Choose editor"
-              size={isPanel ? "sm" : "icon-xs"}
-              variant={isPanel ? "ghost" : "outline"}
-              part="secondary"
-              panel={isPanel}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                disabled={isHostEditorDenied}
+                render={
+                  <ThreadDetailsControl
+                    aria-label="Choose editor"
+                    size={isPanel ? "sm" : "icon-xs"}
+                    variant={isPanel ? "ghost" : "outline"}
+                    part="secondary"
+                    panel={isPanel}
+                    data-toolbar-control=""
+                  />
+                }
+              />
+            }
+          >
+            <ChevronDownIcon
+              aria-hidden="true"
+              className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
             />
-          }
-        >
-          <ChevronDownIcon
-            aria-hidden="true"
-            className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
-          />
-        </MenuTrigger>
+          </TooltipTrigger>
+          <TooltipPopup>Choose editor</TooltipPopup>
+        </Tooltip>
         <MenuPopup
           align="end"
           {...(isPanel ? { anchor: panelAnchorRef } : {})}
