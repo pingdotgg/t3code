@@ -67,8 +67,11 @@ group's `RpcScopeAuthorization` middleware checks it before any handler runs.
 
 Scope changes must not prevent older clients from connecting. Token exchange
 intersects recognized requests with the pairing grant; retired and unknown names
-are dropped. A request with no granted scopes fails before consuming the link.
-Stored credentials are never expanded when scopes split.
+are dropped. An explicit request made only of pre-split scopes also asks for the
+permissions split out of its requested parents, because released clients cannot
+name those. Mixed and granular requests keep their exact meaning; omitting the
+request keeps the full grant. A request with no granted scopes fails before
+consuming the link. Stored credentials are never expanded when scopes split.
 
 Auth responses keep `scopes` within the original wire vocabulary and include
 `permissions` for the exact grant. New clients use `permissions` when present,

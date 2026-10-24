@@ -175,26 +175,26 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const token = "reusable-dev-auth-token-that-is-long-enough";
       const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         token,
-        ["orchestration:read"],
+        ["filesystem:read"],
         requestMetadata,
       );
 
       expect(exchanged.access_token).not.toBe(token);
-      expect(exchanged.scope).toBe("orchestration:read");
+      expect(exchanged.scope).toBe("filesystem:read");
       const dpop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         token,
-        ["orchestration:read"],
+        ["filesystem:read"],
         requestMetadata,
         { proofKeyThumbprint: "test-proof-key" },
       );
       expect(dpop.access_token).not.toBe(token);
       expect(dpop.access_token).not.toBe(exchanged.access_token);
       expect(dpop.token_type).toBe("DPoP");
-      expect(dpop.scope).toBe("orchestration:read");
+      expect(dpop.scope).toBe("filesystem:read");
 
       const secondBearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         token,
-        ["orchestration:read"],
+        ["filesystem:read"],
         requestMetadata,
       );
       const firstSession = yield* serverAuth.authenticateHttpRequest(
@@ -273,7 +273,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const pairingCredential = yield* serverAuth.issuePairingCredential({
-        scopes: ["orchestration:read", "orchestration:operate"],
+        scopes: ["orchestration:read", "filesystem:read"],
       });
 
       const error = yield* serverAuth
@@ -292,22 +292,22 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
       const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         pairingCredential.credential,
-        ["orchestration:read"],
+        ["filesystem:read"],
         requestMetadata,
       );
       const session = yield* serverAuth.authenticateHttpRequest(
         makeBearerRequest(token.access_token),
       );
 
-      expect(token.scope).toBe("orchestration:read");
-      expect(session.scopes).toEqual(["orchestration:read"]);
+      expect(token.scope).toBe("filesystem:read");
+      expect(session.scopes).toEqual(["filesystem:read"]);
       expect((yield* serverAuth.listPairingLinks()).map((link) => link.id)).not.toContain(
         pairingCredential.id,
       );
       const reused = yield* serverAuth
         .exchangeBootstrapCredentialForAccessToken(
           pairingCredential.credential,
-          ["orchestration:read"],
+          ["filesystem:read"],
           requestMetadata,
         )
         .pipe(Effect.flip);
@@ -338,20 +338,75 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
+  it.effect.each([
+    {
+      label: "the historical iOS request against a standard grant",
+      grantedScopes: AuthStandardClientScopes,
+      requestedScopes: [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "relay:read",
+      ],
+      expectedPermissions: [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "relay:read",
+        "filesystem:read",
+        "diagnostics:read",
+        "settings:write",
+        "providers:manage",
+        "environment:maintain",
+        "preview:operate",
+        "source-control:write",
+        "filesystem:write",
+        "terminal:read",
+      ],
+    },
+    {
+      label: "a requested parent capped by a limited grant",
+      grantedScopes: [
+        "orchestration:read",
+        "orchestration:operate",
+        "filesystem:read",
+        "providers:manage",
+      ],
+      requestedScopes: ["orchestration:read"],
+      expectedPermissions: ["orchestration:read", "filesystem:read"],
+    },
+  ] as const)(
+    "expands legacy scopes for $label",
+    ({ grantedScopes, requestedScopes, expectedPermissions }) =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairing = yield* serverAuth.issuePairingCredential({ scopes: grantedScopes });
+        const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          pairing.credential,
+          requestedScopes,
+          requestMetadata,
+        );
+        const session = yield* serverAuth.getSessionState(makeBearerRequest(token.access_token));
+
+        expect(session.authenticated).toBe(true);
+        expect(session.permissions?.toSorted()).toEqual(expectedPermissions.toSorted());
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
   it.effect("narrows seeded desktop grants to the requested scopes", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         "desktop-bootstrap-token",
-        ["orchestration:read"],
+        ["orchestration:read", "filesystem:read"],
         requestMetadata,
       );
       const session = yield* serverAuth.authenticateHttpRequest(
         makeBearerRequest(token.access_token),
       );
 
-      expect(token.scope).toBe("orchestration:read");
-      expect(session.scopes).toEqual(["orchestration:read"]);
+      expect(token.scope).toBe("orchestration:read filesystem:read");
+      expect(session.scopes).toEqual(["orchestration:read", "filesystem:read"]);
     }).pipe(
       Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
     ),
