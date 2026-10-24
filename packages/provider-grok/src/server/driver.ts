@@ -52,7 +52,11 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 const GROK_NPM_PACKAGE = "@xai-official/grok";
 // `grok update` finds the installer that owns the binary itself, so the
 // resolved executable is its own updater. It installs under `GROK_HOME`, so it
-// runs with the instance's environment. The exception is a Homebrew cask
+// runs with the instance's environment. For an npm install it runs npm, and
+// npm 12 blocks the package's postinstall, which is what moves the new binary
+// into `GROK_HOME`, while still exiting 0. The allowlist travels to that npm
+// through the environment; older npm warns about the unknown config and
+// continues. The exception is a Homebrew cask
 // (normally `grok-build`), which brew upgrades and versions: `grok update` would install
 // a second copy beside it, so a cask its brew cannot vouch for stays manual.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
@@ -86,7 +90,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: context.env,
+      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
     });
   }),
 };
