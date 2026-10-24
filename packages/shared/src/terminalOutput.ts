@@ -58,7 +58,7 @@ export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
 export const TERMINAL_OUTPUT_TAIL_CHARS = 64 * 1024;
 
 /** Lines that cursor movement can still reach; older output is fixed. */
-const LIVE_LINES = 64;
+export const LIVE_LINES = 64;
 
 // Longest fragment we will hold waiting for an escape sequence to finish.
 const MAX_PENDING_ESCAPE = 64;

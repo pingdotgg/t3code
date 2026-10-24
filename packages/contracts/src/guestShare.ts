@@ -109,81 +109,6 @@ export const GuestSubmitRequest = Schema.Struct({
 });
 export type GuestSubmitRequest = typeof GuestSubmitRequest.Type;
 
-/** Only these kinds ever reach a guest. Everything else in a thread is dropped on the server. */
-export const GuestTranscriptItem = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literals(["user", "assistant", "plan"]),
-    id: TrimmedNonEmptyString,
-    text: Schema.String,
-    streaming: Schema.Boolean,
-    /** Set on a user message a guest wrote. Earlier links' guests show by name, not as "You". */
-    guestMessageId: Schema.optional(GuestMessageId),
-    guestName: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("question"),
-    id: TrimmedNonEmptyString,
-    questions: Schema.Array(
-      Schema.Struct({
-        header: Schema.String,
-        question: Schema.String,
-        options: Schema.Array(Schema.String),
-      }),
-    ),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("tool"),
-    id: TrimmedNonEmptyString,
-    /** Which kind of tool ran. Titles and arguments never reach a guest. */
-    tool: Schema.Literals([
-      "command",
-      "file_change",
-      "file_search",
-      "web_search",
-      "tool",
-      "subagent",
-    ]),
-  }),
-  /** A visual the agent published. The page loads it from `GUEST_RENDER_ROUTE` by `id`. */
-  Schema.Struct({
-    kind: Schema.Literal("html-render"),
-    id: TrimmedNonEmptyString,
-    title: Schema.String,
-    height: Schema.Number,
-    heights: Schema.optional(Schema.Array(Schema.Tuple([Schema.Number, Schema.Number]))),
-  }),
-]);
-export type GuestTranscriptItem = typeof GuestTranscriptItem.Type;
-
-export const GuestShareView = Schema.Struct({
-  shareId: GuestShareId,
-  title: Schema.String,
-  guestName: TrimmedNonEmptyString,
-  expiresAt: IsoDateTime,
-  working: Schema.Boolean,
-  messages: Schema.Array(ThreadGuestMessage),
-});
-export type GuestShareView = typeof GuestShareView.Type;
-
-export const GuestStreamEvent = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("snapshot"),
-    view: GuestShareView,
-    items: Schema.Array(GuestTranscriptItem),
-  }),
-  Schema.Struct({ type: Schema.Literal("item"), item: GuestTranscriptItem }),
-  /** Streaming text grows by `append` when the new text extends the old one. */
-  Schema.Struct({
-    type: Schema.Literal("append"),
-    id: TrimmedNonEmptyString,
-    text: Schema.String,
-    streaming: Schema.Boolean,
-  }),
-  Schema.Struct({ type: Schema.Literal("view"), view: GuestShareView }),
-  Schema.Struct({ type: Schema.Literal("ended") }),
-]);
-export type GuestStreamEvent = typeof GuestStreamEvent.Type;
-
 export const GUEST_ROUTE_PREFIX = "/api/guest";
 /** The guest page and guest routes name the share they mean with this query parameter. */
 export const GUEST_SHARE_PARAM = "share";
@@ -195,3 +120,7 @@ export const GUEST_SHARE_PARAM = "share";
 export const guestSessionCookieName = (shareId: string) => `t3_guest_${shareId}`;
 /** Serves one HTML render the guest can see: `?share=<share id>&item=<turn item id>`. */
 export const GUEST_RENDER_ROUTE = `${GUEST_ROUTE_PREFIX}/render`;
+/** One item the guest can see, as its expanded row shows it: `?share=<share id>&item=<id>`. */
+export const GUEST_ITEM_ROUTE = `${GUEST_ROUTE_PREFIX}/item`;
+/** Server-sent output frames of one command the guest can see: `?share=<share id>&item=<id>`. */
+export const GUEST_COMMAND_OUTPUT_ROUTE = `${GUEST_ROUTE_PREFIX}/command-output`;

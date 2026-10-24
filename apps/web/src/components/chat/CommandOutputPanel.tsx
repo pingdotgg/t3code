@@ -1,3 +1,4 @@
+import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
 import { useLayoutEffect, useRef } from "react";
@@ -6,6 +7,7 @@ import { useTheme } from "../../hooks/useTheme";
 import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
+import type { TurnItemSource } from "./timelineRowContext";
 
 // Within this many pixels of the end still counts as following the output.
 const FOLLOW_SLACK_PX = 8;
@@ -19,19 +21,21 @@ export function useCommandOutputStreaming(environmentId: EnvironmentId): boolean
 
 /**
  * Output of one expanded command row: streams while the command runs, then
- * shows its final output. Mount it only when `useCommandOutputStreaming` holds.
+ * shows its final output. Mount it only when `useCommandOutputStreaming` holds
+ * or a `source` serves the output.
  * It subscribes only while mounted, so collapsed rows and other threads receive nothing.
  */
 export function CommandOutputPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
+  readonly source?: TurnItemSource["commandOutput"] | undefined;
 }) {
-  const { data, error } = useEnvironmentQuery(
-    orchestrationEnvironment.v2.commandOutput({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId, itemId: props.itemId },
-    }),
+  const input = { threadId: props.threadId, itemId: props.itemId };
+  const { data, error } = useEnvironmentQuery<CommandOutputView, unknown>(
+    props.source
+      ? props.source(input)
+      : orchestrationEnvironment.v2.commandOutput({ environmentId: props.environmentId, input }),
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   // Follow new output until the reader scrolls up; scrolling back down resumes.

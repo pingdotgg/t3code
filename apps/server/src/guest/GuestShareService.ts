@@ -9,12 +9,14 @@ import {
   type GuestRedeemRequest,
   type GuestStreamEvent,
   type GuestSubmitRequest,
+  type GuestTurnItemDetail,
   type OrchestrationV2AppThread,
-  type OrchestrationV2Run,
+  type OrchestrationV2CommandOutputFrame,
   type RunId,
   ThreadId,
+  type OrchestrationV2Run,
 } from "@t3tools/contracts";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -37,14 +39,23 @@ import { resolveAttachmentPathById, threadHtmlRenderAttachmentIds } from "../att
 import * as ServerConfig from "../config.ts";
 import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import { GUEST_FAILURE } from "../orchestration-v2/GuestShareDecider.ts";
+import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {
-  guestItemEvent,
-  guestItemText,
+  coalesceGuestEvents,
+  guestCommandOutputFrames,
+  guestPathRoots,
   guestShareView,
-  guestTranscriptItem,
+  guestThreadModel,
   isGuestVisibleRun,
-} from "./guestTranscript.ts";
+  guestRunTurnEnded,
+  projectRunForGuest,
+  projectSnapshotForGuest,
+  projectTurnItemForGuest,
+  projectTurnItemForGuestDetail,
+} from "./guestProjection.ts";
 
 const SIGNING_SECRET_NAME = "guest-share-signing-key";
 const SHARE_ID_BYTES = 16;
@@ -52,18 +63,17 @@ const INVITE_SIGNATURE_BYTES = 16;
 const SNAPSHOT_ROW_LIMIT = 600;
 const HOST_RECHECK_INTERVAL = Duration.seconds(30);
 const SNAPSHOT_USER_TURN_LIMIT = 20;
-const WORKING_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
-  "preparing",
-  "starting",
-  "running",
-  "waiting",
-]);
+const GUEST_COMMAND_OUTPUT_BYTES_PER_SECOND = 128 * 1024;
+// Streaming text and running tools update many times a second; the owner's stream batches the
+// same way (see ThreadLiveEventCoalescer).
+const LIVE_COALESCE_WINDOW = Duration.millis(50);
+const LIVE_COALESCE_MAX_EVENTS = 512;
 
 const GUEST_ACCESS_MESSAGES = {
   ...GUEST_FAILURE,
   invalid: "This guest link is not valid.",
   stale_page: "This page is for an older guest link. Reload it to continue.",
-  unavailable: "This visual is not available.",
+  unavailable: "This item is not available.",
   rejected: "The owner's server rejected this request.",
 } as const;
 
@@ -142,11 +152,28 @@ export class GuestShareService extends Context.Service<
       session: string,
       itemId: string,
     ) => Effect.Effect<{ readonly path: string; readonly title: string }, GuestShareAccessError>;
+    /** An item the guest can see, as its expanded row shows it. */
+    readonly item: (
+      session: string,
+      itemId: string,
+    ) => Effect.Effect<GuestTurnItemDetail, GuestShareAccessError>;
+    /**
+     * Output frames of a command the guest can see, as the owner's expanded row gets them, until
+     * the command settles or the share ends.
+     */
+    readonly commandOutput: (
+      session: string,
+      itemId: string,
+    ) => Effect.Effect<Stream.Stream<OrchestrationV2CommandOutputFrame>, GuestShareAccessError>;
   }
 >()("t3/guest/GuestShareService") {}
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projects = yield* ProjectStore.ProjectStoreV2;
+  const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const home = yield* HostProcess.HomeDirectory;
   const managedEndpoint = yield* CloudManagedEndpointRuntime;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
@@ -310,6 +337,30 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // Guests get paths relative to the workspace; absolute ones name the owner's home folder.
+  const projectRootOf = (thread: OrchestrationV2AppThread) =>
+    projects.get(thread.projectId).pipe(
+      Effect.map((project) => Option.getOrNull(project)?.workspaceRoot ?? null),
+      Effect.orElseSucceed(() => null),
+    );
+
+  /** Completes when the share expires or T3 Connect stops serving its host. */
+  const untilExpiredOrHostLost = Effect.fn("GuestShareService.untilExpiredOrHostLost")(
+    function* (share: { readonly expiresAt: string; readonly host: string }) {
+      const untilExpiry = Effect.sleep(
+        Math.max(0, Date.parse(share.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
+      );
+      // Unlinking T3 Connect must also end streams that are already open.
+      const untilHostLost = connectHostname.pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced(HOST_RECHECK_INTERVAL),
+          until: (current) => current !== share.host,
+        }),
+      );
+      yield* Effect.race(untilExpiry, untilHostLost);
+    },
+  );
+
   const stream = Effect.fn("GuestShareService.stream")(function* (session: string) {
     const { thread: authorizedThread, share } = yield* authorize(session, "session");
     const snapshot = yield* orchestrator
@@ -328,25 +379,25 @@ const make = Effect.gen(function* () {
       return yield* inactive;
     }
 
-    const runStatuses = new Map<RunId, OrchestrationV2Run["status"]>();
-    for (const run of projection.runs) {
-      if (isGuestVisibleRun(run, share.historyStartRunOrdinal)) runStatuses.set(run.id, run.status);
-    }
-    const texts = new Map<string, string>();
-    const items = projection.visibleTurnItems.flatMap((entry) => {
-      if (entry.visibility !== "local" || entry.item.runId === null) return [];
-      if (!runStatuses.has(entry.item.runId)) return [];
-      const item = guestTranscriptItem(entry.item);
-      if (item === null) return [];
-      const text = guestItemText(item);
-      if (text !== undefined) texts.set(item.id, text);
-      return [item];
-    });
-    const working = () =>
-      [...runStatuses.values()].some((status) => WORKING_RUN_STATUSES.has(status));
+    const projectRoot = yield* projectRootOf(projection.thread);
     let thread: OrchestrationV2AppThread = projection.thread;
-    const view = () => guestShareView(thread, working());
-    const initialView = view();
+    let roots = guestPathRoots([thread.worktreePath, projectRoot], home);
+    // Read once; a provider configured mid-share shows after the guest reconnects.
+    const providers = yield* providerRegistry.getProviders;
+    const viewOf = (current: OrchestrationV2AppThread) =>
+      guestShareView(current, guestThreadModel(current.modelSelection, providers));
+    const guestSnapshot = projectSnapshotForGuest(projection, share.historyStartRunOrdinal, roots);
+    const visibleRunIds = new Set<RunId>(guestSnapshot.runs.map((run) => run.id));
+    // Kept to re-send a run when its provider turn ends, which arrives as its own event.
+    const visibleRuns = new Map(
+      projection.runs.filter((run) => visibleRunIds.has(run.id)).map((run) => [run.id, run]),
+    );
+    const providerTurns = new Map(projection.providerTurns.map((turn) => [turn.id, turn]));
+    const guestRun = (run: OrchestrationV2Run): GuestStreamEvent => ({
+      type: "run",
+      run: projectRunForGuest(run, guestRunTurnEnded(run, providerTurns.values())),
+    });
+    const initialView = viewOf(thread);
     if (initialView === null) return yield* inactive;
 
     const ended: GuestStreamEvent = { type: "ended" };
@@ -359,22 +410,26 @@ const make = Effect.gen(function* () {
             case "run.created":
             case "run.updated": {
               if (!isGuestVisibleRun(event.payload, share.historyStartRunOrdinal)) return [];
-              const wasWorking = working();
-              runStatuses.set(event.payload.id, event.payload.status);
-              const next = view();
-              return wasWorking === working() || next === null
-                ? []
-                : [{ type: "view", view: next }];
+              visibleRunIds.add(event.payload.id);
+              visibleRuns.set(event.payload.id, event.payload);
+              return [guestRun(event.payload)];
+            }
+            case "provider-turn.updated": {
+              providerTurns.set(event.payload.id, event.payload);
+              const attemptId = event.payload.runAttemptId;
+              const run =
+                attemptId === null
+                  ? undefined
+                  : [...visibleRuns.values()].find(
+                      (candidate) => candidate.activeAttemptId === attemptId,
+                    );
+              return run === undefined ? [] : [guestRun(run)];
             }
             case "turn-item.updated": {
               const runId = event.payload.runId;
-              if (runId === null || !runStatuses.has(runId)) return [];
-              const item = guestTranscriptItem(event.payload);
-              if (item === null) return [];
-              const update = guestItemEvent(texts.get(item.id), item);
-              const text = guestItemText(item);
-              if (text !== undefined) texts.set(item.id, text);
-              return [update];
+              if (runId === null || !visibleRunIds.has(runId)) return [];
+              const item = projectTurnItemForGuest(event.payload, roots);
+              return item === null ? [] : [{ type: "item", item }];
             }
             case "thread.archived":
             case "thread.deleted":
@@ -383,7 +438,8 @@ const make = Effect.gen(function* () {
             case "thread.metadata-updated": {
               thread = event.payload;
               if (thread.guestShare?.id !== share.id) return [ended];
-              const next = view();
+              roots = guestPathRoots([thread.worktreePath, projectRoot], home);
+              const next = viewOf(thread);
               return next === null ? [ended] : [{ type: "view", view: next }];
             }
             default:
@@ -391,35 +447,40 @@ const make = Effect.gen(function* () {
           }
         }),
         Stream.flattenIterable,
+        // Ending first means a batch holding `ended` flushes at once instead of after the window.
         Stream.takeUntil((event) => event.type === "ended"),
+        Stream.groupedWithin(LIVE_COALESCE_MAX_EVENTS, LIVE_COALESCE_WINDOW),
+        Stream.map(coalesceGuestEvents),
+        Stream.flattenIterable,
         Stream.catchCause(() => Stream.make(ended)),
       );
-    const untilExpiry = Effect.sleep(
-      Math.max(0, Date.parse(share.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
-    );
-    // Unlinking T3 Connect must also end streams that are already open.
-    const untilHostLost = connectHostname.pipe(
-      Effect.repeat({
-        schedule: Schedule.spaced(HOST_RECHECK_INTERVAL),
-        until: (current) => current !== share.host,
-      }),
-    );
-    const snapshotEvent: GuestStreamEvent = { type: "snapshot", view: initialView, items };
+    const snapshotEvent: GuestStreamEvent = {
+      type: "snapshot",
+      view: initialView,
+      runs: guestSnapshot.runs,
+      items: guestSnapshot.items,
+    };
     return Stream.concat(
       Stream.make(snapshotEvent),
       Stream.concat(
-        live.pipe(Stream.interruptWhen(Effect.race(untilExpiry, untilHostLost))),
+        live.pipe(Stream.interruptWhen(untilExpiredOrHostLost(share))),
         Stream.make(ended),
       ),
     ).pipe(Stream.takeUntil((event) => event.type === "ended"));
   });
 
-  const renderUnavailable = new GuestShareAccessError({ reason: "unavailable" });
-  // Only an item the guest's transcript shows right now: the same snapshot window and
-  // visibility rules as the stream, so a rolled-back or out-of-window render is not served.
-  const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
+  const unavailable = new GuestShareAccessError({ reason: "unavailable" });
+
+  /**
+   * An item the guest's transcript shows right now: the same snapshot window and visibility rules
+   * as the stream, so a rolled-back or out-of-window item is not served.
+   */
+  const visibleItem = Effect.fn("GuestShareService.visibleItem")(function* (
+    session: string,
+    itemId: string,
+  ) {
     const { thread, share } = yield* authorize(session, "session");
-    const { projection } = yield* orchestrator
+    const { projection, snapshotSequence } = yield* orchestrator
       .getThreadSnapshotWindow(thread.id, {
         rowLimit: SNAPSHOT_ROW_LIMIT,
         userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
@@ -437,26 +498,92 @@ const make = Effect.gen(function* () {
       (entry) => entry.visibility === "local" && entry.item.id === itemId,
     )?.item;
     const run = item?.runId == null ? undefined : projection.runs.find((r) => r.id === item.runId);
+    if (item === undefined || run === undefined) return yield* unavailable;
+    if (!isGuestVisibleRun(run, share.historyStartRunOrdinal)) return yield* unavailable;
+    return { thread: projection.thread, share, item, snapshotSequence };
+  });
+
+  const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
+    const { thread, item } = yield* visibleItem(session, itemId);
+    // The same policy as the stream decides whether the guest sees this visual.
+    const guestItem = projectTurnItemForGuest(item, []);
     if (
-      item === undefined ||
       item.type !== "dynamic_tool" ||
-      run === undefined ||
-      !isGuestVisibleRun(run, share.historyStartRunOrdinal) ||
-      guestTranscriptItem(item)?.kind !== "html-render"
+      guestItem?.type !== "dynamic_tool" ||
+      guestItem.output === undefined
     ) {
-      return yield* renderUnavailable;
+      return yield* unavailable;
     }
     const [attachmentId] = threadHtmlRenderAttachmentIds(thread.id, [item]);
     const path =
       attachmentId === undefined
         ? null
         : resolveAttachmentPathById({ attachmentsDir, attachmentId });
-    const reference = htmlRenderFromToolItem(item);
-    if (path === null || reference === undefined) return yield* renderUnavailable;
-    return { path, title: reference.title };
+    if (path === null) return yield* unavailable;
+    return { path, title: guestItem.output.htmlRender.title };
   });
 
-  return GuestShareService.of({ create, redeem, check, submit, stream, render });
+  const item = Effect.fn("GuestShareService.item")(function* (session: string, itemId: string) {
+    const { thread, item } = yield* visibleItem(session, itemId);
+    const roots = guestPathRoots([thread.worktreePath, yield* projectRootOf(thread)], home);
+    const detail = projectTurnItemForGuestDetail(item, roots);
+    return detail === null ? yield* unavailable : detail;
+  });
+
+  const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (
+    session: string,
+    itemId: string,
+  ) {
+    const { thread, share, item, snapshotSequence } = yield* visibleItem(session, itemId);
+    if (item.type !== "command_execution" || projectTurnItemForGuest(item, []) === null) {
+      return yield* unavailable;
+    }
+    const roots = guestPathRoots([thread.worktreePath, yield* projectRootOf(thread)], home);
+    // Closing, replacing, archiving, or deleting the share ends the output as it ends the stream.
+    // A rename or model change keeps the share, so it does not.
+    const untilClosed = orchestrator
+      .streamStoredEventsFrom({ threadId: thread.id, afterSequence: snapshotSequence })
+      .pipe(
+        Stream.filter(
+          ({ event }) =>
+            event.type === "thread.archived" ||
+            event.type === "thread.deleted" ||
+            ((event.type === "thread.guest-share-updated" ||
+              event.type === "thread.metadata-updated") &&
+              event.payload.guestShare?.id !== share.id),
+        ),
+        Stream.runHead,
+        Effect.ignore,
+      );
+    return commandOutputs.subscribe({ threadId: thread.id, itemId: item.id }).pipe(
+      Stream.map(guestCommandOutputFrames(roots)),
+      Stream.filter((frame) => frame !== null),
+      // A replace carries the whole tail. Waiting here slows the pull, and the owner's stream
+      // coalesces output meanwhile, so a busy command costs a guest about what it costs an owner
+      // whose client fell behind.
+      Stream.rechunk(1),
+      Stream.throttle({
+        cost: (frames) => frames.reduce((total, frame) => total + frame.text.length, 0),
+        units: GUEST_COMMAND_OUTPUT_BYTES_PER_SECOND,
+        duration: Duration.seconds(1),
+        strategy: "shape",
+      }),
+      // A lost hub stream ends the output; the row reloads it when reopened.
+      Stream.catchCause(() => Stream.empty),
+      Stream.interruptWhen(Effect.race(untilExpiredOrHostLost(share), untilClosed)),
+    );
+  });
+
+  return GuestShareService.of({
+    create,
+    redeem,
+    check,
+    submit,
+    stream,
+    render,
+    item,
+    commandOutput,
+  });
 });
 
 export const layer = Layer.effect(GuestShareService, make);

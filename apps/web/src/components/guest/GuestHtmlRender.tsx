@@ -1,9 +1,6 @@
+import { GUEST_RENDER_ROUTE, GUEST_SHARE_PARAM } from "@t3tools/contracts";
 import {
-  GUEST_RENDER_ROUTE,
-  GUEST_SHARE_PARAM,
-  type GuestTranscriptItem,
-} from "@t3tools/contracts";
-import {
+  type HtmlRenderReference,
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFrameHeight,
   htmlRenderResult,
@@ -23,10 +20,12 @@ import { observeResize } from "~/lib/observeResize";
  * and ask to open a web link; it cannot reach the guest's session.
  */
 export function GuestHtmlRender({
-  item,
+  itemId,
+  reference,
   shareId,
 }: {
-  readonly item: Extract<GuestTranscriptItem, { kind: "html-render" }>;
+  readonly itemId: string;
+  readonly reference: HtmlRenderReference;
   readonly shareId: string;
 }) {
   const theme = useHtmlRenderTheme();
@@ -37,7 +36,7 @@ export function GuestHtmlRender({
   // The theme rides in the fragment for the first paint; later changes are posted.
   const [src] = useState(
     () =>
-      `${GUEST_RENDER_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&item=${encodeURIComponent(item.id)}${htmlRenderThemeFragment(theme)}`,
+      `${GUEST_RENDER_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&item=${encodeURIComponent(itemId)}${htmlRenderThemeFragment(theme)}`,
   );
   useLayoutEffect(() => {
     const box = boxRef.current;
@@ -79,22 +78,13 @@ export function GuestHtmlRender({
     <div
       ref={boxRef}
       style={{
-        height: htmlRenderFrameHeight(
-          {
-            attachmentId: "",
-            title: item.title,
-            height: item.height,
-            ...(item.heights === undefined ? {} : { heights: item.heights }),
-          },
-          width,
-          contentHeight,
-        ),
+        height: htmlRenderFrameHeight(reference, width, contentHeight),
       }}
     >
       <iframe
         ref={frameRef}
         src={src}
-        title={item.title}
+        title={reference.title}
         sandbox="allow-scripts allow-forms allow-popups allow-downloads"
         className="block size-full rounded-lg border border-border"
       />

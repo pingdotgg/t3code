@@ -1,16 +1,22 @@
 import {
   GuestStreamEvent,
   type GuestMessageId,
+  type GuestRun,
   type GuestShareView,
-  type GuestTranscriptItem,
+  type GuestTurnItem,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
   type ThreadGuestMessage,
 } from "@t3tools/contracts";
+import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export interface GuestStreamState {
   readonly view: GuestShareView | null;
-  readonly items: ReadonlyArray<GuestTranscriptItem>;
+  readonly runs: ReadonlyArray<GuestRun>;
+  /** In the shape the real timeline reads. A guest only ever gets this thread's own items. */
+  readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly ended: boolean;
   /**
    * Messages this page saw waiting that have no transcript row yet. Survives reconnects, and a
@@ -21,10 +27,41 @@ export interface GuestStreamState {
 
 export const initialGuestStreamState: GuestStreamState = {
   view: null,
+  runs: [],
   items: [],
   ended: false,
   awaitingRowIds: new Set(),
 };
+
+const projectedItem = (
+  item: GuestTurnItem,
+  position: number,
+): OrchestrationV2ProjectedTurnItem => ({
+  position,
+  visibility: "local",
+  sourceThreadId: item.threadId,
+  sourceItemId: item.id,
+  item,
+});
+
+/** Replaces the row with the item's id, or adds it at the end. Other rows keep their identity. */
+function upsertItem(
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  item: GuestTurnItem,
+): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
+  const index = items.findIndex((row) => row.item.id === item.id);
+  return index === -1
+    ? [...items, projectedItem(item, items.length)]
+    : items.with(index, projectedItem(item, items[index]!.position));
+}
+
+function upsertRun(runs: ReadonlyArray<GuestRun>, run: GuestRun): ReadonlyArray<GuestRun> {
+  const index = runs.findIndex((existing) => existing.id === run.id);
+  return index === -1 ? [...runs, run] : runs.with(index, run);
+}
+
+const guestMessageIdOf = (item: OrchestrationV2TurnItem) =>
+  item.type === "user_message" ? item.context?.guest?.guestMessageId : undefined;
 
 function withPendingFrom(
   awaiting: ReadonlySet<GuestMessageId>,
@@ -37,13 +74,12 @@ function withPendingFrom(
 
 function withoutPlaced(
   awaiting: ReadonlySet<GuestMessageId>,
-  items: ReadonlyArray<GuestTranscriptItem>,
+  items: ReadonlyArray<GuestTurnItem>,
 ): ReadonlySet<GuestMessageId> {
-  const placed = items.flatMap((item) =>
-    item.kind === "user" && item.guestMessageId && awaiting.has(item.guestMessageId)
-      ? [item.guestMessageId]
-      : [],
-  );
+  const placed = items.flatMap((item) => {
+    const id = guestMessageIdOf(item);
+    return id !== undefined && awaiting.has(id) ? [id] : [];
+  });
   if (placed.length === 0) return awaiting;
   const next = new Set(awaiting);
   for (const id of placed) next.delete(id);
@@ -65,39 +101,30 @@ export function applyGuestStreamEvent(
   event: GuestStreamEvent,
 ): GuestStreamState {
   switch (event.type) {
-    case "snapshot":
+    case "snapshot": {
       // Another tab redeemed a newer link, and the shared cookie now opens that thread.
       if (state.view !== null && state.view.shareId !== event.view.shareId) {
         return { ...state, ended: true };
       }
       return {
         view: event.view,
-        items: event.items,
+        runs: event.runs,
+        items: event.items.map(projectedItem),
         ended: false,
         awaitingRowIds: withoutPlaced(
           withPendingFrom(state.awaitingRowIds, event.view),
           event.items,
         ),
       };
-    case "item": {
-      const exists = state.items.some((item) => item.id === event.item.id);
+    }
+    case "item":
       return {
         ...state,
-        items: exists
-          ? state.items.map((item) => (item.id === event.item.id ? event.item : item))
-          : [...state.items, event.item],
+        items: upsertItem(state.items, event.item),
         awaitingRowIds: withoutPlaced(state.awaitingRowIds, [event.item]),
       };
-    }
-    case "append":
-      return {
-        ...state,
-        items: state.items.map((item) =>
-          item.id === event.id && "text" in item
-            ? { ...item, text: item.text + event.text, streaming: event.streaming }
-            : item,
-        ),
-      };
+    case "run":
+      return { ...state, runs: upsertRun(state.runs, event.run) };
     case "view":
       return {
         ...state,
@@ -109,6 +136,55 @@ export function applyGuestStreamEvent(
   }
 }
 
+const WORKING_RUN_STATUSES: ReadonlySet<GuestRun["status"]> = new Set([
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+export interface GuestActivity {
+  readonly isWorking: boolean;
+  /** The run the working row and turn folding follow, as the owner's timeline gets it. */
+  readonly run: ThreadRunSummary | null;
+  readonly workStartedAt: string | null;
+}
+
+/**
+ * The newest working run, or else the newest run that left the queue. The same choice the owner's
+ * view makes from its projection (see deriveThreadActivityRun).
+ */
+export function deriveGuestActivity(runs: ReadonlyArray<GuestRun>): GuestActivity {
+  let working: GuestRun | null = null;
+  let latest: GuestRun | null = null;
+  for (const run of runs) {
+    if (
+      WORKING_RUN_STATUSES.has(run.status) &&
+      (working === null || run.ordinal > working.ordinal)
+    ) {
+      working = run;
+    }
+    if (run.status !== "queued" && (latest === null || run.ordinal > latest.ordinal)) latest = run;
+  }
+  const run = working ?? latest;
+  return {
+    isWorking: working !== null,
+    run:
+      run === null
+        ? null
+        : {
+            runId: run.id,
+            status: run.status,
+            requestedAt: run.requestedAt,
+            startedAt: run.startedAt,
+            completedAt: run.completedAt,
+            assistantMessageId: null,
+            ...(run.turnEnded ? { turnEnded: true } : {}),
+          },
+    workStartedAt: working?.workStartedAt ?? null,
+  };
+}
+
 /**
  * The guest's messages to show after the transcript, oldest first. Pending ones always show. A
  * sent or dismissed one shows only while it awaits a row (see `awaitingRowIds`): a queued send, or
@@ -117,14 +193,10 @@ export function applyGuestStreamEvent(
  */
 export function unplacedGuestMessages(
   messages: ReadonlyArray<ThreadGuestMessage>,
-  items: ReadonlyArray<GuestTranscriptItem>,
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   awaitingRowIds: ReadonlySet<GuestMessageId>,
 ): ReadonlyArray<ThreadGuestMessage> {
-  const placed = new Set(
-    items.flatMap((item) =>
-      item.kind === "user" && item.guestMessageId ? [item.guestMessageId] : [],
-    ),
-  );
+  const placed = new Set(items.flatMap((row) => guestMessageIdOf(row.item) ?? []));
   return messages
     .filter(
       (message) =>
@@ -147,50 +219,4 @@ export function formatGuestExpiry(expiresAt: string, nowMs: number): string {
 export function inviteShareId(credential: string): string | null {
   const [shareId, signature] = credential.split(".");
   return shareId && signature ? shareId : null;
-}
-
-type GuestTool = Extract<GuestTranscriptItem, { kind: "tool" }>["tool"];
-
-/** A run of tool calls between two messages shows as one line, as the app's work log does. */
-export type GuestTranscriptRow =
-  | { readonly kind: "item"; readonly item: GuestTranscriptItem }
-  | { readonly kind: "work"; readonly id: string; readonly line: string };
-
-const WORK_PHRASES: Record<GuestTool, (count: number) => string> = {
-  command: (count) => (count === 1 ? "ran a command" : `ran ${count} commands`),
-  file_change: () => "edited files",
-  file_search: () => "searched files",
-  web_search: () => "searched the web",
-  tool: (count) => (count === 1 ? "used a tool" : `used ${count} tools`),
-  subagent: (count) => (count === 1 ? "ran a subagent" : `ran ${count} subagents`),
-};
-
-/** "Ran 8 commands, edited files": each kind once, in the order it first ran. */
-function formatGuestWork(tools: ReadonlyArray<GuestTool>): string {
-  const counts = new Map<GuestTool, number>();
-  for (const tool of tools) counts.set(tool, (counts.get(tool) ?? 0) + 1);
-  const line = [...counts].map(([tool, count]) => WORK_PHRASES[tool](count)).join(", ");
-  return line.charAt(0).toUpperCase() + line.slice(1);
-}
-
-export function groupGuestTranscript(
-  items: ReadonlyArray<GuestTranscriptItem>,
-): ReadonlyArray<GuestTranscriptRow> {
-  const rows: GuestTranscriptRow[] = [];
-  let work: { id: string; tools: GuestTool[] } | null = null;
-  const flush = () => {
-    if (work !== null) rows.push({ kind: "work", id: work.id, line: formatGuestWork(work.tools) });
-    work = null;
-  };
-  for (const item of items) {
-    if (item.kind === "tool") {
-      if (work === null) work = { id: item.id, tools: [] };
-      work.tools.push(item.tool);
-      continue;
-    }
-    flush();
-    rows.push({ kind: "item", item });
-  }
-  flush();
-  return rows;
 }
