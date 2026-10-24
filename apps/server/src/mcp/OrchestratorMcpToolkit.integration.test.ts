@@ -44,12 +44,18 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
+import * as UsageService from "../usage/UsageService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(Layer.mock(UsageLimitSources.UsageLimitSources)({})),
+  Layer.provide(Layer.mock(UsageService.UsageService)({})),
+  Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
 );
 
 // Effect returns a declared tool failure as `isError` with its encoded payload

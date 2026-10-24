@@ -1472,6 +1472,108 @@ it.layer(
       }),
     );
 
+    it.effect("a fresh refresh re-probes past a cached reading and an in-flight pass", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const provider = (checkedAt: string) =>
+          ({
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt,
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          }) as const satisfies ServerProvider;
+        const probes = yield* Ref.make(0);
+        const cached = yield* Ref.make<string | null>(null);
+        const firstProbeStarted = yield* Deferred.make<void>();
+        const releaseFirstProbe = yield* Deferred.make<void>();
+        const instances = [
+          {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: { driverKind: driver, continuationKey: "claude:instance" },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider("2026-06-10T00:00:00.000Z")),
+              refresh: Effect.gen(function* () {
+                const hit = yield* Ref.get(cached);
+                if (hit !== null) return provider(hit);
+                const probe = yield* Ref.updateAndGet(probes, (count) => count + 1);
+                const checkedAt = `2026-06-10T00:0${probe}:00.000Z`;
+                yield* Ref.set(cached, checkedAt);
+                if (probe === 1) {
+                  yield* Deferred.succeed(firstProbeStarted, undefined);
+                  yield* Deferred.await(releaseFirstProbe);
+                }
+                return provider(checkedAt);
+              }),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            invalidateCaches: Ref.set(cached, null),
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          },
+        ] satisfies ReadonlyArray<ProviderInstance>;
+        const instanceRegistryLayer = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === requestedId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(instanceRegistryLayer),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-fresh-refresh-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const checkedAt = (providers: ReadonlyArray<ServerProvider>) =>
+            providers.find((candidate) => candidate.instanceId === instanceId)?.checkedAt;
+          const inFlight = yield* registry.refresh().pipe(Effect.forkChild);
+          yield* Deferred.await(firstProbeStarted);
+          assert.strictEqual(
+            checkedAt(yield* registry.refresh(undefined, { fresh: true })),
+            "2026-06-10T00:02:00.000Z",
+          );
+          yield* Deferred.succeed(releaseFirstProbe, undefined);
+          yield* Fiber.join(inFlight);
+          assert.strictEqual(yield* Ref.get(probes), 2);
+          yield* registry.refresh();
+          assert.strictEqual(yield* Ref.get(probes), 2);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect("persists the merged snapshot when a live update has empty models", () =>
       Effect.gen(function* () {
         const cursorDriver = ProviderDriverKind.make("cursor");

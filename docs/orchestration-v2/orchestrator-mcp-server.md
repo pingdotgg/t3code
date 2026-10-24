@@ -215,6 +215,33 @@ user's model order for other providers. `omittedModels` counts the rest, and the
 `search` input finds them, legacy models included. `delegate_task` still accepts
 any catalog model.
 
+### `t3_usage_limits` and `t3_usage_spend`
+
+The Usage tab's two halves, split so an agent that only needs headroom before
+choosing a target pays for a small limits response, not a spend report.
+
+`t3_usage_limits` returns the subscription windows the provider registry
+already holds: each driver's own probe (Codex app-server
+`account/rateLimits/read`, the Claude Agent SDK's `get_usage`), turn-time
+rate-limit events, and any configured usage limit sources. Snapshots only
+re-probe while a client is in the foreground, so `refresh: true` clears driver
+caches and re-reads every provider before answering.
+
+`t3_usage_spend` is `UsageService.readSummary` for the Usage tab's window
+(`makeWindow`), merged with the tab's own `mergeUsage`, so the totals match the
+tab when it shows only this environment, hides no providers, and runs in the
+server's time zone. The tool reports the environment that serves it, every
+provider, and days in the server's zone; the tab can merge environments, hide
+providers, and uses the viewer's zone.
+
+Both answer what an agent decides with, not everything the tab draws: reset
+and read times as minutes from now, no account email, and spend without the
+tab's token-type, category, speed, and per-period provider splits. Every agent
+pays for a tool's output schema on every turn, so there is no `detail` switch
+for the rest; the tab shows it.
+
+`t3 usage limits` and `t3 usage spend` print the same results.
+
 ### `delegate_task`
 
 Creates a T3-owned child thread and immediately dispatches the supplied task

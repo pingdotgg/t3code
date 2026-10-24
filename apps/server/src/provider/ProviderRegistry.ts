@@ -53,6 +53,7 @@ export class ProviderRegistry extends Context.Service<
 
     readonly refresh: (
       provider?: ProviderDriverKind,
+      options?: { readonly fresh?: boolean },
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /**
@@ -646,7 +647,27 @@ export const layer = Layer.effect(
       return yield* Deferred.await(claimed.completion);
     });
 
-    const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
+    const refresh = Effect.fn("refresh")(function* (
+      provider?: ProviderDriverKind,
+      options?: { readonly fresh?: boolean },
+    ) {
+      if (options?.fresh) {
+        const instances = yield* instanceRegistry.listInstances;
+        yield* Effect.forEach(
+          instances.filter(
+            (instance) => provider === undefined || instance.driverKind === provider,
+          ),
+          (instance) => instance.invalidateCaches ?? Effect.void,
+          { discard: true },
+        );
+      }
+      if (provider === undefined && options?.fresh) {
+        yield* Effect.forEach(yield* getLiveSources, refreshOneSource, {
+          concurrency: "unbounded",
+          discard: true,
+        });
+        return yield* Ref.get(providersRef);
+      }
       if (provider === undefined) {
         return yield* refreshAll();
       }
@@ -1010,8 +1031,8 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
-      refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refresh: (provider?: ProviderDriverKind, options?: { readonly fresh?: boolean }) =>
+        refresh(provider, options).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>

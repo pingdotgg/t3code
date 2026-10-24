@@ -7,6 +7,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+import * as UsageReport from "../../../usage/UsageReport.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -14,6 +15,28 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.capabilities(scope, input);
+    }),
+  ),
+  t3_usage_limits: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const report = yield* UsageReport.UsageReport;
+      return yield* report.readLimits({ refresh: input.refresh === true });
+    }),
+  ),
+  t3_usage_spend: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const report = yield* UsageReport.UsageReport;
+      return yield* report
+        .readSpend({
+          days: input.days ?? 30,
+          refresh: input.refresh === true,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.detail }),
+          ),
+        );
     }),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>

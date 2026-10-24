@@ -18,6 +18,10 @@ import {
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpUpdateScheduledTaskInput,
+  OrchestratorMcpUsageLimitsInput,
+  OrchestratorMcpUsageLimitsResult,
+  OrchestratorMcpUsageSpendInput,
+  OrchestratorMcpUsageSpendResult,
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -36,6 +40,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as UsageReport from "../../../usage/UsageReport.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -61,6 +66,34 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   dependencies,
 })
   .annotate(Tool.Title, "Get orchestration capabilities")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const UsageLimitsTool = Tool.make("t3_usage_limits", {
+  description:
+    "Read each enabled provider instance's subscription limits, such as Codex and Claude, to compare headroom before choosing where to start or delegate work. Each window gives remainingPercent and resetsInMins; a label such as 'Weekly · Fable' marks a window that applies to one model. unavailable explains an empty windows list: no subscription limits (API key or Bedrock), a failed read, or a provider that is not installed, signed in, or healthy. Limits can be old while no T3 client is open; ageMins says how old. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub. For token and dollar spend, use t3_usage_spend.",
+  parameters: OrchestratorMcpUsageLimitsInput,
+  success: OrchestratorMcpUsageLimitsResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [UsageReport.UsageReport],
+})
+  .annotate(Tool.Title, "Get usage limits")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const UsageSpendTool = Tool.make("t3_usage_spend", {
+  description:
+    "Read the token and API-priced USD spend the Usage tab calculates from this environment's provider transcripts: totals, then cost and tokens by provider and model, and cost by day (or hour for days=1) in the server's time zone. notices say when a source is missing or still loading. For remaining quota and reset times, use t3_usage_limits.",
+  parameters: OrchestratorMcpUsageSpendInput,
+  success: OrchestratorMcpUsageSpendResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [UsageReport.UsageReport],
+})
+  .annotate(Tool.Title, "Get usage spend")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -275,6 +308,8 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
+  UsageLimitsTool,
+  UsageSpendTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,

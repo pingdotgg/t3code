@@ -50,6 +50,8 @@ export type T3McpToolSummaryAction =
   | "project-delete"
   | "project-clone"
   | "environment-read"
+  | "usage-limits"
+  | "usage-spend"
   | "environment-update"
   | "attachment-prepare"
   | "attachment-discard"
@@ -124,6 +126,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",
   ),
+  t3_usage_limits: tool(["Check", "Checking", "Checked", "usage limits"], "usage-limits"),
+  t3_usage_spend: tool(["Check", "Checking", "Checked", "usage spend"], "usage-spend"),
   delegate_task: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
   task_status: tool(["Get", "Getting", "Got", "delegated task status"], "task-status"),
   task_cancel: tool(
