@@ -367,6 +367,7 @@ patchedDependencies:
   micromark-extension-gfm-table@2.1.1: 9ad23a530e45d9f83cba1da8654fe16d5af8b59d5c73d5c7a7c91fd25b9be1d8
   micromark-extension-llm-math@3.1.0: 49ab4815c18b003f6af998dcc6c258c17a21b50b2cc87745f12d4bd8b6d591f9
   node-pty@1.2.0-beta.15: f1e680afec85f650699ea756f91f469844ec4c976f4f168492a45c6b3f67d651
+  prosemirror-view@^1.42.3: f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde
   react-native-gesture-handler@3.3.0: abe20e1d1c23549297cbbc818e14fe479b41455930d9663135d6b40fe359b626
   react-native-image-viewing@0.2.2: 419f35ee91eac88ced9438058281db5eb09d9c799d8974c1172926068c9448cf
   react-native-keyboard-controller@1.22.7: f28d08f1233e3cce8b9324b4357d2b10f1ee040b8051bc87235b0fb95069b9bb
@@ -16239,7 +16240,7 @@ snapshots:
       prosemirror-state: 1.4.4
       prosemirror-tables: 1.8.5
       prosemirror-transform: 1.12.1
-      prosemirror-view: 1.42.3
+      prosemirror-view: 1.42.3(patch_hash=f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde)
 
   '@tiptap/react@3.31.3(@floating-ui/dom@1.7.6)(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
@@ -20993,20 +20994,20 @@ snapshots:
     dependencies:
       prosemirror-state: 1.4.4
       prosemirror-transform: 1.12.1
-      prosemirror-view: 1.42.3
+      prosemirror-view: 1.42.3(patch_hash=f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde)
 
   prosemirror-gapcursor@1.4.1:
     dependencies:
       prosemirror-keymap: 1.2.3
       prosemirror-model: 1.25.11
       prosemirror-state: 1.4.4
-      prosemirror-view: 1.42.3
+      prosemirror-view: 1.42.3(patch_hash=f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde)
 
   prosemirror-history@1.5.0:
     dependencies:
       prosemirror-state: 1.4.4
       prosemirror-transform: 1.12.1
-      prosemirror-view: 1.42.3
+      prosemirror-view: 1.42.3(patch_hash=f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde)
       rope-sequence: 1.3.4
 
   prosemirror-inputrules@1.5.1:
@@ -21033,7 +21034,7 @@ snapshots:
     dependencies:
       prosemirror-model: 1.25.11
       prosemirror-transform: 1.12.1
-      prosemirror-view: 1.42.3
+      prosemirror-view: 1.42.3(patch_hash=f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde)
 
   prosemirror-tables@1.8.5:
     dependencies:
@@ -21041,13 +21042,13 @@ snapshots:
       prosemirror-model: 1.25.11
       prosemirror-state: 1.4.4
       prosemirror-transform: 1.12.1
-      prosemirror-view: 1.42.3
+      prosemirror-view: 1.42.3(patch_hash=f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde)
 
   prosemirror-transform@1.12.1:
     dependencies:
       prosemirror-model: 1.25.11
 
-  prosemirror-view@1.42.3:
+  prosemirror-view@1.42.3(patch_hash=f385072b78109e284b599f6f81b18569b16379d5e9502a330f882a86ef13fbde):
     dependencies:
       prosemirror-model: 1.25.11
       prosemirror-state: 1.4.4

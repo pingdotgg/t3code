@@ -1,0 +1,39 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 6ee53e1db4c61e2eeca5617e84cb16ce8b4730a0..b081ba86797239bae489004c0abeb2316e087736 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -3019,7 +3019,7 @@ editHandlers.keydown = function (view, _event) {
+   view.input.lastKeyCodeTime = Date.now();
+   if (android && chrome && event.keyCode == 13) return;
+   if (event.keyCode != 229) view.domObserver.forceFlush();
+-  if (ios && event.keyCode == 13 && !event.ctrlKey && !event.altKey && !event.metaKey) {
++  if (ios && event.keyCode == 13 && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+     var now = Date.now();
+     view.input.lastIOSEnter = now;
+     view.input.lastIOSEnterFallbackTimeout = setTimeout(function () {
+diff --git a/dist/index.js b/dist/index.js
+index 012237dd813a21d86d6d527263b49c5af0a0e2f0..97da970430394bbd1a70a273712bdd400b6557ec 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -3204,7 +3204,7 @@ editHandlers.keydown = (view, _event) => {
+     // keyboard gets confused. So the hack here is to set a flag that
+     // makes the DOM change code recognize that what just happens should
+     // be replaced by whatever the Enter key handlers do.
+-    if (ios && event.keyCode == 13 && !event.ctrlKey && !event.altKey && !event.metaKey) {
++    if (ios && event.keyCode == 13 && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+         let now = Date.now();
+         view.input.lastIOSEnter = now;
+         view.input.lastIOSEnterFallbackTimeout = setTimeout(() => {
+diff --git a/src/input.ts b/src/input.ts
+index a2036a510a528dae691607c1ceb8c6cfc1023ee3..025832339ab92ff8301882a39598eedf20478e14 100644
+--- a/src/input.ts
++++ b/src/input.ts
+@@ -120,7 +120,7 @@ editHandlers.keydown = (view: EditorView, _event: Event) => {
+   // keyboard gets confused. So the hack here is to set a flag that
+   // makes the DOM change code recognize that what just happens should
+   // be replaced by whatever the Enter key handlers do.
+-  if (browser.ios && event.keyCode == 13 && !event.ctrlKey && !event.altKey && !event.metaKey) {
++  if (browser.ios && event.keyCode == 13 && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+     let now = Date.now()
+     view.input.lastIOSEnter = now
+     view.input.lastIOSEnterFallbackTimeout = setTimeout(() => {
