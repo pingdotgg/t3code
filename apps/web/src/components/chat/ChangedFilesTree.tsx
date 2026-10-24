@@ -1,3 +1,4 @@
+import { useSyncLayout } from "@legendapp/list/react";
 import { type RunId } from "@t3tools/contracts";
 import { type MouseEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
@@ -46,6 +47,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onOpenTurnDiff,
     onFileContextMenu,
   } = props;
+  const syncTimelineLayout = useSyncLayout();
   const summaryStat = summarizeTurnDiffStats(files);
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
 
@@ -84,7 +86,10 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                       allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
                     }
                     data-scroll-anchor-ignore
-                    onClick={onToggleAllDirectories}
+                    onClick={() => {
+                      onToggleAllDirectories();
+                      syncTimelineLayout();
+                    }}
                   />
                 }
               >
@@ -147,6 +152,7 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     key: string | null;
     overrides: Record<string, boolean>;
   }>({ key: null, overrides: {} });
+  const syncTimelineLayout = useSyncLayout();
   const treeNodes = buildTurnDiffTree(files);
   const directoryPathsKey = collectDirectoryPaths(treeNodes).join("\u0000");
   const hasDirectoryNodes = directoryPathsKey.length > 0;
@@ -167,6 +173,9 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         },
       };
     });
+    // LegendList waits a frame before applying a row that shrank, so a collapse would paint
+    // the shorter card with the rows below it still in place. Measure the row in this commit.
+    syncTimelineLayout();
   };
 
   const rows = collectExpandedRows(treeNodes, expandedDirectories, allDirectoriesExpanded);
