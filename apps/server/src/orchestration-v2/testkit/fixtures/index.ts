@@ -161,6 +161,7 @@ import { assertTodoListCursorOutput } from "./todo_list/cursor_output.ts";
 import { assertTodoListGrokOutput } from "./todo_list/grok_output.ts";
 import { todoListInput } from "./todo_list/input.ts";
 import { assertToolCallDeniedWriteClaudeOutput } from "./tool_call_denied_write/claude_output.ts";
+import { assertToolCallDeniedWriteFxOutput } from "./tool_call_denied_write/fx_output.ts";
 import {
   DENIED_WRITE_POLICY,
   TOOL_CALL_DENIED_WRITE_TARGET,
@@ -174,6 +175,7 @@ import {
   assertToolCallReadOnlyOnRequestOutput,
 } from "./tool_call_read_only_on_request/output.ts";
 import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
+import { assertToolCallReadOnlyOnRequestFxOutput } from "./tool_call_read_only_on_request/fx_output.ts";
 import {
   stopBackgroundWorkAfterFailedTurnInput,
   stopBackgroundWorkAfterReleaseInput,
@@ -190,6 +192,8 @@ import { assertCommandOutputStreamingOutput } from "./command_output_streaming/o
 import { commandOutputStreamingInput } from "./command_output_streaming/input.ts";
 import { assertTurnInterruptOutput } from "./turn_interrupt/codex_output.ts";
 import { turnInterruptInput } from "./turn_interrupt/input.ts";
+import { fxEarlyStopInput } from "./fx_early_stop/input.ts";
+import { assertFxEarlyStopOutput } from "./fx_early_stop/fx_output.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
@@ -205,6 +209,7 @@ import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
   CURSOR_MODEL_SELECTION,
+  FX_MODEL_SELECTION,
   GROK_MODEL_SELECTION,
   MUSE_MODEL_SELECTION,
   OPENCODE_MODEL_SELECTION,
@@ -642,6 +647,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertSimpleOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./simple/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./simple/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -693,6 +704,14 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         runtimePolicyOverride: DENIED_WRITE_POLICY,
         expectedAbsentWorkspacePaths: [TOOL_CALL_DENIED_WRITE_TARGET],
         assertOutput: assertToolCallDeniedWriteClaudeOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./tool_call_denied_write/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: DENIED_WRITE_POLICY,
+        expectedAbsentWorkspacePaths: [TOOL_CALL_DENIED_WRITE_TARGET],
+        assertOutput: assertToolCallDeniedWriteFxOutput,
       },
     ],
   },
@@ -767,6 +786,16 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertToolCallReadOnlyOnRequestGrokOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL(
+          "./tool_call_read_only_on_request/fx_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
+        assertOutput: assertToolCallReadOnlyOnRequestFxOutput,
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
@@ -1223,6 +1252,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertMultiTurnOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./multi_turn/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./multi_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1374,6 +1409,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertQueuedTurnOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./queued_turn/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./queued_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1507,6 +1548,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertGrokMessageSteeringOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./message_steering/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertGrokMessageSteeringOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./message_steering/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1546,6 +1593,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertTurnInterruptOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./turn_interrupt/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./turn_interrupt/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1564,6 +1618,19 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./turn_interrupt/muse_transcript.ndjson", import.meta.url),
         modelSelection: MUSE_MODEL_SELECTION,
         assertOutput: assertMuseTurnInterruptOutput,
+      },
+    ],
+  },
+  {
+    name: "fx_early_stop",
+    buildInput: fxEarlyStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./fx_early_stop/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertFxEarlyStopOutput,
       },
     ],
   },
