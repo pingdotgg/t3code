@@ -7,6 +7,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   CheckpointId,
+  ChatAttachmentId,
+  ChatFileAttachment,
+  ChatImageAttachment,
   CodexSettings,
   EnvironmentId,
   MessageId,
@@ -31,7 +34,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
-import type * as CodexSchema from "effect-codex-app-server/schema";
+import * as CodexSchema from "effect-codex-app-server/schema";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
@@ -39,7 +42,7 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
-import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -51,6 +54,7 @@ import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
+import type * as ServerConfig from "../../config.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -63,6 +67,8 @@ import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const isTurnCompletedNotification = Schema.is(CodexSchema.V2TurnCompletedNotification);
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
@@ -241,6 +247,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
           params: {
             id: "evt-1",
             http_headers: { Authorization: "Bearer secret-codex-token" },
+            audio: { type: "audio", url: `data:audio/wav;base64,${"cHJpdmF0ZQ==".repeat(8_192)}` },
             usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
           },
         },
@@ -267,11 +274,244 @@ describe("CodexAdapterV2 native protocol logging", () => {
             params: {
               id: "evt-1",
               http_headers: { Authorization: "[REDACTED]" },
+              audio: { type: "audio", url: "[REDACTED AUDIO]" },
               usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
             },
           },
         },
       });
+    }),
+  );
+
+  it.effect("filters streaming frames before redaction without losing decode failures", () =>
+    Effect.gen(function* () {
+      const writes: Array<unknown> = [];
+      const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
+        nativeEventLogger: {
+          filePath: "/tmp/events.log",
+          write: (event) =>
+            Effect.sync(() => {
+              writes.push(event);
+            }),
+          close: () => Effect.void,
+        },
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: ProviderSessionId.make("provider-session-1"),
+      });
+      assert.exists(protocolLogger);
+      if (protocolLogger === undefined) return;
+
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          method: "item/agentMessage/delta",
+          get params() {
+            throw new Error("delta must not be copied");
+          },
+        },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "raw",
+        get payload() {
+          throw new Error("raw frame must not be parsed");
+        },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decode_failed",
+        payload: { operation: "decode", method: "turn/completed", issueCount: 1 },
+      });
+
+      assert.equal(writes.length, 1);
+      assert.nestedPropertyVal(writes[0], "event.stage", "decode_failed");
+      assert.nestedPropertyVal(writes[0], "event.payload.method", "turn/completed");
+    }),
+  );
+
+  it.effect("bounds deeply nested and wide notifications without interrupting logging", () =>
+    Effect.gen(function* () {
+      const writes: Array<unknown> = [];
+      const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
+        nativeEventLogger: {
+          filePath: "/tmp/events.log",
+          write: (event) =>
+            Effect.sync(() => {
+              writes.push(event);
+            }),
+          close: () => Effect.void,
+        },
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: ProviderSessionId.make("provider-session-1"),
+      });
+      assert.exists(protocolLogger);
+      if (protocolLogger === undefined) return;
+
+      let nested: unknown = { token: "secret-token" };
+      for (let i = 0; i < 20_000; i++) nested = i % 2 === 0 ? { nested } : [nested];
+      for (const result of [nested, Array.from({ length: 20_000 }, () => nested)]) {
+        yield* protocolLogger({
+          direction: "incoming",
+          stage: "decoded",
+          payload: { method: "item/completed", params: { result } },
+        });
+      }
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: { method: "turn/completed", params: { turnId: "next-turn" } },
+      });
+
+      assert.lengthOf(writes, 3);
+      const serialized = encodeUnknownJson(writes);
+      assert.isBelow(serialized.length, 64 * 1_024);
+      assert.notInclude(serialized, "secret-token");
+      assert.nestedPropertyVal(writes[2], "event.payload.params.turnId", "next-turn");
+    }),
+  );
+
+  it.effect("bounds visits to huge arrays at the redaction depth limit", () =>
+    Effect.gen(function* () {
+      const writes: Array<unknown> = [];
+      const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
+        nativeEventLogger: {
+          filePath: "/tmp/events.log",
+          write: (event) => Effect.sync(() => void writes.push(event)),
+          close: () => Effect.void,
+        },
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: ProviderSessionId.make("provider-session-1"),
+      })!;
+      let visits = 0;
+      let result: unknown = new Proxy(Array.from({ length: 2_000_000 }), {
+        get(target, key, receiver) {
+          if (typeof key === "string" && /^\d+$/.test(key)) {
+            visits++;
+            return "secret-token";
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      // result starts at depth 3 in the protocol envelope.
+      for (let depth = 3; depth < 16; depth++) result = { nested: result };
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: { method: "item/completed", params: { result } },
+      });
+      assert.isAbove(visits, 0);
+      assert.isAtMost(visits, 1_024);
+      assert.lengthOf(writes, 1);
+      assert.isBelow(encodeUnknownJson(writes).length, 64 * 1_024);
+      assert.notInclude(encodeUnknownJson(writes), "secret-token");
+    }),
+  );
+
+  it.effect.each(["completed", "failed"] as const)(
+    "retains %s metadata after large item arrays",
+    (status) =>
+      Effect.gen(function* () {
+        const writes: Array<unknown> = [];
+        const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
+          nativeEventLogger: {
+            filePath: "/tmp/events.log",
+            write: (event) =>
+              Effect.sync(() => {
+                writes.push(event);
+              }),
+            close: () => Effect.void,
+          },
+          threadId: ThreadId.make("thread-1"),
+          providerSessionId: ProviderSessionId.make("provider-session-1"),
+        })!;
+        const params = {
+          threadId: "native-thread",
+          turn: {
+            id: "native-turn",
+            items: Array.from({ length: 200 }, (_, index) => ({
+              type: "agentMessage" as const,
+              id: `item-${index}`,
+              text: "answer",
+              phase: "final_answer" as const,
+              delivery: null,
+              questions: null,
+            })),
+            status,
+            error:
+              status === "failed"
+                ? { message: "provider failed", codexErrorInfo: "internalServerError" as const }
+                : null,
+          },
+        };
+        assert.isTrue(isTurnCompletedNotification(params));
+        yield* protocolLogger({
+          direction: "incoming",
+          stage: "decoded",
+          payload: { method: "turn/completed", params },
+        });
+        assert.lengthOf(writes, 1);
+        assert.nestedPropertyVal(writes[0], "event.payload.params.turn.id", "native-turn");
+        assert.nestedPropertyVal(writes[0], "event.payload.params.threadId", "native-thread");
+        assert.nestedPropertyVal(writes[0], "event.payload.params.turn.status", status);
+        if (status === "failed")
+          assert.nestedPropertyVal(
+            writes[0],
+            "event.payload.params.turn.error.message",
+            "provider failed",
+          );
+        else assert.nestedPropertyVal(writes[0], "event.payload.params.turn.error", null);
+        assert.isBelow(encodeUnknownJson(writes).length, 64 * 1_024);
+      }),
+  );
+
+  it.effect("retains redacted failures when large payloads are summarized", () =>
+    Effect.gen(function* () {
+      const writes: Array<unknown> = [];
+      const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
+        nativeEventLogger: {
+          filePath: "/tmp/events.log",
+          write: (event) =>
+            Effect.sync(() => {
+              writes.push(event);
+            }),
+          close: () => Effect.void,
+        },
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: ProviderSessionId.make("provider-session-1"),
+      });
+      assert.exists(protocolLogger);
+      if (protocolLogger === undefined) return;
+
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          method: "error",
+          params: {
+            threadId: "native-thread",
+            turnId: "native-turn",
+            error: {
+              code: "unauthorized",
+              message: '{"message":"Unauthorized","Authorization":"Bearer secret-token"}',
+            },
+            history: JSON.stringify({
+              padding: "x".repeat(128 * 1_024),
+              Authorization: "Bearer oversized-secret",
+            }),
+          },
+        },
+      });
+
+      const serialized = encodeUnknownJson(writes);
+      assert.equal(writes.length, 1);
+      assert.isBelow(serialized.length, 2_048);
+      assert.notInclude(serialized, "secret-token");
+      assert.notInclude(serialized, "oversized-secret");
+      assert.nestedPropertyVal(writes[0], "event.payload.params.history", "[TRUNCATED]");
+      assert.include(serialized, "[REDACTED]");
+      assert.nestedPropertyVal(writes[0], "event.payload.params.error.code", "unauthorized");
+      assert.nestedPropertyVal(writes[0], "event.payload.params.turnId", "native-turn");
     }),
   );
 });
@@ -881,11 +1121,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    config?: ServerConfig.ServerConfig["Service"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
+      const serverConfig =
+        config ?? (yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie));
       const changes = yield* makeChangeSignal;
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
@@ -1001,6 +1243,319 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect.each([
+    "wav",
+    "mp3",
+    "m4a",
+    "ogg",
+    "webm",
+    "uppercase",
+    "unsupported",
+    "video",
+    "oversized",
+    "stale-size",
+    "empty",
+    "no-audio-model",
+    "old-server",
+    "rejected",
+    "steer",
+    "mixed-media",
+    "frame-size-start",
+    "frame-size-steer",
+  ])("delivers audio attachments with %s input", (scenario) =>
+    Effect.gen(function* () {
+      const nativeThreadId = `audio-${scenario}`;
+      const frameSizeEdge = scenario.startsWith("frame-size-");
+      const steering = scenario === "steer" || scenario === "frame-size-steer";
+      const prompt = frameSizeEdge ? "\0".repeat(120_000) : "Transcribe without tools";
+      const appContext =
+        scenario === "frame-size-start"
+          ? Array.from({ length: 80 }, (_, index) => ({
+              key: `app-${index}`,
+              text: "\0".repeat(16 * 1024),
+            }))
+          : undefined;
+      const bytes = Buffer.from("current-audio-bytes");
+      const extension =
+        scenario === "uppercase"
+          ? "WAV"
+          : ["mp3", "m4a", "ogg", "webm"].includes(scenario)
+            ? scenario
+            : scenario === "unsupported"
+              ? "flac"
+              : scenario === "video"
+                ? "webm"
+                : "wav";
+      const mimes: Record<string, string> = {
+        mp3: "audio/mpeg",
+        m4a: "audio/mp4",
+        ogg: "audio/ogg",
+        webm: "audio/webm",
+      };
+      const mime = mimes[extension] ?? "audio/wav";
+      const attachment = {
+        ...ChatFileAttachment.make({
+          type: "file",
+          id: ChatAttachmentId.make("audio-12345678-1234-1234-1234-123456789abc-wav"),
+          name: `voice.${extension}`,
+          mimeType: scenario === "video" ? "video/webm" : mime,
+          sizeBytes: bytes.length,
+        }),
+        sizeBytes: scenario === "oversized" ? 50 * 1024 * 1024 + 1 : bytes.length,
+      };
+      const serverConfig = yield* makeReplayServerConfig(nativeThreadId).pipe(Effect.orDie);
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.makeDirectory(serverConfig.attachmentsDir, { recursive: true });
+      const storedPath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      })!;
+      yield* fileSystem.writeFile(storedPath, bytes);
+      if (scenario === "stale-size") yield* fileSystem.truncate(storedPath, 50 * 1024 * 1024 + 1);
+      if (scenario === "empty") yield* fileSystem.truncate(storedPath, 0);
+      const attachments: Array<ChatFileAttachment | ChatImageAttachment> = [attachment];
+      const imageInput: Array<{ type: "image"; url: string }> = [];
+      const extraAudioInput: Array<{ type: "audio"; url: string }> = [];
+      const paths = [`[Attached file "${attachment.name}" is saved at: ${storedPath}]`];
+      if (scenario === "mixed-media" || frameSizeEdge) {
+        const imageBytes = Buffer.alloc(10 * 1024 * 1024);
+        const image = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make("image-12345678-1234-1234-1234-123456789abc-png"),
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: imageBytes.length,
+        });
+        const largeAudio = {
+          ...attachment,
+          id: ChatAttachmentId.make("large-audio-wav"),
+          sizeBytes:
+            scenario === "frame-size-steer"
+              ? 14 * 1024 * 1024
+              : frameSizeEdge
+                ? 10 * 1024 * 1024 - 256
+                : 50 * 1024 * 1024,
+        };
+        const largePath = resolveAttachmentPath({
+          attachmentsDir: serverConfig.attachmentsDir,
+          attachment: largeAudio,
+        })!;
+        const imagePath = resolveAttachmentPath({
+          attachmentsDir: serverConfig.attachmentsDir,
+          attachment: image,
+        })!;
+        yield* fileSystem.writeFile(imagePath, imageBytes);
+        yield* fileSystem.writeFile(largePath, new Uint8Array());
+        yield* fileSystem.truncate(largePath, largeAudio.sizeBytes);
+        if (scenario === "frame-size-steer")
+          extraAudioInput.push({
+            type: "audio",
+            url: `data:audio/wav;base64,${Buffer.alloc(largeAudio.sizeBytes).toString("base64")}`,
+          });
+        attachments.unshift(largeAudio);
+        paths.unshift(`[Attached file "${largeAudio.name}" is saved at: ${largePath}]`);
+        for (let index = 0; index < 8; index++) {
+          attachments.push(image);
+          paths.push(`[Attached image "${image.name}" is saved at: ${imagePath}]`);
+          imageInput.push({
+            type: "image",
+            url: `data:image/png;base64,${imageBytes.toString("base64")}`,
+          });
+        }
+      }
+      const text = frameSizeEdge ? prompt : `${prompt}\n\n${paths.join("\n\n")}`;
+      const queryModel = !["unsupported", "video", "oversized"].includes(scenario);
+      const nativeAudio = ![
+        "unsupported",
+        "video",
+        "oversized",
+        "stale-size",
+        "empty",
+        "no-audio-model",
+        "old-server",
+      ].includes(scenario);
+      const audioInput = [
+        { type: "text", text },
+        ...imageInput,
+        ...extraAudioInput,
+        ...(nativeAudio
+          ? [{ type: "audio", url: `data:${mime};base64,${bytes.toString("base64")}` }]
+          : []),
+      ];
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId: "audio-turn", prompt });
+      const entries = preamble.slice(0, -3);
+      let requestId = 3;
+      if (steering) {
+        entries.push(...preamble.slice(-3));
+        requestId++;
+      }
+      if (queryModel) {
+        entries.push(
+          {
+            type: "expect_outbound",
+            label: "audio model",
+            frame: { id: requestId, method: "model/list", params: {} },
+          },
+          {
+            type: "emit_inbound",
+            label: "audio model",
+            frame:
+              scenario === "old-server"
+                ? { id: requestId, error: { code: -32601, message: "Unknown method" } }
+                : {
+                    id: requestId,
+                    result: {
+                      data: [
+                        {
+                          id: "gpt-5.4",
+                          model: "gpt-5.4",
+                          displayName: "Codex",
+                          description: "",
+                          hidden: false,
+                          isDefault: true,
+                          defaultReasoningEffort: "medium",
+                          supportedReasoningEfforts: [],
+                          inputModalities:
+                            scenario === "no-audio-model" ? ["text", "image"] : ["text", "audio"],
+                        },
+                      ],
+                      nextCursor: null,
+                    },
+                  },
+          },
+        );
+        requestId++;
+      }
+      if (steering) {
+        entries.push(
+          {
+            type: "expect_outbound",
+            label: "audio steer",
+            frame: {
+              id: requestId,
+              method: "turn/steer",
+              params: { threadId: nativeThreadId, expectedTurnId: "audio-turn", input: audioInput },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "audio steer",
+            frame: { id: requestId, result: { turnId: "audio-turn" } },
+          },
+        );
+      } else {
+        const start = preamble.at(-3)!;
+        if (
+          start.type !== "expect_outbound" ||
+          !Predicate.isObject(start.frame) ||
+          !Predicate.isObject(start.frame.params)
+        )
+          return yield* Effect.die("Missing start frame");
+        const frame = {
+          ...start.frame,
+          id: requestId,
+          params: {
+            ...start.frame.params,
+            input: audioInput,
+            ...(appContext === undefined
+              ? {}
+              : {
+                  additionalContext: Object.fromEntries(
+                    appContext.map((entry) => [
+                      entry.key,
+                      { kind: "untrusted", value: entry.text },
+                    ]),
+                  ),
+                }),
+          },
+        };
+        entries.push({ ...start, frame });
+        if (scenario === "rejected") {
+          entries.push({
+            type: "emit_inbound",
+            label: "audio rejected",
+            frame: {
+              id: requestId,
+              error: { code: -32602, message: "Audio input is not supported" },
+            },
+          });
+          requestId++;
+          entries.push({
+            ...start,
+            frame: {
+              ...frame,
+              id: requestId,
+              params: {
+                ...frame.params,
+                input: audioInput.filter((item) => item.type !== "audio"),
+              },
+            },
+          });
+        }
+        entries.push(withReplayRequestId(preamble.at(-2)!, requestId), preamble.at(-1)!);
+      }
+      const transcript = makeCodexReplayTranscript({ scenario: nativeThreadId, entries });
+      const requests: Array<{ method: string; params: unknown }> = [];
+      const turnStarted = yield* Deferred.make<ProviderTurnId>();
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        (event) =>
+          event.type === "provider_turn.updated"
+            ? Deferred.succeed(turnStarted, event.providerTurn.id)
+            : Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (frameSizeEdge && (method === "turn/start" || method === "turn/steer"))
+              assert.isBelow(
+                Buffer.byteLength(encodeUnknownJson({ id: 4, method, params })) + 1,
+                128 * 1024 * 1024,
+              );
+            requests.push({ method, params });
+          }),
+        undefined,
+        serverConfig,
+      );
+      const turn = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("audio-attempt"),
+        text: prompt,
+      });
+      if (steering) {
+        yield* harness.runtime.startTurn(turn);
+        const providerTurnId = yield* Deferred.await(turnStarted);
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: turn.runId,
+          providerThread: harness.providerThread,
+          providerTurnId,
+          message: { ...turn.message, attachments },
+        });
+      } else {
+        yield* harness.runtime.startTurn({
+          ...turn,
+          message: { ...turn.message, attachments },
+          ...(appContext === undefined ? {} : { appContext }),
+        });
+      }
+      assert.equal(
+        requests.filter((request) => request.method === "model/list").length,
+        queryModel ? 1 : 0,
+      );
+      assert.notInclude(JSON.stringify(harness.events), bytes.toString("base64"));
+      if (scenario === "mixed-media") {
+        const sent = requests.find((request) => request.method === "turn/start")!;
+        assert.isBelow(Buffer.byteLength(JSON.stringify(sent)), 128 * 1024 * 1024);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
