@@ -69,6 +69,7 @@ const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 export function AddEnvironmentDialog({
   open,
   routeTarget,
+  pairAgainHost,
   error,
   savedEnvironments,
   onOpenChange,
@@ -76,6 +77,8 @@ export function AddEnvironmentDialog({
 }: {
   readonly open: boolean;
   readonly routeTarget: EnvironmentPresentation | null;
+  /** With routeTarget: the saved address whose pairing that machine refused. */
+  readonly pairAgainHost: string | null;
   readonly error: string | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
   readonly onOpenChange: (open: boolean) => void;
@@ -117,6 +120,18 @@ export function AddEnvironmentDialog({
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
+  const pairingAgain = routeTarget !== null && pairAgainHost !== null;
+  // Pair again opens with the saved address filled in, and the next plain open
+  // must not inherit it. Adjusted during render so the first open frame shows it.
+  const [lastOpen, setLastOpen] = useState({ open, pairAgainHost });
+  if (open !== lastOpen.open) {
+    setLastOpen({ open, pairAgainHost });
+    if (open && (pairAgainHost !== null || lastOpen.pairAgainHost !== null)) {
+      if (pairAgainHost !== null) setSavedBackendMode("remote");
+      setSavedBackendHost(pairAgainHost ?? "");
+      setSavedBackendPairingCode("");
+    }
+  }
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
   const desktopSshHosts = useEnvironmentQuery(
     isSshDiscoveryActive ? desktopSshHostsStateAtom : null,
@@ -244,17 +259,23 @@ export function AddEnvironmentDialog({
     setSavedBackendSshPort("");
     onOpenChange(false);
     toastManager.add(
-      routeTarget
+      routeTarget && pairingAgain
         ? {
             type: "success",
-            title: "Route added",
-            description: `${routeTarget.label} now has another way to connect.`,
+            title: "Paired again",
+            description: `${routeTarget.label} accepts this device again.`,
           }
-        : {
-            type: "success",
-            title: "Backend added",
-            description: "The environment is saved and will reconnect on app startup.",
-          },
+        : routeTarget
+          ? {
+              type: "success",
+              title: "Route added",
+              description: `${routeTarget.label} now has another way to connect.`,
+            }
+          : {
+              type: "success",
+              title: "Backend added",
+              description: "The environment is saved and will reconnect on app startup.",
+            },
     );
     setIsAddingSavedBackend(false);
   };
@@ -465,7 +486,13 @@ export function AddEnvironmentDialog({
         onClick={() => void handleAddSavedBackend()}
       >
         <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+        {isAddingSavedBackend
+          ? "Adding…"
+          : pairingAgain
+            ? "Pair again"
+            : routeTarget
+              ? "Add route"
+              : "Add environment"}
       </Button>
     </div>
   );
@@ -612,12 +639,18 @@ export function AddEnvironmentDialog({
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            {routeTarget
+              ? pairingAgain
+                ? `Pair ${routeTarget.label} again`
+                : `Add a route to ${routeTarget.label}`
+              : "Add Environment"}
           </DialogTitle>
           <DialogDescription>
-            {routeTarget
-              ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+            {pairingAgain
+              ? "This machine no longer accepts this device's pairing. Enter a new pairing code from it to replace the old one."
+              : routeTarget
+                ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
+                : "Pair another environment to this client."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

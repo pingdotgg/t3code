@@ -238,11 +238,14 @@ export function ConnectionsSettings() {
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
+  // With routeTarget: the saved address whose pairing that machine refused.
+  const [pairAgainHost, setPairAgainHost] = useState<string | null>(null);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const handleAddBackendDialogOpenChange = (open: boolean) => {
     setAddBackendDialogOpen(open);
     if (open) {
       setRouteTarget(null);
+      setPairAgainHost(null);
     } else {
       setSavedBackendError(null);
     }
@@ -1494,6 +1497,7 @@ export function ConnectionsSettings() {
             <AddEnvironmentDialog
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
+              pairAgainHost={pairAgainHost}
               error={savedBackendError}
               savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}
@@ -1511,6 +1515,13 @@ export function ConnectionsSettings() {
             onRemove={handleRemoveSavedBackend}
             onAddRoute={(target) => {
               setRouteTarget(target);
+              setPairAgainHost(null);
+              setSavedBackendError(null);
+              setAddBackendDialogOpen(true);
+            }}
+            onPairAgain={(target, host) => {
+              setRouteTarget(target);
+              setPairAgainHost(host);
               setSavedBackendError(null);
               setAddBackendDialogOpen(true);
             }}
