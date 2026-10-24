@@ -1,11 +1,9 @@
 import type { NativeReviewDiffRow, NativeReviewDiffTheme } from "../diffs/nativeReviewDiffSurface";
-import type {
-  NativeReviewDiffFile,
-  NativeReviewDiffLanguage,
-} from "../diffs/nativeReviewDiffTypes";
+import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
+import { resolveHighlightLanguage } from "../../lib/highlightLanguage";
 import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
 import { computeWordAltDiffRanges } from "./reviewWordDiffs";
@@ -234,35 +232,6 @@ function mapChangeType(file: ReviewRenderableFile): NativeReviewDiffRow["changeT
     default:
       return "modified";
   }
-}
-
-function getLanguageForPath(
-  filePath: string,
-  languageHint: string | null,
-): NativeReviewDiffLanguage {
-  const hinted = languageHint?.toLowerCase();
-  if (hinted === "typescript" || hinted === "tsx" || hinted === "javascript" || hinted === "jsx") {
-    return hinted;
-  }
-  if (hinted === "json" || hinted === "yaml" || hinted === "bash" || hinted === "diff") {
-    return hinted;
-  }
-
-  const normalizedPath = filePath.toLowerCase();
-  if (normalizedPath.endsWith(".tsx")) return "tsx";
-  if (normalizedPath.endsWith(".ts")) return "typescript";
-  if (normalizedPath.endsWith(".jsx")) return "jsx";
-  if (normalizedPath.endsWith(".js") || normalizedPath.endsWith(".cjs")) return "javascript";
-  if (normalizedPath.endsWith(".json") || normalizedPath.endsWith(".jsonc")) return "json";
-  if (normalizedPath.endsWith(".yml") || normalizedPath.endsWith(".yaml")) return "yaml";
-  if (
-    normalizedPath.endsWith(".sh") ||
-    normalizedPath.includes("/bin/") ||
-    normalizedPath.includes("shell")
-  ) {
-    return "bash";
-  }
-  return "diff";
 }
 
 function createNoticeRow(fileId: string, suffix: string, text: string): NativeReviewDiffRow {
@@ -548,7 +517,7 @@ function prepareNativeReviewDiffData(parsedDiff: ReviewParsedDiff): PreparedNati
   const files = parsedDiff.files.map<NativeReviewDiffFile>((file) => ({
     id: file.id,
     path: file.path,
-    language: getLanguageForPath(file.path, file.languageHint),
+    language: resolveHighlightLanguage({ language: file.languageHint, path: file.path }),
     additions: file.additions,
     deletions: file.deletions,
   }));

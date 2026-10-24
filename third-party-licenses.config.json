@@ -162,6 +162,22 @@
     },
     {
       "bundles": ["ios", "android", "mobile"],
+      "license": "Apache-2.0",
+      "name": "wasm2c runtime (WABT)",
+      "version": "1.0.42",
+      "noticeFile": "apps/mobile/modules/t3-highlights/Vendor/wasm2c/LICENSE",
+      "sourceUrl": "https://github.com/WebAssembly/wabt/tree/1.0.42/wasm2c"
+    },
+    {
+      "bundles": ["ios", "android", "mobile"],
+      "license": "MIT",
+      "name": "SIMD Everywhere",
+      "version": "0.8.2",
+      "noticeFile": "apps/mobile/modules/t3-highlights/Vendor/simde/LICENSE",
+      "sourceUrl": "https://github.com/simd-everywhere/simde/tree/v0.8.2"
+    },
+    {
+      "bundles": ["ios", "android", "mobile"],
       "license": "MIT",
       "name": "RaTeX",
       "version": "0.1.15",

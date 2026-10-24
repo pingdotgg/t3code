@@ -96,14 +96,6 @@ Build and run the local iOS preview app:
 vp run ios:preview
 ```
 
-Force the review diff highlighter engine:
-
-```bash
-EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript vp run ios:dev
-```
-
-`javascript` is the default and recommended setting for the review diff screen. Set `EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=native` only when you explicitly want to test the native Shiki engine.
-
 Inspect the resolved Expo config for a variant:
 
 ```bash
