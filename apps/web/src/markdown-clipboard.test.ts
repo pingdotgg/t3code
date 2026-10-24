@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  serializeCodeBlockToMarkdown,
+  serializeRenderedMarkdownFragment,
+  serializeTableElementToMarkdown,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -95,6 +99,21 @@ class FakeElement {
     };
     return search(this);
   }
+
+  querySelectorAll(selector: string): FakeElement[] {
+    return selector.split(", ").flatMap((part) =>
+      part
+        .slice(":scope > ".length)
+        .split(" > ")
+        .reduce<FakeElement[]>(
+          (parents, tag) =>
+            parents.flatMap((parent) =>
+              parent.children.filter((child) => child.tagName === tag.toUpperCase()),
+            ),
+          [this],
+        ),
+    );
+  }
 }
 
 function asNode(element: FakeElement): Node {
@@ -177,13 +196,37 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
   });
 
-  it("keeps fences when a bare list item sits alongside the code block", () => {
+  it("keeps a bare list item that sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
       renderedCodeBlock(["pnpm test"]),
     );
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\npnpm test");
+  });
+
+  it("copies a command and the prose after it as shown, without code fences", () => {
+    const container = new FakeElement("DIV").append(
+      renderedCodeBlock(["printf 'hello\\n'"]),
+      new FakeElement("P").append(new FakeText("T")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("printf 'hello\\n'\n\nT");
+  });
+
+  it("keeps a diagram's source exactly as written when copied with prose", () => {
+    const source = 'flowchart TD\n  A["first   \n\n\nlast"]';
+    const container = new FakeElement("DIV").append(
+      new FakeElement("DIV", [], {
+        "data-markdown-mermaid": "",
+        "data-markdown-copy": serializeCodeBlockToMarkdown(source, "mermaid"),
+      }),
+      new FakeElement("P").append(new FakeText("After")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      `\`\`\`mermaid\n${source}\n\`\`\`\n\nAfter`,
+    );
   });
 
   it("omits fences when a selection past the last line drags in the whole code block", () => {
@@ -195,6 +238,35 @@ describe("serializeRenderedMarkdownFragment", () => {
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN",
+    );
+  });
+});
+
+describe("serializeTableElementToMarkdown", () => {
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("copies a raw HTML code block in a cell without its internal markers", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        new FakeElement("TR").append(new FakeElement("TH").append(new FakeText("Command"))),
+      ),
+      new FakeElement("TBODY").append(
+        new FakeElement("TR").append(
+          new FakeElement("TD").append(
+            new FakeElement("PRE").append(new FakeElement("CODE").append(new FakeText("a  b"))),
+          ),
+        ),
+      ),
+    );
+
+    expect(serializeTableElementToMarkdown(asNode(table) as Element)).toBe(
+      "| Command |\n| --- |\n| a  b |",
     );
   });
 });
