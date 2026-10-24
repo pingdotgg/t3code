@@ -383,6 +383,48 @@ it.effect("skips GitHub discovery for the identity resolver's empty base URL", (
   }),
 );
 
+it.effect("detects the configured SSH hostname while preserving the transport alias", () =>
+  Effect.gen(function* () {
+    const remoteUrl = "git@github.com-work:example/project.git";
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: remoteUrl }],
+      process: {
+        run: (input) =>
+          Effect.succeed(processOutput(input.command === "ssh" ? "hostname github.com\n" : "")),
+      },
+    });
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+    assert.strictEqual(handle.context?.provider.kind, "github");
+    assert.strictEqual(handle.context?.provider.name, "GitHub");
+    assert.strictEqual(handle.context?.provider.baseUrl, "https://github.com");
+    assert.strictEqual(handle.context?.remoteUrl, remoteUrl);
+  }),
+);
+
+it.effect("preserves an explicit web authority when its SSH transport uses another host", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: () => Effect.die("An explicit web authority must not be replaced by SSH discovery"),
+      },
+    });
+    const context = {
+      provider: {
+        kind: SourceControlProviderKind.make("forgejo"),
+        name: "Forgejo",
+        baseUrl: "https://reviews.example.test/gitea",
+      },
+      requestedHost: "reviews.example.test",
+      remoteName: "origin",
+      remoteUrl: "git@work:team/project.git",
+    };
+    const handle = yield* registry.resolveHandle({ cwd: "/repo with spaces", context });
+    assert.deepStrictEqual(handle.context, context);
+    assert.strictEqual(handle.provider.kind, "forgejo");
+  }),
+);
+
 const notFound = (command: string, cwd: string) =>
   new VcsProcessSpawnError({
     operation: "test",
@@ -416,6 +458,8 @@ it.effect("asks once for every checkout of a server no integration claims", () =
       remotes: [],
       process: {
         run: ({ command, args, cwd }) => {
+          if (command === "ssh")
+            return Effect.succeed(processOutput("hostname git.example.internal\n"));
           asked.push([command, ...args].join(" "));
           return Deferred.await(release).pipe(Effect.andThen(Effect.fail(notFound(command, cwd))));
         },
@@ -473,6 +517,8 @@ it.effect("asks again after a check that could not answer", () =>
       remotes: [],
       process: {
         run: ({ command, cwd }) => {
+          if (command === "ssh")
+            return Effect.succeed(processOutput("hostname git.example.internal\n"));
           asks += 1;
           return Effect.fail(
             new VcsProcessTimeoutError({ operation: "test", command, cwd, timeoutMs: 1 }),

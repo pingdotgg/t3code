@@ -61,6 +61,20 @@ const LIST_RESULT: PullRequestListResult = {
 };
 
 describe("PullRequestListResult", () => {
+  it("round-trips per-entry accounts while accepting older host-only results", () => {
+    const result = {
+      ...LIST_RESULT,
+      entries: [
+        { ...LIST_RESULT.entries[0]!, viewer: "work-user" },
+        { ...LIST_RESULT.entries[0]!, number: 2, viewer: "personal-user" },
+      ],
+    };
+    const codec = Schema.toCodecJson(PullRequestListResult);
+    expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(result))).toStrictEqual(result);
+    expect(
+      Schema.decodeUnknownSync(PullRequestListResult)(LIST_RESULT).entries[0]?.viewer,
+    ).toBeUndefined();
+  });
   it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
     const identity = {
       canonicalKey: "forge.example/team/repo",

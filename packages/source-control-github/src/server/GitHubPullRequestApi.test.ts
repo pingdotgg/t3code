@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -3787,3 +3788,167 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 });
+
+it.effect("loads PR details and files with the repo account rather than the active account", () =>
+  Effect.gen(function* () {
+    const credentials = Layer.succeed(
+      GitHubCredentials.GitHubCredentials,
+      GitHubCredentials.GitHubCredentials.of({
+        get: (host) =>
+          Effect.gen(function* () {
+            const cwd = yield* GitHubCredentials.RepositoryDirectory;
+            const account = cwd === "/work repo" ? "work" : "personal";
+            return {
+              host,
+              token: Redacted.make(`fake-${account}`),
+              source: "gh" as const,
+              fingerprint: `${host}:${account}`,
+            };
+          }),
+        invalidate: () => Effect.void,
+      }),
+    );
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.headers.authorization !== "Bearer fake-work"
+              ? new Response(encodeJson({ message: "Not Found" }), { status: 404 })
+              : new Response(
+                  encodeJson(request.url.endsWith("/graphql") ? coreResponse({ id: "PR_7" }) : []),
+                  { headers: { "content-type": "application/json" } },
+                ),
+          ),
+        ),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubRest.layer.pipe(
+          Layer.provideMerge(GitHubRequestPolicy.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(credentials, http, GitHubQuota.layer, SourceControlRateLimit.layer),
+          ),
+          Layer.provideMerge(TestSourceControlHost.layer()),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+    const input = { cwd: "/work repo", repository: "acme/web", host: "github.com", number: 7 };
+    expect((yield* cli.getPullRequestDetail(input)).title).toBe("Pull request 7");
+    expect((yield* cli.getPullRequestDiff({ ...input, cursor: "1" })).patch).toBe("");
+    expect(
+      (yield* Effect.flip(cli.runPullRequestAction({ ...input, action: "merge", stackNumber: 1 })))
+        ._tag,
+    ).toBe("GitHubStackChangedError");
+    expect(
+      (yield* Effect.flip(cli.getPullRequestDetail({ ...input, cwd: "/personal repo" })))._tag,
+    ).toBe("GitHubApiNotFoundError");
+  }),
+);
+
+layer("repo account batching", (it) => {
+  it.effect("keeps summaries from different checkouts under their own account", () =>
+    Effect.gen(function* () {
+      const directories: Array<string | null> = [];
+      mockedCredential.mockImplementation((host) =>
+        Effect.gen(function* () {
+          const cwd = yield* GitHubCredentials.RepositoryDirectory;
+          return { token: Redacted.make("fake-token"), fingerprint: `${host}:${cwd}` };
+        }),
+      );
+      mockedExecute.mockImplementation(() =>
+        Effect.gen(function* () {
+          const cwd = yield* GitHubCredentials.RepositoryDirectory;
+          directories.push(cwd);
+          const pullRequest = {
+            ...coreResponse().data.repository.pullRequest,
+            title: cwd,
+            latestReviews: { nodes: [] },
+          };
+          return output(encodeJson({ data: { _0_repository: { pullRequest } } }));
+        }),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const pending = yield* Effect.forEach(
+        ["/work repo", "/personal repo"],
+        (cwd) =>
+          cli.getPullRequestSummary({ cwd, repository: "acme/web", host: "github.com", number: 7 }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      expect((yield* Fiber.join(pending)).map((summary) => summary.title)).toEqual([
+        "/work repo",
+        "/personal repo",
+      ]);
+      expect(directories.toSorted()).toEqual(["/personal repo", "/work repo"]);
+    }),
+  );
+});
+
+it.effect(
+  "holds a background account lookup during a pause while allowing an interactive lookup",
+  () => {
+    let requests = 0;
+    const dependencies = Layer.mergeAll(
+      Layer.succeed(
+        GitHubCredentials.GitHubCredentials,
+        GitHubCredentials.GitHubCredentials.of({
+          get: (host) =>
+            Effect.succeed({
+              host,
+              token: Redacted.make("fake-credential"),
+              fingerprint: "test-account",
+              source: "gh" as const,
+            }),
+          invalidate: () => Effect.void,
+        }),
+      ),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(encodeJson({ id: 123, login: "work-user" })),
+            ),
+          );
+        }),
+      ),
+      GitHubQuota.layer,
+      SourceControlRateLimit.layer,
+      TestSourceControlHost.layer(),
+      NodeServices.layer,
+    );
+    return Effect.gen(function* () {
+      const policy = yield* GitHubRequestPolicy.make;
+      const api = yield* GitHubRest.make.pipe(
+        Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
+      );
+      const cli = yield* GitHubPullRequestApi.make.pipe(
+        Effect.provideService(GitHubRest.GitHubRest, api),
+        Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
+      );
+      const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+      const key = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
+      yield* limits
+        .recordRateLimit({ ...key, lease: 0 })
+        .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "test-account"));
+      const input = { cwd: "/work", host: "github.com" };
+      const refused = yield* Effect.flip(
+        cli.withVerifiedCredential({ ...input, allowReserve: false }, Effect.succeed),
+      );
+      expect(refused._tag).toBe("SourceControlRateLimitPausedError");
+      expect(requests).toBe(0);
+      const identity = yield* cli.withVerifiedCredential(
+        { ...input, allowReserve: true },
+        Effect.succeed,
+      );
+      expect(identity.viewer).toBe("work-user");
+      expect(requests).toBe(1);
+    }).pipe(Effect.provide(dependencies));
+  },
+);

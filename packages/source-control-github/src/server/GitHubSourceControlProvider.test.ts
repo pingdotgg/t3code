@@ -1,4 +1,8 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  repositoryGroupingKeyOf,
+  SourceControlProviderKind,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -171,6 +175,8 @@ function harness(input: {
   >;
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
+  readonly sshHostname?: string;
+  /** Fails the local branch listing, the first git read a checkout makes. */
   readonly gitFailure?: unknown;
 }) {
   const git: Array<readonly [string, unknown]> = [];
@@ -209,9 +215,11 @@ function harness(input: {
     process: {
       run: (args) =>
         Effect.succeed(
-          args.args[0] === "remote"
-            ? processOutput(input.remotes)
-            : processOutput(input.resolved ?? "", input.resolved ? 0 : 1),
+          args.command === "ssh" && input.sshHostname
+            ? processOutput(`hostname ${input.sshHostname}\n`)
+            : args.args[0] === "remote"
+              ? processOutput(input.remotes)
+              : processOutput(input.resolved ?? "", input.resolved ? 0 : 1),
         ),
     },
   });
@@ -292,6 +300,80 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       assert.deepStrictEqual(paths, ["github.com repos/acme/web"]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each([
+    ["github", "git@github:acme/web.git"],
+    ["github.com-scale", "git@github.com-scale:acme/web.git"],
+    ["github.com-scale", "ssh://git@github.com-scale:22/acme/web.git"],
+  ] as const)("reads an SSH alias on %s through github.com (%s)", ([host, remoteUrl]) => {
+    const hosts: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", remoteUrl]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            hosts.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "acme/web",
+              html_url: "https://github.com/acme/web",
+              ssh_url: "git@github.com:acme/web.git",
+              default_branch: "main",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      yield* gh.getDefaultBranch({ cwd: "/repo" });
+      yield* gh.getDefaultBranch({
+        cwd: "/repo",
+        context: { ...githubContext(host), remoteUrl },
+      });
+      assert.deepStrictEqual(hosts, ["github.com repos/acme/web", "github.com repos/acme/web"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each(["sole", "upstream", "missing"])(
+    "preserves an HTTPS context host with %s remotes",
+    (mode) => {
+      const paths: string[] = [];
+      const remoteUrl = "https://github.com-scale/me/web.git";
+      const { layer } = harness({
+        remotes:
+          mode === "missing"
+            ? ""
+            : remotesOutput(
+                ["origin", remoteUrl],
+                ...(mode === "upstream"
+                  ? ([["upstream", "https://github.com/acme/web.git"]] as const)
+                  : []),
+              ),
+        api: {
+          rest: (input) =>
+            Effect.sync(() => {
+              paths.push(`${input.host} ${input.path}`);
+              return restResponse({
+                full_name: "me/web",
+                html_url: "https://github.com-scale/me/web",
+                ssh_url: "git@github.com-scale:me/web.git",
+                default_branch: "trunk",
+              });
+            }),
+        },
+      });
+      return Effect.gen(function* () {
+        const gh = yield* GitHubSourceControlProvider.make;
+        assert.strictEqual(
+          yield* gh.getDefaultBranch({
+            cwd: "/repo",
+            context: { ...githubContext("github.com-scale"), remoteUrl },
+          }),
+          "trunk",
+        );
+        assert.deepStrictEqual(paths, ["github.com-scale repos/me/web"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describe("GitHubSourceControlProvider change request lookups by head", () => {
@@ -1051,3 +1133,182 @@ it.effect.each([
     );
   },
 );
+
+it.effect(
+  "lists change requests on a dotted alias's configured API host with the checkout context",
+  () => {
+    const hosts: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@github.com-work:acme/web.git"]),
+      sshHostname: "github.com",
+      credential: (host) =>
+        Effect.gen(function* () {
+          assert.strictEqual(yield* GitHubCredentials.RepositoryDirectory, "/repo");
+          return {
+            host,
+            token: Redacted.make("fake-token"),
+            fingerprint: "work",
+            source: "gh" as const,
+          };
+        }),
+      graphql: (_lookup, call) => {
+        hosts.push(call.host);
+        return { pullRequests: { nodes: [node(7, "feature")] } };
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const pending = yield* provider
+        .listChangeRequests({
+          cwd: "/repo",
+          context: githubContext("github.com-work"),
+          headSelector: "feature",
+          state: "open",
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("50 millis");
+      const requests = yield* Fiber.join(pending);
+      assert.strictEqual(requests[0]?.number, 7);
+      assert.deepStrictEqual(hosts, ["github.com"]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("batches matching accounts across checkouts and separates different accounts", () =>
+  Effect.gen(function* () {
+    for (const differentAccounts of [false, true]) {
+      const { layer, graphqlCalls } = harness({
+        remotes: remotesOutput(["origin", "https://github.com/acme/web.git"]),
+        credential: (host) =>
+          Effect.gen(function* () {
+            const cwd = yield* GitHubCredentials.RepositoryDirectory;
+            return {
+              host,
+              token: Redacted.make("fake-token"),
+              fingerprint: differentAccounts ? String(cwd) : "same-account",
+              source: "gh" as const,
+            };
+          }),
+        graphql: () => ({ pullRequests: { nodes: [node(7, "feature")] } }),
+      });
+      yield* Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const pending = yield* Effect.forEach(
+          ["/personal", "/work"],
+          (cwd) => provider.listChangeRequests({ cwd, headSelector: "feature", state: "open" }),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("50 millis");
+        assert.deepStrictEqual(
+          (yield* Fiber.join(pending)).map((rows) => rows.map((pr) => pr.number)),
+          [[7], [7]],
+        );
+        assert.strictEqual(graphqlCalls.length, differentAccounts ? 2 : 1);
+      }).pipe(Effect.provide(layer));
+    }
+  }),
+);
+
+it.effect("records the API host in repository identities while keeping the SSH locator", () => {
+  const { layer } = harness({ remotes: "", api: {}, sshHostname: "github.com" });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const identity = {
+      canonicalKey: "github.com-work/acme/web",
+      provider: "github",
+      rootPath: "/work repo",
+      displayName: "acme/web",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "upstream",
+        remoteUrl: "git@github.com-work:acme/web.git",
+      },
+      origin: { canonicalKey: "github.com-work/fake-user/web", displayName: "fake-user/web" },
+    };
+    const refined = yield* provider.refineRepositoryIdentity!({
+      identity,
+      resolveContext: () => Effect.die("unused"),
+    });
+    assert.strictEqual(refined.canonicalKey, "github.com/acme/web");
+    assert.strictEqual(refined.origin?.canonicalKey, "github.com/fake-user/web");
+    assert.deepStrictEqual(refined.locator, identity.locator);
+  }).pipe(Effect.provide(layer));
+});
+
+/** An identity as the resolver builds it before refinement: keyed by the raw SSH alias. */
+const aliasedIdentity = (alias: string, rootPath: string): RepositoryIdentity => ({
+  canonicalKey: `${alias}/acme/web`,
+  provider: SourceControlProviderKind.make("unknown"),
+  rootPath,
+  displayName: "acme/web",
+  locator: {
+    source: "git-remote",
+    remoteName: "origin",
+    remoteUrl: `git@${alias}:acme/web.git`,
+  },
+});
+
+it.effect("groups checkouts that reach github.com through different SSH aliases together", () => {
+  const { layer } = harness({ remotes: "", api: {}, sshHostname: "github.com" });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const refine = (identity: RepositoryIdentity) =>
+      provider.refineRepositoryIdentity!({ identity, resolveContext: () => Effect.die("unused") });
+    const work = yield* refine(aliasedIdentity("github-work", "/work/web"));
+    const personal = yield* refine(aliasedIdentity("gh-personal", "/personal/web"));
+    assert.strictEqual(repositoryGroupingKeyOf(work), "github.com/acme/web");
+    assert.strictEqual(repositoryGroupingKeyOf(personal), repositoryGroupingKeyOf(work));
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("leaves SSH aliases for non-GitHub hosts keyed by the alias", () => {
+  const { layer } = harness({ remotes: "", api: {}, sshHostname: "gitlab.example.com" });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const identity = aliasedIdentity("gitlab-work", "/work/web");
+    const refined = yield* provider.refineRepositoryIdentity!({
+      identity,
+      resolveContext: () => Effect.die("unused"),
+    });
+    assert.strictEqual(refined, identity);
+    assert.strictEqual(repositoryGroupingKeyOf(refined), "gitlab-work/acme/web");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("checks out the matching SSH alias remote instead of an unrelated origin", () => {
+  const { layer, git } = harness({
+    remotes: remotesOutput(
+      ["origin", "git@github.com:other/web.git"],
+      ["upstream", "git@review-alias:acme/web.git"],
+    ),
+    sshHostname: "github.com",
+    localBranches: ["feature"],
+    graphql: () => ({ pullRequest: node(42, "feature") }),
+  });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    yield* provider.checkoutChangeRequest({
+      cwd: "/repo",
+      reference: "https://github.com/acme/web/pull/42",
+    });
+    assert.deepStrictEqual(git.find(([name]) => name === "fetchRemoteTrackingBranch")?.[1], {
+      cwd: "/repo",
+      remoteName: "upstream",
+      remoteBranch: "feature",
+    });
+    assert.ok(
+      git.some(
+        ([name, args]) =>
+          name === "execute" &&
+          encodeJson(args) ===
+            encodeJson(["merge", "--ff-only", "--quiet", "refs/remotes/upstream/feature"]),
+      ),
+    );
+    assert.deepStrictEqual(git.find(([name]) => name === "setBranchUpstream")?.[1], {
+      cwd: "/repo",
+      branch: "feature",
+      remoteName: "upstream",
+      remoteBranch: "feature",
+    });
+  }).pipe(Effect.provide(layer));
+});

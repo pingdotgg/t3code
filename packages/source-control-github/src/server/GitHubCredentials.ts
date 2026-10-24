@@ -48,7 +48,7 @@ export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedIn
   override get message(): string {
     return this.account === undefined
       ? `No GitHub credential for ${this.host}: run \`gh auth login --hostname ${this.host}\`.`
-      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account or pick another in Settings → Source Control.`;
+      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account, or review Settings → Source Control and \`git config github.user\`.`;
   }
 }
 
@@ -74,7 +74,24 @@ export type GitHubCredentialUnavailableError =
   | GitHubCliMissingError
   | GitHubNotSignedInError
   | GitHubHostDisabledError
-  | GitHubCliFailedError;
+  | GitHubCliFailedError
+  | GitHubRepositoryAccountError;
+
+/** The account choice could not be read, so another login must not be used. */
+export class GitHubRepositoryAccountError extends Schema.TaggedError<GitHubRepositoryAccountError>()(
+  "GitHubRepositoryAccountError",
+  { cwd: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `T3 Code cannot read \`git config github.user\` in ${this.cwd}. Run \`git config --get github.user\` in that folder to see the Git error.`;
+  }
+}
+
+/** The checkout for this request. Host discovery does not select a repository account. */
+export const RepositoryDirectory = Context.Reference<string | null>(
+  "@t3tools/source-control-github/server/GitHubCredentials/RepositoryDirectory",
+  { defaultValue: () => null },
+);
 
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
@@ -183,18 +200,64 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const cacheKey = (host: string, account: string | undefined) =>
-    account === undefined ? host : `${host}\u0000${account}`;
+  /** Cache key: the host plus its pinned account, so a changed pin misses the cache. */
+  const cacheKey = (host: string, account: string | undefined, repository = false) =>
+    account === undefined ? host : `${host}\u0000${account}${repository ? "\u0000repo" : ""}`;
+
+  const repositoryAccounts = yield* Cache.makeWith(
+    (cwd: string) =>
+      process
+        .run({
+          operation: "GitHubCredentials.repositoryAccount",
+          command: "git",
+          args: ["config", "--get", "github.user"],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.mapError((cause) => new GitHubRepositoryAccountError({ cwd, cause })),
+          Effect.flatMap((output) =>
+            output.exitCode === 0
+              ? Effect.succeed(output.stdout.trim() || undefined)
+              : output.exitCode === 1
+                ? Effect.succeed(undefined)
+                : Effect.fail(
+                    new GitHubRepositoryAccountError({
+                      cwd,
+                      cause: new Error(`Git exited with code ${output.exitCode}.`),
+                    }),
+                  ),
+          ),
+        ),
+    {
+      capacity: 512,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.seconds(5) : Duration.zero),
+    },
+  );
+
+  const repositoryAccount = Effect.fn("GitHubCredentials.repositoryAccount")(function* (
+    host: string,
+  ) {
+    const cwd = yield* RepositoryDirectory;
+    if (host !== "github.com" || cwd === null || environmentToken(host, environment) !== null)
+      return undefined;
+    return yield* Cache.get(repositoryAccounts, cwd);
+  });
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
-    const [host = key, choice] = key.split("\u0000");
+    const [host = key, choice, repository] = key.split("\u0000");
+    // An environment token wins over a pinned account, exactly as it does in gh.
     const fromEnv = environmentToken(host, environment);
+    // Keep the existing Settings fallback. A repository account must never fall back to another login.
     const token =
       fromEnv ??
       (yield* fromGh(host, choice).pipe(
         Effect.catchTags({
           GitHubNotSignedInError: (error) =>
-            choice === undefined ? Effect.fail(error) : fromGh(host, undefined),
+            choice === undefined || repository === "repo"
+              ? Effect.fail(error)
+              : fromGh(host, undefined),
         }),
       ));
     return {
@@ -233,14 +296,21 @@ export const make = Effect.gen(function* () {
           fingerprint: yield* fingerprintOf(host, saved),
         } satisfies GitHubCredential;
       }
-      return yield* Cache.get(cache, cacheKey(host, choice?.account));
-    }),
-    invalidate: (rawHost) => {
-      const host = normalizeHost(rawHost);
-      return hostChoice(host).pipe(
-        Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
+      const account = yield* repositoryAccount(host);
+      return yield* Cache.get(
+        cache,
+        cacheKey(host, account ?? choice?.account, account !== undefined),
       );
-    },
+    }),
+    invalidate: Effect.fn("GitHubCredentials.invalidate")(function* (rawHost) {
+      const host = normalizeHost(rawHost);
+      const choice = yield* hostChoice(host);
+      const account = yield* repositoryAccount(host).pipe(Effect.orElseSucceed(() => undefined));
+      yield* Cache.invalidate(
+        cache,
+        cacheKey(host, account ?? choice?.account, account !== undefined),
+      );
+    }),
   });
 });
 

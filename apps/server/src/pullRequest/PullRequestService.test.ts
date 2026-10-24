@@ -229,10 +229,37 @@ function fakeProvider(
   };
 }
 
+function inboxProvider(
+  accounts: Readonly<Record<string, string>>,
+  overrides: Partial<PullRequestProviderApi> = {},
+) {
+  return fakeProvider(SourceControlProviderKind.make("github"), {
+    withVerifiedCredential: (input, use) => {
+      assert.isFalse(input.allowReserve);
+      const viewer = accounts[input.cwd];
+      if (viewer === undefined)
+        return Effect.fail(
+          new PullRequestProviderError({
+            provider: SourceControlProviderKind.make("github"),
+            operation: "getViewer",
+            reason: "unauthenticated",
+            detail: "The selected test account is signed out.",
+          }),
+        );
+      return use({ accountId: viewer, viewer, credentialFingerprint: viewer }).pipe(
+        Effect.provideService(SourceControlRateLimit.CredentialScope, viewer),
+      );
+    },
+    getViewer: () => Effect.die("Account-aware inbox reads must not use a host-wide viewer"),
+    ...overrides,
+  });
+}
+
 function makeService(input: {
   readonly settings?: ServerSettings;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
+  readonly sshHostname?: string;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
 }) {
@@ -263,6 +290,18 @@ function makeService(input: {
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
+        }),
+        TestSourceControlHost.layer({
+          process: {
+            run: () =>
+              Effect.succeed({
+                stdout: `hostname ${input.sshHostname ?? "unresolved"}\n`,
+                stderr: "",
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+          },
         }),
         SourceControlRateLimit.layer,
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -3195,6 +3234,59 @@ it.effect("keeps reading a host's thinned-out slices until a filtered page is fu
   }),
 );
 
+it.effect("keeps account-bound resume positions across filtered slices and continuations", () =>
+  Effect.gen(function* () {
+    const accounts = { "/work": "work-user" };
+    const resumed: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+      ],
+      providers: [
+        inboxProvider(accounts, {
+          listChangeRequests: (input) =>
+            Effect.gen(function* () {
+              assert.strictEqual(yield* SourceControlRateLimit.CredentialScope, "work-user");
+              resumed.push(input.cursor?.resumeAfter);
+              const delivered = input.cursor?.delivered ?? 0;
+              return {
+                items: [
+                  {
+                    ...changeRequest(delivered + 1, "2026-07-02T00:00:00Z"),
+                    labels: delivered === 0 ? [] : [{ name: "bug", color: null }],
+                  },
+                ],
+                truncated: true,
+                continues: true,
+                resumeAfter: `2026-07-01T00:00:00.000Z~${delivered + 1}`,
+              };
+            }),
+        }),
+      ],
+    });
+    const input = { state: "open" as const, limit: 1, filters: { labels: [["bug"]] } };
+    const first = yield* service.list(input);
+    assert.deepStrictEqual(
+      first.entries.map((entry) => entry.number),
+      [2],
+    );
+    const next = yield* service.list({ ...input, cursors: first.nextCursors });
+    assert.deepStrictEqual(
+      next.entries.map((entry) => entry.number),
+      [3],
+    );
+    assert.deepStrictEqual(resumed, [
+      undefined,
+      "2026-07-01T00:00:00.000Z~1",
+      "2026-07-01T00:00:00.000Z~2",
+    ]);
+    accounts["/work"] = "personal-user";
+    const error = yield* service.list({ ...input, cursors: next.nextCursors }).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(resumed.length, 3);
+  }),
+);
+
 it.effect("hands a host's own resume position back on the next read", () =>
   Effect.gen(function* () {
     const resumed: Array<string | undefined> = [];
@@ -4097,5 +4189,657 @@ it.effect("expands only files the change request changes, across every slice of 
     assert.strictEqual(outside._tag, "PullRequestOperationError");
     assert.strictEqual(halfRename._tag, "PullRequestOperationError");
     assert.deepStrictEqual(read, ["src/old.ts->src/new.ts", "gone.md->gone.md"]);
+  }),
+);
+
+it.effect(
+  "reads an aliased project's PR with its checkout when another GitHub project exists",
+  () =>
+    Effect.gen(function* () {
+      const reads: Array<{ cwd: string; host: string }> = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "work",
+            title: "work",
+            workspaceRoot: "/work repo",
+            repository: "acme/web",
+            host: "github.com-work",
+            remoteUrl: "git@github.com-work:acme/web.git",
+          }),
+          project({
+            id: "personal",
+            title: "personal",
+            workspaceRoot: "/personal repo",
+            repository: "fake-user/demo",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: (input) => {
+              reads.push({ cwd: input.cwd, host: input.host });
+              return Effect.succeed(hostedChangeRequest("Work PR"));
+            },
+          }),
+        ],
+        resolveHandle: ({ context }) =>
+          Effect.succeed({
+            provider: undefined as never,
+            context: {
+              ...context!,
+              provider: {
+                kind: SourceControlProviderKind.make("github"),
+                name: "GitHub",
+                baseUrl: "https://github.com",
+              },
+            },
+          }),
+      });
+      const detail = yield* service.detail({
+        projectId: "work" as ProjectId,
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      assert.strictEqual(detail.workspaceRoot, "/work repo");
+      assert.deepStrictEqual(reads, [{ cwd: "/work repo", host: "github.com" }]);
+    }),
+);
+
+it.effect("uses each checkout's account for inbox searches and author filters", () =>
+  Effect.gen(function* () {
+    const searches: Array<{ scope: string; viewer: string; repositories: ReadonlyArray<string> }> =
+      [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({ id: "w2", title: "Other work", workspaceRoot: "/other", repository: "acme/api" }),
+        project({
+          id: "p",
+          title: "Personal",
+          workspaceRoot: "/personal",
+          repository: "fake-user/demo",
+        }),
+      ],
+      providers: [
+        inboxProvider(
+          { "/work": "work-user", "/other": "work-user", "/personal": "personal-user" },
+          {
+            listChangeRequestsAcross: (input) =>
+              Effect.gen(function* () {
+                const scope = yield* SourceControlRateLimit.CredentialScope;
+                searches.push({ scope, viewer: input.viewer, repositories: input.repositories });
+                assert.strictEqual(scope, input.viewer);
+                return {
+                  items: input.repositories.flatMap((repository) => [
+                    {
+                      ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                      repository,
+                      author: { login: scope, name: null, avatarUrl: null },
+                    },
+                    { ...changeRequest(2, "2026-07-02T00:00:00Z"), repository },
+                  ]),
+                  truncated: false,
+                };
+              }),
+          },
+        ),
+      ],
+    });
+    const result = yield* service.list({
+      state: "open",
+      involvement: "authored",
+      filters: { author: "me" },
+    });
+    assert.strictEqual(searches.length, 2);
+    assert.deepStrictEqual(searches.map((search) => search.repositories.length).toSorted(), [1, 2]);
+    assert.deepStrictEqual(
+      result.entries.map((entry) => [entry.projectId, entry.viewer]).toSorted(),
+      [
+        ["p", "personal-user"],
+        ["w", "work-user"],
+        ["w2", "work-user"],
+      ],
+    );
+    assert.strictEqual(result.providers.length, 1);
+    assert.isTrue(result.providers[0]!.configured);
+  }),
+);
+
+it.effect("keeps a healthy inbox account available when another login is missing", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({
+          id: "p",
+          title: "Personal",
+          workspaceRoot: "/personal",
+          repository: "fake-user/demo",
+        }),
+      ],
+      providers: [
+        inboxProvider(
+          { "/personal": "personal-user" },
+          {
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: true,
+              }),
+          },
+        ),
+      ],
+    });
+    const result = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      result.entries.map((entry) => entry.projectId),
+      ["p"],
+    );
+    assert.deepStrictEqual(
+      result.errors.map((error) => error.projectId),
+      ["w"],
+    );
+    assert.isTrue(result.providers[0]!.configured);
+  }),
+);
+
+it.effect("pauses only the account that reached its inbox rate limit", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({
+          id: "p",
+          title: "Personal",
+          workspaceRoot: "/personal",
+          repository: "fake-user/demo",
+        }),
+      ],
+      providers: [
+        inboxProvider(
+          { "/work": "work-user", "/personal": "personal-user" },
+          {
+            listChangeRequests: () =>
+              Effect.gen(function* () {
+                const scope = yield* SourceControlRateLimit.CredentialScope;
+                reads.push(scope);
+                if (scope === "work-user")
+                  return yield* new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("github"),
+                    operation: "list",
+                    reason: "rate-limited",
+                    detail: "Test account is rate limited.",
+                  });
+                return {
+                  items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                  truncated: false,
+                  continues: true,
+                };
+              }),
+          },
+        ),
+      ],
+    });
+    yield* service.list({ state: "open" });
+    const result = yield* service.list({ state: "closed" });
+    assert.strictEqual(reads.filter((scope) => scope === "work-user").length, 1);
+    assert.strictEqual(reads.filter((scope) => scope === "personal-user").length, 2);
+    assert.deepStrictEqual(
+      result.entries.map((entry) => entry.projectId),
+      ["p"],
+    );
+  }),
+);
+
+it.effect("keeps repository pagination stable and shares matching-account worktree reads", () =>
+  Effect.gen(function* () {
+    const reads: Array<{ viewer: string; cursor: unknown }> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({
+          id: "w2",
+          title: "Worktree",
+          workspaceRoot: "/worktree",
+          repository: "acme/web",
+        }),
+        project({
+          id: "p",
+          title: "Personal",
+          workspaceRoot: "/personal",
+          repository: "fake-user/demo",
+        }),
+      ],
+      providers: [
+        inboxProvider(
+          { "/work": "work-user", "/worktree": "work-user", "/personal": "personal-user" },
+          {
+            listChangeRequests: (input) =>
+              Effect.gen(function* () {
+                assert.strictEqual(yield* SourceControlRateLimit.CredentialScope, input.viewer);
+                reads.push({ viewer: input.viewer, cursor: input.cursor });
+                return {
+                  items: [
+                    changeRequest(input.viewer === "work-user" ? 1 : 2, "2026-07-02T00:00:00Z"),
+                  ],
+                  truncated: true,
+                  continues: true,
+                };
+              }),
+          },
+        ),
+      ],
+    });
+    const first = yield* service.list({ state: "open", limit: 1 });
+    assert.strictEqual(reads.length, 2);
+    assert.strictEqual(Object.keys(first.nextCursors).length, 2);
+    yield* service.list({
+      state: "open",
+      limit: 1,
+      cursors: {
+        "github.com acme/web": first.nextCursors["github.com acme/web"]!,
+      },
+    });
+    assert.deepStrictEqual(
+      reads.map((read) => read.viewer),
+      ["work-user", "personal-user", "work-user"],
+    );
+    assert.isDefined(reads[2]!.cursor);
+  }),
+);
+
+it.effect(
+  "reads inbox diff counts under each account and retains worktree project references",
+  () =>
+    Effect.gen(function* () {
+      const scopes: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+          project({
+            id: "w2",
+            title: "Worktree",
+            workspaceRoot: "/worktree",
+            repository: "acme/web",
+          }),
+          project({
+            id: "p",
+            title: "Personal",
+            workspaceRoot: "/personal",
+            repository: "acme/web",
+          }),
+        ],
+        providers: [
+          inboxProvider(
+            { "/work": "work-user", "/worktree": "work-user", "/personal": "personal-user" },
+            {
+              listChangeRequestStats: (input) =>
+                Effect.gen(function* () {
+                  const scope = yield* SourceControlRateLimit.CredentialScope;
+                  scopes.push(scope);
+                  return [
+                    ...new Map(input.changeRequests.map((ref) => [ref.number, ref])).values(),
+                  ].map((ref) => ({
+                    ...ref,
+                    additions: scope === "work-user" ? 10 : 20,
+                    deletions: 0,
+                  }));
+                }),
+            },
+          ),
+        ],
+      });
+      const result = yield* service.listStats({
+        refs: ["w", "w2", "p"].map((id) => ({
+          projectId: id as ProjectId,
+          repository: "acme/web",
+          number: 1,
+        })),
+      });
+      assert.deepStrictEqual(scopes.toSorted(), ["personal-user", "work-user"]);
+      assert.deepStrictEqual(
+        result.stats.map((stat) => [stat.projectId, stat.additions]).toSorted(),
+        [
+          ["p", 20],
+          ["w", 10],
+          ["w2", 10],
+        ],
+      );
+    }),
+);
+
+it.effect.each([false, true])(
+  "lists a duplicate repository once using its first readable checkout (signed out: %s)",
+  (signedOut) =>
+    Effect.gen(function* () {
+      const captures: string[] = [];
+      const provider = inboxProvider(
+        signedOut
+          ? { "/personal": "personal-user" }
+          : { "/work": "work-user", "/personal": "personal-user" },
+        {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(7, "2026-07-02T00:00:00Z")],
+              truncated: true,
+              continues: true,
+            }),
+        },
+      );
+      const service = yield* makeService({
+        projects: [
+          project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+          project({
+            id: "p",
+            title: "Personal",
+            workspaceRoot: "/personal",
+            repository: "acme/web",
+          }),
+        ],
+        providers: [
+          {
+            ...provider,
+            withVerifiedCredential: (input, use) => {
+              captures.push(input.cwd);
+              return provider.withVerifiedCredential!(input, use);
+            },
+          },
+        ],
+      });
+      const result = yield* service.list({ state: "open", limit: 1 });
+      assert.strictEqual(result.entries.length, 1);
+      assert.strictEqual(result.entries[0]!.viewer, signedOut ? "personal-user" : "work-user");
+      assert.deepStrictEqual(Object.keys(result.nextCursors), ["github.com acme/web"]);
+      assert.deepStrictEqual(result.errors, []);
+      if (!signedOut) assert.isFalse(captures.includes("/personal"));
+      const selected = yield* service.list({ state: "open", projectId: "p" as ProjectId });
+      assert.strictEqual(selected.entries[0]!.projectId, "p");
+      assert.strictEqual(selected.entries[0]!.viewer, "personal-user");
+    }),
+);
+
+it.effect("does not lose one account diff counts when another account read fails", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({
+          id: "p",
+          title: "Personal",
+          workspaceRoot: "/personal",
+          repository: "fake-user/demo",
+        }),
+      ],
+      providers: [
+        inboxProvider(
+          { "/work": "work-user", "/personal": "personal-user" },
+          {
+            listChangeRequestStats: (input) =>
+              Effect.gen(function* () {
+                const scope = yield* SourceControlRateLimit.CredentialScope;
+                if (scope === "work-user")
+                  return yield* new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("github"),
+                    operation: "stats",
+                    reason: "not-found",
+                    detail: "Fake private repository is unavailable.",
+                  });
+                return input.changeRequests.map((ref) => ({ ...ref, additions: 20, deletions: 1 }));
+              }),
+          },
+        ),
+      ],
+    });
+    const result = yield* service.listStats({
+      refs: [
+        { projectId: "w" as ProjectId, repository: "acme/web", number: 1 },
+        { projectId: "p" as ProjectId, repository: "fake-user/demo", number: 1 },
+      ],
+    });
+    assert.deepStrictEqual(
+      result.stats.map((stat) => [stat.projectId, stat.additions]),
+      [["p", 20]],
+    );
+  }),
+);
+
+it.effect("marks review requests with each repository selected account", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({
+          id: "p",
+          title: "Personal",
+          workspaceRoot: "/personal",
+          repository: "fake-user/demo",
+        }),
+      ],
+      providers: [
+        inboxProvider(
+          { "/work": "work-user", "/personal": "personal-user" },
+          {
+            listChangeRequestsAcross: (input) =>
+              Effect.gen(function* () {
+                const scope = yield* SourceControlRateLimit.CredentialScope;
+                assert.strictEqual(scope, input.viewer);
+                return {
+                  items: input.repositories.map((repository) => ({
+                    ...changeRequest(7, "2026-07-02T00:00:00Z"),
+                    repository,
+                    reviewRequestLogins: [scope],
+                  })),
+                  truncated: false,
+                };
+              }),
+          },
+        ),
+      ],
+    });
+    const result = yield* service.list({ state: "open", involvement: "reviewing" });
+    assert.deepStrictEqual(
+      result.entries
+        .map((row) => [row.projectId, row.viewer, row.viewerReviewRequested])
+        .toSorted(),
+      [
+        ["p", "personal-user", true],
+        ["w", "work-user", true],
+      ],
+    );
+  }),
+);
+
+it.effect.each(["gitlab", "forgejo", "bitbucket", "azure-devops"] as const)(
+  "keeps failed %s viewer lookups shared across duplicate checkouts",
+  (kind) =>
+    Effect.gen(function* () {
+      let lookups = 0;
+      const service = yield* makeService({
+        projects: Array.from({ length: 10 }, (_, i) =>
+          project({
+            id: "p" + i,
+            title: "Checkout",
+            workspaceRoot: "/repo" + i,
+            repository: "acme/web",
+            provider: kind,
+          }),
+        ),
+        providers: [
+          fakeProvider(SourceControlProviderKind.make(kind), {
+            getViewer: () => {
+              lookups += 1;
+              return Effect.fail(
+                new PullRequestProviderError({
+                  provider: SourceControlProviderKind.make(kind),
+                  operation: "viewer",
+                  reason: "unauthenticated",
+                  detail: "Test host is signed out.",
+                }),
+              );
+            },
+          }),
+        ],
+      });
+      yield* Effect.flip(service.list({ state: "open" }));
+      assert.strictEqual(lookups, 10);
+    }),
+);
+
+it.effect("looks up a failed non-GitHub host once for all of its repositories", () =>
+  Effect.gen(function* () {
+    let lookups = 0;
+    const kind = SourceControlProviderKind.make("gitlab");
+    const service = yield* makeService({
+      projects: Array.from({ length: 20 }, (_, i) =>
+        project({
+          id: "p" + i,
+          title: "Repository",
+          workspaceRoot: "/repo" + i,
+          repository: "acme/repo" + i,
+          provider: kind,
+        }),
+      ),
+      providers: [
+        fakeProvider(kind, {
+          getViewer: () => {
+            lookups += 1;
+            return Effect.fail(
+              new PullRequestProviderError({
+                provider: kind,
+                operation: "viewer",
+                reason: "unauthenticated",
+                detail: "Test host is signed out.",
+              }),
+            );
+          },
+        }),
+      ],
+    });
+    yield* Effect.flip(service.list({ state: "open" }));
+    assert.strictEqual(lookups, 20);
+  }),
+);
+
+it.effect("refuses continuation under another account while accepting legacy cursors", () =>
+  Effect.gen(function* () {
+    const accounts: Record<string, string> = { "/work": "work-user", "/personal": "personal-user" };
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({ id: "p", title: "Personal", workspaceRoot: "/personal", repository: "acme/web" }),
+      ],
+      providers: [
+        inboxProvider(accounts, {
+          listChangeRequests: () => {
+            reads += 1;
+            return Effect.succeed({
+              items: [changeRequest(7, "2026-07-02T00:00:00Z")],
+              truncated: true,
+              continues: true,
+            });
+          },
+        }),
+      ],
+    });
+    const first = yield* service.list({ state: "open", limit: 1 });
+    assert.isTrue(first.nextCursors["github.com acme/web"]!.endsWith("|work-user"));
+    delete accounts["/work"];
+    const error = yield* Effect.flip(
+      service.list({ state: "open", limit: 1, cursors: first.nextCursors }),
+    );
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    if (error._tag === "PullRequestOperationError")
+      assert.include(error.detail, "Refresh the inbox");
+    assert.strictEqual(reads, 1);
+    yield* service.list({
+      state: "open",
+      limit: 1,
+      cursors: { "github.com acme/web": "2026-07-02T00:00:00Z|1|7" },
+    });
+    assert.strictEqual(reads, 2);
+  }),
+);
+
+it.effect("reports the first checkout when all duplicate repository accounts fail", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "w", title: "Work", workspaceRoot: "/work", repository: "acme/web" }),
+        project({ id: "p", title: "Personal", workspaceRoot: "/personal", repository: "acme/web" }),
+        project({
+          id: "h",
+          title: "Healthy",
+          workspaceRoot: "/healthy",
+          repository: "fake-user/demo",
+        }),
+      ],
+      providers: [
+        inboxProvider(
+          { "/healthy": "healthy-user" },
+          {
+            listChangeRequests: () =>
+              Effect.succeed({ items: [], truncated: false, continues: true }),
+          },
+        ),
+      ],
+    });
+    const result = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      result.errors.map((error) => error.projectId),
+      ["w"],
+    );
+  }),
+);
+
+it.effect("includes an unknown SSH alias in a GitHub host-filtered inbox", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      sshHostname: "github.com",
+      projects: [
+        project({
+          id: "alias",
+          title: "Alias",
+          workspaceRoot: "/repo",
+          repository: "acme/web",
+          provider: "unknown",
+          host: "github-work",
+          remoteUrl: "git@github-work:acme/web.git",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(42, "2026-07-05T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+        }),
+      ],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          provider: undefined as never,
+          context: {
+            ...context!,
+            provider:
+              context?.requestedHost === undefined
+                ? {
+                    kind: SourceControlProviderKind.make("github"),
+                    name: "GitHub",
+                    baseUrl: "https://github.com",
+                  }
+                : context.provider,
+          },
+        }),
+    });
+    const result = yield* service.list({ state: "open", host: "github.com" });
+    assert.deepStrictEqual(
+      result.entries.map(({ host, number }) => [host, number]),
+      [["github.com", 42]],
+    );
   }),
 );

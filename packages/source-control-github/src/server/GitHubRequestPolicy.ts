@@ -106,6 +106,32 @@ export function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
 }
 
+/** Pins one credential before batching, so checkouts using the same account share a request. */
+export const withCredential =
+  (api: GitHubRequestPolicy["Service"], host: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const normalized = normalizeHost(host);
+      const pinned = yield* PinnedGitHubCredential;
+      const credential =
+        pinned?.host === normalized
+          ? pinned
+          : yield* api.credential(normalized).pipe(
+              Effect.map(({ token, fingerprint }) => ({
+                host: normalized,
+                token,
+                credentialFingerprint: fingerprint,
+              })),
+            );
+      return yield* effect.pipe(
+        Effect.provideService(PinnedGitHubCredential, credential),
+        Effect.provideService(
+          SourceControlRateLimit.CredentialScope,
+          credential.credentialFingerprint,
+        ),
+      );
+    });
+
 /**
  * Where the API for a host lives. github.com and GHE.com data residency serve it from an `api.`
  * subdomain; GitHub Enterprise Server serves it under `/api` on the instance itself.

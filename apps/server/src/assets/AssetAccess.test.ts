@@ -196,14 +196,17 @@ describe("AssetAccess", () => {
       Effect.provide(
         Layer.mock(GitHubCredentials.GitHubCredentials)({
           get: (host) =>
-            ++lookups === 1
-              ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-              : Effect.succeed({
-                  host,
-                  token: Redacted.make("signed-in"),
-                  source: "gh" as const,
-                  fingerprint: "fingerprint",
-                }),
+            Effect.gen(function* () {
+              expect(yield* GitHubCredentials.RepositoryDirectory).toBe("/repo");
+              return yield* ++lookups === 1
+                ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
+                : Effect.succeed({
+                    host,
+                    token: Redacted.make("signed-in"),
+                    source: "gh" as const,
+                    fingerprint: "fingerprint",
+                  });
+            }),
         }),
       ),
       Effect.provideService(

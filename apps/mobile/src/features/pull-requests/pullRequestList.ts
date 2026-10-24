@@ -67,6 +67,7 @@ export function pullRequestListRowsAreEqual(
       previous.deletions === next.deletions &&
       previous.checksState === next.checksState &&
       previous.reviewDecision === next.reviewDecision &&
+      previous.viewer === next.viewer &&
       previous.viewerReviewRequested === next.viewerReviewRequested &&
       previous.author?.login === next.author?.login &&
       previous.author?.avatarUrl === next.author?.avatarUrl &&
@@ -260,7 +261,7 @@ export function filterPullRequestList<
     if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
       return false;
     const viewerKey = entry.environmentId ? `${entry.environmentId} ${entry.host}` : entry.host;
-    const viewer = viewers[viewerKey];
+    const viewer = entry.viewer ?? viewers[viewerKey];
     if (controls.involvement === "reviewing" && !entry.viewerReviewRequested) return false;
     if (
       controls.involvement === "authored" &&

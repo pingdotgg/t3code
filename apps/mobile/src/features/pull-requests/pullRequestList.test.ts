@@ -349,6 +349,53 @@ describe("withoutScratchProjectScope", () => {
   });
 });
 
+it("uses row accounts for mobile Authored and author:me filters", () => {
+  const rows = [
+    entry(1, { viewer: "work-user", author: { login: "work-user", name: null, avatarUrl: null } }),
+    entry(2, {
+      viewer: "personal-user",
+      author: { login: "personal-user", name: null, avatarUrl: null },
+    }),
+    entry(3, {
+      viewer: "personal-user",
+      author: { login: "work-user", name: null, avatarUrl: null },
+    }),
+  ];
+  const viewers = { "github.com": "work-user" };
+  expect(
+    filterPullRequestList(
+      rows,
+      { ...DEFAULT_PR_LIST_CONTROLS, involvement: "authored" },
+      viewers,
+      "",
+      new Set(),
+    ).map((row) => row.number),
+  ).toEqual([2, 1]);
+  expect(
+    filterPullRequestList(
+      rows,
+      { ...DEFAULT_PR_LIST_CONTROLS, filters: { author: "me" } },
+      viewers,
+      "",
+      new Set(),
+    ).map((row) => row.number),
+  ).toEqual([2, 1]);
+  expect(
+    filterPullRequestList(
+      [entry(4, { author: { login: "work-user", name: null, avatarUrl: null } })],
+      { ...DEFAULT_PR_LIST_CONTROLS, involvement: "authored" },
+      viewers,
+      "",
+      new Set(),
+    ).map((row) => row.number),
+  ).toEqual([4]);
+});
+
+it("rerenders a mobile inbox row when its selected account changes", () => {
+  const row = { ...entry(1, { viewer: "work-user" }), environmentId: EnvironmentId.make("test") };
+  expect(pullRequestListRowsAreEqual(row, { ...row, viewer: "personal-user" })).toBe(false);
+});
+
 describe("pullRequestLabelColors", () => {
   it("keeps the first usable color each label name carries", () => {
     expect(
