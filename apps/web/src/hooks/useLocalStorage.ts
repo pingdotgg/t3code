@@ -40,9 +40,21 @@ const read = (key: string) => {
   }
 };
 
+// Building the JSON codec walks the schema, and it ran on every render of every consumer.
+const jsonCodecs = new WeakMap<Schema.Codec<any, any>, Schema.Codec<any, string>>();
+
+const jsonCodec = <T, E>(schema: Schema.Codec<T, E>) => {
+  let codec = jsonCodecs.get(schema);
+  if (codec === undefined) {
+    codec = Schema.fromJsonString(schema);
+    jsonCodecs.set(schema, codec);
+  }
+  return codec as Schema.Codec<T, string>;
+};
+
 const decode = <T, E>(key: string, schema: Schema.Codec<T, E>, value: string) => {
   try {
-    return Schema.decodeSync(Schema.fromJsonString(schema))(value);
+    return Schema.decodeSync(jsonCodec(schema))(value);
   } catch (cause) {
     throw new LocalStorageOperationError({ operation: "decode", storageKey: key, cause });
   }
@@ -50,7 +62,7 @@ const decode = <T, E>(key: string, schema: Schema.Codec<T, E>, value: string) =>
 
 const encode = <T, E>(key: string, schema: Schema.Codec<T, E>, value: T) => {
   try {
-    return Schema.encodeSync(Schema.fromJsonString(schema))(value);
+    return Schema.encodeSync(jsonCodec(schema))(value);
   } catch (cause) {
     throw new LocalStorageOperationError({ operation: "encode", storageKey: key, cause });
   }

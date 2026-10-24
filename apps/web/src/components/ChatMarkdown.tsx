@@ -1582,6 +1582,8 @@ function ChatMarkdown({
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+  // The plugin's prefix cache lives in its closure, so it must outlive renders.
+  const [incrementalPlugin] = useState(createIncrementalMarkdownPlugin);
   const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
@@ -1589,7 +1591,7 @@ function ChatMarkdown({
   const remarkPlugins = [
     ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
     ...extraRemarkPlugins,
-    ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
+    ...(incrementalParsing ? [incrementalPlugin] : []),
   ];
   if (componentState.mathEnabled)
     remarkPlugins.unshift([remarkMath, { singleDollarTextMath: true }]);

@@ -254,7 +254,8 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
           shell: input.shell ?? false,
           stdin: "ignore",
           stdout: "pipe",
-          stderr: "pipe",
+          // Nothing reads stderr; an undrained pipe fills (~64 KB) and blocks the shell.
+          stderr: "ignore",
           killSignal: "SIGTERM",
           forceKillAfter: PROCESS_TERMINATE_GRACE,
         }),

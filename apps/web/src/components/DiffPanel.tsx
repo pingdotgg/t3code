@@ -43,6 +43,7 @@ import {
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
+  type RenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
@@ -98,6 +99,25 @@ import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
+// The patch is a string, so it cannot key a WeakMap. One entry per option set, compared by
+// value, keeps unrelated renders (typing in the base-ref box, toggling wrap) from re-parsing
+// it. Parsing yields fresh file objects, which would also defeat fileEntryCache below.
+const renderablePatchCache = new Map<string, { patch: string; value: RenderablePatch | null }>();
+
+function getCachedRenderablePatch(
+  patch: string | undefined,
+  theme: string,
+  options: { compactPartialHunkOffsets: boolean; ignoreWhitespace?: boolean },
+) {
+  const cacheScope = `diff-panel:${theme}`;
+  const key = `${cacheScope}|${options.compactPartialHunkOffsets}|${options.ignoreWhitespace === true}`;
+  const cached = renderablePatchCache.get(key);
+  if (cached && cached.patch === patch) return cached.value;
+  const value = getRenderablePatch(patch, cacheScope, options);
+  if (patch) renderablePatchCache.set(key, { patch, value });
+  return value;
+}
+
 const fileEntryCache = new WeakMap<
   FileDiffMetadata,
   { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
@@ -358,9 +378,9 @@ export default function DiffPanel({
     !selectedTurn && selectedGitSource?.truncated && selectedGitSource.files
       ? selectedGitSource
       : null;
-  const renderablePatch = getRenderablePatch(
+  const renderablePatch = getCachedRenderablePatch(
     lazySource ? undefined : selectedPatch,
-    `diff-panel:${resolvedTheme}`,
+    resolvedTheme,
     { compactPartialHunkOffsets: selectedRunId === null },
   );
   const fileStats = new Map(lazySource?.files?.map((file) => [file.path, file]));

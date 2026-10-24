@@ -170,6 +170,26 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("does not leave the login shell's stderr pipe undrained", () =>
+    Effect.gen(function* () {
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env: { SHELL: "/bin/zsh", PATH: "/usr/bin" },
+        platform: "darwin",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+        },
+      });
+
+      const command = commands[0];
+      assert.equal(command?._tag, "StandardCommand");
+      // A chatty rc file fills an unread pipe and the shell never exits.
+      assert.equal(command?._tag === "StandardCommand" ? command.options.stderr : "", "ignore");
+    }),
+  );
+
   it.effect("does not mix login-shell locale categories into an inherited locale", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {

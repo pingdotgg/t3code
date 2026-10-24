@@ -132,4 +132,32 @@ describe("incremental Markdown parsing", () => {
       }
     }
   });
+
+  it("parses a different message in full after the plugin served another one", () => {
+    const incremental = createIncrementalMarkdownPlugin();
+    const first = prefix + "first message tail";
+    const second = "# Other\n\n```ts\nconst other = 1;\n```\n\nsecond message tail";
+    // The plugin keeps the first renderer's parser, so one array must observe every render.
+    const parsedSources: string[] = [];
+    render(first, incremental, parsedSources);
+    render(first + " more", incremental, parsedSources);
+    parsedSources.length = 0;
+    expect(render(second, incremental, parsedSources)).toEqual(render(second));
+    expect(parsedSources).toContain(second);
+  });
+
+  it("parses less text with one plugin instance than with a fresh instance per render", () => {
+    const source = `\`\`\`ts\n${"const value = 1;\n".repeat(200)}\`\`\`\n\nstreaming tail`;
+    const documents = [source, source + "a", source + "ab"];
+    const parsedLength = (pluginFor: () => Plugin<[], Root>) => {
+      // A plugin keeps its first renderer's parser, so one array observes every render.
+      const sources: string[] = [];
+      for (const text of documents) render(text, pluginFor(), sources);
+      return sources.reduce((total, part) => total + part.length, 0);
+    };
+    const persistent = createIncrementalMarkdownPlugin();
+    const shared = parsedLength(() => persistent);
+    const fresh = parsedLength(() => createIncrementalMarkdownPlugin());
+    expect(shared).toBeLessThan(fresh);
+  });
 });
