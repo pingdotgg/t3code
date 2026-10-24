@@ -12,6 +12,8 @@ import * as Tracer from "effect/Tracer";
 import {
   ProjectId,
   GitCommandError,
+  ProviderInstanceId,
+  TextGenerationError,
   type PullRequestActivity,
   type PullRequestDetail,
   type PullRequestStack,
@@ -159,6 +161,7 @@ const makeLayer = (input: {
   readonly enabled?: boolean;
   readonly currentHead?: Ref.Ref<string>;
   readonly identity?: typeof ACME_APP;
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -211,7 +214,9 @@ const makeLayer = (input: {
         generateReviewGuide: input.generate,
       } as unknown as TextGeneration.TextGeneration["Service"]),
     ),
-    Layer.provide(ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true })),
+    Layer.provide(
+      ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true, ...input.settings }),
+    ),
     Layer.provide(ServerConfig.layerTest(input.root, { prefix: "t3-review-guide-config-" })),
   );
 
@@ -462,6 +467,47 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         const result = yield* service.get(reference);
         assert.strictEqual(result.guide?.headSha, repositories.headSha);
         assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+      }),
+    ),
+  );
+
+  it.effect("records the fallback model on a guide the fallback wrote", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const stored = yield* Deferred.make<void>();
+        const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+        const fallback = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        };
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            settings: {
+              reviewGuideModelSelection: primary,
+              textGenerationFallbackModelSelection: fallback,
+            },
+            generate: (input) =>
+              input.modelSelection.instanceId === fallback.instanceId
+                ? Effect.succeed({ stops: [] })
+                : Effect.fail(
+                    new TextGenerationError({
+                      operation: "generateReviewGuide",
+                      detail: "Provider is down.",
+                    }),
+                  ),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const runs = yield* watchRuns;
+        yield* runs.generate(service, reference);
+        const result = yield* runs.settled(service, reference);
+        assert.deepStrictEqual(result.guide?.modelSelection, fallback);
       }),
     ),
   );

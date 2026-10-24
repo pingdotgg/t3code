@@ -117,6 +117,10 @@ const make = Effect.gen(function* () {
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         instructions: settings.threadTitleInstructions,
         modelSelection: settings.textGenerationModelSelection,
+        fallbackModelSelection: ServerSettings.resolveTextGenerationFallbackModelSelection(
+          settings,
+          projection.thread.projectId,
+        ),
       });
       const generatedTitle = result.title.trim();
       return generatedTitle === "New thread" ||

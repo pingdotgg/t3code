@@ -2449,6 +2449,54 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("gives a fallback writer the repository conventions for its own provider", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "AGENTS.md"), "Use imperative subjects.\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "CLAUDE.md"), "Mention the Claude provider.\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
+      const attempts: Array<{ instanceId: string; commitInstructions: string | undefined }> = [];
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          textGenerationModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          textGenerationFallbackModelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-5",
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            attempts.push({
+              instanceId: input.modelSelection.instanceId,
+              commitInstructions: input.policy?.commitInstructions,
+            });
+            return input.modelSelection.instanceId === "codex"
+              ? Effect.fail(
+                  new TextGenerationError({
+                    operation: "generateCommitMessage",
+                    detail: "Provider is down.",
+                  }),
+                )
+              : Effect.succeed({ subject: "Update readme", body: "" });
+          },
+        },
+      });
+
+      yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+
+      expect(attempts.map((attempt) => attempt.instanceId)).toEqual(["codex", "claudeAgent"]);
+      expect(attempts[0]?.commitInstructions).not.toContain("Local CLAUDE.md:");
+      expect(attempts[1]?.commitInstructions).toContain(
+        "Local CLAUDE.md:\nMention the Claude provider.",
+      );
+    }),
+  );
+
   it.effect("falls back when the dedicated source control writer is unavailable", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

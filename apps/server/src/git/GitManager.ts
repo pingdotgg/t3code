@@ -39,6 +39,7 @@ import {
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
   type ThreadId,
+  type TextGenerationError,
   type ThreadPullRequestKey,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
@@ -113,6 +114,7 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
 
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
+  readonly fallbackModelSelection: ModelSelection | null;
   readonly style: SourceControlWritingStyleSettings;
 }
 
@@ -853,6 +855,26 @@ export const make = Effect.gen(function* () {
       }
     }
   });
+  // Repository conventions include CLAUDE.md only for a Claude writer, so a
+  // fallback gets the policy for its own model, not the primary's.
+  const generateWithWriterFallback = <A>(
+    operation: "generateCommitMessage" | "generatePrContent",
+    cwd: string,
+    settings: SourceControlTextGenerationSettings,
+    generate: (
+      policy: Effect.Success<ReturnType<typeof resolveStylePolicy>>,
+      modelSelection: ModelSelection,
+    ) => Effect.Effect<A, TextGenerationError>,
+  ) =>
+    TextGeneration.withModelFallback(
+      operation,
+      settings.modelSelection,
+      settings.fallbackModelSelection,
+      (modelSelection) =>
+        resolveStylePolicy(cwd, { ...settings, modelSelection }).pipe(
+          Effect.flatMap((policy) => generate(policy, modelSelection)),
+        ),
+    );
   const randomUUIDv4 = (cwd: string) =>
     crypto.randomUUIDv4().pipe(
       Effect.mapError(
@@ -2102,19 +2124,21 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const policy = yield* resolveStylePolicy(input.cwd, input.settings);
-
-      const generated = yield* textGeneration
-        .generateCommitMessage({
-          cwd: input.cwd,
-          branch: input.branch,
-          stagedSummary: limitContext(context.stagedSummary, 8_000),
-          stagedPatch: limitContext(context.stagedPatch, 50_000),
-          ...(input.includeBranch ? { includeBranch: true } : {}),
-          ...(policy ? { policy } : {}),
-          modelSelection: input.settings.modelSelection,
-        })
-        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+      const generated = yield* generateWithWriterFallback(
+        "generateCommitMessage",
+        input.cwd,
+        input.settings,
+        (policy, modelSelection) =>
+          textGeneration.generateCommitMessage({
+            cwd: input.cwd,
+            branch: input.branch,
+            stagedSummary: limitContext(context.stagedSummary, 8_000),
+            stagedPatch: limitContext(context.stagedPatch, 50_000),
+            ...(input.includeBranch ? { includeBranch: true } : {}),
+            ...(policy ? { policy } : {}),
+            modelSelection,
+          }),
+      ).pipe(Effect.map((result) => sanitizeCommitMessage(result)));
 
       return {
         subject: generated.subject,
@@ -2295,7 +2319,6 @@ export const make = Effect.gen(function* () {
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings);
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
         ? Option.getOrUndefined(
@@ -2304,18 +2327,24 @@ export const make = Effect.gen(function* () {
         : undefined;
     const threadContext = yield* readThreadContext(threadId);
 
-    const generated = yield* textGeneration.generatePrContent({
+    const generated = yield* generateWithWriterFallback(
+      "generatePrContent",
       cwd,
-      baseBranch,
-      headBranch: headContext.headBranch,
-      commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-      diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-      diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-      ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
-      ...(threadContext ? { threadContext } : {}),
-      ...(policy ? { policy } : {}),
-      modelSelection: settings.modelSelection,
-    });
+      settings,
+      (policy, modelSelection) =>
+        textGeneration.generatePrContent({
+          cwd,
+          baseBranch,
+          headBranch: headContext.headBranch,
+          commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+          diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+          diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+          ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+          ...(threadContext ? { threadContext } : {}),
+          ...(policy ? { policy } : {}),
+          modelSelection,
+        }),
+    );
 
     const bodyFile = path.join(
       tempDir,
@@ -3110,6 +3139,8 @@ export const make = Effect.gen(function* () {
             settings.sourceControlWriterModelSelection === null
               ? Effect.succeed({
                   modelSelection: settings.textGenerationModelSelection,
+                  fallbackModelSelection:
+                    ServerSettings.resolveTextGenerationFallbackModelSelection(settings, projectId),
                   style: settings.sourceControlWritingStyle,
                 })
               : providerRegistry.getProviders.pipe(
@@ -3119,6 +3150,11 @@ export const make = Effect.gen(function* () {
                       providers,
                       projectId,
                     ),
+                    fallbackModelSelection:
+                      ServerSettings.resolveTextGenerationFallbackModelSelection(
+                        settings,
+                        projectId,
+                      ),
                     style: settings.sourceControlWritingStyle,
                   })),
                 ),

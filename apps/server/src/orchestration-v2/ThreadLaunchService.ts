@@ -356,6 +356,10 @@ const make = Effect.gen(function* () {
               attachments: message.attachments,
               ...(message.context ? { context: message.context } : {}),
               modelSelection,
+              fallbackModelSelection: ServerSettings.resolveTextGenerationFallbackModelSelection(
+                settings,
+                input.projectId,
+              ),
             })
             .pipe(
               Effect.map((result) => ({

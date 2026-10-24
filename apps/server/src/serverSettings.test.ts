@@ -799,6 +799,42 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("replaces and clears the text generation fallback model as a whole", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+
+      yield* serverSettings.updateSettings({
+        textGenerationFallbackModelSelection: {
+          instanceId,
+          model: "claude-sonnet-5-5",
+          options: [{ id: "effort", value: "high" }],
+        },
+      });
+      const replaced = yield* serverSettings.updateSettings({
+        textGenerationFallbackModelSelection: { instanceId, model: "claude-haiku-5-5" },
+      });
+
+      assert.deepEqual(replaced.textGenerationFallbackModelSelection, {
+        instanceId,
+        model: "claude-haiku-5-5",
+      });
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.deepEqual(JSON.parse(raw).textGenerationFallbackModelSelection, {
+        instanceId,
+        model: "claude-haiku-5-5",
+      });
+
+      const cleared = yield* serverSettings.updateSettings({
+        textGenerationFallbackModelSelection: null,
+      });
+      assert.isNull(cleared.textGenerationFallbackModelSelection);
+      assert.isNull((yield* serverSettings.getSettings).textGenerationFallbackModelSelection);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("moves customized legacy provider settings into default instances on load", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

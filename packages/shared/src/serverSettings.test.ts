@@ -21,6 +21,7 @@ import {
   resolveSourceControlWriterModelSelection,
   resolveProjectAgentBrowserAccess,
   resolveProjectAutoPull,
+  resolveTextGenerationFallbackModelSelection,
 } from "./serverSettings.ts";
 
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
@@ -309,6 +310,32 @@ describe("serverSettings helpers", () => {
       instanceId: "opencode",
       model: "openai/gpt-5",
     });
+  });
+
+  it("drops the text generation fallback in a project that disabled its provider", () => {
+    const projectId = ProjectId.make("project-1");
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const textGenerationFallbackModelSelection = createModelSelection(
+      instanceId,
+      "claude-haiku-5-5",
+    );
+    const settings = { ...DEFAULT_SERVER_SETTINGS, textGenerationFallbackModelSelection };
+
+    expect(resolveTextGenerationFallbackModelSelection(DEFAULT_SERVER_SETTINGS, null)).toBeNull();
+    expect(resolveTextGenerationFallbackModelSelection(settings, projectId)).toBe(
+      textGenerationFallbackModelSelection,
+    );
+    expect(
+      resolveTextGenerationFallbackModelSelection(
+        {
+          ...settings,
+          projectSettingsOverrides: {
+            [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+          },
+        },
+        projectId,
+      ),
+    ).toBeNull();
   });
 
   it("falls back from a disabled source control writer provider without clearing its selection", () => {

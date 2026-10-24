@@ -8,6 +8,7 @@ import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
   globalIdleCompaction,
+  type ModelSelection,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -517,6 +518,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
     ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+    ...(settings.textGenerationFallbackModelSelection !== null
+      ? ["Text generation fallback model"]
+      : []),
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
       : []),
@@ -629,6 +633,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      textGenerationFallbackModelSelection:
+        DEFAULT_UNIFIED_SETTINGS.textGenerationFallbackModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -861,6 +867,68 @@ export function GeneralSettingsPanel() {
   );
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
+  const mixedTextGenerationFallbackModel = useScopedSettingsMixed([
+    "textGenerationFallbackModelSelection",
+  ]);
+  const usesTextGenerationFallback = settings.textGenerationFallbackModelSelection !== null;
+  // Shown as saved, not resolved to an available provider: the server tries the
+  // saved model, so substituting one here would show a model that never runs.
+  const textGenerationFallbackSelection =
+    settings.textGenerationFallbackModelSelection ?? textGenerationModelSelection;
+  // Every target's saved primary, not the one shown above: the server tries the
+  // saved model even when the picker substitutes a ready provider for it.
+  const textGenerationPrimaries = targets.map(
+    (candidate) => candidate.settings.textGenerationModelSelection,
+  );
+  const isTextGenerationPrimary = (instanceId: ProviderInstanceId, model: string) =>
+    textGenerationPrimaries.some(
+      (primary) => primary.instanceId === instanceId && primary.model === model,
+    );
+  // Turning the fallback on starts from another provider, since a model on a
+  // primary's provider goes down with it.
+  const textGenerationFallbackSeeds = textGenerationProviders
+    .filter(
+      (provider) =>
+        !textGenerationPrimaries.some((primary) => primary.instanceId === provider.instanceId) &&
+        textGenerationModelInstanceEntries.some(
+          (entry) => entry.instanceId === provider.instanceId && entry.enabled && entry.isAvailable,
+        ),
+    )
+    .map((provider) => resolveAppModelSelectionState(settings, [provider]));
+  // Generation never retries the model that just failed, so a primary model
+  // would be a fallback that never runs.
+  const textGenerationFallbackDisabledReason = (instanceId: ProviderInstanceId, model: string) =>
+    isTextGenerationPrimary(instanceId, model)
+      ? "This is already the text generation model."
+      : textGenerationModelDisabledReason(instanceId, model);
+  // For the same reason, a primary that lands on the fallback turns the fallback
+  // off. The clear is written to every target, so it is skipped when another
+  // target keeps a different fallback that still works.
+  const textGenerationModelPatch = (selection: ModelSelection) => {
+    const isSelection = (fallback: ModelSelection | null) =>
+      fallback !== null &&
+      fallback.instanceId === selection.instanceId &&
+      fallback.model === selection.model;
+    const fallbacks = targets.map(
+      (candidate) => candidate.settings.textGenerationFallbackModelSelection,
+    );
+    return {
+      textGenerationModelSelection: selection,
+      ...(fallbacks.some(isSelection) &&
+      fallbacks.every((fallback) => fallback === null || isSelection(fallback))
+        ? { textGenerationFallbackModelSelection: null }
+        : {}),
+    };
+  };
+  const textGenerationFallbackInstanceEntry = textGenerationModelInstanceEntries.find(
+    (entry) => entry.instanceId === textGenerationFallbackSelection.instanceId,
+  );
+  const textGenerationFallbackModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    textGenerationProviders,
+    textGenerationFallbackSelection.instanceId,
+    textGenerationFallbackSelection.model,
+  );
 
   return (
     <SettingsPageContainer>
@@ -1818,10 +1886,9 @@ export function GeneralSettingsPanel() {
               <SettingResetButton
                 label="text generation model"
                 onClick={() =>
-                  updateSettings({
-                    textGenerationModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                  })
+                  updateSettings(
+                    textGenerationModelPatch(DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection),
+                  )
                 }
               />
             ) : null
@@ -1867,15 +1934,17 @@ export function GeneralSettingsPanel() {
                       });
                       return;
                     }
-                    updateSettings({
-                      textGenerationModelSelection: resolveAppModelSelectionState(
-                        {
-                          ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
-                        },
-                        textGenerationProviders,
+                    updateSettings(
+                      textGenerationModelPatch(
+                        resolveAppModelSelectionState(
+                          {
+                            ...settings,
+                            textGenerationModelSelection: createModelSelection(instanceId, model),
+                          },
+                          textGenerationProviders,
+                        ),
                       ),
-                    });
+                    );
                   }}
                 />
                 {textGenInstanceEntry ? (
@@ -1906,6 +1975,124 @@ export function GeneralSettingsPanel() {
                     }}
                   />
                 ) : null}
+              </div>
+            )
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["textGenerationFallbackModelSelection"]}
+          {...searchableSetting("text-generation-fallback-model")}
+          description="Tried once when generated text fails, such as when a provider is down or out of usage. Off means no fallback."
+          control={
+            !hasServerTargets ? (
+              <span className="text-sm text-muted-foreground">
+                Connect an environment to choose its text generation fallback model.
+              </span>
+            ) : (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {usesTextGenerationFallback && !hasTextGenerationProvider ? (
+                  <span className="text-sm text-muted-foreground">
+                    No text generation providers available.
+                  </span>
+                ) : null}
+                {usesTextGenerationFallback && hasTextGenerationProvider ? (
+                  <ProviderModelPicker
+                    environmentId={environmentId}
+                    activeInstanceId={textGenerationFallbackSelection.instanceId}
+                    model={textGenerationFallbackSelection.model}
+                    lockedProvider={null}
+                    instanceEntries={textGenerationModelInstanceEntries}
+                    modelOptionsByInstance={textGenerationFallbackModelOptionsByInstance}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    triggerAriaLabel="Text generation fallback model"
+                    {...(mixedTextGenerationFallbackModel ? { triggerLabel: "Mixed" } : {})}
+                    getModelDisabledReason={textGenerationFallbackDisabledReason}
+                    {...(environmentId
+                      ? {
+                          onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                            void navigate({
+                              to: "/settings/providers",
+                              search: { environmentId, instanceId },
+                            });
+                          },
+                        }
+                      : {})}
+                    onInstanceModelChange={(instanceId, model) => {
+                      const reason = textGenerationFallbackDisabledReason(instanceId, model);
+                      if (reason) {
+                        toastManager.add({
+                          type: "error",
+                          title: "Text generation fallback model not saved",
+                          description: reason,
+                        });
+                        return;
+                      }
+                      updateSettings({
+                        textGenerationFallbackModelSelection: createModelSelection(
+                          instanceId,
+                          model,
+                        ),
+                      });
+                    }}
+                  />
+                ) : null}
+                {usesTextGenerationFallback &&
+                hasTextGenerationProvider &&
+                !mixedTextGenerationFallbackModel &&
+                textGenerationFallbackInstanceEntry ? (
+                  <TraitsPicker
+                    provider={textGenerationFallbackInstanceEntry.driverKind}
+                    models={textGenerationFallbackInstanceEntry.models}
+                    model={textGenerationFallbackSelection.model}
+                    modelOptions={textGenerationFallbackSelection.options ?? []}
+                    allowPromptInjectedEffort={false}
+                    planModeEnabled={
+                      settings.planModeEnabled ||
+                      selectsPlanAgent(textGenerationFallbackSelection.options)
+                    }
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      updateSettings({
+                        textGenerationFallbackModelSelection: createModelSelection(
+                          textGenerationFallbackSelection.instanceId,
+                          textGenerationFallbackSelection.model,
+                          options,
+                        ),
+                      })
+                    }
+                  />
+                ) : null}
+                <ScopedSwitch
+                  settingKeys={["textGenerationFallbackModelSelection"]}
+                  checked={usesTextGenerationFallback}
+                  disabled={!usesTextGenerationFallback && !hasTextGenerationProvider}
+                  onCheckedChange={(checked) => {
+                    if (!checked) {
+                      updateSettings({ textGenerationFallbackModelSelection: null });
+                      return;
+                    }
+                    // The seed is saved to every target in scope, so it must work on all of them.
+                    const seed = textGenerationFallbackSeeds.find(
+                      (selection) =>
+                        textGenerationModelDisabledReason(selection.instanceId, selection.model) ===
+                        null,
+                    );
+                    if (!seed) {
+                      const [firstSeed] = textGenerationFallbackSeeds;
+                      toastManager.add({
+                        type: "error",
+                        title: "Text generation fallback model not saved",
+                        description: firstSeed
+                          ? textGenerationModelDisabledReason(firstSeed.instanceId, firstSeed.model)
+                          : "No other text generation provider is ready to use as a fallback.",
+                      });
+                      return;
+                    }
+                    updateSettings({ textGenerationFallbackModelSelection: seed });
+                  }}
+                  aria-label="Use a text generation fallback model"
+                />
               </div>
             )
           }

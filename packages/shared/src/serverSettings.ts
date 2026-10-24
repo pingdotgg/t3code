@@ -183,6 +183,22 @@ export function resolveReviewGuideModelSelection(
   return resolveSourceControlWriterModelSelection(settings, providers, projectId);
 }
 
+/**
+ * Provider health is not consulted: the fallback only runs after a request
+ * already failed, and attempting it is a fresher availability check than a
+ * cached provider status.
+ */
+export function resolveTextGenerationFallbackModelSelection(
+  settings: ServerSettings,
+  projectId: ProjectId | null,
+): ModelSelection | null {
+  const selection = settings.textGenerationFallbackModelSelection;
+  return selection &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
+    ? selection
+    : null;
+}
+
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
@@ -600,6 +616,9 @@ export function applyServerSettingsPatch(
             usageModelAliasesPatch,
           ),
         }
+      : {}),
+    ...(patch.textGenerationFallbackModelSelection !== undefined
+      ? { textGenerationFallbackModelSelection: patch.textGenerationFallbackModelSelection }
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }

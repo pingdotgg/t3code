@@ -51,7 +51,9 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
               ? "Source control writer model"
               : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
                 ? "Inherit"
-                : "Not set";
+                : key === "textGenerationFallbackModelSelection"
+                  ? "Off"
+                  : "Not set";
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {

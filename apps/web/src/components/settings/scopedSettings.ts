@@ -281,7 +281,8 @@ export function planScopedSettingsPatch(
                   (key === "defaultModelSelection" ||
                     key === "sourceControlWriterModelSelection" ||
                     key === "reviewGuideModelSelection" ||
-                    key === "textGenerationModelSelection") &&
+                    key === "textGenerationModelSelection" ||
+                    key === "textGenerationFallbackModelSelection") &&
                   (value.instanceId !== undefined || value.model !== undefined)
                 ) {
                   next[key] = { instanceId: base.instanceId, model: base.model, ...value };

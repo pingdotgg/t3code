@@ -153,7 +153,9 @@ If its badge is missing because several remotes hold that branch, set the branch
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
-uses the project's instructions and recent commit subjects.
+uses the project's instructions and recent commit subjects. When generation fails with the chosen
+model, for example because its provider is down, T3 Code tries the **Text generation fallback
+model** from **Settings → General** once, if you turned it on.
 
 ## Review and merge
 

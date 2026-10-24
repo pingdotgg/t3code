@@ -548,6 +548,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "text-generation-fallback-model",
+    title: "Text generation fallback model",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["backup secondary failed provider down usage limit thread titles"],
+  },
+  {
     id: "thread-title-instructions",
     title: "Thread title instructions",
     to: "/settings/general",
