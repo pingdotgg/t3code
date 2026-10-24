@@ -8,6 +8,7 @@ const reactTests = [
   "src/native/NativeHeaderToolbar.test.tsx",
   "src/native/useRestingTopOffset.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
+  "src/state/use-selected-thread-git-state.test.tsx",
 ];
 
 export default defineConfig({
