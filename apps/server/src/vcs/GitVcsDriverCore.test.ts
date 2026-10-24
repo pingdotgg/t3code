@@ -3737,7 +3737,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* driver.resolvePrimaryRemoteName(cwd), remoteName);
         yield* driver.fetchRemoteTrackingBranch({ cwd, remoteName, remoteBranch: initialBranch });
         yield* driver.fetchRemote({ cwd, remoteName });
-        const head = yield* driver.fetchRefCommit({ cwd, ref: "refs/pull/7/head" });
+        const head = yield* driver.fetchRefCommit({ cwd, remoteName, ref: "refs/pull/7/head" });
 
         assert.isFalse(yield* fileSystem.exists((yield* Path.Path).join(cwd, "t3-marker")));
         assert.equal(head.commitSha, yield* git(cwd, ["rev-parse", "HEAD"]));

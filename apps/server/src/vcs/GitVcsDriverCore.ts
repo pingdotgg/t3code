@@ -3886,10 +3886,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  // No primary-remote fallback: a change request's number means nothing on another repository.
+  const requireFetchRemote = (operation: string, cwd: string, remoteName: string | null) =>
+    remoteName === null
+      ? Effect.fail(
+          new GitCommandError({
+            ...gitCommandContext({ operation, cwd, args: [] }),
+            detail: "No remote names the pull request's repository.",
+          }),
+        )
+      : Effect.succeed(remoteName);
+
   const fetchRefIntoBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRefIntoBranch"] = Effect.fn(
     "GitVcsDriver.fetchRefIntoBranch",
   )(function* (input) {
-    const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+    const remoteName = yield* requireFetchRemote(
+      "GitVcsDriver.fetchRefIntoBranch",
+      input.cwd,
+      input.remoteName,
+    );
     yield* executeGit(
       "GitVcsDriver.fetchRefIntoBranch",
       input.cwd,
@@ -3922,7 +3937,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRefCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchRefCommit"] = Effect.fn(
     "GitVcsDriver.fetchRefCommit",
   )(function* (input) {
-    const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+    const remoteName = yield* requireFetchRemote(
+      "GitVcsDriver.fetchRefCommit",
+      input.cwd,
+      input.remoteName,
+    );
     // No refspec destination: the ref lands in FETCH_HEAD (per worktree) instead of a branch,
     // which is the only way to read it while that branch is checked out somewhere.
     yield* executeGit(

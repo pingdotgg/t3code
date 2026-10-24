@@ -287,6 +287,101 @@ export function parseRepositoryNameWithOwnerFromRemoteUrl(
   );
 }
 
+function pullRequestBaseRepositoryKey(url: string): string | null {
+  const key = pullRequestRepositoryKey(url);
+  return key === null ? null : sourceControlDefinitions.canonicalRepositoryKey(key);
+}
+
+function pullRequestRepositoryName(url: string, key: string): string {
+  // Preserve the spelling in recognized links when reporting the mismatch.
+  const link = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
+  return link === undefined
+    ? splitRepositoryKey(key).path
+    : new URL(url).pathname.slice(1, link.repository.length + 1);
+}
+
+function splitRepositoryKey(key: string): { readonly host: string; readonly path: string } {
+  const slash = key.indexOf("/");
+  return { host: key.slice(0, slash), path: key.slice(slash + 1) };
+}
+
+function httpPort(url: string): string | null {
+  try {
+    const { protocol, port } = new URL(url);
+    return protocol === "http:" || protocol === "https:" ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+function namesRepository(
+  remoteUrl: string,
+  pullRequestUrl: string,
+  repositoryKey: string,
+): boolean {
+  // HTTP ports distinguish installations; an SSH port says nothing about the web port.
+  const remotePort = httpPort(remoteUrl);
+  if (remotePort !== null && remotePort !== httpPort(pullRequestUrl)) return false;
+  const ssh = isSshRemoteUrl(remoteUrl);
+  const key = sourceControlDefinitions.canonicalRepositoryKey(
+    sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
+  );
+  // GitHub also serves SSH at ssh.github.com:443.
+  const remoteKey = ssh ? key.replace(/^ssh\.github\.com\//u, "github.com/") : key;
+  if (remoteKey === repositoryKey) return true;
+  // Dotless SSH hosts may be aliases whose real hostname is unavailable here.
+  const remote = splitRepositoryKey(remoteKey);
+  return (
+    ssh && !remote.host.includes(".") && remote.path === splitRepositoryKey(repositoryKey).path
+  );
+}
+
+// Any hosted remote can establish a match; absent evidence does not establish a mismatch.
+function pullRequestCheckoutMismatch(
+  remoteUrls: ReadonlyArray<string>,
+  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+): string | null {
+  const baseKey = pullRequestBaseRepositoryKey(pullRequest.url);
+  const hosted = remoteUrls.filter(
+    (url) => parseRepositoryNameWithOwnerFromRemoteUrl(url) !== null,
+  );
+  if (baseKey === null || hosted.length === 0) {
+    return null;
+  }
+  const base = splitRepositoryKey(baseKey);
+  const head = resolveHeadRepositoryNameWithOwner(pullRequest);
+  const holds = (remoteUrl: string) => {
+    // Forgejo HTTP forks retain the installation mount omitted by the head's owner/name.
+    const mount =
+      httpPort(remoteUrl) !== null &&
+      sourceControlDefinitions.parseChangeRequestUrl(pullRequest.url)?.link.authority !== undefined
+        ? base.path.replace(/[^/]+\/[^/]+$/u, "")
+        : "";
+    return (
+      namesRepository(remoteUrl, pullRequest.url, baseKey) ||
+      (head !== null &&
+        namesRepository(remoteUrl, pullRequest.url, `${base.host}/${mount}${head.toLowerCase()}`))
+    );
+  };
+  return hosted.some(holds) ? null : baseKey;
+}
+
+// PR numbers belong to the base repository, even when a fork remote allowed the checkout.
+function pullRequestRefRemote(
+  remotes: ReadonlyMap<string, string>,
+  primaryRemote: string | null,
+  pullRequestUrl: string,
+): string | null {
+  const baseKey = pullRequestBaseRepositoryKey(pullRequestUrl);
+  if (baseKey === null) return primaryRemote;
+  const hosted = [...remotes].filter(
+    ([, url]) => parseRepositoryNameWithOwnerFromRemoteUrl(url) !== null,
+  );
+  const matching = hosted.filter(([, url]) => namesRepository(url, pullRequestUrl, baseKey));
+  const preferred = matching.find(([name]) => name === primaryRemote) ?? matching[0];
+  return preferred?.[0] ?? (hosted.length === 0 ? primaryRemote : null);
+}
+
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
   const trimmed = nameWithOwner?.trim() ?? "";
   if (trimmed.length === 0) {
@@ -985,9 +1080,9 @@ export const make = Effect.gen(function* () {
   });
 
   const fetchChangeRequestHeadIntoBranch = Effect.fn("GitManager.fetchChangeRequestHeadIntoBranch")(
-    function* (cwd: string, number: number, branch: string) {
+    function* (cwd: string, remoteName: string | null, number: number, branch: string) {
       const ref = yield* changeRequestHeadRef(cwd, number);
-      yield* gitCore.fetchRefIntoBranch({ cwd, ref, branch });
+      yield* gitCore.fetchRefIntoBranch({ cwd, remoteName, ref, branch });
     },
   );
 
@@ -995,12 +1090,18 @@ export const make = Effect.gen(function* () {
     function* (
       cwd: string,
       pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+      pullRequestRemote: string | null,
       localBranch = pullRequest.headBranch,
     ) {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
       if (repositoryNameWithOwner.length === 0) {
-        yield* fetchChangeRequestHeadIntoBranch(cwd, pullRequest.number, localBranch).pipe(
+        yield* fetchChangeRequestHeadIntoBranch(
+          cwd,
+          pullRequestRemote,
+          pullRequest.number,
+          localBranch,
+        ).pipe(
           // Without the host's head ref, a head in the same repository is a branch on the
           // primary remote, so it is fetched by name instead, but only when that remote is the
           // pull request's own repository: a host can find a change request by number outside
@@ -1069,11 +1170,17 @@ export const make = Effect.gen(function* () {
   const materializePullRequestHeadBranch = (
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    pullRequestRemote: string | null,
     localBranch = pullRequest.headBranch,
   ) =>
-    materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch).pipe(
+    materializePullRequestHeadBranchBase(cwd, pullRequest, pullRequestRemote, localBranch).pipe(
       Effect.catch((primaryCause) =>
-        fetchChangeRequestHeadIntoBranch(cwd, pullRequest.number, localBranch).pipe(
+        fetchChangeRequestHeadIntoBranch(
+          cwd,
+          pullRequestRemote,
+          pullRequest.number,
+          localBranch,
+        ).pipe(
           Effect.mapError(
             (fallbackCause) =>
               new GitPullRequestMaterializationError({
@@ -2720,6 +2827,24 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // Fetch uses the first configured URL, before insteadOf rewrites. Empty entries changed
+  // behavior in Git 2.46, so a remote containing any empty URL supplies no evidence.
+  const readCheckoutRemoteUrls = Effect.fn("readCheckoutRemoteUrls")(function* (cwd: string) {
+    const { stdout } = yield* gitCore.execute({
+      operation: "GitManager.readCheckoutRemoteUrls",
+      cwd,
+      args: ["config", "--get-regexp", "^remote\\..+\\.url$"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    });
+    const urls = new Map<string, string>();
+    for (const line of stdout.split("\n")) {
+      const [, name = "", url = ""] = /^remote\.(.+?)\.url(?:\s+(.*))?$/.exec(line.trim()) ?? [];
+      if (name.length > 0 && (url.length === 0 || !urls.has(name))) urls.set(name, url);
+    }
+    return urls;
+  });
+
   // Some hosts only switch branches on checkout; use the existing lossless refresh to advance them.
   const moveToPullRequestHead = (cwd: string, headSha: string | undefined) =>
     headSha === undefined || !/^[0-9a-f]{7,64}$/i.test(headSha)
@@ -2763,6 +2888,23 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
+      const pullRequestWithRemoteInfo = {
+        ...pullRequest,
+        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+      } as const;
+      // Hosting reads can borrow another project's credentials; they do not verify this checkout.
+      const remotes = yield* readCheckoutRemoteUrls(input.cwd);
+      const mismatch = pullRequestCheckoutMismatch(
+        [...remotes.values()],
+        pullRequestWithRemoteInfo,
+      );
+      if (mismatch !== null) {
+        return yield* new GitManagerError({
+          operation: "preparePullRequestThread",
+          cwd: input.cwd,
+          detail: `This project is not a checkout of ${pullRequestRepositoryName(pullRequest.url, mismatch)}. Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name.`,
+        });
+      }
 
       if (input.mode === "local") {
         yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
@@ -2772,14 +2914,7 @@ export const make = Effect.gen(function* () {
         });
         const details = yield* gitCore.statusDetails(input.cwd);
         const branch = details.branch ?? pullRequest.headBranch;
-        yield* configurePullRequestHeadUpstream(
-          input.cwd,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
-          branch,
-        );
+        yield* configurePullRequestHeadUpstream(input.cwd, pullRequestWithRemoteInfo, branch);
         return {
           pullRequest,
           branch,
@@ -2794,20 +2929,18 @@ export const make = Effect.gen(function* () {
         const details = yield* gitCore.statusDetails(worktreePath);
         yield* configurePullRequestHeadUpstream(
           worktreePath,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
+          pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
         );
       });
 
-      const pullRequestWithRemoteInfo = {
-        ...pullRequest,
-        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-      } as const;
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
+      const pullRequestRemote = pullRequestRefRemote(
+        remotes,
+        yield* gitCore.resolvePrimaryRemoteName(input.cwd).pipe(Effect.orElseSucceed(() => null)),
+        pullRequest.url,
+      );
 
       // Git refuses to move a branch that is checked out in a worktree, so the
       // reuse paths cannot go through materializePullRequestHeadBranch and instead
@@ -2845,7 +2978,9 @@ export const make = Effect.gen(function* () {
         // from `origin/main` whose head branch has since been deleted still resolves — and
         // following it would move the checkout onto main and call that the pull request.
         const refreshed = yield* changeRequestHeadRef(worktreePath, pullRequest.number).pipe(
-          Effect.flatMap((ref) => gitCore.fetchRefCommit({ cwd: worktreePath, ref })),
+          Effect.flatMap((ref) =>
+            gitCore.fetchRefCommit({ cwd: worktreePath, remoteName: pullRequestRemote, ref }),
+          ),
           // A host that publishes no head ref leaves the remote-tracking branch,
           // taken only where it is the head branch's own rather than whatever the checkout
           // happened to be cut from.
@@ -2960,6 +3095,7 @@ export const make = Effect.gen(function* () {
       yield* materializePullRequestHeadBranch(
         input.cwd,
         pullRequestWithRemoteInfo,
+        pullRequestRemote,
         localPullRequestBranch,
       );
 
