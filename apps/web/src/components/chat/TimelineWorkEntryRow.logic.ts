@@ -164,6 +164,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
         return "zap";
     }
   }
+  if (workEntry.itemType === "system_notice") return "zap";
   if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
     return "message-circle";
   }

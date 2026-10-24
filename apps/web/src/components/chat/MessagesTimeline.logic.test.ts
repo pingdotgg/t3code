@@ -34,6 +34,7 @@ import {
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
+import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 
 describe("computeMessageDurationStart", () => {
   it("uses the previous completed assistant updatedAt for subsequent assistant responses", () => {
@@ -456,6 +457,44 @@ describe("deriveMessagesTimelineRows", () => {
       expect(row).toMatchObject({ kind: "work", groupedEntries: [notice.entry] });
     },
   );
+
+  it("renders info notices without warning styling", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const message = "TPS 227.1 tok/s · TTFT 3.4s";
+    const id = TurnItemId.make("info-notice");
+    const [notice] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          ...fixture.visibleTurnItems[0]!,
+          sourceItemId: id,
+          item: {
+            id,
+            threadId: fixture.threadId,
+            runId: fixture.runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            startedAt: DateTime.makeUnsafe(fixture.time(1)),
+            completedAt: DateTime.makeUnsafe(fixture.time(1)),
+            updatedAt: DateTime.makeUnsafe(fixture.time(1)),
+            type: "system_notice",
+            message,
+            level: "info",
+            title: message,
+            status: "completed",
+          },
+        },
+      ],
+      optimisticMessages: [],
+    });
+    if (notice?.kind !== "work") throw new Error("Expected a notice work entry");
+    expect(notice.entry.sourceActivityKind).toBeUndefined();
+    expect(workEntryIconName(notice.entry)).toBe("zap");
+    expect(workEntryDisplayLabel(notice.entry, undefined)).toBe(message);
+  });
 
   it("gives live compaction the activity slot and restores Thinking when it completes", () => {
     const fixture = makeStreamingTimelineFixture();
