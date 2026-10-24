@@ -3140,6 +3140,34 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("keeps an input dialog's title as the header above its placeholder", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-input-placeholder",
+        method: "input",
+        title: "Name",
+        placeholder: "Your name",
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      assert.equal(event.turnItem.questions[0]?.header, "Name");
+      assert.equal(event.turnItem.questions[0]?.question, "Your name");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("emits a valid empty select option and returns its original value", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -3171,6 +3199,8 @@ describe("PiAdapterV2", () => {
           ["Empty value", ""],
         ],
       );
+      assert.equal(questions[0]?.header, "Question");
+      assert.equal(questions[0]?.question, "Pick a tag");
       yield* runtime.respondToRuntimeRequest({
         requestId: event.turnItem.requestId,
         answers: { "ui-select": "" },
@@ -3205,6 +3235,7 @@ describe("PiAdapterV2", () => {
       if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
         return assert.fail("expected a user input request");
       }
+      assert.equal(decodeUserInputQuestions(event.turnItem.questions)[0]?.header, "Question");
       assert.equal(decodeUserInputQuestions(event.turnItem.questions)[0]?.question, title);
       yield* runtime.respondToRuntimeRequest({
         requestId: event.turnItem.requestId,
@@ -3240,6 +3271,7 @@ describe("PiAdapterV2", () => {
         return;
       assert.equal(event.turnItem.questions[0]?.initialAnswer, prefill);
       assert.deepEqual(event.turnItem.questions[0]?.options, []);
+      assert.equal(event.turnItem.questions[0]?.header, "Question");
       assert.equal(event.turnItem.questions[0]?.question, "Commit message");
       const edited = "  fix(server): edited commit message\n\n";
       yield* runtime.respondToRuntimeRequest({
