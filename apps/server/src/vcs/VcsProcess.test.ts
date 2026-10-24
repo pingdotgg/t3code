@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
@@ -254,6 +255,106 @@ describe("VcsProcess.run", () => {
             _tag: "Some",
             value: { _tag: "VcsProcessExitError", exitCode: 128 },
           });
+        }
+      }),
+  );
+
+  it.effect.each(
+    [
+      {
+        name: "recovers after two lock failures",
+        failures: 2,
+        attempts: 3,
+        transient: true,
+        capture: true,
+        streaming: false,
+      },
+      {
+        name: "bounds persistent lock failures",
+        failures: Infinity,
+        attempts: 3,
+        transient: true,
+        capture: true,
+        streaming: false,
+      },
+      {
+        name: "does not retry unknown exits",
+        failures: Infinity,
+        attempts: 1,
+        transient: false,
+        capture: true,
+        streaming: false,
+      },
+      {
+        name: "leaves other operations unchanged",
+        failures: Infinity,
+        attempts: 1,
+        transient: true,
+        capture: false,
+        streaming: false,
+      },
+      {
+        name: "does not replay stdout callbacks",
+        failures: Infinity,
+        attempts: 1,
+        transient: true,
+        capture: true,
+        streaming: true,
+      },
+    ].flatMap((testCase) =>
+      (testCase.capture
+        ? ["JjVcsDriver.checkpoints.captureCheckpoint"]
+        : [baseInput.operation]
+      ).map((operation) => ({ ...testCase, operation })),
+    ),
+  )(
+    "checkpoint command retry $name ($operation)",
+    ({ failures, attempts: expectedAttempts, transient, operation, streaming }) =>
+      Effect.gen(function* () {
+        let attempts = 0;
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.sync(() => {
+                attempts += 1;
+                return {
+                  stdout: "",
+                  stderr:
+                    attempts > failures
+                      ? ""
+                      : transient
+                        ? "fatal: Unable to create '/repo/index.lock': File exists"
+                        : "fatal: index file corrupt",
+                  code: ChildProcessSpawner.ExitCode(attempts > failures ? 0 : attempts),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        );
+        const fiber = yield* service
+          .run({
+            ...baseInput,
+            operation,
+            ...(streaming ? { onStdoutChunk: () => {} } : {}),
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* TestClock.adjust("150 millis");
+        const result = yield* Fiber.join(fiber);
+        expect(attempts).toBe(expectedAttempts);
+        if (failures === Infinity) {
+          if (Exit.isSuccess(result))
+            return yield* Effect.die("Expected a capture command failure");
+          const error = Cause.findErrorOption(result.cause);
+          if (error._tag === "None" || error.value._tag !== "VcsProcessExitError") {
+            return yield* Effect.die("Expected a Git exit error");
+          }
+          expect(error.value.exitCode).toBe(expectedAttempts);
+        } else {
+          expect(Exit.isSuccess(result)).toBe(true);
         }
       }),
   );
