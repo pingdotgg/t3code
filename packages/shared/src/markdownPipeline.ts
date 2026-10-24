@@ -64,6 +64,70 @@ const STANDALONE_IMAGE_BLOCKS = new Set([
   "blockquote",
 ]);
 
+type MemoryCitationMarkdownNode = {
+  type?: string;
+  value?: string;
+  children?: MemoryCitationMarkdownNode[];
+  position?: {
+    start: { offset?: number };
+    end: { offset?: number };
+  };
+};
+
+const MEMORY_CITATION = /cite([^]+)/g;
+
+function memoryCitationLabel(reference: string): string {
+  const match = /^(.*?\.md):(\d+)(?:-(\d+))?$/i.exec(reference.trim());
+  if (!match) return "Source: " + reference.trim();
+  const [, file, firstLine, lastLine] = match;
+  const isRange = lastLine !== undefined && lastLine !== firstLine;
+  return file + " · line" + (isRange ? "s " : " ") + firstLine + (isRange ? "–" + lastLine : "");
+}
+
+function remarkMemoryCitations() {
+  return (tree: MemoryCitationMarkdownNode) => {
+    const visit = (node: MemoryCitationMarkdownNode) => {
+      if (!node.children) return;
+      node.children = node.children.flatMap((child) => {
+        if (child.type !== "text" || typeof child.value !== "string") {
+          visit(child);
+          return [child];
+        }
+        const matches = [...child.value.matchAll(MEMORY_CITATION)];
+        if (matches.length === 0) return [child];
+        const originalValue = child.value;
+        const replacements: MemoryCitationMarkdownNode[] = [];
+        let cursor = 0;
+        const append = (type: "text" | "inlineCode", value: string, start: number, end: number) => {
+          replacements.push({
+            type,
+            value,
+            ...(child.position?.start.offset === undefined
+              ? {}
+              : {
+                  position: {
+                    start: { offset: child.position.start.offset + start },
+                    end: { offset: child.position.start.offset + end },
+                  },
+                }),
+          });
+        };
+        for (const match of matches) {
+          const index = match.index ?? cursor;
+          if (index > cursor) append("text", originalValue.slice(cursor, index), cursor, index);
+          append("inlineCode", memoryCitationLabel(match[1] ?? ""), index, index + match[0].length);
+          cursor = index + match[0].length;
+        }
+        if (cursor < originalValue.length) {
+          append("text", originalValue.slice(cursor), cursor, originalValue.length);
+        }
+        return replacements;
+      });
+    };
+    visit(tree);
+  };
+}
+
 function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
   const children = meaningfulHastChildren(node);
   if (children.length !== 1) return undefined;
@@ -258,6 +322,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
+  remarkMemoryCitations,
   remarkBreakAroundImageLines,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
@@ -275,6 +340,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
+  remarkMemoryCitations,
   remarkBreakAroundImageLines,
   remarkBreaks,
   remarkPreserveCodeMeta,

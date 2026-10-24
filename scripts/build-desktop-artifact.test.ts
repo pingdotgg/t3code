@@ -43,6 +43,7 @@ import {
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
+  pinStageDependenciesToPatchedVersions,
   resolveBuildOptions,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
@@ -1874,6 +1875,28 @@ it("keeps the prefix of a UNC path instead of going relative", () => {
     assert.ok(candidate.startsWith("\\\\server\\share"), candidate);
   }
   assert.deepStrictEqual(paths[0], "\\\\server\\share\\tmp\\node_modules");
+});
+
+it("pins staged dependency specs to their patched package versions", () => {
+  assert.deepStrictEqual(
+    pinStageDependenciesToPatchedVersions(
+      {
+        "node-pty": "^1.2.0-beta.15",
+        "@expo/fingerprint": "^0.21.2",
+        untouched: "^1.0.0",
+      },
+      {
+        "node-pty@1.2.0-beta.15": "patches/node-pty.patch",
+        "@expo/fingerprint@0.21.5": "patches/fingerprint.patch",
+        "missing@1.0.0": "patches/missing.patch",
+      },
+    ),
+    {
+      "node-pty": "1.2.0-beta.15",
+      "@expo/fingerprint": "0.21.5",
+      untouched: "^1.0.0",
+    },
+  );
 });
 
 it.effect.skipIf(!symlinksSupported)("rebases packaged links into the isolated tree", () =>
