@@ -47,7 +47,7 @@ vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
   useQuietThreadShell: ((ref: { threadId: string } | null) =>
     ref === null || state.shell === null ? null : { ...state.shell, id: ref.threadId }) as never,
-  useThreadProjection: ((ref: unknown) =>
+  useQuietThreadProjection: ((ref: unknown) =>
     ref === null || state.detail === null
       ? null
       : { projection: { thread: state.detail } }) as never,

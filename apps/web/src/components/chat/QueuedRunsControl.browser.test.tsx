@@ -1,11 +1,15 @@
+import { RegistryContext } from "@effect/atom-react";
+import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
-import type { ComponentProps } from "react";
+import * as Option from "effect/Option";
+import { AsyncResult, type Atom, AtomRegistry } from "effect/reactivity";
+import { Profiler, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
-  projection: null as unknown,
+  threadState: null as unknown as Atom.Writable<AsyncResult.AsyncResult<EnvironmentThreadState>>,
   workflow: null as unknown,
 }));
 
@@ -14,10 +18,24 @@ vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importO
   deriveThreadQueueWorkflowState: (() => state.workflow) as never,
 }));
 
-vi.mock(import("../../state/entities"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useThreadProjection: (() => state.projection) as never,
-}));
+// The thread detail atoms are real, fed by one state atom the test writes.
+vi.mock(import("../../state/threads"), async (importOriginal) => {
+  const { createEnvironmentThreadDetailAtoms, EMPTY_ENVIRONMENT_THREAD_STATE } =
+    await import("@t3tools/client-runtime/state/threads");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  const { makeThreadProjectionFixture } = await import("../../test-fixtures");
+  state.threadState = Atom.make<AsyncResult.AsyncResult<EnvironmentThreadState>>(
+    AsyncResult.success({
+      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+      data: Option.some(makeThreadProjectionFixture()),
+    }),
+  ).pipe(Atom.keepAlive);
+  return {
+    ...(await importOriginal()),
+    environmentThreadDetails: createEnvironmentThreadDetailAtoms(() => state.threadState),
+  };
+});
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -30,11 +48,13 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
     resources.map((resource) => `https://assets.test/${resource.attachmentId}`)) as never,
 }));
 
-import { render as renderUi } from "../../../test/render";
+import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
+
+import { act, render as renderUi } from "../../../test/render";
+import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../../test-fixtures";
 import { QueuedRunsControl } from "./QueuedRunsControl";
 
 function setup() {
-  state.projection = null;
   state.workflow = null;
 }
 
@@ -66,7 +86,6 @@ it("previews assistant quotes as readable text and preserves the citation when e
     suffix: "",
   });
   const quoteAndText = `${quote}\n\nWhy per worktree?`;
-  state.projection = { projection: { messages: [] } };
   state.workflow = {
     activeRun: { id: "run:active" },
     canPromoteToSteer: true,
@@ -96,4 +115,64 @@ it("previews assistant quotes as readable text and preserves the citation when e
   expect(onEditQueuedRun).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ text: quoteAndText }),
   );
+});
+
+it("does not re-render while assistant text streams into the thread", async () => {
+  setup();
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    canReorder: true,
+    queuedRuns: [
+      {
+        run: { id: "run:queued", userMessageId: "message:queued" },
+        text: "Run the tests next",
+        attachments: [],
+      },
+    ],
+  };
+  const base = makeThreadProjectionFixture();
+  // Each delta replaces only the streaming reply; every other item keeps its identity.
+  const timeline = makeStreamingTimelineFixture().visibleTurnItems;
+  const thread = (text: string, done = false) => {
+    const items = timeline.map((entry) =>
+      entry.item.type === "assistant_message" && entry.item.streaming
+        ? {
+            ...entry,
+            item: done
+              ? { ...entry.item, text, streaming: false, status: "completed" as const }
+              : { ...entry.item, text },
+          }
+        : entry,
+    );
+    return AsyncResult.success<EnvironmentThreadState>({
+      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+      data: Option.some({
+        ...base,
+        turnItems: items.map(({ item }) => item),
+        visibleTurnItems: items,
+      }),
+    });
+  };
+  const registry = AtomRegistry.make();
+  await using stack = new AsyncDisposableStack();
+  stack.defer(() => registry.dispose());
+  registry.set(state.threadState, thread("Hel"));
+  let renders = 0;
+  await using _screen = await renderUi(
+    <RegistryContext.Provider value={registry}>
+      <Profiler id="queue" onRender={() => (renders += 1)}>
+        <QueuedRunsControl {...baseProps} />
+      </Profiler>
+    </RegistryContext.Provider>,
+  );
+  await expect.element(page.getByText("Run the tests next", { exact: true })).toBeVisible();
+  const settled = renders;
+
+  await act(() => registry.set(state.threadState, thread("Hello")));
+  await act(() => registry.set(state.threadState, thread("Hello there")));
+  expect(renders).toBe(settled);
+
+  await act(() => registry.set(state.threadState, thread("Hello there", true)));
+  expect(renders).toBeGreaterThan(settled);
 });
