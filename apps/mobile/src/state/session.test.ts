@@ -20,7 +20,8 @@ vi.mock("@effect/atom-react", async () => {
   };
 });
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
-vi.mock("@t3tools/client-runtime/state/session", () => ({
+vi.mock("@t3tools/client-runtime/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/session")>()),
   createEnvironmentSessionAtoms: () => ({
     sessionStateAtom: Atom.family((_id: EnvironmentId) =>
       Atom.make(AsyncResult.initial<AuthSessionState, Error>()).pipe(Atom.keepAlive),

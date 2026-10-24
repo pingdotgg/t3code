@@ -24,14 +24,16 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
+import { RemoteEnvironmentAuthFetchError, RemoteEnvironmentAuthTimeoutError } from "../rpc/http.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 
-vi.mock("./session.ts", () => ({
+vi.mock("./session.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./session.ts")>()),
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
 }));
 const sessions = Atom.family((_id: EnvironmentId) =>
-  Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(AsyncResult.initial()),
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState, unknown>>(AsyncResult.initial()),
 );
 const env = EnvironmentId.make("target");
 const other = EnvironmentId.make("other");
@@ -162,6 +164,45 @@ describe("command permissions", () => {
           yield* permissions.authorize(registry, env);
         }),
       ),
+  );
+  it.effect("keeps a cached grant while a session recheck times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(
+          sessions(env),
+          AsyncResult.failure(
+            Cause.fail(new RemoteEnvironmentAuthTimeoutError("http://env/api/auth/session", 6_000)),
+            { previousSuccess: Option.some(AsyncResult.success(grant(true))) },
+          ),
+        );
+        expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+        yield* permissions.authorize(registry, env);
+      }),
+    ),
+  );
+  it.effect("drops a cached grant when the environment rejects the session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(
+          sessions(env),
+          AsyncResult.failure(
+            Cause.fail(
+              new RemoteEnvironmentAuthFetchError({
+                message: "The environment rejected the renewed session authorization.",
+                cause: { ...grant(true), authenticated: false },
+              }),
+            ),
+            { previousSuccess: Option.some(AsyncResult.success(grant(true))) },
+          ),
+        );
+        expect(registry.get(permissions.permissionAtom(env))).toBe(false);
+        expect((yield* permissions.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
   );
   it("rechecks permission after waiting in a serial command lane", async () => {
     const registry = AtomRegistry.make();
