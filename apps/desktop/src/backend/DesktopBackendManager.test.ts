@@ -24,6 +24,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import { makeFakeBackendProcess } from "./testUtils/FakeBackendProcess.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
@@ -373,7 +374,7 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("starts the configured backend and closes the scoped process on stop", () =>
+  it.effect("stops the scoped process with output still pending", () =>
     Effect.scoped(
       Effect.gen(function* () {
         let startCount = 0;
@@ -410,6 +411,7 @@ describe("DesktopBackendManager", () => {
               yield* Scope.addFinalizer(scope, close);
 
               return makeProcess({
+                stdout: Stream.never,
                 exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
                 kill: () => close,
               });
@@ -476,6 +478,94 @@ describe("DesktopBackendManager", () => {
         assert.equal(stoppedSnapshot.desiredRunning, false);
         assert.equal(stoppedSnapshot.ready, false);
         assert.equal(Option.isNone(stoppedSnapshot.activePid), true);
+      }),
+    ),
+  );
+
+  it.effect(
+    "stop with the five-second quit timeout waits for a SIGTERM-ignoring backend to be gone",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const backend = yield* makeFakeBackendProcess(false);
+          const ready = yield* Deferred.make<void>();
+          const instance = yield* makeTestInstance({
+            spawnerLayer: backend.layer,
+            onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+          });
+          yield* instance.start;
+          yield* backend.started;
+          yield* Deferred.await(ready);
+
+          const stopFiber = yield* instance
+            .stop({ timeout: Duration.seconds(5) })
+            .pipe(Effect.forkChild);
+          assert.equal(yield* Queue.take(backend.signals), "SIGTERM");
+          yield* TestClock.adjust(Duration.seconds(5));
+          assert.equal(yield* Queue.take(backend.signals), "SIGKILL");
+          const completedBeforeExit = yield* Effect.sync(() => stopFiber.pollUnsafe());
+          const runningBeforeExit = yield* backend.isRunning;
+          yield* TestClock.adjust(backend.killWait);
+          yield* Fiber.join(stopFiber);
+
+          assert.isTrue(
+            completedBeforeExit === undefined,
+            "stop resolved before the backend exited",
+          );
+          assert.isTrue(runningBeforeExit);
+          assert.isFalse(yield* backend.isRunning);
+          assert.deepEqual(backend.receivedSignals, ["SIGTERM", "SIGKILL"]);
+          assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
+          yield* instance.stop();
+          assert.deepEqual(backend.receivedSignals, ["SIGTERM", "SIGKILL"]);
+        }),
+      ),
+  );
+
+  it.effect("the shared quit budget is strictly greater than terminate grace plus kill wait", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const backend = yield* makeFakeBackendProcess(true);
+        const instance = yield* makeTestInstance({ spawnerLayer: backend.layer });
+        yield* instance.start;
+        yield* backend.started;
+        const terminateGrace = yield* backend.terminateGrace;
+        yield* instance.stop();
+
+        assert.isAbove(
+          Duration.toMillis(DesktopBackendManager.BACKEND_QUIT_TIMEOUT),
+          Duration.toMillis(terminateGrace) + Duration.toMillis(backend.killWait),
+        );
+      }),
+    ),
+  );
+
+  it.effect("a cooperative backend stops on SIGTERM without SIGKILL", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const backend = yield* makeFakeBackendProcess(true);
+        const ready = yield* Deferred.make<void>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: backend.layer,
+          onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+        });
+        yield* instance.start;
+        yield* backend.started;
+        yield* Deferred.await(ready);
+
+        yield* instance.stop({ timeout: Duration.seconds(5) });
+
+        assert.isFalse(yield* backend.isRunning);
+        assert.deepEqual(backend.receivedSignals, ["SIGTERM"]);
+        assert.deepEqual(yield* instance.snapshot, {
+          desiredRunning: false,
+          ready: false,
+          activePid: Option.none(),
+          restartAttempt: 0,
+          restartScheduled: false,
+        });
+        yield* instance.stop();
+        assert.deepEqual(backend.receivedSignals, ["SIGTERM"]);
       }),
     ),
   );
