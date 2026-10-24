@@ -46,6 +46,8 @@ import {
   makePiAdapterV2,
   PiAdapterV2Driver,
   PI_PROVIDER,
+  PiProviderCapabilitiesV2,
+  piTodoSteps,
   type PiAdapterV2Options,
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
@@ -2403,6 +2405,271 @@ describe("PiAdapterV2", () => {
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
+
+  it.effect("advertises emitsTodoList and emitsPlanUpdated in planning capabilities", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      assert.isTrue(runtime.providerSession.capabilities.planning.emitsTodoList);
+      assert.isTrue(runtime.providerSession.capabilities.planning.emitsPlanUpdated);
+      assert.isTrue(PiProviderCapabilitiesV2.planning.emitsTodoList);
+      assert.isTrue(PiProviderCapabilitiesV2.planning.emitsPlanUpdated);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("persists a todo_list from Pi todo tool calls and updates the plan", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+
+      // Start phase: agent calls todo with initial tasks
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_todo_1",
+        toolName: "todo",
+        args: {
+          action: "create",
+          todos: [{ content: "Task 1" }, { content: "Task 2" }],
+        },
+      });
+
+      const startNode = yield* takeEvent(
+        (event) => event.type === "node.updated" && event.node.kind === "todo_list",
+      );
+      assert.isTrue(startNode.type === "node.updated" && startNode.node.status === "running");
+
+      const startItem = yield* takeEvent(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "todo_list",
+      );
+      assert.isTrue(
+        startItem.type === "turn_item.updated" &&
+          startItem.turnItem.type === "todo_list" &&
+          startItem.turnItem.status === "running" &&
+          startItem.turnItem.steps.length === 2,
+      );
+
+      // End phase: tool completes with rpiv-todo details.tasks
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_todo_1",
+        toolName: "todo",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Created 2 tasks" }],
+          details: {
+            action: "create",
+            tasks: [
+              { id: 1, subject: "Task 1", status: "in_progress" },
+              { id: 2, subject: "Task 2", status: "pending" },
+              { id: 3, subject: "Cancelled task", status: "deleted" },
+            ],
+          },
+        },
+      });
+
+      const endNode = yield* takeEvent(
+        (event) =>
+          event.type === "node.updated" &&
+          event.node.kind === "todo_list" &&
+          event.node.status === "completed",
+      );
+      assert.isTrue(endNode.type === "node.updated" && endNode.node.completedAt !== null);
+
+      const endPlan = yield* takeEvent(
+        (event) =>
+          event.type === "plan.updated" &&
+          event.plan.kind === "todo_list" &&
+          event.plan.status === "active",
+      );
+      if (endPlan.type !== "plan.updated" || endPlan.plan.kind !== "todo_list") {
+        return assert.fail("expected plan.updated with todo_list");
+      }
+      assert.equal(endPlan.plan.steps.length, 2);
+      assert.deepEqual(
+        endPlan.plan.steps.map((s) => ({ id: s.id, text: s.text, status: s.status })),
+        [
+          { id: "1", text: "Task 1", status: "running" },
+          { id: "2", text: "Task 2", status: "pending" },
+        ],
+      );
+
+      const endItem = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "todo_list" &&
+          event.turnItem.status === "completed",
+      );
+      if (endItem.type !== "turn_item.updated" || endItem.turnItem.type !== "todo_list") {
+        return assert.fail("expected turn_item.updated");
+      }
+      assert.equal(endItem.turnItem.steps.length, 2);
+      assert.equal(endItem.turnItem.planId, endPlan.plan.id);
+
+      // Second tool call start: intermediate update call does not clobber the authoritative plan
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_todo_2",
+        toolName: "todo",
+        args: { action: "update", id: 2, status: "completed" },
+      });
+
+      const updateStartItem = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "todo_list" &&
+          event.turnItem.status === "running",
+      );
+      if (
+        updateStartItem.type !== "turn_item.updated" ||
+        updateStartItem.turnItem.type !== "todo_list"
+      ) {
+        return assert.fail("expected turn_item.updated on update start");
+      }
+      // Retains the previous steps rather than falling back to zero steps
+      assert.equal(updateStartItem.turnItem.steps.length, 2);
+
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_todo_2",
+        toolName: "todo",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Updated task" }],
+          details: {
+            action: "update",
+            tasks: [
+              { id: 1, subject: "Task 1", status: "completed" },
+              { id: 2, subject: "Task 2", status: "completed" },
+            ],
+          },
+        },
+      });
+
+      const completedPlan = yield* takeEvent(
+        (event) =>
+          event.type === "plan.updated" &&
+          event.plan.kind === "todo_list" &&
+          event.plan.status === "completed",
+      );
+      if (completedPlan.type !== "plan.updated" || completedPlan.plan.kind !== "todo_list") {
+        return assert.fail("expected plan.updated with completed todo_list");
+      }
+      assert.equal(completedPlan.plan.id, endPlan.plan.id);
+      assert.isTrue(completedPlan.plan.steps.every((s) => s.status === "completed"));
+
+      // Third tool call: removal resulting in an empty task list clears cached steps and publishes empty plan
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_todo_3",
+        toolName: "todo",
+        args: { action: "clear" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_todo_3",
+        toolName: "todo",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Cleared tasks" }],
+          details: { action: "clear", tasks: [] },
+        },
+      });
+
+      const emptyPlan = yield* takeEvent(
+        (event) =>
+          event.type === "plan.updated" &&
+          event.plan.kind === "todo_list" &&
+          event.plan.steps.length === 0,
+      );
+      if (emptyPlan.type !== "plan.updated" || emptyPlan.plan.kind !== "todo_list") {
+        return assert.fail("expected plan.updated with empty steps");
+      }
+      assert.equal(emptyPlan.plan.id, endPlan.plan.id);
+      assert.equal(emptyPlan.plan.steps.length, 0);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it("piTodoSteps extracts steps from various payloads", () => {
+    // 1. details.tasks (rpiv-todo)
+    const fromDetails = piTodoSteps(
+      {},
+      {
+        details: {
+          tasks: [
+            { id: 1, subject: "Alpha", status: "pending" },
+            { id: 2, subject: "Beta", status: "in_progress" },
+            { id: 3, subject: "Gamma", status: "completed" },
+            { id: 4, subject: "Delta", status: "deleted" },
+          ],
+        },
+      },
+    );
+    assert.deepEqual(fromDetails, [
+      { id: "1", text: "Alpha", status: "pending" },
+      { id: "2", text: "Beta", status: "running" },
+      { id: "3", text: "Gamma", status: "completed" },
+    ]);
+
+    // 2. structuredContent.todos
+    const fromStructured = piTodoSteps(
+      {},
+      {
+        structuredContent: {
+          todos: [
+            { content: "One", status: "pending" },
+            { content: "Two", status: "completed" },
+          ],
+        },
+      },
+    );
+    assert.deepEqual(fromStructured, [
+      { id: "todo-1", text: "One", status: "pending" },
+      { id: "todo-2", text: "Two", status: "completed" },
+    ]);
+
+    // 3. args.todos
+    const fromArgsTodos = piTodoSteps(
+      {
+        todos: [
+          { content: "Step 1", status: "in_progress" },
+          { content: "Step 2", status: "pending" },
+        ],
+      },
+      {},
+    );
+    assert.deepEqual(fromArgsTodos, [
+      { id: "todo-1", text: "Step 1", status: "running" },
+      { id: "todo-2", text: "Step 2", status: "pending" },
+    ]);
+
+    // 4. args.subject
+    const fromSingle = piTodoSteps({ subject: "Solo task", status: "pending" }, {});
+    assert.deepEqual(fromSingle, [{ id: "1", text: "Solo task", status: "pending" }]);
+
+    // 5. Authoritative empty result details.tasks overrides args fallback
+    const emptyResult = piTodoSteps({ subject: "Old task" }, { details: { tasks: [] } });
+    assert.deepEqual(emptyResult, []);
+
+    // 6. Authoritative empty structuredContent.todos overrides args fallback
+    const emptyStructured = piTodoSteps(
+      { todos: [{ content: "Old task" }] },
+      { structuredContent: { todos: [] } },
+    );
+    assert.deepEqual(emptyStructured, []);
+
+    // 7. Single task with terminal status (deleted/cancelled/removed) is filtered out
+    assert.deepEqual(piTodoSteps({ subject: "Old task", status: "deleted" }, {}), []);
+    assert.deepEqual(piTodoSteps({ subject: "Old task", status: "cancelled" }, {}), []);
+    assert.deepEqual(piTodoSteps({ subject: "Old task", status: "removed" }, {}), []);
+  });
 
   it.effect.each([false, true])("follows an extension rewind with summarize=%s", (summarize) =>
     Effect.gen(function* () {

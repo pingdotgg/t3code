@@ -9,6 +9,7 @@ import {
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRef,
@@ -22,6 +23,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type OrchestrationV2ProviderTurnTokenUsage,
+  type PlanId,
 } from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
@@ -92,7 +94,7 @@ const PI_UNSOLICITED_ACTIVITY_ERROR =
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 
-const PiProviderCapabilitiesV2 = {
+export const PiProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "client-boundary" },
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
@@ -147,8 +149,8 @@ const PiProviderCapabilitiesV2 = {
     approvalsCanOriginateFromSubagents: false,
   },
   planning: {
-    emitsPlanUpdated: false,
-    emitsTodoList: false,
+    emitsPlanUpdated: true,
+    emitsTodoList: true,
     emitsProposedPlan: false,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
@@ -528,6 +530,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
       const sessionApprovals = new Set<string>();
+      const lastPlanSteps = new Map<string, ReadonlyArray<OrchestrationV2PlanStep>>();
+      const planIds = new Map<string, PlanId>();
       // Answering a dialog and terminalizing a turn both publish lifecycle
       // events. Pi can settle immediately after `extension_ui_response`, so
       // serialize the two paths to stop `turn.terminal` from overtaking the
@@ -991,6 +995,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           { discard: true },
         );
 
+      const resolvePlanId = Effect.fnUntraced(function* (turn: ActivePiTurn, planKey: string) {
+        const existing = planIds.get(planKey);
+        if (existing !== undefined) return existing;
+        const planId = yield* idAllocator.allocate.plan({
+          threadId: turn.turnInput.threadId,
+          runId: turn.turnInput.runId,
+          driver: PI_PROVIDER,
+        });
+        planIds.set(planKey, planId);
+        return planId;
+      });
+
       const emitToolItem = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         event: PiRpcRecord,
@@ -1018,10 +1034,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             : "completed"
           : "running";
         const base = baseItemFields(turn, toolCallId, startedAt, emittedAt);
+        const nodeKind: OrchestrationV2ExecutionNode["kind"] =
+          toolName === "todo" ? "todo_list" : "tool_call";
         yield* emitItemNode(
           turn,
           toolCallId,
-          "tool_call",
+          nodeKind,
           status,
           startedAt,
           completed ? emittedAt : null,
@@ -1031,6 +1049,77 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           status,
           completedAt: completed ? emittedAt : null,
         } as const;
+        if (toolName === "todo") {
+          const planKey = `${turn.turnInput.threadId}:todo_list`;
+          const details = recordField(resultRecord, "details");
+          const structuredContent = recordField(resultRecord, "structuredContent");
+          const hasExplicitResultTasks =
+            Array.isArray(recordField(details, "tasks")) ||
+            Array.isArray(recordField(structuredContent, "todos")) ||
+            Array.isArray(recordField(details, "todos"));
+
+          const todoArgs = completed && !isError ? args : { todos: recordField(args, "todos") };
+          const derived = piTodoSteps(todoArgs, resultRecord);
+
+          let steps: ReadonlyArray<OrchestrationV2PlanStep>;
+          if (
+            completed &&
+            !isError &&
+            (hasExplicitResultTasks || recordString(args, "action") === "clear")
+          ) {
+            if (derived.length > 0) {
+              lastPlanSteps.set(planKey, derived);
+            } else {
+              lastPlanSteps.delete(planKey);
+            }
+            steps = derived;
+          } else {
+            steps = derived.length > 0 ? derived : (lastPlanSteps.get(planKey) ?? []);
+          }
+
+          if (
+            completed &&
+            !isError &&
+            (hasExplicitResultTasks ||
+              derived.length > 0 ||
+              recordString(args, "action") === "clear")
+          ) {
+            const planId = yield* resolvePlanId(turn, planKey);
+            const allCompleted =
+              steps.length > 0 && steps.every((step) => step.status === "completed");
+            const planStatus = allCompleted ? "completed" : "active";
+            yield* emit({
+              type: "plan.updated",
+              driver: PI_PROVIDER,
+              plan: {
+                id: planId,
+                threadId: turn.turnInput.threadId,
+                runId: turn.turnInput.runId,
+                nodeId: idAllocator.derive.nodeFromProviderItem({
+                  driver: PI_PROVIDER,
+                  nativeItemId: toolCallId,
+                }),
+                kind: "todo_list",
+                status: planStatus,
+                steps: [...steps],
+              },
+            });
+          }
+
+          const planId = yield* resolvePlanId(turn, planKey);
+          yield* emit({
+            type: "turn_item.updated",
+            driver: PI_PROVIDER,
+            turnItem: {
+              ...shared,
+              title: "Todo list",
+              type: "todo_list",
+              planId,
+              steps: [...steps],
+            },
+          });
+          return;
+        }
         if (toolName === "bash" || toolName === "powershell") {
           const exitCode =
             recordNumber(recordField(resultRecord, "structuredContent"), "exit_code") ??
@@ -2195,6 +2284,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           baselineModel = null;
           baselineThinking = null;
           contextWindow = null;
+          if (needsNewSession) {
+            lastPlanSteps.delete(`${threadInput.threadId}:todo_list`);
+          }
           const result = yield* lifecycleRequest(
             resumeId != null
               ? { type: "switch_session", sessionPath: resumeId }
@@ -2969,6 +3061,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       appliedSessionName = null;
                       lastKnownLeaf = leafId;
                       leafCursorStale = entriesData === undefined;
+                      if (state.providerThread.appThreadId !== null) {
+                        lastPlanSteps.delete(`${state.providerThread.appThreadId}:todo_list`);
+                      }
                       yield* updateProviderThread(state, {
                         nativeThreadRef: providerRef(forkSessionFile),
                         nativeConversationHeadRef: leafId === null ? null : providerRef(leafId),
@@ -3302,6 +3397,116 @@ function piExtensionDisplayName(extensionPath: string | undefined): string {
   const normalized = extensionPath.replace(/\\/g, "/").replace(/\/+$/, "");
   const name = normalized.slice(normalized.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
   return name.length === 0 ? "Pi extension" : name;
+}
+
+export function piTodoSteps(
+  args: unknown,
+  resultRecord: unknown,
+): ReadonlyArray<OrchestrationV2PlanStep> {
+  const details = recordField(resultRecord, "details");
+  const tasks = recordField(details, "tasks");
+  if (Array.isArray(tasks)) {
+    return tasks.flatMap((task, index) => {
+      if (typeof task !== "object" || task === null) return [];
+      const statusRaw = recordString(task, "status")?.toLowerCase();
+      if (statusRaw === "deleted" || statusRaw === "cancelled" || statusRaw === "removed")
+        return [];
+      const status =
+        statusRaw === "completed" || statusRaw === "complete" || statusRaw === "done"
+          ? "completed"
+          : statusRaw === "in_progress" ||
+              statusRaw === "in-progress" ||
+              statusRaw === "inprogress" ||
+              statusRaw === "running" ||
+              statusRaw === "active"
+            ? "running"
+            : "pending";
+      const text =
+        recordString(task, "subject") ??
+        recordString(task, "content") ??
+        recordString(task, "text") ??
+        "";
+      if (text.trim().length === 0) return [];
+      const id = String(recordField(task, "id") ?? `todo-${index + 1}`);
+      return [{ id, text: text.trim(), status }];
+    });
+  }
+
+  const structuredContent = recordField(resultRecord, "structuredContent");
+  const structuredTodos = recordField(structuredContent, "todos") ?? recordField(details, "todos");
+  if (Array.isArray(structuredTodos)) {
+    return structuredTodos.flatMap((todo, index) => {
+      if (typeof todo !== "object" || todo === null) return [];
+      const statusRaw = recordString(todo, "status")?.toLowerCase();
+      if (statusRaw === "deleted" || statusRaw === "cancelled" || statusRaw === "removed")
+        return [];
+      const status =
+        statusRaw === "completed" || statusRaw === "complete" || statusRaw === "done"
+          ? "completed"
+          : statusRaw === "in_progress" ||
+              statusRaw === "in-progress" ||
+              statusRaw === "inprogress" ||
+              statusRaw === "running" ||
+              statusRaw === "active"
+            ? "running"
+            : "pending";
+      const text =
+        recordString(todo, "content") ??
+        recordString(todo, "subject") ??
+        recordString(todo, "text") ??
+        "";
+      if (text.trim().length === 0) return [];
+      const id = String(recordField(todo, "id") ?? `todo-${index + 1}`);
+      return [{ id, text: text.trim(), status }];
+    });
+  }
+
+  const argTodos = recordField(args, "todos");
+  if (Array.isArray(argTodos)) {
+    return argTodos.flatMap((todo, index) => {
+      if (typeof todo !== "object" || todo === null) return [];
+      const statusRaw = recordString(todo, "status")?.toLowerCase();
+      if (statusRaw === "deleted" || statusRaw === "cancelled" || statusRaw === "removed")
+        return [];
+      const status =
+        statusRaw === "completed" || statusRaw === "complete" || statusRaw === "done"
+          ? "completed"
+          : statusRaw === "in_progress" ||
+              statusRaw === "in-progress" ||
+              statusRaw === "inprogress" ||
+              statusRaw === "running" ||
+              statusRaw === "active"
+            ? "running"
+            : "pending";
+      const text =
+        recordString(todo, "content") ??
+        recordString(todo, "subject") ??
+        recordString(todo, "text") ??
+        "";
+      if (text.trim().length === 0) return [];
+      const id = String(recordField(todo, "id") ?? `todo-${index + 1}`);
+      return [{ id, text: text.trim(), status }];
+    });
+  }
+
+  const subject = recordString(args, "subject") ?? recordString(args, "content");
+  if (subject !== undefined && subject.trim().length > 0) {
+    const statusRaw = recordString(args, "status")?.toLowerCase();
+    if (statusRaw === "deleted" || statusRaw === "cancelled" || statusRaw === "removed") return [];
+    const status =
+      statusRaw === "completed" || statusRaw === "complete" || statusRaw === "done"
+        ? "completed"
+        : statusRaw === "in_progress" ||
+            statusRaw === "in-progress" ||
+            statusRaw === "inprogress" ||
+            statusRaw === "running" ||
+            statusRaw === "active"
+          ? "running"
+          : "pending";
+    return [{ id: "1", text: subject.trim(), status }];
+  }
+
+  return [];
 }
 
 function piThreadSnapshot(
