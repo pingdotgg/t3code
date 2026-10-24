@@ -490,11 +490,26 @@ export const layer: Layer.Layer<
             });
             yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
               Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: project.workspaceRoot,
-                  refName: branch,
-                  path: worktreePath,
-                }),
+                gitWorkflow
+                  .createWorktree({
+                    cwd: project.workspaceRoot,
+                    refName: branch,
+                    path: worktreePath,
+                  })
+                  .pipe(
+                    // A branch deleted after merging leaves nothing to check out, so
+                    // start it again from the checkout it was usually merged into.
+                    Effect.catchIf(
+                      (error) => error.reason === "ref_not_found",
+                      () =>
+                        gitWorkflow.createWorktree({
+                          cwd: project.workspaceRoot,
+                          refName: "HEAD",
+                          newRefName: branch,
+                          path: worktreePath,
+                        }),
+                    ),
+                  ),
               ),
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)

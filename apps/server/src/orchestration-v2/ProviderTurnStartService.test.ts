@@ -3,6 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  GitCommandError,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -73,6 +74,8 @@ function startWithMissingWorktree(
     [managedWorktreesDir]: managedWorktreesDir,
     [`${managedWorktreesDir}/project`]: `${managedWorktreesDir}/project`,
   },
+  createWorktreeImpl: GitWorkflow.GitWorkflowService["Service"]["createWorktree"] = () =>
+    Effect.succeed({} as never),
 ) {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
   const runId = RunId.make("run_provider_turn_start_projection_failure");
@@ -121,7 +124,7 @@ function startWithMissingWorktree(
   );
   const startRootRun = vi.fn(() => Effect.void);
   const pruneWorktrees = vi.fn(() => Effect.void);
-  const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  const createWorktree = vi.fn(createWorktreeImpl);
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -255,6 +258,31 @@ it.each([
   const harness = startWithMissingWorktree(input.worktreePath, input.realPaths);
   await harness.start;
   expect(harness.createWorktree).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
+});
+
+it("recreates a missing worktree whose branch was deleted after merge", async () => {
+  const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
+  const harness = startWithMissingWorktree(worktreePath, undefined, (input) =>
+    input.newRefName === undefined
+      ? Effect.fail(
+          new GitCommandError({
+            operation: "GitVcsDriver.createWorktree",
+            command: "git worktree add",
+            cwd: input.cwd,
+            reason: "ref_not_found",
+            detail: "git worktree add failed",
+          }),
+        )
+      : Effect.succeed({} as never),
+  );
+  await harness.start;
+  expect(harness.createWorktree).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      cwd: "/tmp/provider-turn-start-project",
+      newRefName: "feature/restore",
+      path: worktreePath,
+    }),
+  );
 });
 
 function makeLocalCommandHarness(input: {
