@@ -260,6 +260,8 @@ interface MessagesTimelineProps {
   onContentOverflowChange?: (overflows: boolean) => void;
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
+  /** Reports the list's scroll node when it mounts, remounts, or unmounts. */
+  onScrollNodeChange?: (node: HTMLElement | null) => void;
   findOpen?: boolean;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
   hideEmptyPlaceholder?: boolean;
@@ -359,6 +361,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   liveFollowEnabled,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
+  onScrollNodeChange,
   cancelPositionRestoreRef,
   hideEmptyPlaceholder = false,
   emptyPlaceholderInset,
@@ -1006,10 +1009,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
-  const setTimelineList = (list: LegendListRef | null) => {
+  // A stable ref callback: a fresh identity would make React report null and
+  // then the node again on every render.
+  const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
-    registerTimeline?.(list?.getScrollableNode() ?? null);
-  };
+    const scrollNode = list?.getScrollableNode() ?? null;
+    registerTimeline?.(scrollNode);
+    onScrollNodeChange?.(scrollNode);
+  });
 
   useThreadFindPositionReader({
     findPositionReaderRef,
