@@ -6,6 +6,8 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
+import { wslEnvironmentLabel } from "@t3tools/shared/environmentLabel";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -40,9 +42,6 @@ const resolveTargetInstanceId = (distro: string | null): DesktopBackendPool.Back
 const isWslInstanceId = (id: DesktopBackendPool.BackendInstanceId): boolean =>
   id.startsWith(WSL_INSTANCE_ID_PREFIX);
 
-const buildLabel = (distro: string | null): string =>
-  distro === null ? "WSL (default distro)" : `WSL (${distro})`;
-
 // Loopback-only port scan starting one above the primary's port. The
 // WSL backend is reachable via 127.0.0.1 from Windows (wslhost
 // auto-forwards), so we only need to verify the IPv4 loopback can bind.
@@ -69,6 +68,7 @@ export const layer = Layer.effect(
     const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const net = yield* NetService.NetService;
+    const hostname = yield* HostProcess.Hostname;
     // Serialize reconcile so the bootstrap fork and the IPC handlers
     // (setWslBackendEnabled, setWslDistro) can't interleave. Without
     // this, two reconciles could both observe "no WSL instance
@@ -126,7 +126,7 @@ export const layer = Layer.effect(
       const instance = yield* pool
         .register({
           id: targetId,
-          label: Effect.succeed(buildLabel(input.distro)),
+          label: Effect.succeed(wslEnvironmentLabel(hostname, input.distro)),
           configResolve: configuration.resolveWsl({ port: allocatedPort, distro: input.distro }),
           onPreflightFailed: (failure) =>
             Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),

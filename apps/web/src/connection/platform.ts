@@ -478,7 +478,8 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   // backend id lets desktop-only operations (notably the WSL folder picker)
   // route back to the instance that owns the environment.
   const connectionId = desktopLocalConnectionId(entry.id);
-  const label = entry.label || descriptor.label;
+  // The server's label is what every other client shows for this environment.
+  const label = descriptor.label || entry.label;
   return {
     registration: new BearerConnectionRegistration({
       target: new BearerConnectionTarget({
