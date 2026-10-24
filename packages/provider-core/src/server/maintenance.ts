@@ -23,6 +23,10 @@ export interface ProviderMaintenanceCapabilities {
    * install to update.
    */
   readonly installPath?: string;
+  /**
+   * A command T3 Code shows but cannot run.
+   */
+  readonly manualCommand?: string;
 }
 
 export interface ProviderMaintenanceCommandAction {
