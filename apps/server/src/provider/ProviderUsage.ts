@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ServerProviderUsageWindow,
+  TrimmedNonEmptyString,
   type OrchestratorMcpProviderUsage,
   type OrchestratorMcpProviderUsageInput,
   type OrchestratorMcpProviderUsageResult,
@@ -32,9 +33,12 @@ const StoredUsage = Schema.Record(
     driver: ProviderDriverKind,
     checkedAt: IsoDateTime,
     windows: Schema.Array(ServerProviderUsageWindow),
+    email: Schema.optional(TrimmedNonEmptyString),
+    workspaceId: Schema.optional(TrimmedNonEmptyString),
   }),
 );
 type StoredUsage = typeof StoredUsage.Type;
+type StoredObservation = StoredUsage[ProviderInstanceId];
 const decodeStoredUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredUsage));
 
 export class ProviderUsage extends Context.Service<
@@ -61,13 +65,20 @@ const toWindows = (windows: ReadonlyArray<ServerProviderUsageWindow>) =>
     scope: window.model === undefined ? "account" : `model:${window.model}`,
   }));
 
+// The same account-switch rule ManagedServerProvider applies to probe results.
+const isSameAccount = (auth: ServerProvider["auth"], stored: StoredObservation) =>
+  (auth.email === undefined ||
+    stored.email === undefined ||
+    auth.email.toLowerCase() === stored.email.toLowerCase()) &&
+  (auth.workspaceId === undefined || auth.workspaceId === stored.workspaceId);
+
 /**
  * Live snapshots only carry usage reported during this server session, so
  * they are `observed`. Anything else comes from the store and is `stale`.
  */
 function describeProviderUsage(
   provider: ServerProvider,
-  stored: StoredUsage[ProviderInstanceId] | undefined,
+  stored: StoredObservation | undefined,
 ): OrchestratorMcpProviderUsage {
   const identity = { providerInstanceId: provider.instanceId, driverKind: provider.driver };
   const live = observedLimits(provider);
@@ -84,6 +95,7 @@ function describeProviderUsage(
   if (
     stored !== undefined &&
     stored.driver === provider.driver &&
+    isSameAccount(provider.auth, stored) &&
     provider.usageLimits?.unavailable?.reason !== "unsupported"
   ) {
     return {
@@ -116,26 +128,33 @@ const make = Effect.gen(function* () {
   const persist = Effect.fn("ProviderUsage.persist")(function* (
     providers: ReadonlyArray<ServerProvider>,
   ) {
-    const next = yield* Ref.modify(storedRef, (stored) => {
-      let updated: StoredUsage | undefined;
-      for (const provider of providers) {
-        const live = observedLimits(provider);
-        if (!live || stored[provider.instanceId]?.checkedAt === live.checkedAt) {
-          continue;
-        }
-        updated = {
-          ...(updated ?? stored),
-          [provider.instanceId]: {
-            driver: provider.driver,
-            checkedAt: live.checkedAt,
-            windows: live.windows,
-          },
-        };
+    // Only this fiber writes the store. It advances after the write lands, so
+    // a failed write is retried on the next change.
+    const stored = yield* Ref.get(storedRef);
+    let updated: StoredUsage | undefined;
+    for (const provider of providers) {
+      const live = observedLimits(provider);
+      if (!live || stored[provider.instanceId]?.checkedAt === live.checkedAt) {
+        continue;
       }
-      return [updated, updated ?? stored] as const;
-    });
-    if (next) {
-      yield* writeStored(next).pipe(Effect.tapError(Effect.logWarning), Effect.ignore);
+      const { email, workspaceId } = provider.auth;
+      updated = {
+        ...(updated ?? stored),
+        [provider.instanceId]: {
+          driver: provider.driver,
+          checkedAt: live.checkedAt,
+          windows: live.windows,
+          ...(email ? { email } : {}),
+          ...(workspaceId ? { workspaceId } : {}),
+        },
+      };
+    }
+    if (updated) {
+      yield* writeStored(updated).pipe(
+        Effect.andThen(Ref.set(storedRef, updated)),
+        Effect.tapError(Effect.logWarning),
+        Effect.ignore,
+      );
     }
   });
 

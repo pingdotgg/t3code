@@ -16,14 +16,10 @@ import * as ServerConfig from "../config.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ProviderUsage from "./ProviderUsage.ts";
 
-const makeProvider = (
-  driver: string,
-  usageLimits?: ServerProviderUsageLimits,
-  enabled = true,
-): ServerProvider => ({
+const makeProvider = (driver: string, overrides: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make(driver),
   driver: ProviderDriverKind.make(driver),
-  enabled,
+  enabled: true,
   installed: true,
   version: "1.0.0",
   status: "ready",
@@ -32,7 +28,7 @@ const makeProvider = (
   models: [],
   slashCommands: [],
   skills: [],
-  ...(usageLimits ? { usageLimits } : {}),
+  ...overrides,
 });
 
 const claudeLimits: ServerProviderUsageLimits = {
@@ -99,6 +95,28 @@ const readSession = (
     ),
   );
 
+/** A session in which the registry publishes `provider` once; returns after it is saved. */
+const observeOnce = (baseDir: string, provider: ServerProvider) =>
+  Effect.gen(function* () {
+    // The change stream is consumed in order, so `persisted` completes only
+    // after the observation before it has been written.
+    const persisted = yield* Deferred.make<void>();
+    return yield* readSession(
+      baseDir,
+      [provider],
+      Stream.concat(
+        Stream.make([provider]),
+        Stream.fromEffect(Deferred.succeed(persisted, undefined)).pipe(Stream.drain),
+      ),
+      Deferred.await(persisted),
+    );
+  });
+
+const claudeAuth = (email: string): ServerProvider["auth"] => ({
+  status: "authenticated",
+  email,
+});
+
 it.layer(NodeServices.layer)("ProviderUsage", (it) => {
   it.effect("reports an enabled provider that has reported nothing as none", () =>
     Effect.gen(function* () {
@@ -106,7 +124,7 @@ it.layer(NodeServices.layer)("ProviderUsage", (it) => {
       const baseDir = yield* fs.makeTempDirectoryScoped();
       const result = yield* readSession(baseDir, [
         makeProvider("opencode"),
-        makeProvider("cursor", undefined, false),
+        makeProvider("cursor", { enabled: false }),
       ]);
       assert.deepStrictEqual(result, {
         providers: [
@@ -126,23 +144,18 @@ it.layer(NodeServices.layer)("ProviderUsage", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped();
-      const claude = makeProvider("claudeAgent", claudeLimits);
-
-      // The change stream is consumed in order, so `persisted` completes only
-      // after the observation before it has been written.
-      const persisted = yield* Deferred.make<void>();
-      const first = yield* readSession(
+      const first = yield* observeOnce(
         baseDir,
-        [claude],
-        Stream.concat(
-          Stream.make([claude]),
-          Stream.fromEffect(Deferred.succeed(persisted, undefined)).pipe(Stream.drain),
-        ),
-        Deferred.await(persisted),
+        makeProvider("claudeAgent", {
+          usageLimits: claudeLimits,
+          auth: claudeAuth("a@example.com"),
+        }),
       );
       assert.strictEqual(first.providers[0]?.source, "observed");
 
-      const restarted = yield* readSession(baseDir, [makeProvider("claudeAgent")]);
+      const restarted = yield* readSession(baseDir, [
+        makeProvider("claudeAgent", { auth: claudeAuth("A@example.com") }),
+      ]);
       assert.deepStrictEqual(restarted.providers, [
         {
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
@@ -152,6 +165,25 @@ it.layer(NodeServices.layer)("ProviderUsage", (it) => {
           windows: claudeWindows,
         },
       ]);
+    }),
+  );
+
+  it.effect("does not show another account's observation after a switch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      yield* observeOnce(
+        baseDir,
+        makeProvider("claudeAgent", {
+          usageLimits: claudeLimits,
+          auth: claudeAuth("a@example.com"),
+        }),
+      );
+
+      const switched = yield* readSession(baseDir, [
+        makeProvider("claudeAgent", { auth: claudeAuth("b@example.com") }),
+      ]);
+      assert.strictEqual(switched.providers[0]?.source, "none");
     }),
   );
 });
