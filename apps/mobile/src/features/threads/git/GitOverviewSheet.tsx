@@ -1,4 +1,5 @@
 import * as Dialog from "../../../components/ui/Dialog";
+import { DialogSheetHost } from "../../../components/ui/DialogHost";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
@@ -69,7 +70,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     if (isBlankLink) navigation.goBack();
   }, [isBlankLink, navigation]);
   if (isBlankLink) return null;
-  return <GitOverviewSheetContent {...props} />;
+  return (
+    <>
+      <GitOverviewSheetContent {...props} />
+      <DialogSheetHost />
+    </>
+  );
 }
 
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
