@@ -90,6 +90,7 @@ import {
   snapShotShortcutSystemConflict,
 } from "./snapShot.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 
 const MAX_CAPTURE_WIDTH = 2_560;
 const MAX_CAPTURE_HEIGHT = 1_600;
@@ -418,10 +419,10 @@ async function requestMacSnapShotPermissions(
 }
 
 function snapShotImageSize(png: Buffer, fallback: Electron.Rectangle): Electron.Size {
-  try {
-    const size = Electron.nativeImage.createFromBuffer(png).getSize();
-    if (size.width > 0 && size.height > 0) return size;
-  } catch {}
+  // Capture backends already validate or encode the PNG. Reading its header
+  // avoids decoding every pixel again just to size accessibility coordinates.
+  const size = readImageDimensions(png);
+  if (size) return size;
   return {
     width: Math.max(1, Math.round(fallback.width)),
     height: Math.max(1, Math.round(fallback.height)),
