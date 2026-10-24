@@ -1119,6 +1119,26 @@ describe("planComposerTurn", () => {
     }
   });
 
+  it.each([
+    "/compact Keep the interface decisions, drop the debugging output",
+    "/compact  keep the interface decisions",
+    "/compact\nkeep the interface decisions",
+  ])("does not compact a stale session before /compact with instructions: %j", (messageText) => {
+    expect(
+      planComposerTurn({ ...base, resumeCompactionTokens: 250_000, messageText }),
+    ).toMatchObject({ compactBeforeSend: false, turnDispatchMode: "auto" });
+  });
+
+  it("compacts a stale session before mixed-case /Compact with instructions, which Claude reads as prose", () => {
+    expect(
+      planComposerTurn({
+        ...base,
+        resumeCompactionTokens: 250_000,
+        messageText: "/Compact keep the interface decisions",
+      }),
+    ).toMatchObject({ compactBeforeSend: true, turnDispatchMode: "queue" });
+  });
+
   it("queues behind a running turn only when asked to", () => {
     const running = {
       ...base,
