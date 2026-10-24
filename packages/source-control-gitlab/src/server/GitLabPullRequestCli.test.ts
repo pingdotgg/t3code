@@ -735,6 +735,26 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("keeps a delayed pipeline pending until its execution finishes", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const statuses = [];
+      for (const status of ["scheduled", "running", "success"]) {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ head_pipeline: { status } }))),
+        );
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+        statuses.push(detail.checks[0]?.status);
+      }
+
+      assert.deepStrictEqual(statuses, ["pending", "pending", "success"]);
+    }),
+  );
+
   it.effect("fails when the authenticated account has no username", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ username: "" }))));

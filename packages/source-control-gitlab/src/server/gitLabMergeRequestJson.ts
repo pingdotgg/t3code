@@ -271,7 +271,6 @@ function toPipelineStatus(value: string | null | undefined): PullRequestCheckSta
     case "skipped":
       return "skipped";
     case "manual":
-    case "scheduled":
       return "neutral";
     default:
       return "pending";

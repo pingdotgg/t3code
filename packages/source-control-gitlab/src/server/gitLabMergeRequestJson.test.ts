@@ -216,6 +216,29 @@ describe("decodeMergeRequestDetailJson", () => {
 
     expect(detail.checks[0]?.status).toBe("neutral");
   });
+
+  it.each(["scheduled", " SCHEDULED "])("keeps a delayed pipeline pending: %s", (status) => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(
+        detailJson({
+          head_pipeline: {
+            status,
+            web_url: "https://gitlab.com/acme/web/-/pipelines/9",
+            source: "merge_request_event",
+          },
+        }),
+      ),
+    );
+
+    expect(detail.checks).toEqual([
+      {
+        name: "Pipeline",
+        status: "pending",
+        description: "merge_request_event",
+        url: "https://gitlab.com/acme/web/-/pipelines/9",
+      },
+    ]);
+  });
 });
 
 describe("decodeNotesJson", () => {
