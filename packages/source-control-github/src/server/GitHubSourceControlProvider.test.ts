@@ -86,6 +86,7 @@ const node = (number: number, headRefName: string, owner = "acme") => ({
  */
 interface GraphQlCall {
   readonly host: string;
+  readonly authorization: string | undefined;
   readonly operationName: string;
   readonly query: string;
   readonly lookups: ReadonlyArray<Readonly<Record<string, unknown>>>;
@@ -128,6 +129,7 @@ function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
             );
       const call: GraphQlCall = {
         host: new URL(request.url).hostname.replace(/^api\./, ""),
+        authorization: request.headers["authorization"],
         operationName: sent.operationName,
         query: sent.query,
         lookups,
@@ -165,6 +167,7 @@ function harness(input: {
   /** The credential a GraphQL read is sent with; github.com's token by default. */
   readonly credential?: (
     host: string,
+    cwd?: string,
   ) => Effect.Effect<
     GitHubCredentials.GitHubCredential,
     GitHubCredentials.GitHubCredentialUnavailableError
@@ -361,6 +364,30 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
 });
 
 describe("GitHubSourceControlProvider.getChangeRequest", () => {
+  it.effect("reads URL-only PRs with the account of the supplied project checkout", () => {
+    const { layer, graphqlCalls } = harness({
+      remotes: "",
+      credential: (host, cwd) =>
+        Effect.succeed({
+          host,
+          token: Redacted.make(cwd === "/work" ? "work" : "personal"),
+          source: "gh",
+          fingerprint: `${host}:${cwd}`,
+        }),
+      graphql: () => ({ pullRequest: node(42, "feature") }),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      for (const cwd of ["/personal", "/work"]) {
+        yield* gh.getChangeRequest({ cwd, reference: "https://github.com/acme/web/pull/42" });
+      }
+      assert.deepStrictEqual(
+        graphqlCalls.map((call) => call.authorization),
+        ["Bearer personal", "Bearer work"],
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("reads a pull request by number, and by URL on its own repository", () => {
     const { layer, graphqlCalls } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),

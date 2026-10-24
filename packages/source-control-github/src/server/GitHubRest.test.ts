@@ -16,6 +16,7 @@ import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
@@ -89,6 +90,56 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubRest", () => {
+  it.effect("sends repository-selected gh tokens on both reads and writes", () => {
+    const authorization: Array<string | undefined> = [];
+    const layer = GitHubRest.layerWithDependencies.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          TestSourceControlHost.layer({
+            git: { readConfigValue: (cwd) => Effect.succeed(cwd === "/work" ? "work" : null) },
+            process: {
+              run: (input) =>
+                Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    input.args.includes("--user") ? "work-token" : "personal-token",
+                  ),
+                ),
+            },
+          }),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              authorization.push(request.headers.authorization);
+              return Effect.succeed(HttpClientResponse.fromWeb(request, json({ ok: true })));
+            }),
+          ),
+        ),
+      ),
+      Layer.provide(Layer.succeed(HostProcess.Environment, {})),
+    );
+    return Effect.gen(function* () {
+      const api = yield* GitHubRest.GitHubRest;
+      for (const cwd of ["/personal", "/work"]) {
+        for (const method of ["GET", "POST"] as const) {
+          yield* api.rest({
+            cwd,
+            host: "github.com",
+            operation: "pullRequests",
+            method,
+            path: "repos/acme/web/pulls",
+          });
+        }
+      }
+      expect(authorization).toEqual([
+        "Bearer personal-token",
+        "Bearer personal-token",
+        "Bearer work-token",
+        "Bearer work-token",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("traces the operation, path and quota, never the query string or the token", () => {
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({

@@ -129,6 +129,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   const endpoint = `repos/${input.repository}`;
   const read = yield* api.rest({
     host: input.host,
+    cwd: input.cwd,
     operation: "runGitHubStackAction",
     path: `${endpoint}/stacks?pull_request=${input.number}`,
   });
@@ -183,6 +184,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     ).pipe(
       GitHubGraphQlClient.call({
         host: input.host,
+        cwd: input.cwd,
         operation: "runGitHubStackAction",
         allowReserve: true,
       }),
@@ -207,6 +209,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     // copy of every lower layer into the one above it. The cascade moves each layer's own commits.
     yield* cascadeRebaseStack({
       host: input.host,
+      cwd: input.cwd,
       repository: input.repository,
       base: stack.base,
       layers: open.map((layer) => ({
@@ -237,6 +240,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     );
   const request = yield* api.rest({
     host: input.host,
+    cwd: input.cwd,
     operation: "runGitHubStackAction",
     method: "PUT",
     path: `${endpoint}/pulls/${input.number}/merge-async`,
@@ -258,6 +262,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     yield* Effect.sleep(Math.min(1_000 * 2 ** attempt, 10_000));
     const poll = yield* api.rest({
       host: input.host,
+      cwd: input.cwd,
       operation: "runGitHubStackAction",
       path: `${endpoint}/pulls/${input.number}/merge-async/${encodeURIComponent(uuid)}`,
     });

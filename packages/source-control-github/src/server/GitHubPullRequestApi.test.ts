@@ -101,7 +101,7 @@ type ApiCall =
 type ApiAnswer = Effect.Effect<GitHubRest.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
 
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
-const defaultCredential = (host: string) =>
+const defaultCredential = (host: string, _cwd?: string) =>
   Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` });
 const mockedCredential = vi.fn(defaultCredential);
 const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
@@ -113,7 +113,7 @@ const mockApi = Layer.succeed(
   GitHubRest.GitHubRest,
   GitHubRest.GitHubRest.of({
     rest: (input) => mockedExecute({ kind: "rest", ...input }),
-    credential: (host) => mockedCredential(host),
+    credential: (host, cwd) => mockedCredential(host, cwd),
   }),
 );
 
@@ -183,8 +183,12 @@ const layer = it.layer(
     Layer.provideMerge(mockHttp),
     Layer.provideMerge(
       Layer.succeed(GitHubCredentials.GitHubCredentials, {
-        get: (host) =>
-          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+        get: (host, cwd) =>
+          Effect.map(mockedCredential(host, cwd), (held) => ({
+            ...held,
+            host,
+            source: "gh" as const,
+          })),
         invalidate: () => Effect.void,
       }),
     ),
@@ -723,6 +727,91 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
+  it.effect("keeps summaries and watch batches separate by repository credential", () =>
+    Effect.gen(function* () {
+      mockedCredential.mockImplementation((host, cwd) => {
+        const account = cwd?.startsWith("/work") ? "work" : "personal";
+        return Effect.succeed({ token: Redacted.make(account), fingerprint: `${host}:${account}` });
+      });
+      mockedExecute.mockImplementation((call) => {
+        assert.strictEqual(call.kind, "graphql");
+        if (call.kind !== "graphql") return Effect.die("Expected GraphQL");
+        const variables = call.variables ?? {};
+        const prefixes = [
+          ...new Set(Object.keys(variables).flatMap((key) => /^_\d+_/.exec(key) ?? [])),
+        ];
+        const data = Object.fromEntries(
+          prefixes.map((prefix) => {
+            const owner = variables[`${prefix}owner`];
+            expect(call.authorization).toBe(`Bearer ${owner}`);
+            return [
+              `${prefix}repository`,
+              {
+                pullRequest: {
+                  ...coreResponse().data.repository.pullRequest,
+                  number: variables[`${prefix}number`],
+                  latestReviews: { nodes: [] },
+                  comments: { totalCount: 0, nodes: [] },
+                  reviews: { totalCount: 0, nodes: [] },
+                  reviewThreads: { totalCount: 0 },
+                },
+              },
+            ];
+          }),
+        );
+        return Effect.succeed(output(encodeJson({ data })));
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const inputs = [
+        { ...pullRequestInput, cwd: "/work", repository: "work/repo" },
+        { ...pullRequestInput, cwd: "/work-tree", repository: "work/repo", number: 8 },
+        { ...pullRequestInput, cwd: "/personal", repository: "personal/repo" },
+      ];
+      const summaries = yield* Effect.forEach(inputs, cli.getPullRequestSummary, {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      expect((yield* Fiber.join(summaries)).map((pr) => pr.number)).toEqual([7, 8, 7]);
+      const watches = yield* Effect.forEach(inputs, cli.getPullRequestWatchFingerprint, {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      expect(yield* Fiber.join(watches)).toHaveLength(3);
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
+      expect(
+        [0, 1, 2, 3]
+          .map((index) => callAt(index))
+          .filter((call) => call.kind === "graphql" && call.authorization === "Bearer work"),
+      ).toHaveLength(2);
+    }),
+  );
+
+  it.effect("uses the repository credential for detail reads and merge mutations", () =>
+    Effect.gen(function* () {
+      mockedCredential.mockImplementation((host, cwd) =>
+        Effect.succeed({
+          token: Redacted.make(cwd === "/work" ? "work" : "personal"),
+          fingerprint: `${host}:${cwd}`,
+        }),
+      );
+      route(
+        ["query PullRequestCore", coreResponse()],
+        ["query PullRequestActionState", actionState()],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      for (const cwd of ["/personal", "/work"]) {
+        const start = mockedExecute.mock.calls.length;
+        yield* cli.getPullRequestDetail({ ...pullRequestInput, cwd });
+        yield* cli.runPullRequestAction({ ...pullRequestInput, cwd, action: "merge" });
+        const calls = mockedExecute.mock.calls.slice(start).map(([call]) => call);
+        expect(calls.length).toBeGreaterThanOrEqual(3);
+        for (const call of calls) {
+          if (call.kind === "graphql") expect(call.authorization).toBe(`Bearer ${cwd.slice(1)}`);
+        }
+      }
+    }),
+  );
+
   it.effect("loads the complete hover card with one GraphQL request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
