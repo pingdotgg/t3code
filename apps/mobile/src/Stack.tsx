@@ -148,7 +148,7 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
-  readonly unstable_headerMinimizationBehavior?: "onScrollUp";
+  readonly unstable_headerMinimizationBehavior?: "onScrollUp" | "never";
 };
 
 const GLASS_HEADER_OPTIONS: AppScreenOptions = {
@@ -177,6 +177,10 @@ const THREAD_HEADER_OPTIONS: AppScreenOptions = {
   ...DETAIL_HEADER_OPTIONS,
   unstable_headerMinimizationBehavior: "onScrollUp",
 };
+
+// The Duo minimizes headers on scroll down by default. Home and the pull request lists
+// stutter against it on hardware (not reproducible in the simulator), so they keep theirs.
+const FIXED_DUO_HEADER: AppScreenOptions = { unstable_headerMinimizationBehavior: "never" };
 
 const SOLID_HEADER_OPTIONS: AppScreenOptions = {
   headerBackButtonDisplayMode: "minimal",
@@ -649,6 +653,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: "",
       options: {
         ...GLASS_HEADER_OPTIONS,
+        ...FIXED_DUO_HEADER,
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
@@ -660,7 +665,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         path: "pull-requests/:environmentId/:projectId/:repository/:number",
         parse: { number: Number },
       },
-      options: DETAIL_HEADER_OPTIONS,
+      options: { ...DETAIL_HEADER_OPTIONS, ...FIXED_DUO_HEADER },
     }),
     PullRequestGuideStop: createNativeStackScreen({
       screen: PullRequestGuideStopScreen,
@@ -684,6 +689,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: PullRequestReviewersScreen,
       options: {
         ...DETAIL_HEADER_OPTIONS,
+        ...FIXED_DUO_HEADER,
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: formSheetDetents(0.75),
         sheetGrabberVisible: true,
