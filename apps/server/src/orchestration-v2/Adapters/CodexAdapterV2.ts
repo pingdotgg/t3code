@@ -61,6 +61,7 @@ import type {
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
+  MessageId,
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
   ProviderApprovalOption,
@@ -4305,7 +4306,196 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           return { node, request, turnItem };
         });
 
-        yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
+        /**
+         * Turns queued on a root thread from outside T3 (`codex queue`) have no
+         * run. Their frames wait here while a provider continuation wakes a run,
+         * whose startTurn adopts the native turn instead of starting another.
+         */
+        const heldExternalTurns = new Map<
+          string,
+          {
+            readonly nativeThreadId: string;
+            readonly startedAt: DateTime.Utc;
+            /** `adopted` is false when the wake was rejected or the session closed. */
+            readonly frames: Array<(adopted: boolean) => Effect.Effect<void>>;
+            messageId: MessageId | undefined;
+            releasing: boolean;
+            completed: boolean;
+          }
+        >();
+        /**
+         * Held turns released without adoption, until Codex completes them. Their
+         * later requests still need an answer, and no ordinary handler has a
+         * turn to give one.
+         */
+        const rejectedExternalTurns = new Set<string>();
+        const externalTurnIdOf = (payload: unknown) => {
+          if (typeof payload !== "object" || payload === null) return undefined;
+          const turnId =
+            "turnId" in payload
+              ? payload.turnId
+              : "turn" in payload && typeof payload.turn === "object" && payload.turn !== null
+                ? (payload.turn as { readonly id?: unknown }).id
+                : undefined;
+          return typeof turnId === "string" ? turnId : undefined;
+        };
+        /**
+         * Delivers the held frames in order and stops holding. Without adoption,
+         * notifications are dropped as for any unknown turn and requests fail.
+         */
+        const releaseHeldExternalTurn = Effect.fnUntraced(function* (
+          nativeTurnId: string,
+          adopted: boolean,
+        ) {
+          const held = heldExternalTurns.get(nativeTurnId);
+          if (held === undefined || held.releasing) return;
+          held.releasing = true;
+          // The turn stays held while draining: frames the reader delivers
+          // meanwhile append here, so none overtakes an earlier buffered one.
+          // Requests are forked, so a frame never waits on a user decision.
+          // Uninterruptible so no held request is left without a response.
+          yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              for (let index = 0; index < held.frames.length; index++) {
+                yield* held.frames[index]!(adopted);
+              }
+              heldExternalTurns.delete(nativeTurnId);
+              if (!adopted && !held.completed) rejectedExternalTurns.add(nativeTurnId);
+            }),
+          );
+        });
+        yield* Scope.addFinalizer(
+          scope,
+          Effect.suspend(() =>
+            Effect.forEach([...heldExternalTurns.keys()], (nativeTurnId) =>
+              releaseHeldExternalTurn(nativeTurnId, false),
+            ),
+          ).pipe(Effect.asVoid),
+        );
+        const offerExternalTurnWake = Effect.fnUntraced(function* (
+          nativeTurnId: string,
+          payload: unknown,
+        ) {
+          const held = heldExternalTurns.get(nativeTurnId);
+          const item = (
+            payload as {
+              readonly item?:
+                | CodexSchema.V2ItemStartedNotification__ThreadItem
+                | CodexSchema.V2ItemCompletedNotification__ThreadItem;
+            }
+          ).item;
+          const isPrompt = item?.type === "userMessage";
+          const isEnd = (payload as { readonly turn?: unknown }).turn !== undefined;
+          if (
+            held === undefined ||
+            held.releasing ||
+            held.messageId !== undefined ||
+            !(isPrompt || isEnd)
+          )
+            return;
+          const providerThread = rootProviderThreads.get(held.nativeThreadId);
+          if (providerThread?.appThreadId == null || continuationRequests === undefined) {
+            return yield* releaseHeldExternalTurn(nativeTurnId, false);
+          }
+          const messageId = idAllocator.derive.messageFromProviderItem({
+            driver: CODEX_PROVIDER,
+            nativeItemId: isPrompt ? item.id : nativeTurnId,
+          });
+          held.messageId = messageId;
+          const text = isPrompt ? codexUserMessageText(item.content) : "";
+          const rejectIfCurrent = () =>
+            heldExternalTurns.get(nativeTurnId)?.messageId === messageId
+              ? releaseHeldExternalTurn(nativeTurnId, false)
+              : Effect.void;
+          yield* continuationRequests.offer({
+            threadId: providerThread.appThreadId,
+            providerThreadId: providerThread.id,
+            driver: CODEX_PROVIDER,
+            detail: text === "" ? null : text,
+            messageId,
+            notification: {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Message queued in Codex",
+            },
+            dispatchIfCurrent: (dispatch) =>
+              dispatch.pipe(Effect.asSome, Effect.onError(rejectIfCurrent)),
+            clearIfCurrent: rejectIfCurrent,
+            // A woken run cancelled or failed before startTurn never adopts.
+            onRunSettled: rejectIfCurrent,
+          });
+        });
+        const handleCodexNotification: CodexClient.CodexAppServerClient["Service"]["handleServerNotification"] =
+          (method, handler) =>
+            client.handleServerNotification(method, (payload) => {
+              const nativeTurnId = externalTurnIdOf(payload);
+              if (nativeTurnId === undefined) return handler(payload);
+              if (rejectedExternalTurns.has(nativeTurnId)) {
+                if (method === "turn/completed") rejectedExternalTurns.delete(nativeTurnId);
+                return Effect.void;
+              }
+              const held = heldExternalTurns.get(nativeTurnId);
+              if (held === undefined) return handler(payload);
+              if (method === "turn/completed") held.completed = true;
+              held.frames.push((adopted) =>
+                adopted
+                  ? Effect.suspend(() => handler(payload)).pipe(Effect.exit, Effect.asVoid)
+                  : Effect.void,
+              );
+              return offerExternalTurnWake(nativeTurnId, payload);
+            });
+        const handleCodexRequest: CodexClient.CodexAppServerClient["Service"]["handleServerRequest"] =
+          (method, handler) =>
+            client.handleServerRequest(method, (payload) => {
+              const nativeTurnId = externalTurnIdOf(payload);
+              if (nativeTurnId === undefined) return handler(payload);
+              const notAdopted = CodexErrors.CodexAppServerRequestError.internalError(
+                `No T3 run adopted Codex turn ${nativeTurnId}.`,
+              );
+              if (rejectedExternalTurns.has(nativeTurnId)) return Effect.fail(notAdopted);
+              const held = heldExternalTurns.get(nativeTurnId);
+              if (held === undefined) return handler(payload);
+              return Effect.gen(function* () {
+                const response = yield* Deferred.make<
+                  Effect.Success<ReturnType<typeof handler>>,
+                  Effect.Error<ReturnType<typeof handler>>
+                >();
+                // Forked like the protocol reader forks live requests: an
+                // approval waits on the user, who answers through the effect
+                // outbox that this adoption's startTurn would otherwise block.
+                // Without adoption the request is answered here: handlers die
+                // without an active turn, which sends Codex no response at all.
+                held.frames.push((adopted) =>
+                  adopted
+                    ? Effect.suspend(() => handler(payload)).pipe(
+                        Deferred.into(response),
+                        Effect.forkIn(scope, { startImmediately: true }),
+                        Effect.asVoid,
+                      )
+                    : Deferred.fail(response, notAdopted).pipe(Effect.asVoid),
+                );
+                return yield* Deferred.await(response);
+              });
+            });
+        /** Adopts the native turn a provider continuation woke this run for. */
+        const adoptExternalTurn = Effect.fnUntraced(function* (
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) {
+          let nativeTurnId: string | undefined;
+          for (const [id, held] of heldExternalTurns) {
+            if (!held.releasing && held.messageId === turnInput.message.messageId)
+              nativeTurnId = id;
+          }
+          if (nativeTurnId === undefined) return false;
+          const held = heldExternalTurns.get(nativeTurnId)!;
+          yield* registerRootTurn({ turnInput, nativeTurnId, startedAt: held.startedAt }).pipe(
+            Effect.onInterrupt(() => releaseHeldExternalTurn(nativeTurnId, false)),
+          );
+          yield* releaseHeldExternalTurn(nativeTurnId, true);
+          return true;
+        });
+
+        yield* handleCodexNotification("item/agentMessage/delta", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context !== undefined) {
@@ -4319,7 +4509,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
         );
 
-        yield* client.handleServerNotification("item/commandExecution/outputDelta", (payload) =>
+        yield* handleCodexNotification("item/commandExecution/outputDelta", (payload) =>
           Effect.gen(function* () {
             // A delta always follows its item/started, so the turn is already
             // known; background commands keep printing after it settles.
@@ -4340,14 +4530,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
         );
 
-        yield* client.handleServerNotification("item/reasoning/summaryTextDelta", (payload) =>
+        yield* handleCodexNotification("item/reasoning/summaryTextDelta", (payload) =>
           appendReasoning(payload, "summary", payload.summaryIndex),
         );
-        yield* client.handleServerNotification("item/reasoning/textDelta", (payload) =>
+        yield* handleCodexNotification("item/reasoning/textDelta", (payload) =>
           appendReasoning(payload, "content", payload.contentIndex),
         );
 
-        yield* client.handleServerNotification("item/plan/delta", (payload) =>
+        yield* handleCodexNotification("item/plan/delta", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -4362,7 +4552,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("turn/plan/updated", (payload) =>
+        yield* handleCodexNotification("turn/plan/updated", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -4400,7 +4590,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
+        yield* handleCodexNotification("account/rateLimits/updated", (payload) =>
           Effect.gen(function* () {
             yield* Ref.update(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
@@ -4430,7 +4620,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
+        yield* handleCodexNotification("thread/tokenUsage/updated", (payload) =>
           Effect.gen(function* () {
             accumulateCodexTurnTokenUsage(
               usageStateForThread(payload.threadId),
@@ -4469,7 +4659,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("thread/settings/updated", (payload) =>
+        yield* handleCodexNotification("thread/settings/updated", (payload) =>
           updateSubagentSelection(
             payload.threadId,
             payload.threadSettings.model,
@@ -4477,11 +4667,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             payload.threadSettings.serviceTier,
           ),
         );
-        yield* client.handleServerNotification("model/rerouted", (payload) =>
+        yield* handleCodexNotification("model/rerouted", (payload) =>
           updateSubagentSelection(payload.threadId, payload.toModel),
         );
 
-        yield* client.handleServerNotification("turn/started", (payload) =>
+        yield* handleCodexNotification("turn/started", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context !== undefined) {
@@ -4559,6 +4749,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               return;
             }
+            if (rootProviderThreads.has(payload.threadId)) {
+              heldExternalTurns.set(payload.turn.id, {
+                nativeThreadId: payload.threadId,
+                startedAt: codexTimestamp(payload.turn.startedAt),
+                frames: [],
+                messageId: undefined,
+                releasing: false,
+                completed: false,
+              });
+              return;
+            }
             yield* rememberSubagentTurnStarted({
               nativeThreadId: payload.threadId,
               nativeTurnId: payload.turn.id,
@@ -4567,14 +4768,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
-        yield* client.handleServerNotification("thread/goal/updated", (payload) =>
+        yield* handleCodexNotification("thread/goal/updated", (payload) =>
           Effect.gen(function* () {
             goalsByNativeThread.set(payload.threadId, providerGoalFromCodex(payload.goal));
             yield* emitGoalUpdate(payload.threadId);
             if (payload.goal.status !== "active") yield* releaseGoalHold(payload.threadId);
           }).pipe(turnTerminalizationPermit.withPermits(1)),
         );
-        yield* client.handleServerNotification("thread/goal/cleared", (payload) =>
+        yield* handleCodexNotification("thread/goal/cleared", (payload) =>
           Effect.gen(function* () {
             goalsByNativeThread.set(payload.threadId, null);
             yield* emitGoalUpdate(payload.threadId);
@@ -4582,7 +4783,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(turnTerminalizationPermit.withPermits(1)),
         );
 
-        yield* client.handleServerNotification("error", (payload) =>
+        yield* handleCodexNotification("error", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -4718,7 +4919,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         // Unloading an idle thread kills its terminals without completing
         // their command items, while the shared provider session stays alive.
-        yield* client.handleServerNotification("thread/closed", (payload) =>
+        yield* handleCodexNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
             const completedAt = yield* DateTime.now;
             for (const context of (yield* Ref.get(settledTurns)).values()) {
@@ -4745,7 +4946,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
-        yield* client.handleServerNotification("item/started", (payload) =>
+        yield* handleCodexNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -4878,7 +5079,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
-        yield* client.handleServerNotification("item/completed", (payload) =>
+        yield* handleCodexNotification("item/completed", (payload) =>
           Effect.gen(function* () {
             if (payload.item.type === "contextCompaction")
               // The notification callback runs on the input reader. Let it read
@@ -5180,7 +5381,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
-        yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
+        yield* handleCodexRequest("item/commandExecution/requestApproval", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -5252,7 +5453,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerRequest("item/fileChange/requestApproval", (payload) =>
+        yield* handleCodexRequest("item/fileChange/requestApproval", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -5325,7 +5526,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerRequest("item/permissions/requestApproval", (payload) =>
+        yield* handleCodexRequest("item/permissions/requestApproval", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -5387,7 +5588,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
+        yield* handleCodexRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
             if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
               yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
@@ -5467,7 +5668,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerRequest("execCommandApproval", (payload) =>
+        yield* handleCodexRequest("execCommandApproval", (payload) =>
           Effect.gen(function* () {
             const context = yield* findActiveTurnByNativeThreadId(payload.conversationId);
             if (context === undefined) {
@@ -5537,7 +5738,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerRequest("applyPatchApproval", (payload) =>
+        yield* handleCodexRequest("applyPatchApproval", (payload) =>
           Effect.gen(function* () {
             const context = yield* findActiveTurnByNativeThreadId(payload.conversationId);
             if (context === undefined) {
@@ -5606,7 +5807,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerRequest("item/tool/requestUserInput", (payload) =>
+        yield* handleCodexRequest("item/tool/requestUserInput", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -6198,7 +6399,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }),
           );
 
-        yield* client.handleServerNotification("turn/completed", (payload) =>
+        yield* handleCodexNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
@@ -6785,6 +6986,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {
+              // RunExecutionService routes `/compact` here before startTurn.
+              if (yield* adoptExternalTurn(turnInput)) return;
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
@@ -6849,8 +7052,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               turnInput.restartContinuationOfRunId === undefined
                 ? parseCodexGoalCommand(turnInput.message.text)
                 : null;
-            if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
+            // An adopted turn's text was typed into Codex, not a T3 command.
+            if (goalCommand !== null)
+              return Effect.flatMap(adoptExternalTurn(turnInput), (adopted) =>
+                adopted ? Effect.void : runGoalCommand(turnInput, goalCommand),
+              );
             return Effect.gen(function* () {
+              if (yield* adoptExternalTurn(turnInput)) return;
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined

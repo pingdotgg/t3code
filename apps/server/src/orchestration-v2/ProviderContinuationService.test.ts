@@ -7,6 +7,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -107,6 +109,52 @@ function layerTest(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect("tells the source once the run its wake dispatched settles", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const settled = yield* Deferred.make<void>();
+      const messageId = MessageId.make("message-provider-continuation-woken");
+      const runUpdated = (userMessageId: MessageId, status: string) =>
+        ({
+          type: "run.updated",
+          threadId,
+          payload: { userMessageId, status },
+        }) as unknown as OrchestrationV2DomainEvent;
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) => Queue.offer(dispatched, command).pipe(Effect.as({} as never)),
+        streamDomainEvents: Stream.fromQueue(events),
+      });
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          messageId,
+          onRunSettled: () => Deferred.succeed(settled, undefined).pipe(Effect.asVoid),
+        });
+        yield* Queue.take(dispatched);
+        // Another message's run settling, or this run only starting, is not the signal.
+        yield* Queue.offer(events, runUpdated(MessageId.make("message-other"), "cancelled"));
+        yield* Queue.offer(events, runUpdated(messageId, "running"));
+        assert.isFalse(yield* Deferred.isDone(settled));
+        yield* Queue.offer(events, runUpdated(messageId, "cancelled"));
+        yield* Deferred.await(settled);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            ProviderContinuationRequests.layer,
+            ProviderContinuationService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+              ),
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+
   it.effect("recovers an unaccepted persisted steer using the same delivery identity", () =>
     Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
