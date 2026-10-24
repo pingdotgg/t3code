@@ -29,7 +29,6 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     isDevelopment: false,
     displayName: "T3 Code (Alpha)",
     linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
-    linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path,
