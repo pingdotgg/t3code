@@ -114,6 +114,7 @@ export interface ThreadLaunchPreparationInput {
 export interface ThreadLaunchResult {
   readonly threadId: ThreadId;
   readonly projection: OrchestrationV2ThreadProjection;
+  /** The launch's last write (the initial message, else the thread claim) was accepted before this call. */
   readonly resumed: boolean;
 }
 
@@ -974,6 +975,8 @@ const make = Effect.gen(function* () {
               creationSource: input.creationSource,
             })
             .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId)));
+          // A concurrent retry can read no receipt and still replay the dispatch.
+          messageWasAlreadyAccepted ||= dispatched.replayed === true;
           const runCreated = dispatched.storedEvents.find(
             (stored) => stored.event.type === "run.created",
           );
@@ -1034,7 +1037,12 @@ const make = Effect.gen(function* () {
         return {
           threadId,
           projection,
-          resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
+          // An attempt that failed after claiming the thread recorded nothing, so
+          // only a repeat of the final write counts as resumed.
+          resumed:
+            input.initialMessage === undefined
+              ? Option.isSome(launchReceipt) || claimed.replayed === true
+              : messageWasAlreadyAccepted,
         };
       });
     },

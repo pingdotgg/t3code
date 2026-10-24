@@ -344,6 +344,10 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   delete output.T3_SERVICE_LAUNCHER_CONTEXT;
   delete output.T3_BOOT_SERVICE_UNIT;
 
+  // Each worktree has its own state, so a dev server would count as a new
+  // install of the developer's real accounts. Set it explicitly to opt in.
+  output.T3CODE_TELEMETRY_ENABLED = baseEnv.T3CODE_TELEMETRY_ENABLED ?? "false";
+
   if (!isDesktopMode) {
     output.T3CODE_PORT = String(serverPort);
     // HOST is Vite's own bind address, and the desktop branch below is the

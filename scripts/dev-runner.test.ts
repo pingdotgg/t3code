@@ -90,6 +90,31 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect("turns product analytics off unless the developer opts in", () =>
+      Effect.gen(function* () {
+        const input = {
+          mode: "dev",
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        } as const;
+        const byDefault = yield* createDevRunnerEnv({ ...input, baseEnv: {} });
+        const optedIn = yield* createDevRunnerEnv({
+          ...input,
+          baseEnv: { T3CODE_TELEMETRY_ENABLED: "true" },
+        });
+
+        assert.equal(byDefault.T3CODE_TELEMETRY_ENABLED, "false");
+        assert.equal(optedIn.T3CODE_TELEMETRY_ENABLED, "true");
+      }),
+    );
+
     it.effect("strips inherited service-launcher context", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({

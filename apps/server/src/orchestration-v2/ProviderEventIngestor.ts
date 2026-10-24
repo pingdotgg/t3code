@@ -9,6 +9,8 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type ModelSelection,
+  type OrchestrationV2Actor,
+  type OrchestrationV2CreationSource,
   type RuntimeMode,
   type ProviderInteractionMode,
   ProviderInstanceId,
@@ -77,6 +79,19 @@ export interface ProviderTurnAnalyticsContext {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly origin?: ProviderTurnOrigin;
+}
+
+/**
+ * Where the run's starting message came from. Most turns start without a
+ * person (provider continuations, agent sends, delegated subagents), so
+ * reports need this to tell user turns apart.
+ */
+export interface ProviderTurnOrigin {
+  readonly createdBy: OrchestrationV2Actor;
+  readonly creationSource: OrchestrationV2CreationSource;
+  readonly scheduled: boolean;
+  readonly subagent: boolean;
 }
 
 export class ProviderTurnAnalytics extends Context.Reference<{
@@ -126,6 +141,7 @@ function providerTurnAnalyticsProperties(input: {
     ...(effort ? { effort } : {}),
     ...(input.context?.runtimeMode ? { runtimeMode: input.context.runtimeMode } : {}),
     ...(input.context?.interactionMode ? { interactionMode: input.context.interactionMode } : {}),
+    ...input.context?.origin,
     ...(input.providerTurn.startedAt && input.providerTurn.completedAt
       ? {
           durationMs: Math.max(

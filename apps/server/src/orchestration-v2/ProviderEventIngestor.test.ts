@@ -233,6 +233,12 @@ it.effect("records accepted billed turn usage once without billing the context w
         modelSelection,
         runtimeMode: "full-access" as const,
         interactionMode: "default" as const,
+        origin: {
+          createdBy: "agent" as const,
+          creationSource: "provider" as const,
+          scheduled: false,
+          subagent: true,
+        },
       },
       event: { type: "provider_turn.updated" as const, driver: CODEX_DRIVER, providerTurn },
     };
@@ -271,6 +277,10 @@ it.effect("records accepted billed turn usage once without billing the context w
       mixedModels: false,
       runtimeMode: "full-access",
       interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "provider",
+      scheduled: false,
+      subagent: true,
       durationMs: 120,
     });
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
