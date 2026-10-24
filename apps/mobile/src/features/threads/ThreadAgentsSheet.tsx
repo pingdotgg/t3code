@@ -21,7 +21,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
-import { SubagentRow } from "./SubagentRow";
+import { SubagentElapsedColumn, SubagentElapsedText, SubagentRow } from "./SubagentRow";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
@@ -77,15 +77,17 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
           No agents in this turn.
         </Text>
       ) : (
-        subagents.map((subagent) => (
-          <AgentRow
-            key={subagent.id}
-            subagent={subagent}
-            environmentId={target.environmentId}
-            tickSeconds={hasLiveAgent}
-            onOpen={openChildThread}
-          />
-        ))
+        <SubagentElapsedColumn>
+          {subagents.map((subagent) => (
+            <AgentRow
+              key={subagent.id}
+              subagent={subagent}
+              environmentId={target.environmentId}
+              tickSeconds={hasLiveAgent}
+              onOpen={openChildThread}
+            />
+          ))}
+        </SubagentElapsedColumn>
       )}
     </ScrollView>
   );
@@ -178,9 +180,7 @@ function AgentElapsed(props: {
   readonly tickSeconds: boolean;
 }) {
   const elapsed = useSubagentElapsed(props.subagent, props.tickSeconds);
-  return elapsed === null ? null : (
-    <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
-  );
+  return <SubagentElapsedText>{elapsed}</SubagentElapsedText>;
 }
 
 function useSubagentElapsed(

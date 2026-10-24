@@ -2,8 +2,17 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
-import type { ReactNode } from "react";
-import { View } from "react-native";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { Text as SystemText, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -28,6 +37,67 @@ type SubagentRowSubagent = Pick<
   | "result"
 >;
 
+type ElapsedColumn = {
+  readonly width: number;
+  readonly report: (key: string, width: number | null) => void;
+};
+
+const ElapsedColumnContext = createContext<ElapsedColumn | null>(null);
+
+/**
+ * Sizes every subagent timer inside it to the widest one, like a table column,
+ * so the status labels beside them line up and shift together, once, when a
+ * timer gains a digit.
+ */
+export function SubagentElapsedColumn(props: { readonly children: ReactNode }) {
+  const [widths, setWidths] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // Stable, so a timer's unmount cleanup is the only thing that drops its width.
+  const report = useCallback(
+    (key: string, width: number | null) =>
+      setWidths((current) => {
+        if (current.get(key) === (width ?? undefined)) return current;
+        const next = new Map(current);
+        if (width === null) next.delete(key);
+        else next.set(key, width);
+        return next;
+      }),
+    [],
+  );
+  const width = Math.max(0, ...widths.values());
+  const column = useMemo(() => ({ width, report }), [width, report]);
+  return <ElapsedColumnContext value={column}>{props.children}</ElapsedColumnContext>;
+}
+
+/**
+ * Renders a ticking subagent duration in the system font: DM Sans has no
+ * tabular figures, so `tabular-nums` alone would still let the width jitter.
+ * Inside a column, a row without a duration still keeps the column's space.
+ */
+export function SubagentElapsedText(props: { readonly children: string | null }) {
+  const column = useContext(ElapsedColumnContext);
+  if (props.children !== null) return <ElapsedCell column={column}>{props.children}</ElapsedCell>;
+  return column ? <View style={{ minWidth: column.width }} /> : null;
+}
+
+function ElapsedCell(props: { readonly column: ElapsedColumn | null; readonly children: string }) {
+  const { column } = props;
+  const key = useId();
+  const report = column?.report;
+  useEffect(() => (report ? () => report(key, null) : undefined), [key, report]);
+  return (
+    <View className="shrink-0 items-end" style={{ minWidth: column?.width ?? 0 }}>
+      <SystemText
+        className="text-xs text-foreground-muted"
+        numberOfLines={1}
+        onLayout={report ? (event) => report(key, event.nativeEvent.layout.width) : undefined}
+        style={{ fontVariant: ["tabular-nums"] }}
+      >
+        {props.children}
+      </SystemText>
+    </View>
+  );
+}
+
 export function SubagentRow(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: SubagentRowSubagent;
@@ -45,7 +115,7 @@ export function SubagentRow(props: {
           <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
             <Text
               numberOfLines={1}
-              className="min-w-0 shrink font-t3-medium text-sm text-foreground"
+              className="min-w-0 flex-1 font-t3-medium text-sm text-foreground"
             >
               {presentation.title}
             </Text>
@@ -68,7 +138,10 @@ export function SubagentRow(props: {
           {props.elapsed}
           {presentation.canOpenThread ? (
             <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
-          ) : null}
+          ) : (
+            // Holds the chevron's width so statuses line up with openable rows.
+            <View className="w-3" />
+          )}
         </View>
         <SubagentMetadata environmentId={props.environmentId} subagent={props.subagent} />
         {detail ? (
