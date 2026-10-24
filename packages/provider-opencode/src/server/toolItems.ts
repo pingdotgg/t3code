@@ -5,6 +5,10 @@ import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/tool
 // Search results stay on the timeline wire, so keep their text a preview.
 const SEARCH_PREVIEW_MAX_CHARS = 8_000;
 
+export type OpenCodeToolContentBlock =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly mimeType: string; readonly data: string };
+
 type ToolItemBase = Omit<
   Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>,
   "type" | "toolName" | "input" | "output"
@@ -88,9 +92,11 @@ export function openCodeToolTurnItem(
     readonly input: Record<string, unknown>;
     readonly output: string | undefined;
     readonly completedMetadata: unknown;
+    /** Result blocks in provider order. Only a dynamic tool can show images; other kinds stay text. */
+    readonly content?: ReadonlyArray<OpenCodeToolContentBlock>;
   },
 ): OrchestrationV2TurnItem {
-  const { input, output } = tool;
+  const { input, output, content } = tool;
   switch (openCodeToolProjectionKind(tool.name)) {
     case "command_execution": {
       const exitCode = recordNumber(tool.completedMetadata, "exit", "exitCode");
@@ -159,6 +165,9 @@ export function openCodeToolTurnItem(
       const readPath = recordString(input, "filePath", "path", "file");
       const cleanedOutput =
         tool.name === "read" && output !== undefined ? nativeReadOutput(output) : output;
+      // Text-only results stay a string; images take the block shape clients and
+      // the server already read tool-output images from.
+      const result = content?.some((block) => block.type === "image") ? { content } : cleanedOutput;
       return {
         ...base,
         title:
@@ -168,7 +177,7 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(cleanedOutput === undefined ? {} : { output: cleanedOutput }),
+        ...(result === undefined ? {} : { output: result }),
       };
     }
   }
