@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./assistant-insights": {
+      "types": "./src/assistantInsights.ts",
+      "default": "./src/assistantInsights.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
