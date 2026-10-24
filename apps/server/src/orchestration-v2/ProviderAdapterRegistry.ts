@@ -188,7 +188,7 @@ export function layerFromAdapters(
 
 export function layerFromAdaptersEffect<R, E>(
   adapters: Effect.Effect<ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>, E, R>,
-): Layer.Layer<ProviderAdapterRegistryV2, E, R> {
+): Layer.Layer<ProviderAdapterRegistryV2, E, Exclude<R, Scope.Scope>> {
   return Layer.effect(
     ProviderAdapterRegistryV2,
     adapters.pipe(Effect.map((entries) => ProviderAdapterRegistryV2.of(makeRegistry(entries)))),

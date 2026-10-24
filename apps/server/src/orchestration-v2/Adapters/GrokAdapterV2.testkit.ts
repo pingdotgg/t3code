@@ -47,7 +47,7 @@ function layerGrokProviderAdapterRegistryReplay(
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
-        .makeTempDirectory({
+        .makeTempDirectoryScoped({
           prefix: `t3-orchestration-v2-grok-replay-${transcript.scenario}-`,
         })
         .pipe(Effect.orDie);

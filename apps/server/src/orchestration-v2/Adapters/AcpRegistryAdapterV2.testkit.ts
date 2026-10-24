@@ -45,7 +45,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
-        .makeTempDirectory({
+        .makeTempDirectoryScoped({
           prefix: `t3-orchestration-v2-acp-registry-replay-${transcript.scenario}-`,
         })
         .pipe(Effect.orDie);
