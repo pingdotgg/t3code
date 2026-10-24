@@ -173,9 +173,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
   };
   // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
+  // A client that asks for usage limit sources also renders credit balance cards.
   const onDemandSnapshots = (input: ServerConfigSubscriptionInput) => ({
     ...input,
     workspaceSnapshotsOnDemand: true,
+    creditBalances: input.usageLimitSources === true,
   });
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {

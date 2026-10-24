@@ -1,6 +1,10 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ServerConfigStreamEvent,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -9,6 +13,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
+import { legacyCreditSettings, legacyCreditSources } from "./creditClientCompatibility.ts";
 
 const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
 
@@ -184,3 +189,31 @@ it.effect("keeps a failed credit request unknown and hides remote error bodies",
     Effect.scoped,
   ),
 );
+
+it("keeps credit settings and snapshots away from clients without currency-card support", () => {
+  const id = UsageLimitSourceId.make("credits");
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    usageLimitSources: {
+      [id]: {
+        kind: "credits" as const,
+        url: "http://127.0.0.1:3774/credits",
+        managementKey: "",
+        enabled: true,
+      },
+    },
+  };
+  expect(legacyCreditSettings(settings).usageLimitSources).toEqual({});
+  expect(settings.usageLimitSources[id]?.kind).toBe("credits");
+  expect(
+    legacyCreditSources([
+      {
+        id,
+        kind: "credits",
+        label: "Credits",
+        checkedAt: "2026-10-24T12:00:00.000Z",
+        accounts: [],
+      },
+    ]),
+  ).toEqual([]);
+});
