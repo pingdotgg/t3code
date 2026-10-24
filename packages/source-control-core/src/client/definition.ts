@@ -111,6 +111,11 @@ export interface SourceControlClientDefinition {
    */
   readonly changeRequestActions: ReadonlySet<PullRequestAction>;
   readonly checkoutCommand: (changeRequest: ChangeRequestCheckoutInput) => string | null;
+  /**
+   * Matches a shell command that merges or closes a change request with this host's CLI, which
+   * sends T3 no notification of its own. Absent for a host with no such CLI.
+   */
+  readonly changeRequestCloseCommand?: RegExp;
   readonly authorProfileUrl: (login: string, repositoryUrl: string) => string | null;
   readonly referenceAutolinkRepositoryUrl: (repositoryUrl: string) => string | null;
   readonly reviewSummaryRequired: (verdict: PullRequestReviewVerdict) => boolean;

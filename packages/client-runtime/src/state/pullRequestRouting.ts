@@ -354,7 +354,8 @@ export function createPullRequestRouter() {
           identityProbe,
         )
       : identityProbe;
-    if (identity === null || identity.provider !== "github") return yield* finish(source);
+    // The source server answers only for a host whose account it can verify.
+    if (identity === null) return yield* finish(source);
 
     const routedInput = {
       ...input,
@@ -437,7 +438,7 @@ export function createPullRequestRouter() {
             );
           if (
             alternate === null ||
-            alternate.provider !== "github" ||
+            alternate.provider !== identity.provider ||
             alternate.host.toLowerCase() !== identity.host.toLowerCase() ||
             alternate.accountId !== identity.accountId
           ) {

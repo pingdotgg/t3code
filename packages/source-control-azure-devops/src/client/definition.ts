@@ -98,6 +98,9 @@ export const definition = defineSourceControlClient({
     "disable-auto-merge",
   ] as const),
   checkoutCommand: ({ number }) => `az repos pr checkout --id ${number}`,
+  // Completing or abandoning is a status change, the same `update` this package runs.
+  changeRequestCloseCommand:
+    /\baz\s+repos\s+pr\s+update\b[^;&|]*--status[\s=]+["']?(?:completed|abandoned)\b/u,
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,

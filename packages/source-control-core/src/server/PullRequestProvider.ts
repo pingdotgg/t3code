@@ -287,6 +287,14 @@ export interface PullRequestProviderApi {
   >;
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
+  /**
+   * What a reader is told when this host cannot be read on the server: `missing` for no tool or
+   * credential, `unauthenticated` for one the host refused. Absent means a generic sentence.
+   */
+  readonly unavailableRequirement?: {
+    readonly missing: string;
+    readonly unauthenticated: string;
+  };
   readonly mergeMessageRewrite?: (message: string) => string;
   /**
    * Absent means `owner/name` on the host identifies it, and any checkout on the host can serve a
@@ -335,6 +343,12 @@ export interface PullRequestProviderApi {
    * rows a page ordered by update shows. `cursor` is one boundary for all of them, so a caller
    * with repositories standing at different boundaries asks in groups rather than in one call.
    */
+  /**
+   * Set when `listChangeRequestsAcross` can answer with silence for a repository it does not
+   * cover rather than with an error, so a repository the read said nothing about is read on its
+   * own before it is believed empty.
+   */
+  readonly listsAcrossMayOmitRepositories?: boolean;
   readonly listChangeRequestsAcross?: (input: {
     readonly cwd: string;
     readonly host: string;

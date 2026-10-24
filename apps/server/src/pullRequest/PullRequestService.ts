@@ -18,7 +18,6 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import {
   PullRequestOperationError,
   PullRequestUnavailableError,
-  pullRequestProviderRequirement,
   resolvePullRequestAuthorFilter,
   type OrchestrationProjectShell,
   type ProjectId,
@@ -402,36 +401,47 @@ function isProviderUnusable(error: PullRequestProviderError): boolean {
   return error.reason === "missing-tool" || error.reason === "unauthenticated";
 }
 
-function providerDetail(error: PullRequestProviderError): string {
+type UnavailableRequirementOf = (
+  kind: SourceControlProviderKind,
+) => PullRequestProviderApi["unavailableRequirement"];
+
+function unavailableRequirement(
+  requirementOf: UnavailableRequirementOf,
+  error: PullRequestProviderError,
+): string | undefined {
+  const requirement = requirementOf(error.provider);
+  if (requirement === undefined) return undefined;
+  return error.reason === "missing-tool" ? requirement.missing : requirement.unauthenticated;
+}
+
+function providerDetail(
+  requirementOf: UnavailableRequirementOf,
+  error: PullRequestProviderError,
+): string {
   if (!isProviderUnusable(error)) return error.detail;
-  return (
-    pullRequestProviderRequirement(
-      error.provider,
-      error.reason === "missing-tool" ? "cli-missing" : "cli-unauthenticated",
-    ) ?? error.detail
-  );
+  return unavailableRequirement(requirementOf, error) ?? error.detail;
 }
 
-function toUnavailableError(error: PullRequestProviderError): PullRequestUnavailableError {
-  return new PullRequestUnavailableError({
-    reason: error.reason === "missing-tool" ? "cli-missing" : "cli-unauthenticated",
-    provider: error.provider,
-    cause: error,
-  });
-}
-
-function toPullRequestError(
-  operation: string,
-): (error: PullRequestProviderError) => PullRequestError {
-  return (error) =>
-    isProviderUnusable(error)
-      ? toUnavailableError(error)
-      : new PullRequestOperationError({
-          operation,
-          detail: error.detail,
-          ...(error.reason === "not-found" ? { reason: "not-found" as const } : {}),
-          cause: error,
-        });
+function toPullRequestErrorWith(
+  requirementOf: UnavailableRequirementOf,
+): (operation: string) => (error: PullRequestProviderError) => PullRequestError {
+  return (operation) => (error) => {
+    if (isProviderUnusable(error)) {
+      const requirement = unavailableRequirement(requirementOf, error);
+      return new PullRequestUnavailableError({
+        reason: error.reason === "missing-tool" ? "cli-missing" : "cli-unauthenticated",
+        provider: error.provider,
+        ...(requirement === undefined ? {} : { requirement }),
+        cause: error,
+      });
+    }
+    return new PullRequestOperationError({
+      operation,
+      detail: error.detail,
+      ...(error.reason === "not-found" ? { reason: "not-found" as const } : {}),
+      cause: error,
+    });
+  };
 }
 
 function withRateLimitBackoff(
@@ -493,6 +503,12 @@ function withRateLimitBackoff(
     ...(api.mergeMessageRewrite === undefined
       ? {}
       : { mergeMessageRewrite: api.mergeMessageRewrite }),
+    ...(api.unavailableRequirement === undefined
+      ? {}
+      : { unavailableRequirement: api.unavailableRequirement }),
+    ...(api.listsAcrossMayOmitRepositories === undefined
+      ? {}
+      : { listsAcrossMayOmitRepositories: api.listsAcrossMayOmitRepositories }),
     ...(api.repositoryKey === undefined ? {} : { repositoryKey: api.repositoryKey }),
     ...(api.readsPublicHostWithoutCheckout === undefined
       ? {}
@@ -679,6 +695,9 @@ export const make = Effect.gen(function* () {
   const stateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
   const registry = yield* PullRequestProviderRegistry.PullRequestProviderRegistry;
+  const requirementOf: UnavailableRequirementOf = (kind) =>
+    registry.get(kind)?.unavailableRequirement;
+  const toPullRequestError = toPullRequestErrorWith(requirementOf);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -1172,9 +1191,9 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  // A repository that has appeared in a host search is known to be indexed there. Empty
-  // authored/reviewing searches for that same repository are therefore real empty answers, not
-  // a reason to issue the two-command per-repository fallback again.
+  // On a host whose read across repositories may omit some, a repository that has appeared in
+  // one is known to be covered. Empty reads for that same repository are therefore real empty
+  // answers, not a reason to read it on its own again.
   const searchVisibleAt = new Map<string, number>();
   const searchVisibilityKey = (host: string, repository: string) =>
     `${host}\n${repository.trim().toLowerCase()}`;
@@ -1207,7 +1226,7 @@ export const make = Effect.gen(function* () {
           actions: capabilities?.actions ?? [],
           projectCount: projectCounts.get(result.host) ?? 1,
           configured: result.viewer !== null,
-          detail: result.error === null ? null : providerDetail(result.error),
+          detail: result.error === null ? null : providerDetail(requirementOf, result.error),
         };
       }),
       ...[...unimplemented].map(([host, { kind, projectCount }]) => ({
@@ -1412,18 +1431,18 @@ export const make = Effect.gen(function* () {
               chunk,
               (project): Effect.Effect<RepositoryBatch> => {
                 const fetched = rows.get(project.repository.trim().toLowerCase()) ?? [];
-                // GitHub does not index every repository for search — a renamed one answers for
-                // its old name with silence rather than with an error — so a repository the
-                // search said nothing at all about is read on its own, once, before it is
-                // believed. Only on its first slice: after that it has a boundary to carry on
-                // from, and silence past one means the rows are older rather than absent.
+                // A repository the read said nothing at all about, on a host whose read can omit
+                // one, is read on its own, once, before it is believed. Only on its first slice:
+                // after that it has a boundary to carry on from, and silence past one means the
+                // rows are older rather than absent.
                 const lastVisible = searchVisibleAt.get(
                   searchVisibilityKey(project.host, project.repository),
                 );
                 const searchIsKnownVisible =
-                  !page.truncated &&
-                  lastVisible !== undefined &&
-                  now - lastVisible <= Duration.toMillis(SEARCH_VISIBILITY_TTL);
+                  first.api.listsAcrossMayOmitRepositories !== true ||
+                  (!page.truncated &&
+                    lastVisible !== undefined &&
+                    now - lastVisible <= Duration.toMillis(SEARCH_VISIBILITY_TTL));
                 if (
                   fetched.length === 0 &&
                   cursorOf(project) === undefined &&
@@ -1529,7 +1548,7 @@ export const make = Effect.gen(function* () {
         host,
       })
       .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
-    return { ...identity, host, provider: "github" as const };
+    return { ...identity, host, provider: api.kind };
   });
 
   const withRoutingCredential: PullRequestService["Service"]["withRoutingCredential"] = Effect.fn(
@@ -1539,7 +1558,7 @@ export const make = Effect.gen(function* () {
     const rejected = () =>
       new PullRequestOperationError({
         operation: "routeIdentity",
-        detail: "The GitHub account could not be verified before starting the operation.",
+        detail: "The signed-in account could not be verified before starting the operation.",
       });
     const project = yield* requireProject(input).pipe(Effect.mapError(rejected));
     const api = registry.get(project.api.kind);

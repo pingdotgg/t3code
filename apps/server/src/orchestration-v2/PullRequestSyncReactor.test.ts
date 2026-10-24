@@ -1337,7 +1337,11 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("reads open links fresh only when a run that ran a merge command ends", () =>
+  it.effect.each([
+    "gh pr merge 7 --squash 2>&1 | tail -3",
+    "cafe pr merge 7 --squash",
+    "az repos pr update --id 7 --status completed",
+  ])("reads open links fresh only when a run that ran `%s` ends", (mergeCommand) =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -1366,7 +1370,7 @@ describe("PullRequestSyncReactor", () => {
           yield* Queue.offerAll(fixture.domainEvents, [
             commandRan(ThreadId.make("other"), "gh pr view 9"),
             runUpdated(ThreadId.make("other"), "completed"),
-            commandRan(ThreadId.make("agent"), "gh pr merge 7 --squash 2>&1 | tail -3"),
+            commandRan(ThreadId.make("agent"), mergeCommand),
             runUpdated(ThreadId.make("agent"), "completed"),
           ]);
           yield* Queue.take(fixture.snapshotReads);

@@ -46,6 +46,7 @@ export const definition = defineSourceControlClient({
     "disable-auto-merge",
   ] as const),
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
+  changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|close)\b/u,
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,

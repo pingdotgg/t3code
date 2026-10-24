@@ -12,7 +12,7 @@ import * as DateTime from "effect/DateTime";
  * this only stops a chatty bot looping an agent that is replying to it.
  */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
-/** How long a GitHub head may go without any check before the agent is told none reported. */
+/** How long a head may go without any check before the agent is told none reported. */
 const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
@@ -38,7 +38,7 @@ export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "provider" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
@@ -95,10 +95,10 @@ export function evaluatePullRequestWatch(
 
   // Only a head never read with checks waits for them: an empty read after checks were seen is
   // the failed read above. A watch saved before this field may have seen pending checks on its
-  // head, so its clock starts only at the next push. Other hosts can lack a checks API (Azure
-  // DevOps pipelines), where an empty list says nothing, so only GitHub waits.
+  // head, so its clock starts only at the next push. Where a host's empty list can mean the
+  // repository runs no checks at all, nothing waits.
   let checksAwaitedSince = watch.checksAwaitedSince;
-  if (detail.provider === "github") {
+  if (detail.capabilities.checksAlwaysReport === true) {
     const awaitedBefore = headMoved
       ? DateTime.formatIso(DateTime.makeUnsafe(now))
       : (watch.checksAwaitedSince ?? null);
@@ -113,7 +113,7 @@ export function evaluatePullRequestWatch(
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
-  // GitHub times are per second, so remarks at the boundary time are told apart by ID.
+  // Hosts can stamp remarks to the second, so remarks at the boundary time are told apart by ID.
   const fresh = (remarks ?? []).filter((remark) => {
     const at = Date.parse(activeAt(remark));
     return (
@@ -133,7 +133,7 @@ export function evaluatePullRequestWatch(
   if (detail.mergeability === "conflicting" && !watch.conflicting) {
     changes.push({ kind: "conflicting" });
   }
-  // "unknown" is GitHub still computing after a push; only a clean answer clears a conflict.
+  // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 

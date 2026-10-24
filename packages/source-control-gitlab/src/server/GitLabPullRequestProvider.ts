@@ -41,6 +41,12 @@ const CAPABILITIES: PullRequestCapabilities = {
   edit: { changeRequest: true, comment: true },
 };
 
+const UNAVAILABLE_REQUIREMENT = {
+  missing:
+    "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
+  unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
+};
+
 /**
  * The actions `user.can_merge` answers for. Rebasing writes to the source branch rather than to
  * the target, so it is not literally the same permission — but GitLab reports nothing narrower,
@@ -115,6 +121,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
 
     getViewer: (input) =>
       cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),

@@ -309,6 +309,8 @@ const ReviewSubmissionSchema = Schema.Struct({
   comments: Schema.Array(
     Schema.Struct({
       path: Schema.String,
+      start_line: Schema.optional(Schema.Int),
+      start_side: Schema.optional(Schema.Literals(["LEFT", "RIGHT"])),
       line: Schema.Int,
       side: Schema.Literals(["LEFT", "RIGHT"]),
       body: Schema.String,
@@ -346,11 +348,19 @@ export function buildReviewSubmission(input: {
   return {
     event: REVIEW_EVENTS[input.verdict],
     body: input.body,
-    comments: input.comments.map((comment) => ({
-      path: comment.path,
-      ...gitHubReviewPosition(comment.position),
-      body: comment.body,
-    })),
+    comments: input.comments.map((comment) => {
+      const end = gitHubReviewPosition(comment.position);
+      const start =
+        comment.startPosition === undefined ? null : gitHubReviewPosition(comment.startPosition);
+      // GitHub refuses a start that is the end itself, so a one-line range is sent as one line.
+      const ranged = start !== null && (start.line !== end.line || start.side !== end.side);
+      return {
+        path: comment.path,
+        ...(ranged ? { start_line: start.line, start_side: start.side } : {}),
+        ...end,
+        body: comment.body,
+      };
+    }),
   };
 }
 

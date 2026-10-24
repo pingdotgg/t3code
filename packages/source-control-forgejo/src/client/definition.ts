@@ -81,6 +81,7 @@ export const definition = defineSourceControlClient({
     repositoryUrl
       ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' ${changeRequestHeadRef(number)} && git checkout -B pulls/${number} FETCH_HEAD`
       : null,
+  changeRequestCloseCommand: /\b(?:tea\s+(?:pr|pulls)|fj\s+pr)\s+(?:merge|close)\b/u,
   authorProfileUrl: () => null,
   // Forgejo refuses a change request review without a summary, even with inline comments.
   referenceAutolinkRepositoryUrl: () => null,

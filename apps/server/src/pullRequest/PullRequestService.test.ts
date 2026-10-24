@@ -713,6 +713,10 @@ it.effect("reports an unusable host over a merely failing one", () =>
             ),
         }),
         fakeProvider(SourceControlProviderKind.make("gitlab"), {
+          unavailableRequirement: {
+            missing: "Install glab.",
+            unauthenticated: "Run glab auth login.",
+          },
           getViewer: () =>
             Effect.fail(unusable(SourceControlProviderKind.make("gitlab"), "missing-tool")),
         }),
@@ -722,7 +726,10 @@ it.effect("reports an unusable host over a merely failing one", () =>
     const error = yield* Effect.flip(service.list({ state: "open" }));
 
     assert.strictEqual(error._tag, "PullRequestUnavailableError");
-    assert.strictEqual(error.message.includes("glab"), true);
+    if (error._tag === "PullRequestUnavailableError") {
+      assert.strictEqual(error.requirement, "Install glab.");
+    }
+    assert.strictEqual(error.message, "Install glab.");
   }),
 );
 
@@ -2303,6 +2310,7 @@ it.effect("carries every repository of a slice on from the oldest row in it", ()
       ],
       providers: [
         fakeProvider(SourceControlProviderKind.make("github"), {
+          listsAcrossMayOmitRepositories: true,
           listChangeRequestsAcross: () =>
             Effect.succeed({
               items: [
@@ -2394,7 +2402,51 @@ it.effect("reads a workspace larger than one search in chunks, and merges them",
     assert.strictEqual(result.entries.length, 101);
   }),
 );
-it.effect("asks on its own for a repository a search answered nothing for", () =>
+it.effect(
+  "asks on its own for a repository a search answered nothing for, where searches can omit one",
+  () =>
+    Effect.gen(function* () {
+      const separately: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+          project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            listsAcrossMayOmitRepositories: true,
+            listChangeRequests: ({ repository }) => {
+              separately.push(repository);
+              return repository === "acme/docs"
+                ? Effect.fail(requestFailed)
+                : Effect.succeed({ items: [], truncated: false, continues: true });
+            },
+            listChangeRequestsAcross: () =>
+              Effect.succeed({
+                items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
+                truncated: false,
+              }),
+          }),
+        ],
+      });
+
+      const result = yield* service.list({ state: "open" });
+
+      assert.deepStrictEqual(separately, ["acme/docs"]);
+      assert.deepStrictEqual(result.errors, [
+        {
+          projectId: "p2" as ProjectId,
+          projectTitle: "docs",
+          message: "acme/docs could not be read.",
+        },
+      ]);
+      assert.deepStrictEqual(
+        result.entries.map((entry) => entry.number),
+        [1],
+      );
+    }),
+);
+it.effect("believes a search's silence about a repository where searches cover every one", () =>
   Effect.gen(function* () {
     const separately: string[] = [];
     const service = yield* makeService({
@@ -2406,9 +2458,7 @@ it.effect("asks on its own for a repository a search answered nothing for", () =
         fakeProvider(SourceControlProviderKind.make("github"), {
           listChangeRequests: ({ repository }) => {
             separately.push(repository);
-            return repository === "acme/docs"
-              ? Effect.fail(requestFailed)
-              : Effect.succeed({ items: [], truncated: false, continues: true });
+            return Effect.succeed({ items: [], truncated: false, continues: true });
           },
           listChangeRequestsAcross: () =>
             Effect.succeed({
@@ -2421,14 +2471,7 @@ it.effect("asks on its own for a repository a search answered nothing for", () =
 
     const result = yield* service.list({ state: "open" });
 
-    assert.deepStrictEqual(separately, ["acme/docs"]);
-    assert.deepStrictEqual(result.errors, [
-      {
-        projectId: "p2" as ProjectId,
-        projectTitle: "docs",
-        message: "acme/docs could not be read.",
-      },
-    ]);
+    assert.deepStrictEqual(separately, []);
     assert.deepStrictEqual(
       result.entries.map((entry) => entry.number),
       [1],

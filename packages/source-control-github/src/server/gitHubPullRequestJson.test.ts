@@ -1399,6 +1399,38 @@ describe("review submission payload", () => {
       ],
     });
   });
+
+  it("sends a range from its first line, and a one-line range as one line", () => {
+    const payload = buildReviewSubmission({
+      verdict: "comment",
+      body: "",
+      comments: [
+        {
+          path: "src/a.ts",
+          startPosition: { kind: "context", oldLine: 4, newLine: 5, side: "right" },
+          position: { kind: "added", newLine: 9 },
+          body: "this block",
+        },
+        {
+          path: "src/b.ts",
+          startPosition: { kind: "added", newLine: 2 },
+          position: { kind: "added", newLine: 2 },
+          body: "this line",
+        },
+      ],
+    });
+    expect(payload.comments).toEqual([
+      {
+        path: "src/a.ts",
+        start_line: 5,
+        start_side: "RIGHT",
+        line: 9,
+        side: "RIGHT",
+        body: "this block",
+      },
+      { path: "src/b.ts", line: 2, side: "RIGHT", body: "this line" },
+    ]);
+  });
 });
 
 describe("decodePullRequestFilesJson", () => {

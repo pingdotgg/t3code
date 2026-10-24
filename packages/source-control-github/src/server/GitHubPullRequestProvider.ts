@@ -38,6 +38,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "host",
   review: {
     inlineComment: true,
+    rangeComment: true,
     reply: true,
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
@@ -47,6 +48,16 @@ const CAPABILITIES: PullRequestCapabilities = {
   stacks: true,
   stackActions: true,
   labels: true,
+  // Statuses and check runs land on the head commit itself and are read whole, so an empty list
+  // after a push is CI that never started rather than a read that saw nothing.
+  checksAlwaysReport: true,
+};
+
+const UNAVAILABLE_REQUIREMENT = {
+  missing:
+    "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
+  unauthenticated:
+    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
 };
 
 /**
@@ -243,6 +254,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("github"),
     capabilities: CAPABILITIES,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     readsPublicHostWithoutCheckout: true,
     mergeMessageRewrite: removeAgentCredits,
     getRoutingIdentity: (input) =>
@@ -294,6 +306,9 @@ export const make = Effect.gen(function* () {
           ),
         ),
 
+    // GitHub does not index every repository for search: a renamed one answers for its old name
+    // with silence rather than with an error.
+    listsAcrossMayOmitRepositories: true,
     listChangeRequestsAcross: (input) =>
       cli
         .searchPullRequests({

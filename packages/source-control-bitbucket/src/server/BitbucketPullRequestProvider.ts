@@ -38,6 +38,12 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "environment",
 };
 
+const UNAVAILABLE_REQUIREMENT = {
+  missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+  unauthenticated:
+    "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
+};
+
 /**
  * Bitbucket lets the author of a pull request decline their own with no more than read access,
  * and the permission response says nothing about who opened this one — so withholding the
@@ -147,6 +153,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     readsPublicHostWithoutCheckout: true,
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),

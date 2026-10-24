@@ -69,6 +69,7 @@ export const definition = defineSourceControlClient({
     "update-branch",
   ] as const),
   checkoutCommand: ({ number }) => `cafe pr checkout ${number}`,
+  changeRequestCloseCommand: /\bcafe\s+(?:pr|stack)\s+(?:merge|close)\b/u,
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,

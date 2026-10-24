@@ -1,5 +1,4 @@
 import {
-  SourceControlProviderKind,
   type PullRequestCheck,
   PullRequestComment,
   ThreadPullRequestWatch,
@@ -40,8 +39,19 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
 
 type Detail = Parameters<typeof evaluatePullRequestWatch>[1];
 
+const capabilities = (checksAlwaysReport: boolean): Detail["capabilities"] => ({
+  diff: true,
+  comment: true,
+  actions: [],
+  mergeMethods: [],
+  search: false,
+  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+  reviewers: { request: false, listCandidates: false },
+  checksAlwaysReport,
+});
+
 const detail = (overrides: Partial<Detail> = {}): Detail => ({
-  provider: SourceControlProviderKind.make("github"),
+  capabilities: capabilities(true),
   headSha: "aaaaaaaaaa",
   checks: [check("lint", "success"), check("test", "pending")],
   mergeability: "mergeable",
@@ -364,11 +374,8 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(pushed.flat(), ["no-checks"]);
   });
 
-  it("never reports missing checks on a host whose checks it cannot read", () => {
-    const azure = detail({
-      provider: SourceControlProviderKind.make("azure-devops"),
-      checks: [],
-    });
-    assert.isTrue(anHourLater(watch(), azure).every((kinds) => kinds.length === 0));
+  it("never reports missing checks on a host where an empty list says nothing", () => {
+    const silent = detail({ capabilities: capabilities(false), checks: [] });
+    assert.isTrue(anHourLater(watch(), silent).every((kinds) => kinds.length === 0));
   });
 });
