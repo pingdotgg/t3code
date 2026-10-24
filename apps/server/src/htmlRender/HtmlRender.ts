@@ -492,6 +492,7 @@ const make = Effect.gen(function* () {
         html: inlined.html,
         width,
         urlFragment: htmlRenderThemeFragment(theme),
+        appearance,
       }).pipe(Effect.provideContext(services)),
     );
     return {

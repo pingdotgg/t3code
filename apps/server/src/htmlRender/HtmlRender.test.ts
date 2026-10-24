@@ -316,6 +316,31 @@ describe("HtmlRender", () => {
     },
   );
 
+  it.live("matches preview media queries and text colors to the requested appearance", (ctx) =>
+    Effect.gen(function* () {
+      const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
+      if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+      yield* Effect.gen(function* () {
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        for (const appearance of [undefined, "dark", "light"] as const) {
+          const preview = yield* htmlRender.preview({
+            appearance,
+            html: [
+              "<style>h1{color:#18181b}@media(prefers-color-scheme:dark){h1{color:#fafafa}}</style>",
+              "<h1>The moon garden opens at dusk</h1>",
+              '<script>console.log(matchMedia("(prefers-color-scheme:dark)").matches,',
+              'getComputedStyle(document.querySelector("h1")).color);</script>',
+            ].join(""),
+          });
+          expect(preview.consoleMessages).toContainEqual({
+            level: "log",
+            text: appearance === "light" ? "false rgb(24, 24, 27)" : "true rgb(250, 250, 250)",
+          });
+        }
+      }).pipe(Effect.provide(layerHtmlRender(executable)));
+    }),
+  );
+
   it.live("keeps every local file but the page itself out of the browser", (ctx) =>
     Effect.gen(function* () {
       const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
