@@ -12,6 +12,7 @@ import {
   SourceControlProviderKind,
   TrimmedNonEmptyString,
   type SourceControlProviderAuth,
+  type SourceControlProviderInfo,
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
@@ -50,6 +51,19 @@ const BitbucketApiEnvConfig = Config.all({
   email: Config.String("T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
   apiToken: Config.String("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
+
+/**
+ * This client speaks only the Bitbucket Cloud API. Bitbucket Server and Data Center answer a
+ * different one, so a repository on another host is not read unless
+ * T3CODE_BITBUCKET_API_BASE_URL names the Cloud API to send it to.
+ */
+export const BitbucketServesHost = Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
+  Config.option,
+  Config.map(
+    (baseUrl) => (host: string) =>
+      Option.isSome(baseUrl) || host === "bitbucket.org" || host.endsWith(".bitbucket.org"),
+  ),
+);
 
 const BitbucketApiOperation = Schema.Literals([
   "resolveRepository",
@@ -653,6 +667,11 @@ export const make = Effect.gen(function* () {
     host: "bitbucket.org",
   };
 
+  const servesHost = yield* BitbucketServesHost;
+
+  const servesProvider = (provider: SourceControlProviderInfo | null) =>
+    provider?.kind === "bitbucket" && servesHost(URL.parse(provider.baseUrl)?.hostname ?? "");
+
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
   const currentCredential = host.settings.get.pipe(
@@ -764,6 +783,10 @@ export const make = Effect.gen(function* () {
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly repository?: string;
   }) {
+    if (input.context?.provider.kind === "bitbucket" && !servesProvider(input.context.provider)) {
+      // Falling back to another remote could act on a different repository.
+      return yield* new BitbucketRepositoryRemoteNotFoundError({ cwd: input.cwd });
+    }
     if (input.repository !== undefined) {
       return yield* requireRepositoryLocator(input.repository);
     }
@@ -794,7 +817,7 @@ export const make = Effect.gen(function* () {
     );
 
     for (const remote of remotes.remotes) {
-      if (recognizeRemoteWith(definition, remote.url) === null) continue;
+      if (!servesProvider(recognizeRemoteWith(definition, remote.url))) continue;
       const parsed = parseBitbucketRemoteUrl(remote.url);
       if (parsed) return parsed;
     }
