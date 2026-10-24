@@ -1,33 +1,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
-export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
-  "codex",
-  "claude",
-  "grok",
-  "cursor",
-  "opencode",
-  "antigravity",
-  "pi",
-  "muse",
-];
-
-/** The usage series a provider driver reports under, or null for drivers without one. */
-export function usageProviderKind(driver: string): UsageProviderKind | null {
-  if (driver === "claudeAgent") return "claude";
-  return PROVIDER_ORDER.find((kind) => kind === driver) ?? null;
-}
-
-export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  grok: "Grok Build",
-  cursor: "Cursor",
-  opencode: "OpenCode",
-  antigravity: "Antigravity",
-  pi: "Pi",
-  muse: "Muse Code",
-};
+export { PROVIDER_LABEL, PROVIDER_ORDER, usageProviderKind } from "./usageProviderPresentation";
 
 export function useProviderColors(): Record<UsageProviderKind, string> {
   const { themeAppearance: scheme } = useAppearancePreferences();
@@ -40,6 +14,7 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
     antigravity: "#8c7bd1",
     pi: "#4d9f8a",
     muse: "#0866ff",
+    mistral: "#ff7000",
   };
 }
 

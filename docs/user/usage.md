@@ -8,8 +8,8 @@ On mobile, choose **Usage** in the workspace navigation.
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
-from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, Cursor, and Mistral Vibe
+history from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
@@ -42,6 +42,11 @@ known prices still contribute tokens and appear as unpriced; set custom prices t
 Use absolute paths or `~/` paths in the account's environment settings; relative environment paths
 depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
 sharing a history directory count once.
+
+Mistral Vibe reads `~/.vibe/logs/session/unified`, or the `logs/session/unified` directory under
+`VIBE_HOME` set on the server. Each session counts once with its lifetime token totals, attributed
+to the day of its last update, so a session resumed on a later day lands on that day. Vibe records
+tokens but no dollar cost, so Mistral Vibe costs are estimated from the shared price table.
 
 When your app and server support different providers, usage totals may cover only the providers
 your app understands. Update the app to include newly supported providers.
