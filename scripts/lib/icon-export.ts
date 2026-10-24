@@ -1,6 +1,18 @@
+import sharp from "sharp";
+
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export const WINDOWS_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256] as const;
+
+export async function renderSvgIco(source: Buffer): Promise<Buffer> {
+  const images = await Promise.all(
+    WINDOWS_ICON_SIZES.map(async (size) => ({
+      size,
+      contents: await sharp(source, { density: 288 }).resize(size, size).png().toBuffer(),
+    })),
+  );
+  return encodePngIco(images);
+}
 
 export interface PngIconImage {
   readonly size: number;

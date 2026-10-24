@@ -14,7 +14,12 @@ import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
-import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
+import {
+  encodePngIco,
+  readPngDimensions,
+  renderSvgIco,
+  WINDOWS_ICON_SIZES,
+} from "./lib/icon-export.ts";
 
 const DESIGN_GENERATION = 26;
 const ICON_COMPOSER_EXECUTABLE_PARTS = [
@@ -57,6 +62,7 @@ interface VariantOutputs {
 interface IconVariant {
   readonly label: string;
   readonly source: string;
+  readonly windowsSource?: string;
   readonly outputs: VariantOutputs;
 }
 
@@ -234,6 +240,7 @@ const ICON_VARIANTS = [
   {
     label: "production",
     source: BRAND_ASSET_PATHS.productionIconComposerProject,
+    windowsSource: BRAND_ASSET_PATHS.productionWindowsIconSvg,
     outputs: {
       ios: BRAND_ASSET_PATHS.productionIosIconPng,
       macos: BRAND_ASSET_PATHS.productionMacIconPng,
@@ -596,6 +603,26 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
   });
 
+  // Windows needs flat artwork with a larger wordmark at taskbar sizes.
+  let windowsIco = ico;
+  if (variant.windowsSource !== undefined) {
+    const windowsSourcePath = path.join(repositoryRoot, variant.windowsSource);
+    const windowsSource = yield* fs.readFile(windowsSourcePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new IconExportFileSystemError({
+            operation: "read-file",
+            path: windowsSourcePath,
+            cause,
+          }),
+      ),
+    );
+    windowsIco = yield* Effect.tryPromise({
+      try: () => renderSvgIco(Buffer.from(windowsSource)),
+      catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
+    });
+  }
+
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
     [variant.outputs.universal, ios],
@@ -603,7 +630,7 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     [variant.outputs.favicon16, yield* render("iOS", 16)],
     [variant.outputs.favicon32, yield* render("iOS", 32)],
     [variant.outputs.faviconIco, ico],
-    [variant.outputs.windowsIco, ico],
+    [variant.outputs.windowsIco, windowsIco],
   ]);
 });
 
