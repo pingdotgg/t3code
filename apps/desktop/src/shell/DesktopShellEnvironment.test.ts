@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
@@ -9,6 +10,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
@@ -68,7 +70,8 @@ function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
   readonly userShell?: string;
-  readonly handler: (
+  // Without a handler, commands run as real processes.
+  readonly handler?: (
     command: ChildProcess.Command,
   ) => string | { output: string; exitCode: number };
   readonly failure?: PlatformError.PlatformError;
@@ -79,18 +82,22 @@ function runShellEnvironment(input: {
       platform: input.platform,
     } as DesktopEnvironment.DesktopEnvironment["Service"]),
   );
-  const layerSpawner = Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      if (input.failure !== undefined) return Effect.fail(input.failure);
-      const result = input.handler(command);
-      return Effect.succeed(
-        typeof result === "string"
-          ? makeProcess(result)
-          : makeProcess(result.output, result.exitCode),
-      );
-    }),
-  );
+  const handler = input.handler;
+  const layerSpawner =
+    handler === undefined
+      ? Layer.empty
+      : Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (input.failure !== undefined) return Effect.fail(input.failure);
+            const result = handler(command);
+            return Effect.succeed(
+              typeof result === "string"
+                ? makeProcess(result)
+                : makeProcess(result.output, result.exitCode),
+            );
+          }),
+        );
 
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
@@ -168,6 +175,36 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
     }),
+  );
+
+  // The fake login shell is a POSIX script.
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "imports the login-shell PATH when the profile floods stderr",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped();
+        const shell = `${home}/noisy-shell`;
+        // More stderr than the OS pipe buffers hold, like a profile running under `set -x`.
+        yield* fileSystem.writeFileString(
+          shell,
+          [
+            "#!/bin/sh",
+            "head -c 1048576 /dev/zero >&2",
+            'PATH="/noisy/bin:/usr/bin:/bin"',
+            "export PATH",
+            'exec /bin/sh -c "$2"',
+          ].join("\n"),
+        );
+        yield* fileSystem.chmod(shell, 0o755);
+        const env: NodeJS.ProcessEnv = { SHELL: shell, HOME: home, PATH: "/usr/bin:/bin" };
+
+        yield* runShellEnvironment({ env, platform: "linux", userShell: shell }).pipe(
+          Effect.provide(Logger.layer([])),
+        );
+
+        assert.equal(env.PATH, "/noisy/bin:/usr/bin:/bin");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not mix login-shell locale categories into an inherited locale", () =>

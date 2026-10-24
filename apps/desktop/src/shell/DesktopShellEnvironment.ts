@@ -254,7 +254,8 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
           shell: input.shell ?? false,
           stdin: "ignore",
           stdout: "pipe",
-          stderr: "pipe",
+          // Nothing reads stderr, so a pipe would fill and block a noisy profile until timeout.
+          stderr: "ignore",
           killSignal: "SIGTERM",
           forceKillAfter: PROCESS_TERMINATE_GRACE,
         }),
