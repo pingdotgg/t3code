@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -11,6 +12,7 @@ import {
   CheckpointRef,
   CommandId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -42,6 +44,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import { McpSchema, McpServer } from "effect/ai";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -51,6 +54,8 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -75,6 +80,7 @@ import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadSearch from "./ThreadSearch.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -3698,6 +3704,313 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const projection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projection.thread.settledOverride, "settled");
+    }),
+  );
+
+  it.effect("lets a scheduled run mark its own thread unread through t3_thread_organize", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const server = yield* McpServer.McpServer;
+      const threadId = ThreadId.make("runtime-layer-own-mark-unread-thread");
+      const completeRun = (run: OrchestrationV2Run, id: string) =>
+        Effect.gen(function* () {
+          yield* TestClock.adjust("1 second");
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            commandId: CommandId.make(id),
+            events: [
+              {
+                id: EventId.make(id),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          return now;
+        });
+      const sendMessage = (id: string) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(id),
+          threadId,
+          messageId: MessageId.make(id),
+          text: id,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-own-mark-unread-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-own-mark-unread-project"),
+        title: "Own mark unread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-own-mark-unread",
+      });
+      yield* sendMessage("runtime-layer-own-mark-unread-seed");
+      const seedRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+      if (seedRun === undefined) return yield* Effect.die(new Error("Seed run missing."));
+      yield* completeRun(seedRun, "runtime-layer-own-mark-unread-seed-completed");
+      yield* sendMessage("runtime-layer-own-mark-unread-scheduled");
+      const scheduledRun = (yield* orchestrator.getThreadProjection(threadId)).runs[1];
+      if (scheduledRun === undefined) return yield* Effect.die(new Error("Scheduled run missing."));
+
+      const markedUnread = yield* orchestrator
+        .streamStoredEventsFrom({ threadId, afterSequence: 0, eventType: "thread.marked-unread" })
+        .pipe(Stream.runHead, Effect.forkChild);
+      // The scheduled run's own agent calls the tool while that run is still active.
+      const result = yield* server
+        .callTool({ name: "t3_thread_organize", arguments: { action: "mark_unread" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            environmentId: EnvironmentId.make("runtime-layer-own-mark-unread-environment"),
+            requestNamespace: "runtime-layer-own-mark-unread-session",
+            thread: {
+              threadId,
+              providerSessionId: "runtime-layer-own-mark-unread-session",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            },
+            client: undefined,
+            issuedAt: 0,
+            capabilities: new Set(["orchestration"] as const),
+          }),
+          Effect.provideService(
+            McpSchema.McpServerClient,
+            McpSchema.McpServerClient.of({
+              clientId: 1,
+              protocolVersion: "2025-06-18",
+              clientCapabilities: {},
+              clientInfo: { name: "runtime-layer", version: "1" },
+              initializePayload: {
+                protocolVersion: "2025-06-18",
+                capabilities: {},
+                clientInfo: { name: "runtime-layer", version: "1" },
+              },
+              getClient: Effect.die("unused"),
+            }),
+          ),
+        );
+      const text = result.content[0];
+      assert.deepEqual(
+        result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined,
+        undefined,
+        "mark_unread from the thread's own active run must not be rejected",
+      );
+
+      const completedAt = yield* completeRun(
+        scheduledRun,
+        "runtime-layer-own-mark-unread-scheduled-completed",
+      );
+      yield* Fiber.join(markedUnread);
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.thread.lastVisitedAt,
+        DateTime.subtract(completedAt, { milliseconds: 1 }),
+      );
+
+      // A deferred mark that lands after a newer visit keeps the read state.
+      const visitedAt = DateTime.add(completedAt, { milliseconds: 500 });
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-own-mark-unread-visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(visitedAt),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("runtime-layer-own-mark-unread-after-visit"),
+        threadId,
+        runId: scheduledRun.id,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.lastVisitedAt,
+        visitedAt,
+      );
+    }).pipe(
+      Effect.provide(
+        McpHttpServer.layerThreadToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a visit when a deferred mark-unread lands after its run rolled back", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-rollback-mark-unread-thread");
+      const updateRun = (
+        run: OrchestrationV2Run,
+        id: string,
+        status: "completed" | "rolled_back",
+      ) =>
+        Effect.gen(function* () {
+          yield* TestClock.adjust("1 second");
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            commandId: CommandId.make(id),
+            events: [
+              {
+                id: EventId.make(id),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status, startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          return now;
+        });
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-rollback-mark-unread-project"),
+        title: "Rollback mark unread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-rollback-mark-unread",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-rollback-mark-unread-message"),
+        text: "run",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+      if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+      const completedAt = yield* updateRun(
+        run,
+        "runtime-layer-rollback-mark-unread-completed",
+        "completed",
+      );
+      const visitedAt = DateTime.add(completedAt, { milliseconds: 500 });
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(visitedAt),
+      });
+      // Rollback rewrites the same run with a later completedAt.
+      yield* updateRun(run, "runtime-layer-rollback-mark-unread-rolled-back", "rolled_back");
+
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-deferred"),
+        threadId,
+        runId: run.id,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.lastVisitedAt,
+        visitedAt,
+      );
+    }),
+  );
+
+  it.effect("keeps a visit when a deferred mark-unread lands after a newer run completed", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-superseded-mark-unread-thread");
+      const runMessage = (id: string) =>
+        Effect.gen(function* () {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(id),
+            text: id,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1);
+          if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+          yield* TestClock.adjust("1 second");
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            commandId: CommandId.make(`${id}-completed`),
+            events: [
+              {
+                id: EventId.make(`${id}-completed`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          return { run, completedAt: now };
+        });
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-superseded-mark-unread-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-superseded-mark-unread-project"),
+        title: "Superseded mark unread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-superseded-mark-unread",
+      });
+      const older = yield* runMessage("runtime-layer-superseded-mark-unread-older");
+      const visitedAt = DateTime.add(older.completedAt, { milliseconds: 500 });
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-superseded-mark-unread-visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(visitedAt),
+      });
+      // The newer run completes after the visit, so only the runId guard keeps
+      // the older run's deferred mark from marking it unread.
+      yield* runMessage("runtime-layer-superseded-mark-unread-newer");
+
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("runtime-layer-superseded-mark-unread-deferred"),
+        threadId,
+        runId: older.run.id,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.lastVisitedAt,
+        visitedAt,
+      );
     }),
   );
 

@@ -337,3 +337,44 @@ it.effect.each([
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
   }),
 );
+
+it.effect.each([
+  { status: "completed" as const, marks: true },
+  { status: "failed" as const, marks: false },
+  { status: "interrupted" as const, marks: false },
+])("markUnreadAfterRun marks unread only when the run $status", ({ status, marks }) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:mark-unread-after-run");
+    const threadId = ThreadId.make("thread:thread-management:mark-unread-after-run");
+    const runId = RunId.make("run:thread-management:mark-unread-after-run");
+    const dispatched: Array<string> = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(false),
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, projectId, deletedAt: null },
+              runs: [{ id: runId, status }],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command.type);
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+
+    yield* service.markUnreadAfterRun({ projectId, threadId, runId });
+
+    expect(dispatched).toEqual(marks ? ["thread.mark-unread"] : []);
+  }),
+);

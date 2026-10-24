@@ -415,6 +415,25 @@ export interface ThreadManagementServiceShape {
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
+  /**
+   * Marking unread rewinds the visit to just before the latest run completed,
+   * so an agent that marks its own thread unread uses this to wait for its
+   * turn to end. A run that ends any other way leaves the thread as it was,
+   * as does a newer run or a visit after the run completed.
+   */
+  readonly markUnreadAfterRun: (input: {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+  }) => Effect.Effect<void, ThreadManagementFailure>;
+  readonly markThreadUnread: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+    readonly byOwnAgent: boolean;
+  }) => Effect.Effect<
+    { readonly sequence: number } | { readonly marksUnreadWhenTurnEnds: true },
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+  >;
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
@@ -505,7 +524,7 @@ function latestSteerableRun(
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
-const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
+const AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -932,7 +951,7 @@ const make = Effect.gen(function* () {
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
     "orchestrationV2.threadManagement.settleAfterRun",
   )(function* (input) {
-    const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
+    const { run } = yield* waitForThread({ ...input, timeoutMs: AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
     yield* dispatch({
       type: "thread.settle",
@@ -955,6 +974,39 @@ const make = Effect.gen(function* () {
     }
     const result = yield* dispatch({
       type: "thread.settle",
+      commandId: input.commandId,
+      threadId: input.threadId,
+    });
+    return { sequence: result.sequence };
+  });
+
+  const markUnreadAfterRun: ThreadManagementServiceShape["markUnreadAfterRun"] = Effect.fn(
+    "orchestrationV2.threadManagement.markUnreadAfterRun",
+  )(function* (input) {
+    const { run, timedOut } = yield* waitForThread({ ...input, timeoutMs: AFTER_RUN_WAIT_MS });
+    if (timedOut || run?.status !== "completed") return;
+    yield* dispatch({
+      type: "thread.mark-unread",
+      commandId: CommandId.make(`server:mark-unread-after-run:${input.runId}`),
+      threadId: input.threadId,
+      runId: run.id,
+    });
+  });
+
+  const markThreadUnread: ThreadManagementServiceShape["markThreadUnread"] = Effect.fn(
+    "orchestrationV2.threadManagement.markThreadUnread",
+  )(function* (input) {
+    const shell = input.byOwnAgent ? yield* orchestrator.getThreadShell(input.threadId) : null;
+    if (shell != null && shell.activeRunId !== null) {
+      yield* markUnreadAfterRun({
+        projectId: shell.projectId,
+        threadId: shell.id,
+        runId: shell.activeRunId,
+      }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(layerScope));
+      return { marksUnreadWhenTurnEnds: true } as const;
+    }
+    const result = yield* dispatch({
+      type: "thread.mark-unread",
       commandId: input.commandId,
       threadId: input.threadId,
     });
@@ -1186,6 +1238,8 @@ const make = Effect.gen(function* () {
     waitForThread,
     settleAfterRun,
     settleThread,
+    markUnreadAfterRun,
+    markThreadUnread,
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,

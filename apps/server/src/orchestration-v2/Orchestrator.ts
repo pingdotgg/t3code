@@ -3074,15 +3074,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
       const projection = yield* loadProjectionForCommand(command, ["runs"]);
-      const latestRunCompletedAt = projection.runs.at(-1)?.completedAt ?? null;
-      if (latestRunCompletedAt === null) {
+      const latestRun = projection.runs.at(-1);
+      const latestRunCompletedAt = latestRun?.completedAt ?? null;
+      if (command.runId !== undefined) {
+        // Checked here, not by the caller, so a newer run or a visit that lands
+        // while the deferred mark is in flight still wins.
+        markUnreadVisitedAt =
+          latestRun?.id === command.runId &&
+          latestRun.status === "completed" &&
+          latestRunCompletedAt !== null &&
+          (thread.lastVisitedAt === null ||
+            DateTime.toEpochMillis(thread.lastVisitedAt) <
+              DateTime.toEpochMillis(latestRunCompletedAt))
+            ? DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 })
+            : thread.lastVisitedAt;
+      } else if (latestRunCompletedAt === null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} has no completed run to mark unread.`,
         });
+      } else {
+        markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
       }
-      markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {

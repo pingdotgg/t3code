@@ -2724,6 +2724,11 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.mark-unread"),
     commandId: CommandId,
     threadId: ThreadId,
+    /**
+     * Mark only while this run is the latest and completed, and the thread
+     * was not visited after it completed; otherwise keep the read state.
+     */
+    runId: Schema.optional(RunId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),
