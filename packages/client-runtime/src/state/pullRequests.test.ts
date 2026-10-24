@@ -44,7 +44,7 @@ import {
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { executeAtomQuery } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
-import { GitHubRoutingPermissions } from "../connection/githubRoutingPermissions.ts";
+import { PullRequestRoutingPermissions } from "../connection/pullRequestRoutingPermissions.ts";
 
 const trustedRouting = {
   get: () => Effect.succeed("read-write" as const),
@@ -198,7 +198,7 @@ for (const scenario of [
         ).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
-          Effect.provideService(GitHubRoutingPermissions, {
+          Effect.provideService(PullRequestRoutingPermissions, {
             ...trustedRouting,
             get: () => Effect.succeed(trusted ? "read-write" : "off"),
           }),
@@ -283,7 +283,7 @@ it.effect.each([
           }).pipe(
             Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+            Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
           );
         const first = yield* read().pipe(Effect.forkChild);
         yield* Deferred.await(started);
@@ -347,7 +347,7 @@ it.effect.each(["revoked", "disabled"] as const)(
         ).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-          Effect.provideService(GitHubRoutingPermissions, {
+          Effect.provideService(PullRequestRoutingPermissions, {
             ...trustedRouting,
             get: () => Effect.sync(() => (trusted ? "read-write" : "off")),
           }),
@@ -415,7 +415,7 @@ it.effect.each(["origin", "alternate"] as const)(
           }).pipe(
             Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+            Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
           );
         const first = yield* read().pipe(Effect.forkChild);
         yield* Deferred.await(started);
@@ -479,7 +479,7 @@ it.effect("forgets routed viewed marks when a viewed-files batch fails", () =>
         );
       }).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
         Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       );
@@ -678,7 +678,7 @@ it.effect.each([
           ? request
           : request.pipe(
               Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
-              Effect.provideService(GitHubRoutingPermissions, {
+              Effect.provideService(PullRequestRoutingPermissions, {
                 ...trustedRouting,
                 get: (entry) =>
                   Effect.succeed(
@@ -797,7 +797,7 @@ it.effect.each(
       }).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
         Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
       );
       yield* stored === "unavailable"
@@ -860,7 +860,7 @@ it.live.each([undefined, true, false])(
           number: 7,
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
           Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         );
@@ -956,7 +956,7 @@ it.live(
           expect(invalidations).toContainEqual({ environment: "local", input: {} });
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
           Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         );
@@ -1504,7 +1504,7 @@ it.effect("denies a routed write when only the origin has source-control permiss
       }).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, fixture.environmentRegistry),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, fixture.supervisor),
-        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
         Effect.provideService(RpcPermissionGuard, {
           authorize: (id, method, input) =>
             createCommandPermissions(fixture.runtime, method).authorize(

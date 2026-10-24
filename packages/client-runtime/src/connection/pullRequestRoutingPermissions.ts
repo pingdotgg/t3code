@@ -10,21 +10,21 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
 
-export const GitHubRoutingPermission = Schema.Literals(["off", "read", "read-write"]);
-export type GitHubRoutingPermission = typeof GitHubRoutingPermission.Type;
-export const StoredGitHubRoutingPermission = Schema.Struct({
+export const PullRequestRoutingPermission = Schema.Literals(["off", "read", "read-write"]);
+export type PullRequestRoutingPermission = typeof PullRequestRoutingPermission.Type;
+export const StoredPullRequestRoutingPermission = Schema.Struct({
   environmentId: EnvironmentId,
   connectionKey: Schema.String,
-  permission: GitHubRoutingPermission,
+  permission: PullRequestRoutingPermission,
 });
-export type StoredGitHubRoutingPermission = typeof StoredGitHubRoutingPermission.Type;
+export type StoredPullRequestRoutingPermission = typeof StoredPullRequestRoutingPermission.Type;
 
 /**
  * Trust belongs to the saved endpoints, never to an environment id advertised
  * by a server alone. With several routes the key covers all of them, sorted so
  * reordering keeps trust but adding or changing an address revokes it.
  */
-export function gitHubRoutingConnectionKey(entry: ConnectionCatalogEntry): string | null {
+export function pullRequestRoutingConnectionKey(entry: ConnectionCatalogEntry): string | null {
   const routes = [
     { target: entry.target, profile: entry.profile },
     ...(entry.alternateRoutes ?? []),
@@ -75,25 +75,25 @@ function routeConnectionKey(
   }
 }
 
-export function gitHubRoutingPermissionFor(
+export function pullRequestRoutingPermissionFor(
   entry: ConnectionCatalogEntry,
-  permissions: ReadonlyArray<StoredGitHubRoutingPermission>,
-): GitHubRoutingPermission {
-  const key = gitHubRoutingConnectionKey(entry);
+  permissions: ReadonlyArray<StoredPullRequestRoutingPermission>,
+): PullRequestRoutingPermission {
+  const key = pullRequestRoutingConnectionKey(entry);
   return key === null
     ? "off"
     : (permissions.find((permission) => permission.connectionKey === key)?.permission ?? "off");
 }
 
-export class GitHubRoutingPermissions extends Context.Reference<{
-  readonly get: (entry: ConnectionCatalogEntry) => Effect.Effect<GitHubRoutingPermission>;
-  readonly changes: Stream.Stream<ReadonlyArray<StoredGitHubRoutingPermission>>;
+export class PullRequestRoutingPermissions extends Context.Reference<{
+  readonly get: (entry: ConnectionCatalogEntry) => Effect.Effect<PullRequestRoutingPermission>;
+  readonly changes: Stream.Stream<ReadonlyArray<StoredPullRequestRoutingPermission>>;
   readonly set: (
     entry: ConnectionCatalogEntry,
-    permission: GitHubRoutingPermission,
+    permission: PullRequestRoutingPermission,
   ) => Effect.Effect<void, ConnectionAttemptError>;
   readonly forget: (environmentId: EnvironmentId) => Effect.Effect<void, ConnectionAttemptError>;
-}>("@t3tools/client-runtime/connection/GitHubRoutingPermissions", {
+}>("@t3tools/client-runtime/connection/PullRequestRoutingPermissions", {
   defaultValue: () => ({
     get: () => Effect.succeed("off"),
     changes: Stream.succeed([]),
@@ -101,29 +101,29 @@ export class GitHubRoutingPermissions extends Context.Reference<{
       Effect.fail(
         new ConnectionBlockedError({
           reason: "unsupported",
-          detail: "GitHub routing preferences are unavailable on this client.",
+          detail: "Pull request routing preferences are unavailable on this client.",
         }),
       ),
     forget: () => Effect.void,
   }),
 }) {}
 
-export const makeGitHubRoutingPermissions = Effect.fn("makeGitHubRoutingPermissions")(
+export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRoutingPermissions")(
   function* (storage: {
     readonly read: Effect.Effect<
-      ReadonlyArray<StoredGitHubRoutingPermission>,
+      ReadonlyArray<StoredPullRequestRoutingPermission>,
       ConnectionAttemptError
     >;
     readonly write: (
-      permissions: ReadonlyArray<StoredGitHubRoutingPermission>,
+      permissions: ReadonlyArray<StoredPullRequestRoutingPermission>,
     ) => Effect.Effect<void, ConnectionAttemptError>;
   }) {
     const state = yield* SubscriptionRef.make(yield* storage.read);
     const lock = yield* Semaphore.make(1);
     const update = (
       transform: (
-        current: ReadonlyArray<StoredGitHubRoutingPermission>,
-      ) => ReadonlyArray<StoredGitHubRoutingPermission>,
+        current: ReadonlyArray<StoredPullRequestRoutingPermission>,
+      ) => ReadonlyArray<StoredPullRequestRoutingPermission>,
     ) =>
       lock.withPermits(1)(
         Effect.gen(function* () {
@@ -134,14 +134,14 @@ export const makeGitHubRoutingPermissions = Effect.fn("makeGitHubRoutingPermissi
           yield* SubscriptionRef.set(state, next);
         }),
       );
-    return GitHubRoutingPermissions.of({
+    return PullRequestRoutingPermissions.of({
       get: (entry) =>
         SubscriptionRef.get(state).pipe(
-          Effect.map((permissions) => gitHubRoutingPermissionFor(entry, permissions)),
+          Effect.map((permissions) => pullRequestRoutingPermissionFor(entry, permissions)),
         ),
       changes: SubscriptionRef.changes(state),
       set: (entry, permission) => {
-        const connectionKey = gitHubRoutingConnectionKey(entry);
+        const connectionKey = pullRequestRoutingConnectionKey(entry);
         if (connectionKey === null)
           return Effect.fail(
             new ConnectionBlockedError({

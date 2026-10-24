@@ -7,6 +7,7 @@ import {
   parseChangeRequestPath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/client/definition";
+import { icon } from "./icon.ts";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
@@ -21,7 +22,7 @@ export const definition = defineSourceControlClient({
   kind: KIND,
   label: "GitLab",
   pickerLabel: "GitLab",
-  icon: "gitlab",
+  icon,
   changeRequest: { shortLabel: "MR", singular: "merge request" },
   repositoryPathHint: "group/project",
   publicHost: "gitlab.com",

@@ -13,6 +13,7 @@ import {
   parseChangeRequestPath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/client/definition";
+import { icon } from "./icon.ts";
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
 const repositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -66,7 +67,7 @@ export const definition = defineSourceControlClient({
   kind: KIND,
   label: "Bitbucket",
   pickerLabel: "Bitbucket",
-  icon: "bitbucket",
+  icon,
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "workspace/repository",
   publicHost: "bitbucket.org",

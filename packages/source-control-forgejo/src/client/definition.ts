@@ -11,6 +11,7 @@ import {
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/client/definition";
+import { icon } from "./icon.ts";
 
 const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
@@ -54,7 +55,8 @@ export const definition = defineSourceControlClient({
   kind: KIND,
   label: "Forgejo",
   pickerLabel: "Forgejo / Gitea",
-  icon: "forgejo",
+  icon,
+  searchKeywords: ["gitea", "tea", "codeberg"],
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "owner/repo",
   // Codeberg is the public Forgejo; any other server is self-hosted.

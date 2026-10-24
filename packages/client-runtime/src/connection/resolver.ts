@@ -31,9 +31,9 @@ import {
   profileMissingError,
 } from "./errors.ts";
 import {
-  GitHubRoutingPermissions,
-  gitHubRoutingConnectionKey,
-} from "./githubRoutingPermissions.ts";
+  PullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
+} from "./pullRequestRoutingPermissions.ts";
 import type {
   BearerConnectionTarget,
   ConnectionTarget,
@@ -250,10 +250,10 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       target: prepared.bootstrap.target,
     });
     if (
-      gitHubRoutingConnectionKey(entry) !==
-      gitHubRoutingConnectionKey({ ...entry, profile: Option.some(preparedProfile) })
+      pullRequestRoutingConnectionKey(entry) !==
+      pullRequestRoutingConnectionKey({ ...entry, profile: Option.some(preparedProfile) })
     ) {
-      const permissions = yield* GitHubRoutingPermissions;
+      const permissions = yield* PullRequestRoutingPermissions;
       yield* permissions.forget(target.environmentId);
     }
     yield* profiles.put(preparedProfile);

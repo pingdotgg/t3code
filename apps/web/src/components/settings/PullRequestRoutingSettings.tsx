@@ -1,9 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import {
-  gitHubRoutingConnectionKey,
-  gitHubRoutingPermissionFor,
-  type GitHubRoutingPermission,
+  pullRequestRoutingConnectionKey,
+  pullRequestRoutingPermissionFor,
+  type PullRequestRoutingPermission,
 } from "@t3tools/client-runtime/connection";
 import { useState } from "react";
 
@@ -16,7 +16,7 @@ import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
 
-const options: ReadonlyArray<{ value: GitHubRoutingPermission; label: string }> = [
+const options: ReadonlyArray<{ value: PullRequestRoutingPermission; label: string }> = [
   { value: "off", label: "Off" },
   { value: "read", label: "Read PRs" },
   { value: "read-write", label: "Read and act" },
@@ -24,8 +24,11 @@ const options: ReadonlyArray<{ value: GitHubRoutingPermission; label: string }> 
 
 const summaryLabels = { "read-write": "read and act", read: "read PRs" } as const;
 
-function summarizeGitHubRouting(
-  entries: ReadonlyArray<{ readonly label: string; readonly permission: GitHubRoutingPermission }>,
+function summarizePullRequestRouting(
+  entries: ReadonlyArray<{
+    readonly label: string;
+    readonly permission: PullRequestRoutingPermission;
+  }>,
 ): string | null {
   const groups = (["read-write", "read"] as const).flatMap((permission) => {
     const labels = entries.filter((entry) => entry.permission === permission);
@@ -36,36 +39,36 @@ function summarizeGitHubRouting(
   return groups.length === 0 ? null : groups.join(" · ");
 }
 
-export function GitHubRoutingSettings({
+export function PullRequestRoutingSettings({
   environments,
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
-  const permissions = useAtomValue(environmentCatalog.githubRoutingPermissionsValueAtom);
+  const permissions = useAtomValue(environmentCatalog.pullRequestRoutingPermissionsValueAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const update = useAtomCommand(environmentCatalog.setGitHubRoutingPermission);
+  const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
   const [saving, setSaving] = useState(false);
 
   if (environments.length < 2) return null;
 
-  const { id, title } = searchableSetting("github-routing");
+  const { id, title } = searchableSetting("pull-request-routing");
   return (
     <FoldedSettingsSection
       id={id}
       title={title}
       summary={
-        summarizeGitHubRouting(
+        summarizePullRequestRouting(
           environments.map((environment) => ({
             label: environment.label,
-            permission: gitHubRoutingPermissionFor(environment.entry, permissions),
+            permission: pullRequestRoutingPermissionFor(environment.entry, permissions),
           })),
         ) ?? "Off"
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        Machines you trust here can read PR data through each other's GitHub access. Enable both
-        machines. Read and act may use broader permissions than the machine that owns them. This
-        applies only to this device.
+        Machines you trust here can read PR data through each other's source control access. Enable
+        both machines. Read and act may use broader permissions than the machine that owns them.
+        This applies only to this device.
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
@@ -76,9 +79,11 @@ export function GitHubRoutingSettings({
         >
           <Select
             items={options}
-            value={gitHubRoutingPermissionFor(environment.entry, permissions)}
+            value={pullRequestRoutingPermissionFor(environment.entry, permissions)}
             disabled={
-              !catalog.isReady || saving || gitHubRoutingConnectionKey(environment.entry) === null
+              !catalog.isReady ||
+              saving ||
+              pullRequestRoutingConnectionKey(environment.entry) === null
             }
             onValueChange={(permission) => {
               if (permission === null) return;
@@ -89,7 +94,7 @@ export function GitHubRoutingSettings({
                   if (result._tag === "Failure")
                     toastManager.add({
                       type: "error",
-                      title: "Could not save GitHub routing permission",
+                      title: "Could not save pull request routing permission",
                     });
                 },
               );
@@ -98,7 +103,7 @@ export function GitHubRoutingSettings({
             <SelectTrigger
               size="xs"
               className="w-32"
-              aria-label={`${environment.label} GitHub routing`}
+              aria-label={`${environment.label} pull request routing`}
             >
               <SelectValue />
             </SelectTrigger>

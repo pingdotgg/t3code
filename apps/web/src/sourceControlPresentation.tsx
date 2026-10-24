@@ -5,31 +5,27 @@ import type {
   ChangeRequestTerminology,
   SourceControlClientDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
-import {
-  AzureDevOpsIcon,
-  BitbucketIcon,
-  ForgejoIcon,
-  GitCafeIcon,
-  GitHubIcon,
-  GitLabIcon,
-} from "./components/Icons";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { SourceControlIconArtwork } from "./components/SourceControlIconArtwork";
 
 export type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 
 type SourceControlIcon = ElementType<{ className?: string }>;
 
-const SOURCE_CONTROL_ICONS: Partial<Record<string, SourceControlIcon>> = {
-  github: GitHubIcon,
-  gitlab: GitLabIcon,
-  forgejo: ForgejoIcon,
-  bitbucket: BitbucketIcon,
-  "azure-devops": AzureDevOpsIcon,
-  gitcafe: GitCafeIcon,
-};
+const SOURCE_CONTROL_ICONS = new WeakMap<SourceControlClientDefinition, SourceControlIcon>();
 
+/** One component per definition, so a host's icon keeps its identity across renders. */
 export function sourceControlIcon(definition: SourceControlClientDefinition): SourceControlIcon {
-  return SOURCE_CONTROL_ICONS[definition.icon] ?? PullRequestGlyph.pullRequest;
+  const artwork = definition.icon;
+  if (artwork === null) return PullRequestGlyph.pullRequest;
+  let Icon = SOURCE_CONTROL_ICONS.get(definition);
+  if (Icon === undefined) {
+    Icon = (props: { className?: string }) => (
+      <SourceControlIconArtwork {...props} icon={artwork} />
+    );
+    SOURCE_CONTROL_ICONS.set(definition, Icon);
+  }
+  return Icon;
 }
 
 export interface SourceControlPresentation {

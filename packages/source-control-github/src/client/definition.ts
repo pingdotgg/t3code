@@ -1,16 +1,8 @@
-import {
-  GitHubHost,
-  makeProviderSettingsSchema,
-  secretSetting,
-  SourceControlProviderKind,
-  TrimmedNonEmptyString,
-  TrimmedString,
-} from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { makeProviderSettingsSchema, SourceControlProviderKind } from "@t3tools/contracts";
 import {
   changeRequestUrlBelow,
   defineSourceControlClient,
+  hostCredentialSettingsFields,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
@@ -19,6 +11,7 @@ import {
 } from "@t3tools/source-control-core/client/definition";
 
 import { gitHubMediaUrl } from "./gitHubMedia.ts";
+import { icon } from "./icon.ts";
 import { gitHubReferenceAutolinks } from "./referenceAutolinks.ts";
 
 const CHECKOUT_COMMAND = /^gh\s+pr\s+checkout\s+(.+)$/i;
@@ -49,30 +42,23 @@ function isRepositoryPath(repository: string): boolean {
   );
 }
 
-export const GitHubHostChoice = Schema.Struct({
-  account: Schema.optionalKey(TrimmedNonEmptyString),
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-});
-export type GitHubHostChoice = typeof GitHubHostChoice.Type;
-
-export const settings = makeProviderSettingsSchema({
-  hosts: Schema.Record(GitHubHost, GitHubHostChoice).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-  ),
-  tokens: Schema.Record(GitHubHost, TrimmedString).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-    secretSetting,
-    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-  ),
-});
+export const settings = makeProviderSettingsSchema(hostCredentialSettingsFields);
 export type GitHubSettings = typeof settings.Type;
 
 export const definition = defineSourceControlClient({
   kind: KIND,
   label: "GitHub",
   pickerLabel: "GitHub",
-  icon: "github",
+  icon,
+  searchKeywords: ["ghes", "enterprise"],
+  credentials: {
+    cliName: "gh",
+    cliLabel: "GitHub CLI",
+    loginCommand: "gh auth login",
+    tokenEnvVar: "GH_TOKEN",
+    tokenAccess: "read and write access to pull requests and contents",
+    newTokenUrl: (host) => `https://${host}/settings/personal-access-tokens/new`,
+  },
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "owner/repo",
   publicHost: "github.com",

@@ -14,6 +14,7 @@ import {
   parseChangeRequestPath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/client/definition";
+import { icon } from "./icon.ts";
 
 /** GitCafe has no self-hosted installs: production and staging are its only hosts. */
 const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
@@ -41,7 +42,7 @@ export const definition = defineSourceControlClient({
   kind: KIND,
   label: "GitCafe",
   pickerLabel: "GitCafe",
-  icon: "gitcafe",
+  icon,
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "owner/repo",
   publicHost: null,

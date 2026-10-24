@@ -1,19 +1,19 @@
 import type { SourceControlProviderAuth } from "@t3tools/contracts";
-import type { GitHubSettings } from "@t3tools/client-runtime/source-control-clients";
+import type { HostCredentialSettings } from "@t3tools/client-runtime/source-control-clients";
 
-export type GitHubDiscoveredAccount = NonNullable<SourceControlProviderAuth["accounts"]>[number];
+export type DiscoveredAccount = NonNullable<SourceControlProviderAuth["accounts"]>[number];
 
-export interface GitHubHostGroup {
+export interface HostAccountGroup {
   readonly host: string;
   readonly activeAccount: string | null;
   readonly selectable: ReadonlyArray<string>;
-  readonly broken: ReadonlyArray<GitHubDiscoveredAccount>;
+  readonly broken: ReadonlyArray<DiscoveredAccount>;
   readonly environmentVariable: string | null;
 }
 
-export function groupGitHubAccounts(
-  accounts: ReadonlyArray<GitHubDiscoveredAccount>,
-): ReadonlyArray<GitHubHostGroup> {
+export function groupHostAccounts(
+  accounts: ReadonlyArray<DiscoveredAccount>,
+): ReadonlyArray<HostAccountGroup> {
   const hosts = [...new Set(accounts.map((entry) => entry.host))];
   return hosts.map((host) => {
     const entries = accounts.filter((entry) => entry.host === host);
@@ -30,11 +30,11 @@ export function groupGitHubAccounts(
   });
 }
 
-export function nextGitHubHosts(
-  current: GitHubSettings["hosts"],
+export function nextHostAccountChoices(
+  current: HostCredentialSettings["hosts"],
   host: string,
   change: { readonly enabled?: boolean; readonly account?: string | null },
-): GitHubSettings["hosts"] {
+): HostCredentialSettings["hosts"] {
   const previous = current[host];
   const enabled = change.enabled ?? previous?.enabled ?? true;
   const account = change.account === undefined ? previous?.account : (change.account ?? undefined);

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupGitHubAccounts, nextGitHubHosts } from "./GitHubAccountSettings.logic";
+import { groupHostAccounts, nextHostAccountChoices } from "./SourceControlAccountSettings.logic";
 
-describe("groupGitHubAccounts", () => {
+describe("groupHostAccounts", () => {
   it("groups logins by host, keeping broken and environment logins out of the picker", () => {
     expect(
-      groupGitHubAccounts([
+      groupHostAccounts([
         { host: "github.com", account: "personal", active: true, authenticated: true },
         { host: "github.com", account: "work", active: false, authenticated: true },
         { host: "github.com", account: "old", active: false, authenticated: false, error: "bad" },
@@ -39,17 +39,17 @@ describe("groupGitHubAccounts", () => {
   });
 });
 
-describe("nextGitHubHosts", () => {
-  it("pins an account, keeps other hosts, and drops a host back on gh's defaults", () => {
+describe("nextHostAccountChoices", () => {
+  it("pins an account, keeps other hosts, and drops a host back on the CLI defaults", () => {
     const other = { "ghe.acme.test": { enabled: false } };
-    const pinned = nextGitHubHosts(other, "github.com", { account: "work" });
+    const pinned = nextHostAccountChoices(other, "github.com", { account: "work" });
     expect(pinned).toEqual({ ...other, "github.com": { enabled: true, account: "work" } });
 
-    const disabled = nextGitHubHosts(pinned, "github.com", { enabled: false });
+    const disabled = nextHostAccountChoices(pinned, "github.com", { enabled: false });
     expect(disabled["github.com"]).toEqual({ enabled: false, account: "work" });
 
-    expect(nextGitHubHosts(disabled, "github.com", { enabled: true, account: null })).toEqual(
-      other,
-    );
+    expect(
+      nextHostAccountChoices(disabled, "github.com", { enabled: true, account: null }),
+    ).toEqual(other);
   });
 });

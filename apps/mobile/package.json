@@ -41,6 +41,7 @@
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
     "sync:chip-icons": "node scripts/sync-context-chip-icons.mjs",
+    "sync:link-icons": "node scripts/sync-link-icons.ts",
     "sync:pierre-icons": "node scripts/sync-pierre-file-icons.mjs",
     "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",

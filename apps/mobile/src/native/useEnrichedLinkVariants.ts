@@ -11,7 +11,7 @@ import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
-import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
+import { markdownLinkIcon } from "../lib/markdownLinkIcons";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
 import type {
@@ -83,12 +83,12 @@ function presentation(
       icon: markdownFileIconSource(link.icon),
       chip: { accent: contextChipPresentation("mention").accent, tintsIcon: false },
     };
-  const icon = link.kind === "external" ? markdownLinkIconSource(link.host) : null;
+  const icon = link.kind === "external" ? markdownLinkIcon(link.host) : null;
   return icon
     ? {
         color: props.textStyle.linkColor,
-        icon,
-        iconTintColor: props.textStyle.linkColor,
+        icon: icon.source,
+        ...(icon.tints ? { iconTintColor: props.textStyle.linkColor } : {}),
       }
     : undefined;
 }

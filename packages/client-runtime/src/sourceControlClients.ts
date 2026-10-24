@@ -1,18 +1,24 @@
 import * as AzureDevOps from "@t3tools/source-control-azure-devops/client/definition";
 import * as Bitbucket from "@t3tools/source-control-bitbucket/client/definition";
 import {
+  HostCredentialSettings,
   makeSourceControlClientRegistry,
   readSourceControlHostSettings,
 } from "@t3tools/source-control-core/client/definition";
 import type { ServerSettings } from "@t3tools/contracts";
 
 export {
+  isMonochromeSourceControlIcon,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
   type ChangeRequestLink,
   type ChangeRequestTerminology,
+  type HostAccountChoice,
+  type HostCredentialSettings,
   type ParsedChangeRequestUrl,
   type ReferenceAutolink,
   type SourceControlClientDefinition,
+  type SourceControlHostCredentials,
+  type SourceControlIcon,
 } from "@t3tools/source-control-core/client/definition";
 import * as Forgejo from "@t3tools/source-control-forgejo/client/definition";
 import * as GitCafe from "@t3tools/source-control-gitcafe/client/definition";
@@ -51,8 +57,10 @@ export const sourceControlClients = makeSourceControlClientRegistry(
   },
 );
 
-export type { GitHubSettings } from "@t3tools/source-control-github/client/definition";
-
-export function readGitHubSettings(settings: Pick<ServerSettings, "sourceControlHosts">) {
-  return readSourceControlHostSettings(GitHub.settings, settings.sourceControlHosts.github);
+/** The saved per-hostname accounts and tokens of a host whose definition has `credentials`. */
+export function readHostCredentialSettings(
+  settings: Pick<ServerSettings, "sourceControlHosts">,
+  kind: string,
+): HostCredentialSettings {
+  return readSourceControlHostSettings(HostCredentialSettings, settings.sourceControlHosts[kind]);
 }

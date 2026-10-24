@@ -6,6 +6,7 @@ import {
   parseChangeRequestPath,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/client/definition";
+import { icon } from "./icon.ts";
 
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
 const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u;
@@ -66,7 +67,7 @@ export const definition = defineSourceControlClient({
   kind: KIND,
   label: "Azure DevOps",
   pickerLabel: "Azure DevOps",
-  icon: "azure-devops",
+  icon,
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "project/repository",
   // `az repos` reads need the checkout's organization and project, so a bare hostname names no

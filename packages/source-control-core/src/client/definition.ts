@@ -2,11 +2,16 @@ import {
   type PullRequestAction,
   type PullRequestReviewVerdict,
   type RepositoryIdentity,
+  secretSetting,
   SourceControlProviderKind,
   type SourceControlProviderInfo,
+  TrimmedNonEmptyString,
+  TrimmedString,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 /**
  * The two strings are what `changeRequestHost` and the project's `repositoryIdentity` produce
@@ -94,11 +99,107 @@ export interface ReferenceAutolink {
   readonly kind: "reference" | "commit" | "mention";
 }
 
+/**
+ * A host's mark as data, so web and mobile draw the same artwork without React in the host's
+ * package. Paths only: a circle or rectangle is written as a path.
+ */
+export interface SourceControlIcon {
+  readonly viewBox: string;
+  /** Always in user space, as `gradientUnits="userSpaceOnUse"`. */
+  readonly gradients?: ReadonlyArray<SourceControlIconGradient>;
+  readonly paths: ReadonlyArray<SourceControlIconPath>;
+}
+
+export interface SourceControlIconGradient {
+  /** Unique within the icon; renderers make it unique on the page. */
+  readonly id: string;
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+  readonly transform?: string;
+  readonly stops: ReadonlyArray<{
+    readonly offset: number;
+    readonly color: string;
+    readonly opacity?: number;
+  }>;
+}
+
+/** A colour, `currentColor` for a mark drawn in the text colour, or one of the icon's gradients. */
+export type SourceControlIconPaint = string | { readonly gradient: string };
+
+export interface SourceControlIconPath {
+  readonly d: string;
+  /** Absent means unfilled. */
+  readonly fill?: SourceControlIconPaint;
+  readonly fillRule?: "evenodd" | "nonzero";
+  readonly fillOpacity?: number;
+  readonly stroke?: string;
+  readonly strokeWidth?: number;
+}
+
+/** Whether the mark is drawn in the text colour alone, so a client may tint it. */
+export function isMonochromeSourceControlIcon(icon: SourceControlIcon): boolean {
+  return icon.paths.every(
+    (path) =>
+      (path.fill === undefined || path.fill === "currentColor") &&
+      (path.stroke === undefined || path.stroke === "currentColor"),
+  );
+}
+
+/**
+ * For a host whose server signs in per hostname, with a saved token or one of a CLI's logins.
+ * Its `settings` include `hostCredentialSettingsFields`, and clients show controls for those
+ * instead of the generic settings form.
+ */
+export interface SourceControlHostCredentials {
+  /** The command name, as `gh`. */
+  readonly cliName: string;
+  /** The CLI's product name, as `GitHub CLI`. */
+  readonly cliLabel: string;
+  readonly loginCommand: string;
+  /** The variable the server reads a token from, which a saved token takes precedence over. */
+  readonly tokenEnvVar: string;
+  /** What a token must be granted, completing "Give it …". */
+  readonly tokenAccess: string;
+  readonly newTokenUrl: (host: string) => string;
+}
+
+export const SourceControlHostName = TrimmedNonEmptyString.pipe(
+  Schema.decodeTo(Schema.String, SchemaTransformation.toLowerCase()),
+);
+
+export const HostAccountChoice = Schema.Struct({
+  account: Schema.optionalKey(TrimmedNonEmptyString),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type HostAccountChoice = typeof HostAccountChoice.Type;
+
+/** Per-hostname settings of a host with `credentials`, keyed by lower-case hostname. */
+export const hostCredentialSettingsFields = {
+  hosts: Schema.Record(SourceControlHostName, HostAccountChoice).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  tokens: Schema.Record(SourceControlHostName, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+};
+
+export const HostCredentialSettings = Schema.Struct(hostCredentialSettingsFields);
+export type HostCredentialSettings = typeof HostCredentialSettings.Type;
+
 export interface SourceControlClientDefinition {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
   readonly pickerLabel: string;
-  readonly icon: string;
+  /** Null for a host without a mark of its own; clients draw a generic change request glyph. */
+  readonly icon: SourceControlIcon | null;
+  /** Further words settings search finds this host by, besides its label. */
+  readonly searchKeywords?: ReadonlyArray<string>;
+  readonly credentials?: SourceControlHostCredentials;
   readonly changeRequest: ChangeRequestTerminology;
   readonly repositoryPathHint: string;
   readonly publicHost: string | null;
@@ -363,7 +464,7 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   kind: SourceControlProviderKind.make("unknown"),
   label: "source control",
   pickerLabel: "source control",
-  icon: "change-request",
+  icon: null,
   changeRequest: { shortLabel: "change request", singular: "change request" },
   repositoryPathHint: "URL",
   publicHost: null,

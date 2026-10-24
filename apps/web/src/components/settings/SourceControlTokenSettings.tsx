@@ -3,7 +3,11 @@ import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
-import { readGitHubSettings } from "@t3tools/client-runtime/source-control-clients";
+import {
+  readHostCredentialSettings,
+  type SourceControlClientDefinition,
+  type SourceControlHostCredentials,
+} from "@t3tools/client-runtime/source-control-clients";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
@@ -11,24 +15,25 @@ import { Input } from "../ui/input";
 import { SecretInput } from "./SecretInput";
 import { Label } from "../ui/label";
 
-const DEFAULT_HOST = "github.com";
-
-function newTokenUrl(host: string): string {
-  return `https://${host}/settings/personal-access-tokens/new`;
-}
-
-export function GitHubTokenSettings({
+export function SourceControlTokenSettings({
   environmentId,
+  definition,
+  credentials,
   onSaved,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly definition: SourceControlClientDefinition;
+  readonly credentials: SourceControlHostCredentials;
   readonly onSaved: () => void;
 }) {
-  const { tokens } = useEnvironmentSettings(environmentId, readGitHubSettings);
+  const { tokens } = useEnvironmentSettings(environmentId, (settings) =>
+    readHostCredentialSettings(settings, definition.kind),
+  );
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "save GitHub token",
+    label: `save ${definition.label} token`,
   });
-  const [host, setHost] = useState(DEFAULT_HOST);
+  const defaultHost = definition.publicHost ?? "";
+  const [host, setHost] = useState(defaultHost);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const normalizedHost = host.trim().toLowerCase();
@@ -43,7 +48,9 @@ export function GitHubTokenSettings({
       environmentId,
       // The map travels whole: every other saved token as its redaction marker, which keeps it.
       input: {
-        patch: { sourceControlHosts: { github: { tokens: { ...tokens, [target]: token } } } },
+        patch: {
+          sourceControlHosts: { [definition.kind]: { tokens: { ...tokens, [target]: token } } },
+        },
       },
     });
     setSaving(false);
@@ -65,38 +72,42 @@ export function GitHubTokenSettings({
       <fieldset disabled={saving} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
           A token saved here is used before{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">GH_TOKEN</code> and the{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">gh</code> login, so GitHub works
-          without the GitHub CLI. Give it read and write access to pull requests and contents.{" "}
-          <InlineButton
-            render={
-              <a
-                href={newTokenUrl(normalizedHost || DEFAULT_HOST)}
-                target="_blank"
-                rel="noreferrer noopener"
-              />
-            }
-          >
-            Create a token
-            <ExternalLinkIcon aria-hidden className="size-3" />
-          </InlineButton>
+          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.tokenEnvVar}</code>{" "}
+          and the{" "}
+          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.cliName}</code> login,
+          so {definition.label} works without the {credentials.cliLabel}. Give it{" "}
+          {credentials.tokenAccess}.{" "}
+          {normalizedHost || defaultHost ? (
+            <InlineButton
+              render={
+                <a
+                  href={credentials.newTokenUrl(normalizedHost || defaultHost)}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                />
+              }
+            >
+              Create a token
+              <ExternalLinkIcon aria-hidden className="size-3" />
+            </InlineButton>
+          ) : null}
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`github-token-host-${environmentId}`}>Host</Label>
+            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>Host</Label>
             <Input
-              id={`github-token-host-${environmentId}`}
+              id={`${definition.kind}-token-host-${environmentId}`}
               autoComplete="off"
               size="sm"
-              placeholder={DEFAULT_HOST}
+              placeholder={defaultHost}
               value={host}
               onChange={(event) => setHost(event.target.value)}
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`github-token-${environmentId}`}>Token</Label>
+            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>Token</Label>
             <SecretInput
-              id={`github-token-${environmentId}`}
+              id={`${definition.kind}-token-${environmentId}`}
               size="sm"
               configured={isSaved}
               value={draft}
@@ -107,7 +118,7 @@ export function GitHubTokenSettings({
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
             {savedHosts.length === 0
-              ? "No token saved; the server uses GH_TOKEN or the gh login."
+              ? `No token saved; the server uses ${credentials.tokenEnvVar} or the ${credentials.cliName} login.`
               : `Saved for ${savedHosts.join(", ")}.`}
           </p>
           <div className="flex shrink-0 gap-2">
