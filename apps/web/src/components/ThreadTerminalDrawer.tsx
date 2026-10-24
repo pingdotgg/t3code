@@ -1096,11 +1096,21 @@ function TerminalSessionViewport({
 
     const previous = previousSessionRef.current;
     synchronizeTerminalStatus(terminal, current.status, current.version);
-    if (current.version === previous.version && current.output === previous.output) {
+    const outputChanged =
+      current.version !== previous.version || current.output !== previous.output;
+    // A failed attach (e.g. a missing cwd) only changes the error, so it must
+    // still reach a surface that is already mounted.
+    if (!outputChanged && current.error === previous.error) {
       return;
     }
 
-    outputCursorRef.current = synchronizeTerminalOutput(terminal, current, outputCursorRef.current);
+    if (outputChanged) {
+      outputCursorRef.current = synchronizeTerminalOutput(
+        terminal,
+        current,
+        outputCursorRef.current,
+      );
+    }
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);

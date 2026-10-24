@@ -1,0 +1,14 @@
+{
+  "root": "/tmp/triage-16923",
+  "projectPath": "/tmp/triage-16923/project",
+  "renamedPath": "/tmp/triage-16923/project-renamed",
+  "longPath": "/tmp/triage-16923/worktrees/Long folder – 日本語 punctuation (fixture)",
+  "projectId": "79839d7b-693e-4dbf-b19c-53f2b72d7e0f",
+  "threadId": "16923000-0000-4000-8000-000000000002",
+  "awayThreadId": "16923000-0000-4000-8000-000000000003",
+  "longThreadId": "16923000-0000-4000-8000-000000000004",
+  "terminalHeight": 300,
+  "wallClock": "2026-10-21T12:00:00Z",
+  "recoveryCommand": "printf 'RECOVERED\\n'",
+  "outputCommand": "printf 'SENTINEL\\nline two\\nline three\\n'"
+}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_TERMINAL_ID,
+  TerminalCwdNotFoundError,
   TerminalError,
   TerminalOpenInput,
   TerminalProviderEnvironmentError,
@@ -35,6 +36,17 @@ describe("TerminalProviderEnvironmentError", () => {
       "Could not prepare the terminal environment for provider instance: codex_work",
     );
     expect(decoded.message).not.toContain("secret backend unavailable");
+  });
+});
+
+describe("TerminalCwdNotFoundError", () => {
+  it("tells the user to restore the missing folder before retrying", () => {
+    const decoded = decodeTerminalError(
+      encodeTerminalError(new TerminalCwdNotFoundError({ cwd: "/tmp/project" })),
+    );
+
+    expect(decoded.message).toContain("/tmp/project");
+    expect(decoded.message).toMatch(/restore the folder at this path before retrying/i);
   });
 });
 
