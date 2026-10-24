@@ -282,6 +282,23 @@ describe("resolveSnoozePresets", () => {
     ]);
   });
 
+  it("puts next week on the requested week start", () => {
+    // Saturday 2026-09-05: with Sunday weeks, "Tomorrow" already is next week.
+    expect(
+      resolveSnoozePresets(localDate(2026, 9, 5, 10), { weekStartsOn: 0 }).map(
+        (preset) => preset.id,
+      ),
+    ).not.toContain("next-week");
+    // Friday 2026-09-04: next week starts Sunday 2026-09-06.
+    const nextWeek = new Date(
+      resolveSnoozePresets(localDate(2026, 9, 4, 10), { weekStartsOn: 0 }).find(
+        (preset) => preset.id === "next-week",
+      )!.snoozedUntil,
+    );
+    expect(nextWeek.getDay()).toBe(0);
+    expect(nextWeek.getDate()).toBe(6);
+  });
+
   it("drops next week on Sundays, when it lands on the same Monday as tomorrow", () => {
     const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7, 1));
     expect(presets.map((preset) => preset.id)).toEqual([

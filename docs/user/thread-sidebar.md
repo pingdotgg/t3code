@@ -240,3 +240,7 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early only when it needs
 an approval or answer from you, when a run fails, or when you send it a message.
+
+**Next week** wakes the thread at 9 AM on the first day of your work week, Monday by
+default. On web and desktop, change it in **Settings → General → First day of the week**;
+the same setting decides which day the **Custom…** calendar starts on.

@@ -200,7 +200,19 @@ function addSnoozeDays(base: Date, days: number): Date {
   return next;
 }
 
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+/**
+ * Shared "snooze until" choices for every client. "This evening" only
+ * appears while it is meaningfully before evening; after that the calendar
+ * choices start at "Tomorrow". "Next week" wakes on the morning of
+ * `weekStartsOn` (a `Date#getDay` index, Monday by default). Calendar presets
+ * that land on the same instant collapse: the day before the week starts,
+ * "Tomorrow" and "Next week" are the same morning, so only "Tomorrow" is
+ * offered.
+ */
+export function resolveSnoozePresets(
+  now: Date,
+  options: { readonly weekStartsOn?: number } = {},
+): ReadonlyArray<SnoozePreset> {
   const inAnHour = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + HOUR_MS));
   const inThreeHours = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + 3 * HOUR_MS));
   const presets: SnoozePreset[] = [
@@ -236,8 +248,9 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     snoozedUntil: tomorrow.toISOString(),
   });
 
-  const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
-  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), MORNING_HOUR);
+  const weekStartsOn = options.weekStartsOn ?? 1;
+  const daysUntilWeekStart = (weekStartsOn - now.getDay() + 7) % 7 || 7;
+  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilWeekStart), MORNING_HOUR);
   if (nextWeek.getTime() !== tomorrow.getTime()) {
     presets.push({
       id: "next-week",

@@ -25,7 +25,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 
-import type { TimestampFormat } from "@t3tools/contracts/settings";
+import type { FirstDayOfWeek, TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -367,9 +367,10 @@ function SnoozeMenuButton(props: {
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   timestampFormat: TimestampFormat;
+  firstDayOfWeek: FirstDayOfWeek;
 }) {
-  const { open, onOpenChange, onSnooze, timestampFormat } = props;
-  const presets = open ? resolveSnoozePresets(new Date(), timestampFormat) : [];
+  const { open, onOpenChange, onSnooze, timestampFormat, firstDayOfWeek } = props;
+  const presets = open ? resolveSnoozePresets(new Date(), timestampFormat, firstDayOfWeek) : [];
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
       <Tooltip>
@@ -535,6 +536,7 @@ type SidebarThreadRowProps = {
   projectDisplayName: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
   timestampFormat: TimestampFormat;
+  firstDayOfWeek: FirstDayOfWeek;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -1400,6 +1402,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           onOpenChange={setSnoozeMenuOpen}
                           onSnooze={handleSnoozePreset}
                           timestampFormat={props.timestampFormat}
+                          firstDayOfWeek={props.firstDayOfWeek}
                         />
                       ) : null}
                       {props.settlementSupported ? (

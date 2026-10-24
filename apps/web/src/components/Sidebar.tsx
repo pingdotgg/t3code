@@ -764,6 +764,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const firstDayOfWeek = useClientSettings((s) => s.firstDayOfWeek);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -2011,7 +2012,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
-      const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat, firstDayOfWeek);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -2304,7 +2305,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
-        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat, firstDayOfWeek);
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -2972,6 +2973,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               EMPTY_PROVIDER_ENTRIES
                             }
                             timestampFormat={timestampFormat}
+                            firstDayOfWeek={firstDayOfWeek}
                             onThreadClick={handleThreadClick}
                             onThreadActivate={navigateToThread}
                             onStartRename={startThreadRename}
