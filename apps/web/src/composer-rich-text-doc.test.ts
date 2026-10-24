@@ -306,6 +306,8 @@ describe("composer rich text document model", () => {
     "@README.md explain this",
     '@"docs/My File.md" and $my-skill please',
     "snake_case stays literal",
+    "انقل ملف_الاعدادات الى ملف_البيانات",
+    "переименуй файл_один и файл_два",
     "unmatched ** stays literal",
     "**bold** then @README.md then *italic*",
   ])("round-trips %s through a real ProseMirror document", (value) => {
