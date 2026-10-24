@@ -25,7 +25,7 @@ import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
@@ -1357,9 +1357,21 @@ export const layer: Layer.Layer<
           // Storage cleanup removes worktrees under the same lease. Only startup
           // holds it; the provider turn runs after it is released.
           const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
-          const providerTurn = yield* thread.worktreePath === null
+          const cwd =
+            thread.worktreePath ??
+            (yield* projects
+              .getById(thread.projectId, { includeDeleted: true })
+              .pipe(Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot)));
+          const providerTurn = yield* cwd === undefined
             ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
+            : withTurnStartReservation(
+                fileSystem,
+                path,
+                path.resolve(cwd),
+                thread.worktreePath === null
+                  ? start(input)
+                  : withWorkspaceLease(path.resolve(thread.worktreePath), start(input)),
+              );
           if (providerTurn !== undefined) yield* providerTurn;
         },
         (effect, input) =>
