@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import type { PermissionRuleset } from "@opencode-ai/sdk/v2";
 import {
   CommandId,
   EnvironmentId,
@@ -27,12 +28,23 @@ import { McpSchema, McpServer } from "effect/ai";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { OpenCodeAdapterV2Driver } from "@t3tools/provider-opencode/server";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import {
+  OPENCODE_DEFAULT_INSTANCE_ID,
+  OPENCODE_PROVIDER,
+  openCodeToolDecision,
+} from "@t3tools/provider-opencode/testing";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
@@ -576,6 +588,285 @@ describe("orchestrator MCP toolkit", () => {
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
               ?.completionDelivery?.state,
           ).toBe("acknowledged");
+        }).pipe(Effect.provide(layerTest));
+      }),
+    ),
+  );
+  // A delegated reviewer pinned to a read-only OpenCode agent redirected shell
+  // output into /tmp: the child's full access overrode the agent's denies.
+  it.live("delegate_task runs an OpenCode review agent without the tools it denies", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("delegated-opencode-review");
+        const instanceId = ProviderInstanceId.make(OPENCODE_DEFAULT_INSTANCE_ID);
+        const model = "anthropic/claude-sonnet";
+        // The agent as OpenCode resolves it from opencode.json: the user's
+        // global allow, then the agent's own rules.
+        const review: PermissionRuleset = [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "*", pattern: "*", action: "deny" },
+          { permission: "read", pattern: "*", action: "allow" },
+          { permission: "glob", pattern: "*", action: "allow" },
+          { permission: "grep", pattern: "*", action: "allow" },
+          { permission: "list", pattern: "*", action: "allow" },
+          { permission: "edit", pattern: "*", action: "deny" },
+          { permission: "bash", pattern: "*", action: "deny" },
+          { permission: "task", pattern: "*", action: "deny" },
+        ];
+        // Another session on the same OpenCode server answered "always" for shell.
+        const approved: PermissionRuleset = [{ permission: "bash", pattern: "*", action: "allow" }];
+        const sessions = new Map<
+          string,
+          { readonly id: string; readonly permission?: PermissionRuleset }
+        >();
+        let markParentStarted!: () => void;
+        const parentStarted = new Promise<void>((resolve) => {
+          markParentStarted = resolve;
+        });
+        let childPrompted!: (prompt: {
+          readonly agent: unknown;
+          readonly variant: unknown;
+          readonly ran: ReadonlyArray<string>;
+        }) => void;
+        const childPrompt = new Promise<Parameters<typeof childPrompted>[0]>((resolve) => {
+          childPrompted = resolve;
+        });
+        const openCodeClient = {
+          event: {
+            subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
+              stream: {
+                [Symbol.asyncIterator]: () => ({
+                  next: () =>
+                    new Promise<IteratorResult<never>>((resolve) => {
+                      const done = () => resolve({ done: true, value: undefined });
+                      if (options?.signal?.aborted) return done();
+                      options?.signal?.addEventListener("abort", done, { once: true });
+                    }),
+                }),
+              },
+            }),
+          },
+          app: {
+            agents: async () => ({
+              data: [{ name: "review", mode: "primary", options: {}, permission: review }],
+            }),
+          },
+          session: {
+            create: async (input: { readonly permission?: PermissionRuleset }) => {
+              const nativeSession = {
+                id: `native-${sessions.size + 1}`,
+                permission: input.permission ?? [],
+                time: { created: 1, updated: 1 },
+              };
+              sessions.set(nativeSession.id, nativeSession);
+              return { data: nativeSession };
+            },
+            get: async ({ sessionID }: { readonly sessionID: string }) => ({
+              data: sessions.get(sessionID),
+            }),
+            update: async (input: {
+              readonly sessionID: string;
+              readonly permission: PermissionRuleset;
+            }) => {
+              const existing = sessions.get(input.sessionID)!;
+              // OpenCode appends updated rules after the session's own.
+              const nativeSession = {
+                ...existing,
+                permission: [...(existing.permission ?? []), ...input.permission],
+              };
+              sessions.set(input.sessionID, nativeSession);
+              return { data: nativeSession };
+            },
+            promptAsync: async (input: {
+              readonly sessionID: string;
+              readonly agent?: string;
+              readonly variant?: string;
+            }) => {
+              if (input.agent === undefined) {
+                markParentStarted();
+                return { data: true };
+              }
+              const rules = [...review, ...(sessions.get(input.sessionID)?.permission ?? [])];
+              // What OpenCode would spawn or write for the reviewer's redirect,
+              // an edit, a nested task, a T3 MCP write, and the read it needs.
+              const ran = (
+                [
+                  ["bash", "git diff > /tmp/review.diff"],
+                  ["write", "notes.md"],
+                  ["task", "general"],
+                  ["t3-code_delegate_task", "*"],
+                  ["read", "src/index.ts"],
+                ] as const
+              ).flatMap(([tool, pattern]) =>
+                openCodeToolDecision(rules, approved, tool, pattern) === "allow" ? [tool] : [],
+              );
+              childPrompted({ agent: input.agent, variant: input.variant, ran });
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        };
+        const layerRegistry = ProviderAdapterRegistry.layerFromDrivers({
+          drivers: [OpenCodeAdapterV2Driver],
+          configMap: {
+            [instanceId]: {
+              driver: OPENCODE_PROVIDER,
+              config: { serverUrl: "http://test.invalid" },
+            },
+          },
+        }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, {
+                connectToOpenCodeServer: () =>
+                  Effect.succeed({
+                    url: "http://test.invalid",
+                    version: "test",
+                    exitCode: null,
+                    external: true,
+                  }),
+                createOpenCodeSdkClient: () => openCodeClient,
+              } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
+              TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+              NodeServices.layer,
+              IdAllocator.layer,
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+          ),
+        );
+        // OpenCode is off until its instance is enabled.
+        const layerSettings = ServerSettings.layerTest({
+          providerInstances: { [instanceId]: { driver: OPENCODE_PROVIDER, enabled: true } },
+        });
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          { name: "delegated-opencode-review" },
+          layerRegistry,
+        );
+        const layerOrchestration = Layer.merge(
+          layerOrchestrator,
+          ThreadManagementService.layer.pipe(
+            Layer.provide(layerOrchestrator),
+            Layer.provide(layerSettings),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          ),
+        );
+        const layerTest = layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(layerOrchestration),
+          Layer.provide(layerRegistry.pipe(Layer.provide(McpProviderSessions.layer))),
+          Layer.provide(
+            ProviderRegistryMock.layer([
+              makeProviderSnapshot({
+                instanceId,
+                driver: ProviderDriverKind.make(OPENCODE_PROVIDER),
+                model,
+                optionDescriptors: [
+                  {
+                    id: "variant",
+                    label: "Variant",
+                    type: "select",
+                    options: [{ id: "high", label: "High" }],
+                  },
+                  {
+                    id: "agent",
+                    label: "Agent",
+                    type: "select",
+                    options: [{ id: "review", label: "Review" }],
+                  },
+                ],
+              }),
+            ]),
+          ),
+          Layer.provide(layerSettings),
+          Layer.provide(layerUnusedScheduledTaskStub),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provideMerge(
+            SecretRequests.layer.pipe(
+              Layer.provide(layerMemorySecretStore),
+              Layer.provide(layerOrchestration),
+            ),
+          ),
+          Layer.provide(NodeServices.layer),
+        );
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const server = yield* McpServer.McpServer;
+          const selection = { instanceId, model } satisfies ModelSelection;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:opencode-review-parent:create"),
+            threadId: parentThreadId,
+            projectId,
+            title: "OpenCode review parent",
+            modelSelection: selection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:opencode-review-parent:start"),
+            threadId: parentThreadId,
+            messageId: MessageId.make("message:opencode-review-parent:start"),
+            text: parentPrompt,
+            attachments: [],
+            modelSelection: selection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Effect.promise(() => parentStarted);
+
+          const invocation: McpInvocationContext.McpInvocationScope = {
+            environmentId: EnvironmentId.make("environment:opencode-review"),
+            requestNamespace: "mcp-provider-session-opencode-review-parent",
+            thread: {
+              threadId: parentThreadId,
+              providerSessionId: "mcp-provider-session-opencode-review-parent",
+              providerInstanceId: instanceId,
+            },
+            client: undefined,
+            capabilities: new Set(["orchestration"]),
+            issuedAt: 1,
+          };
+          const delegated = yield* server
+            .callTool({
+              name: "delegate_task",
+              arguments: {
+                task: "Review the change and report findings.",
+                role: "review",
+                target: {
+                  providerInstanceId: instanceId,
+                  model,
+                  options: [
+                    { id: "variant", value: "high" },
+                    { id: "agent", value: "review" },
+                  ],
+                },
+                mode: "async",
+                clientRequestId: "delegate-opencode-review-1",
+              },
+            })
+            .pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+              Effect.provideService(McpSchema.McpServerClient, client),
+            );
+          expect(delegated.isError).not.toBe(true);
+          expect(yield* Effect.promise(() => childPrompt)).toEqual({
+            agent: "review",
+            variant: "high",
+            ran: ["read"],
+          });
         }).pipe(Effect.provide(layerTest));
       }),
     ),

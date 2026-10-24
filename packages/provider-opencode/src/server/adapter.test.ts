@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, PermissionRuleset, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
   NodeId,
@@ -13,6 +13,7 @@ import {
   RunId,
   MessageId,
   ThreadId,
+  type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
@@ -47,6 +48,7 @@ import {
   OPENCODE_PROVIDER,
   reconcileOpenCodePromptAdmissionStatus,
 } from "./adapter.ts";
+import { openCodeToolDecision } from "../testing.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -144,13 +146,14 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  options: ModelSelection["options"] = [],
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
-  const modelSelection = {
+  const modelSelection: ModelSelection = {
     instanceId,
     model: "anthropic/claude-sonnet",
-    options: [],
+    options,
   };
   const policy = runtimePolicy("full-access", { cwd: "/workspace" });
   const adapter = yield* makeOpenCodeAdapterV2({
@@ -182,8 +185,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   const startTurn = (
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
+    turnRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime = runtime,
+    turnModelSelection: ModelSelection = modelSelection,
   ) =>
-    runtime.startTurn({
+    turnRuntime.startTurn({
       appThread: {
         id: threadId,
         projectId: ProjectId.make(`project-opencode-${suffix}`),
@@ -221,10 +226,12 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         text,
         attachments: [],
       },
-      modelSelection,
+      modelSelection: turnModelSelection,
       runtimePolicy: policy,
     });
   return {
+    adapter,
+    modelSelection,
     nativeSessionId,
     now,
     policy,
@@ -2188,6 +2195,166 @@ describe("OpenCodeAdapterV2", () => {
           TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
+    ),
+  );
+
+  it.effect("keeps the selected agent's denies under full access", () =>
+    Effect.gen(function* () {
+      // A read-only agent as OpenCode resolves it from opencode.json: the
+      // user's global allow, then the agent's own rules.
+      const review: PermissionRuleset = [
+        { permission: "*", pattern: "*", action: "allow" },
+        { permission: "*", pattern: "*", action: "deny" },
+        { permission: "read", pattern: "*", action: "allow" },
+        { permission: "read", pattern: "*.env", action: "deny" },
+        { permission: "glob", pattern: "*", action: "allow" },
+        { permission: "grep", pattern: "*", action: "allow" },
+        { permission: "list", pattern: "*", action: "allow" },
+        { permission: "external_directory", pattern: "*", action: "ask" },
+        { permission: "edit", pattern: "*", action: "deny" },
+        { permission: "bash", pattern: "*", action: "deny" },
+        { permission: "task", pattern: "*", action: "deny" },
+      ];
+      const build: PermissionRuleset = [{ permission: "*", pattern: "*", action: "allow" }];
+      // Another session on the same OpenCode server answered "always" for shell.
+      const approved: PermissionRuleset = [{ permission: "bash", pattern: "*", action: "allow" }];
+      const sessions = new Map<
+        string,
+        { readonly id: string; readonly permission?: PermissionRuleset }
+      >();
+      const prompts: Array<{
+        readonly agent: unknown;
+        readonly variant: unknown;
+        readonly permission: unknown;
+      }> = [];
+      // Stands in for OpenCode's tool executors: what it would have spawned or written.
+      const ran: Array<ReadonlyArray<string>> = [];
+      const client = {
+        event: {
+          subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
+            stream: {
+              [Symbol.asyncIterator]: () => ({
+                next: () =>
+                  new Promise<IteratorResult<never>>((resolve) => {
+                    const done = () => resolve({ done: true, value: undefined });
+                    if (options?.signal?.aborted) return done();
+                    options?.signal?.addEventListener("abort", done, { once: true });
+                  }),
+              }),
+            },
+          }),
+        },
+        app: {
+          agents: async () => ({
+            data: [
+              { name: "build", mode: "primary", options: {}, permission: build },
+              { name: "review", mode: "primary", options: {}, permission: review },
+            ],
+          }),
+        },
+        session: {
+          create: async (input: { readonly permission?: PermissionRuleset }) => {
+            const nativeSession = {
+              id: "native-review",
+              permission: input.permission ?? [],
+              time: { created: 1, updated: 1 },
+            };
+            sessions.set(nativeSession.id, nativeSession);
+            return { data: nativeSession };
+          },
+          get: async ({ sessionID }: { readonly sessionID: string }) => ({
+            data: sessions.get(sessionID),
+          }),
+          update: async (input: {
+            readonly sessionID: string;
+            readonly permission: PermissionRuleset;
+          }) => {
+            const existing = sessions.get(input.sessionID)!;
+            // OpenCode appends updated rules after the session's own.
+            const nativeSession = {
+              ...existing,
+              permission: [...(existing.permission ?? []), ...input.permission],
+            };
+            sessions.set(input.sessionID, nativeSession);
+            return { data: nativeSession };
+          },
+          promptAsync: async (input: {
+            readonly sessionID: string;
+            readonly agent?: string;
+            readonly variant?: string;
+          }) => {
+            const permission = sessions.get(input.sessionID)?.permission ?? [];
+            prompts.push({ agent: input.agent, variant: input.variant, permission });
+            const rules = [...(input.agent === "review" ? review : build), ...permission];
+            // The redirect a reviewer once wrote outside its scope, an edit, a
+            // nested task, a T3 MCP write, and the read it needs.
+            const calls = [
+              ["bash", "git diff > /tmp/review.diff"],
+              ["write", "notes.md"],
+              ["task", "general"],
+              ["t3-code_delegate_task", "*"],
+              ["read", "src/index.ts"],
+            ] as const;
+            ran.push(
+              calls.flatMap(([tool, pattern]) =>
+                openCodeToolDecision(rules, approved, tool, pattern) === "allow" ? [tool] : [],
+              ),
+            );
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness("agent-denies", "native-review", client, [
+        { id: "agent", value: "review" },
+        { id: "variant", value: "high" },
+      ]);
+      yield* harness.startTurn("Review the change");
+
+      // A later provider session resumes the same native session.
+      const reopen = Effect.fn("reopen")(function* (suffix: string) {
+        const runtime = yield* harness.adapter.openSession({
+          threadId: harness.threadId,
+          providerSessionId: ProviderSessionId.make(`session-opencode-agent-denies-${suffix}`),
+          modelSelection: harness.modelSelection,
+          runtimePolicy: harness.policy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId: harness.threadId,
+          modelSelection: harness.modelSelection,
+          runtimePolicy: harness.policy,
+          existingProviderThread: harness.providerThread,
+        });
+        return { runtime, providerThread };
+      });
+      const resumed = yield* reopen("resumed");
+      yield* harness.startTurn("Check the tests too", resumed.providerThread, resumed.runtime);
+      // Dropping the agent returns the thread to plain full access.
+      const plain = yield* reopen("plain");
+      yield* harness.startTurn("Now fix it", plain.providerThread, plain.runtime, {
+        ...harness.modelSelection,
+        options: [],
+      });
+
+      assert.deepEqual(
+        prompts.map(({ agent, variant }) => ({ agent, variant })),
+        [
+          { agent: "review", variant: "high" },
+          { agent: "review", variant: "high" },
+          { agent: undefined, variant: undefined },
+        ],
+      );
+      // The resumed turn finds the agent's rules already in force.
+      assert.deepEqual(prompts[1]?.permission, prompts[0]?.permission);
+      assert.deepEqual(ran, [
+        ["read"],
+        ["read"],
+        ["bash", "write", "task", "t3-code_delegate_task", "read"],
+      ]);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
     ),
   );
 
