@@ -210,6 +210,13 @@ Results also list folders in the worktree folder that no thread uses, with their
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 
+**Delete idle build output** frees the space builds take without removing the worktree. Once a
+worktree's threads have been idle and its build output untouched for the chosen number of days,
+cleanup deletes folders that build tools regenerate and Git ignores, such as `target/` in a Rust
+project, `build/` and `.gradle/` in Gradle, a configured CMake `build/`, `.next/` or `.turbo/`, and
+any folder marked with `CACHEDIR.TAG`. The next build recreates them. Source files, other ignored
+files, and `node_modules` are kept, and an open terminal in the worktree counts as use.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, monogram, or image. The choice applies to

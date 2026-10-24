@@ -202,9 +202,11 @@ function CleanupResults({
             ? ((entry.threadId === null
                 ? entry.path
                 : entry.path?.split(/[\\/]/).findLast(Boolean)) ?? "Worktrees")
-            : entry.kind === "logs"
-              ? "Rotated logs"
-              : "Browser artifacts";
+            : entry.kind === "build-output"
+              ? (entry.path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/") ?? "Build output")
+              : entry.kind === "logs"
+                ? "Rotated logs"
+                : "Browser artifacts";
         return (
           <SettingsRow
             key={`${entry.path ?? entry.kind}:${entry.threadId ?? index}`}
@@ -312,6 +314,7 @@ function CleanupSection() {
     return (
       settings.storageCleanup.browserArtifactsAfterDays !== null ||
       settings.storageCleanup.logsAfterDays !== null ||
+      settings.storageCleanup.buildOutputAfterDays !== null ||
       enabled(resolveWorktreeCleanup(settings, null)) ||
       Object.values(settings.projectSettingsOverrides).some(
         (override) =>
@@ -690,6 +693,32 @@ export function StorageSettingsPanel() {
               />
             }
           />
+          {connectedEnvironments.length > 0 &&
+            connectedEnvironments.every(
+              (environment) =>
+                environment.serverConfig?.environment.capabilities.buildOutputCleanup === true,
+            ) && (
+              <SettingsRow
+                title="Delete idle build output"
+                status={[
+                  ruleStatus("buildOutputAfterDays"),
+                  environments.length > connectedEnvironments.length
+                    ? "Offline machines will not get this setting"
+                    : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(". ")}
+                description="Delete folders that build tools regenerate, such as target/ or .next/, from worktrees whose threads and build output have been unused for this many days. Git must ignore the folder; the worktree and its other files are kept."
+                serverScoped
+                control={
+                  <RetentionControl
+                    label="Delete idle build output"
+                    value={settings.buildOutputAfterDays}
+                    onChange={(buildOutputAfterDays) => update({ buildOutputAfterDays })}
+                  />
+                }
+              />
+            )}
           <SettingsRow
             title="Delete old rotated logs"
             status={ruleStatus("logsAfterDays")}

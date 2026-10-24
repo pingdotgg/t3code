@@ -73,6 +73,28 @@ const SETTLE_SCRIPT_GRACE_MS = 60_000;
 // Worktree creation can precede its thread row, including review-guide checkouts.
 const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
 
+// Folders a project's own tools regenerate, keyed by the files that identify the
+// project. A folder qualifies only when Git also ignores it, so nothing tracked
+// is ever deleted. `configuredBy` names a file that must exist inside the
+// folder when its name alone is too common to trust.
+const BUILD_OUTPUT_RULES: ReadonlyArray<{
+  readonly markers: ReadonlyArray<string>;
+  readonly folders: ReadonlyArray<string>;
+  readonly configuredBy?: string;
+}> = [
+  { markers: ["Cargo.toml"], folders: ["target"] },
+  {
+    markers: ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
+    folders: ["build", ".gradle"],
+  },
+  { markers: ["CMakeLists.txt"], folders: ["build"], configuredBy: "CMakeCache.txt" },
+  {
+    markers: ["package.json"],
+    folders: [".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache"],
+  },
+  { markers: ["build.zig"], folders: [".zig-cache", "zig-cache"] },
+];
+
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
 const isGitCommandError = Schema.is(GitCommandError);
@@ -715,12 +737,9 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
+  const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (
     serverSettings: ServerSettings,
-    now: number,
-    entries: StorageCleanupReportEntry[],
   ) {
-    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
     const roots: Array<string> = [];
     for (const directory of managedWorktreesDirectories(
       serverSettings,
@@ -734,6 +753,16 @@ const make = Effect.gen(function* () {
       );
       if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
     }
+    return roots;
+  });
+
+  const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+    entries: StorageCleanupReportEntry[],
+  ) {
+    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
+    const roots = yield* managedRoots(serverSettings);
     const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
           SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
           FROM orchestration_v2_projection_threads t
@@ -1073,6 +1102,174 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const isDirectory = (target: string) =>
+    fs.readLink(target).pipe(
+      Effect.as(false),
+      Effect.catch(() =>
+        fs.stat(target).pipe(
+          Effect.map((stat) => stat.type === "Directory"),
+          Effect.orElseSucceed(() => false),
+        ),
+      ),
+    );
+  const modifiedAt = (target: string) =>
+    fs.stat(target).pipe(
+      Effect.map((stat) =>
+        Option.match(stat.mtime, { onNone: () => 0, onSome: (d) => d.getTime() }),
+      ),
+      Effect.orElseSucceed(() => 0),
+    );
+  // A build writes into its output folder and its first level (target/debug,
+  // build/intermediates), so their times show when the output was last used.
+  const lastBuildAt = Effect.fnUntraced(function* (folder: string) {
+    let latest = yield* modifiedAt(folder);
+    for (const name of yield* fs.readDirectory(folder).pipe(Effect.orElseSucceed(() => []))) {
+      latest = Math.max(latest, yield* modifiedAt(path.join(folder, name)));
+    }
+    return latest;
+  });
+  const buildOutputFolders = Effect.fnUntraced(function* (worktreePath: string) {
+    const candidates = new Set<string>();
+    for (const rule of BUILD_OUTPUT_RULES) {
+      const markers = yield* Effect.forEach(rule.markers, (marker) =>
+        fs.exists(path.join(worktreePath, marker)).pipe(Effect.orElseSucceed(() => false)),
+      );
+      if (!markers.some(Boolean)) continue;
+      for (const folder of rule.folders) {
+        if (
+          rule.configuredBy !== undefined &&
+          !(yield* fs
+            .exists(path.join(worktreePath, folder, rule.configuredBy))
+            .pipe(Effect.orElseSucceed(() => false)))
+        )
+          continue;
+        candidates.add(folder);
+      }
+    }
+    // CACHEDIR.TAG is the cross-tool marker for regenerable caches (Cargo writes it).
+    for (const name of yield* fs.readDirectory(worktreePath).pipe(Effect.orElseSucceed(() => []))) {
+      if (
+        name !== ".git" &&
+        (yield* fs
+          .exists(path.join(worktreePath, name, "CACHEDIR.TAG"))
+          .pipe(Effect.orElseSucceed(() => false)))
+      )
+        candidates.add(name);
+    }
+    const folders: Array<string> = [];
+    for (const name of [...candidates].sort()) {
+      const folder = path.join(worktreePath, name);
+      if (!(yield* isDirectory(folder))) continue;
+      const ignored = yield* git.execute({
+        operation: "StorageCleanup.buildOutputIgnored",
+        cwd: worktreePath,
+        args: ["check-ignore", "-q", "--", `${name}/`],
+        allowNonZeroExit: true,
+      });
+      if (ignored.exitCode === 0) folders.push(folder);
+    }
+    return folders;
+  });
+
+  // Deletes regenerable build output from idle T3 worktrees. The worktree, its
+  // branch and every tracked, untracked or other ignored file stay.
+  const cleanBuildOutput = Effect.fn("StorageCleanup.cleanBuildOutput")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+    entries: StorageCleanupReportEntry[],
+  ) {
+    const days = serverSettings.storageCleanup.buildOutputAfterDays;
+    if (days === null) return;
+    const cutoff = now - days * DAY_MS;
+    const roots = yield* managedRoots(serverSettings);
+    const snapshot = yield* readThreads();
+    const groups = Map.groupBy(
+      snapshot.threads.filter((thread) => thread.worktreePath !== null),
+      (thread) => path.resolve(thread.worktreePath!),
+    );
+    const before = entries.length;
+    for (const [worktreePath, group] of groups) {
+      const owner = worktreeOwner(group) ?? group[0]!;
+      const activityAt = Math.max(...group.map(storageCleanupActivityAt));
+      const project = snapshot.projects.find((entry) => entry.id === owner.projectId);
+      const stillIdle = Effect.fnUntraced(function* () {
+        if (hasTerminal(worktreePath)) return false;
+        const latest = yield* Effect.forEach(group, (member) =>
+          projections.getThreadShell(member.id),
+        );
+        return latest.every(
+          (shell) =>
+            shell !== null &&
+            storageCleanupThreadIdle(shell, now) &&
+            storageCleanupActivityAt(shell) < cutoff,
+        );
+      });
+      yield* Effect.gen(function* () {
+        if (!group.every((member) => storageCleanupThreadIdle(member, now))) return;
+        if (activityAt >= cutoff) return;
+        if (!(yield* fs.exists(worktreePath))) return;
+        const realPath = yield* fs.realPath(worktreePath);
+        const realParent = yield* fs.realPath(path.dirname(worktreePath));
+        if (realPath !== path.join(realParent, path.basename(worktreePath))) return;
+        if (!roots.some((root) => inside(root, realPath))) return;
+        for (const folder of yield* buildOutputFolders(worktreePath)) {
+          if ((yield* lastBuildAt(folder)) >= cutoff) continue;
+          if (!(yield* stillIdle())) return;
+          const bytes = yield* measureWorktree(folder);
+          yield* fs.remove(folder, { recursive: true });
+          entries.push({
+            kind: "build-output",
+            outcome: "removed",
+            reason: `Unused for ${Math.floor((now - activityAt) / DAY_MS)} days`,
+            path: folder,
+            projectPath: project?.workspaceRoot ?? null,
+            threadId: owner.id,
+            threadTitle: owner.title,
+            bytes,
+            files: null,
+          });
+          yield* Effect.logInfo("storage cleanup removed build output", {
+            threadId: owner.id,
+            folder,
+          });
+        }
+      }).pipe(
+        (effect) => withWorkspaceLease(worktreePath, effect),
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            entries.push({
+              kind: "build-output",
+              outcome: "failed",
+              reason: cleanupFailureReason(error),
+              path: worktreePath,
+              projectPath: project?.workspaceRoot ?? null,
+              threadId: owner.id,
+              threadTitle: owner.title,
+              bytes: null,
+              files: null,
+            });
+            yield* Effect.logWarning("storage cleanup failed for build output", {
+              threadId: owner.id,
+              error,
+            });
+          }),
+        ),
+      );
+    }
+    if (entries.length === before)
+      entries.push({
+        kind: "build-output",
+        outcome: "kept",
+        reason: "No idle build output",
+        path: null,
+        projectPath: null,
+        threadId: null,
+        threadTitle: null,
+        bytes: null,
+        files: null,
+      });
+  });
+
   const cleanFiles = Effect.fn("StorageCleanup.cleanFiles")(function* (
     root: string,
     days: number | null,
@@ -1132,6 +1329,24 @@ const make = Effect.gen(function* () {
             files: null,
           });
           yield* Effect.logWarning("worktree cleanup failed", { error });
+        }),
+      ),
+    );
+    yield* cleanBuildOutput(serverSettings, now, entries).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          entries.push({
+            kind: "build-output",
+            outcome: "failed",
+            reason: cleanupFailureReason(error),
+            path: null,
+            projectPath: null,
+            threadId: null,
+            threadTitle: null,
+            bytes: null,
+            files: null,
+          });
+          yield* Effect.logWarning("build output cleanup failed", { error });
         }),
       ),
     );

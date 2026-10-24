@@ -11,6 +11,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
 import { TestClock } from "effect/testing";
+import * as Clock from "effect/Clock";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -1886,3 +1887,103 @@ it.live("keeps saved usage data when removing a settled checkout", () =>
     }),
   ),
 );
+
+describe("idle build output cleanup", () => {
+  // Live tests: Git and file times run on the wall clock, not the TestClock.
+  const buildOutputFixture = (buildOutputAfterDays: number | null = 8) =>
+    Effect.gen(function* () {
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        buildOutputAfterDays,
+      });
+      const { fs, worktree } = fixture;
+      // Node reads numeric file times as seconds.
+      const old = ((yield* Clock.currentTimeMillis) - 10 * DAY_MS) / 1_000;
+      yield* fs.writeFileString(`${worktree}/Cargo.toml`, "[package]\n");
+      yield* fs.writeFileString(`${worktree}/CMakeLists.txt`, "\n");
+      yield* fs.writeFileString(`${worktree}/.gitignore`, "target/\nbuild/\n");
+      yield* fs.makeDirectory(`${worktree}/target/debug`, { recursive: true });
+      yield* fs.writeFileString(`${worktree}/target/debug/app`, "binary ".repeat(1_000));
+      // An unconfigured CMake build/ and a tagged folder Git does not ignore are kept.
+      yield* fs.makeDirectory(`${worktree}/build`);
+      yield* fs.writeFileString(`${worktree}/build/notes.txt`, "keep\n");
+      yield* fs.makeDirectory(`${worktree}/tagged`);
+      yield* fs.writeFileString(`${worktree}/tagged/CACHEDIR.TAG`, "Signature\n");
+      for (const target of [
+        `${worktree}/target/debug/app`,
+        `${worktree}/target/debug`,
+        `${worktree}/target`,
+      ])
+        yield* fs.utimes(target, old, old);
+      return fixture;
+    });
+
+  it.live("removes ignored build output of an idle worktree and keeps the worktree", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, repo } = yield* buildOutputFixture();
+        const report = yield* service.runNow;
+        const entry = report.entries.find((candidate) => candidate.kind === "build-output");
+        expect(entry).toMatchObject({
+          outcome: "removed",
+          path: `${worktree}/target`,
+          projectPath: repo,
+          threadId: "thread-1",
+        });
+        expect(entry?.reason).toMatch(/^Unused for \d+ days$/);
+        expect(entry?.bytes).toBeGreaterThan(0);
+        expect(yield* fs.exists(`${worktree}/target`)).toBe(false);
+        expect(yield* fs.exists(`${worktree}/build/notes.txt`)).toBe(true);
+        expect(yield* fs.exists(`${worktree}/tagged/CACHEDIR.TAG`)).toBe(true);
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
+      }),
+    ),
+  );
+
+  it.live("keeps build output written within the retention period", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree } = yield* buildOutputFixture();
+        yield* fs.writeFileString(`${worktree}/target/debug/fresh`, "new build\n");
+        const report = yield* service.runNow;
+        expect(report.entries.filter((entry) => entry.kind === "build-output")).toMatchObject([
+          { outcome: "kept", reason: "No idle build output" },
+        ]);
+        expect(yield* fs.exists(`${worktree}/target/debug/app`)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live.each(["running", "recently active"] as const)(
+    "keeps build output of a worktree whose thread is %s",
+    (state) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* buildOutputFixture();
+          const now = yield* Clock.currentTimeMillis;
+          fixture.setThreads([
+            shell({
+              branch: "feature",
+              worktreePath: fixture.worktree,
+              ...(state === "running"
+                ? { status: "running" as const }
+                : { latestUserMessageAt: DateTime.makeUnsafe(now - DAY_MS) }),
+            }),
+          ]);
+          yield* fixture.service.runNow;
+          expect(yield* fixture.fs.exists(`${fixture.worktree}/target/debug/app`)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live("does nothing while the rule is off", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree } = yield* buildOutputFixture(null);
+        const report = yield* service.runNow;
+        expect(report.entries.some((entry) => entry.kind === "build-output")).toBe(false);
+        expect(yield* fs.exists(`${worktree}/target/debug/app`)).toBe(true);
+      }),
+    ),
+  );
+});

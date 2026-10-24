@@ -98,6 +98,7 @@ function setup() {
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
+      buildOutputAfterDays: null,
     },
     projectSettingsOverrides: {},
   };
