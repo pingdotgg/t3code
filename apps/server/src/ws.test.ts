@@ -15,11 +15,13 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { Headers } from "effect/http";
+import { FetchHttpClient, Headers, HttpRouter, HttpServerRequest } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -83,6 +85,7 @@ import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -106,6 +109,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
+  layer as layerWsRoute,
   layerWsRpc,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
@@ -535,6 +539,105 @@ it.effect(
       Effect.scoped,
     ),
 );
+
+it.effect("logs the close code and reason when a client closes /ws", () => {
+  const messages: Array<unknown> = [];
+  const captureLogs = Logger.make(({ message }) => {
+    messages.push(message);
+  });
+  return Effect.gen(function* () {
+    const closingSocket = Socket.make({
+      reader: Effect.succeed({
+        pull: Effect.fail(
+          new Socket.SocketError({
+            reason: new Socket.SocketCloseError({
+              code: 4001,
+              closeReason: "client heartbeat timeout",
+            }),
+          }),
+        ),
+        upgrade: () => Effect.void,
+      }),
+      writer: Effect.succeed({ write: () => Effect.void, writeAll: () => Effect.void }),
+    });
+    const webRequest = HttpServerRequest.fromWeb(
+      new Request("http://localhost/ws?orchestrationProtocol=2&clientSurface=desktop", {
+        headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
+      }),
+    );
+    const request = Object.create(webRequest, {
+      upgrade: { value: Effect.succeed(closingSocket) },
+    }) as HttpServerRequest.HttpServerRequest;
+    const handler = yield* HttpRouter.toHttpEffect(layerWsRoute);
+    yield* handler.pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+            authenticateWebSocketUpgrade: () =>
+              Effect.succeed({
+                sessionId: AuthSessionId.make("close-test"),
+                subject: "close-test",
+                method: "browser-session-cookie",
+                scopes: [],
+              }),
+          }),
+          Layer.mock(SessionStore.SessionStore)({
+            cookieName: "close-test",
+            legacyCookieName: undefined,
+            recordClientConnection: () => Effect.void,
+            markConnected: () => Effect.void,
+            markDisconnected: () => Effect.void,
+            awaitInvalidation: () => Effect.never,
+          }),
+          Layer.mock(AnalyticsService.AnalyticsService)({
+            record: () => Effect.void,
+            recordOwners: () => Effect.void,
+          }),
+        ),
+      ),
+      Effect.scoped,
+    );
+
+    assert.deepStrictEqual(
+      messages.filter((message) => Array.isArray(message) && message[0] === "WebSocket closed"),
+      [
+        [
+          "WebSocket closed",
+          {
+            endedBy: "close_frame",
+            closeCode: 4001,
+            closeReason: "client heartbeat timeout",
+            durationMs: 0,
+            sessionId: "close-test",
+            surface: "desktop",
+            forwardedFor: "203.0.113.7",
+          },
+        ],
+      ],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+        Layer.mock(VcsProcess.VcsProcess)({}),
+        FetchHttpClient.layer,
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Logger.layer([captureLogs], { mergeWithExisting: false }),
+      ),
+    ),
+    Effect.scoped,
+  );
+});
 
 // Compaction keeps the oldest and newest event per message, so a cursor older
 // than the deleted rows still replays each message where the client would

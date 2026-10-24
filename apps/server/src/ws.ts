@@ -240,6 +240,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as WsConnectionLog from "./observability/WsConnectionLog.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -3235,6 +3236,13 @@ export const layer = Layer.unwrap(
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", clientAnalyticsProps);
         yield* analytics.recordOwners(readClientOwners(request), "client");
+        const connection = {
+          sessionId: session.sessionId,
+          ...clientOrigin,
+          ...WsConnectionLog.wsPeerAttributes(request),
+        };
+        const observation = WsConnectionLog.makeObservation();
+        const connectedAt = yield* DateTime.now;
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
@@ -3310,8 +3318,18 @@ export const layer = Layer.unwrap(
           sessions.markConnected(session.sessionId),
           () =>
             Effect.raceFirst(
-              rpcWebSocketHttpEffect,
+              rpcWebSocketHttpEffect.pipe(
+                Effect.provideService(
+                  HttpServerRequest.HttpServerRequest,
+                  WsConnectionLog.observeUpgrade(request, observation),
+                ),
+              ),
               sessions.awaitInvalidation(session.sessionId).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    observation.invalidated = true;
+                  }),
+                ),
                 Effect.as(HttpServerResponse.empty()),
                 Effect.catchTags({
                   SessionCredentialVerificationError: (error) =>
@@ -3319,7 +3337,17 @@ export const layer = Layer.unwrap(
                 }),
               ),
             ),
-          () => sessions.markDisconnected(session.sessionId),
+          (_, exit) =>
+            Effect.gen(function* () {
+              const closed = WsConnectionLog.wsCloseAttributes({
+                observation,
+                exit,
+                connectedAtMs: DateTime.toEpochMillis(connectedAt),
+                closedAtMs: DateTime.toEpochMillis(yield* DateTime.now),
+              });
+              yield* Effect.logInfo("WebSocket closed", { ...closed, ...connection });
+              yield* sessions.markDisconnected(session.sessionId);
+            }),
         );
       }).pipe(
         Effect.catchTags({
