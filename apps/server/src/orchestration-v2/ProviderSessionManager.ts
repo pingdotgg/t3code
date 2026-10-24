@@ -61,6 +61,7 @@ const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThread
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
+const DETACH_TURN_TERMINAL_TIMEOUT_MS = 30 * 1000;
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -2353,7 +2354,7 @@ export const layerWithOptions = (
             const key = sessionKey(input.providerSessionId);
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             let detachedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> = [];
-            if (currentEntry?.supportsMultipleProviderThreads === true) {
+            if (currentEntry?.attachedThreadIds.has(input.threadId)) {
               const projection = yield* Effect.option(
                 projectionStore.getThreadRecords(input.threadId, [
                   "providerThreads",
@@ -2373,24 +2374,49 @@ export const layerWithOptions = (
                 yield* Effect.forEach(
                   activeTurns,
                   (turn) =>
-                    currentEntry.exposedRuntime
-                      .interruptTurn({
+                    Effect.gen(function* () {
+                      const interrupt = currentEntry.exposedRuntime.interruptTurn({
                         providerThread: providerThreads.get(turn.providerThreadId)!,
                         providerTurnId: turn.id,
-                      })
-                      .pipe(
-                        Effect.catchCause((cause) =>
-                          Effect.logWarning(
-                            "orchestration-v2.driver-session.detach-interrupt-failed",
-                            {
-                              providerSessionId: input.providerSessionId,
-                              threadId: input.threadId,
-                              providerTurnId: turn.id,
-                              cause,
-                            },
+                      });
+                      if (currentEntry.supportsMultipleProviderThreads) {
+                        yield* interrupt;
+                        return;
+                      }
+                      yield* Effect.acquireUseRelease(
+                        makeEventSubscription(currentEntry.eventSubscribers),
+                        (subscription) =>
+                          interrupt.pipe(
+                            // Exclusive sessions close below. Let their terminal reach
+                            // every subscriber before release appends a stream failure.
+                            Effect.andThen(
+                              subscription.events.pipe(
+                                Stream.filter(
+                                  (event) =>
+                                    event.type === "turn.terminal" &&
+                                    event.providerThreadId === turn.providerThreadId &&
+                                    event.providerTurnId === turn.id,
+                                ),
+                                Stream.runHead,
+                              ),
+                            ),
+                            Effect.timeout(DETACH_TURN_TERMINAL_TIMEOUT_MS),
                           ),
+                        (subscription) => subscription.close,
+                      );
+                    }).pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning(
+                          "orchestration-v2.driver-session.detach-interrupt-failed",
+                          {
+                            providerSessionId: input.providerSessionId,
+                            threadId: input.threadId,
+                            providerTurnId: turn.id,
+                            cause,
+                          },
                         ),
                       ),
+                    ),
                   { concurrency: 1, discard: true },
                 );
               }
