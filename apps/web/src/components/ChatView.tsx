@@ -118,6 +118,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
+import { useWindowTitleThread } from "../windowTitleStore";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
 import { composerRequiresModifier } from "../composer-logic";
@@ -1048,6 +1049,7 @@ export default function ChatView(props: ChatViewProps) {
       ? scopeProjectRef(activeThreadEnvironmentId, activeThreadProjectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  useWindowTitleThread(activeProject?.title ?? null, activeThread?.title ?? null);
   const activeProjectSettings = resolveProjectSettings(
     settings,
     activeProject?.id ?? null,
