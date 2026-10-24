@@ -1507,6 +1507,42 @@ function ComposerPromptEditorTiptapInner(
   );
 
   useEffect(() => {
+    if (!editor || literalText) return;
+    const key = new PluginKey("composer-typed-skills");
+    editor.registerPlugin(
+      new Plugin({
+        key,
+        appendTransaction(transactions, _previous, state) {
+          if (
+            editor.view.composing ||
+            !transactions.some(
+              (transaction) =>
+                transaction.docChanged &&
+                !isHistoryTransaction(transaction) &&
+                // The flush that commits a composition runs after `composing` clears.
+                transaction.getMeta("composition") == null &&
+                transaction.getMeta("addToHistory") !== false,
+            )
+          ) {
+            return null;
+          }
+          const replacements = skillChipReplacements(state.doc, skillLabelFor).filter(
+            ({ node }) => !node.isText,
+          );
+          if (replacements.length === 0) return null;
+          // Appending keeps the chip in the edit's undo step and preserves its selection.
+          const transaction = state.tr;
+          for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
+          return transaction;
+        },
+      }),
+    );
+    return () => {
+      editor.unregisterPlugin(key);
+    };
+  }, [editor, literalText, skillLabelFor]);
+
+  useEffect(() => {
     editor?.setEditable(!disabled);
   }, [disabled, editor]);
 
