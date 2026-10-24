@@ -53,6 +53,12 @@ export function resolveModifiedTerminalInput(input: {
     return { kind: "paste" };
   }
 
+  // eslint-disable-next-line no-control-regex -- Match the toolbar's arrow-key escape sequences.
+  const arrow = /^\u001b\[([ABCD])$/.exec(input.data);
+  if (arrow) {
+    return { kind: "write", data: `\u001b[1;${input.modifier === "ctrl" ? 5 : 3}${arrow[1]}` };
+  }
+
   return {
     kind: "write",
     data: input.modifier === "ctrl" ? applyCtrlModifier(input.data) : `\u001b${input.data}`,
