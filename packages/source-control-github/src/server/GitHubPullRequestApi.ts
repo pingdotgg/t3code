@@ -1943,26 +1943,27 @@ export const make = Effect.gen(function* () {
         }),
       );
       // GitHub answers a private repository the token cannot see as missing, so the reader is
-      // told which credential that was: a saved token quietly overrides GH_TOKEN and gh. One that
-      // changed during the read goes unnamed rather than misnamed.
-      const activeCredential = api.credential(input.host).pipe(Effect.orElseSucceed(() => null));
-      return activeCredential.pipe(
-        Effect.flatMap((before) =>
+      // told which credential that was: a saved token quietly overrides GH_TOKEN and gh. The
+      // listing is pinned to the credential it names, so a token changed mid-read is not blamed.
+      const host = GitHubRequestPolicy.normalizeHost(input.host);
+      return api.credential(host).pipe(
+        Effect.flatMap(({ token, fingerprint, source }) =>
           listed.pipe(
+            Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+              host,
+              token,
+              credentialFingerprint: fingerprint,
+            }),
             Effect.catchTags({
               GitHubApiNotFoundError: (error) =>
-                activeCredential.pipe(
-                  Effect.flatMap((after) =>
-                    Effect.fail(
-                      before?.source === undefined || after?.fingerprint !== before.fingerprint
-                        ? error
-                        : new GitHubRequestPolicy.GitHubApiNotFoundError({
-                            host: error.host,
-                            operation: error.operation,
-                            credential: before.source,
-                          }),
-                    ),
-                  ),
+                Effect.fail(
+                  source === undefined
+                    ? error
+                    : new GitHubRequestPolicy.GitHubApiNotFoundError({
+                        host: error.host,
+                        operation: error.operation,
+                        credential: source,
+                      }),
                 ),
             }),
           ),

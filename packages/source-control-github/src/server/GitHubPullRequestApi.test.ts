@@ -1203,11 +1203,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
   /** Lists a repository GitHub will not return, under the saved token `token` reads. */
   const listUnreadableRepository = (token: () => string) => {
     mockedCredential.mockImplementation((host) =>
-      Effect.sync(() => ({
-        token: Redacted.make(token()),
-        fingerprint: `${host}:${token()}`,
-        source: "settings" as const,
-      })),
+      Effect.sync(() => {
+        const value = token();
+        return {
+          token: Redacted.make(value),
+          fingerprint: `${host}:${value}`,
+          source: "settings" as const,
+        };
+      }),
     );
     route(
       ["PullRequestSearch", { data: { search: { pageInfo: lastPage, nodes: [] } } }],
@@ -1251,16 +1254,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("names no credential when the saved token changed during the read", () =>
+  it.effect("reads the whole listing with the token it names, even if it changes mid-read", () =>
     Effect.gen(function* () {
-      const error = yield* listUnreadableRepository(() =>
-        mockedExecute.mock.calls.some(([call]) => matches(call, "PullRequestList"))
-          ? "replaced"
-          : "token",
-      );
+      let token = "first";
+      const error = yield* listUnreadableRepository(() => {
+        const current = token;
+        token = "replaced";
+        return current;
+      });
 
       assert.strictEqual(error.reason, "not-found");
-      assert.isUndefined(error.accessHint);
+      expect(error.accessHint).toContain("token saved in Settings");
+      const sentWith = mockedExecute.mock.calls.map(([call]) =>
+        call.kind === "graphql" ? call.authorization : undefined,
+      );
+      assert.isAbove(sentWith.length, 1);
+      for (const authorization of sentWith) expect(authorization).toContain("first");
     }),
   );
 
