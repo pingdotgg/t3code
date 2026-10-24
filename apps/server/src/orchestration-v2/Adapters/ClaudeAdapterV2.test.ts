@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
-import { beforeEach, vi } from "vite-plus/test";
+import { beforeEach, expect, vi } from "vite-plus/test";
 
 import type {
   Query as ClaudeQuery,
@@ -2138,6 +2138,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
 
   const makeWakeHarnessWithOptions = (options?: {
+    readonly onUsageLimits?: ClaudeAdapterV2.ClaudeAdapterV2Options["onUsageLimits"];
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
@@ -2206,6 +2207,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+        ...(options?.onUsageLimits ? { onUsageLimits: options.onUsageLimits } : {}),
         environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
@@ -3624,6 +3626,56 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "delivers unified subscription windows from the SDK stream before the turn completes",
+    () =>
+      Effect.gen(function* () {
+        const updates: unknown[] = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          onUsageLimits: (update) =>
+            Effect.sync(() => {
+              updates.push(update);
+            }),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-unified-limits"),
+            providerTurnOrdinal: 1,
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "allowed",
+              unifiedWindows: { five_hour: { utilization: 0.2 }, seven_day: { utilization: 0.59 } },
+            },
+            uuid: "00000000-0000-4000-8000-000000000610",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000611", result: "Done." }),
+        ]);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.lengthOf(updates, 1);
+        expect(updates[0]).toMatchObject({
+          available: true,
+          windows: [
+            { id: "five_hour", usedPercent: 20 },
+            { id: "seven_day", usedPercent: 59 },
+          ],
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect("announces usage-limit pauses once per window and again on a new turn", () =>

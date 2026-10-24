@@ -21,6 +21,20 @@ const weekly = {
 const published = { checkedAt, windows: [session, weekly] };
 
 describe("applyUsageLimitsUpdate", () => {
+  it("recovers a failed probe from an available stream snapshot and retains it across failed refreshes", () => {
+    const failed = {
+      checkedAt,
+      windows: [session],
+      unavailable: { reason: "probeFailed" as const },
+    };
+    const update = { windows: [session], available: true as const };
+    const recovered = applyUsageLimitsUpdate({ previous: failed, checkedAt, update });
+    expect(recovered).toEqual({ checkedAt, windows: [session] });
+    expect(resolveUsageLimitsAfterProbe({ published: recovered, probed: failed })).toBe(recovered);
+    const unsupported = { ...failed, unavailable: { reason: "unsupported" as const } };
+    expect(applyUsageLimitsUpdate({ previous: unsupported, checkedAt, update })).toBe(unsupported);
+  });
+
   it("returns the published object itself when no window moved", () => {
     // Codex repeats the same numbers beside every token-usage tick; the
     // ingestion path relies on identity to skip the publish.

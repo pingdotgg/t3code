@@ -166,19 +166,42 @@ export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  // Recent CLIs report all subscription windows even when get_usage is unavailable
+  // for setup-token authentication. The pinned SDK does not type this field yet.
+  const unified = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  const windows: ServerProviderUsageWindow[] = [];
+  if (typeof unified === "object" && unified !== null && !Array.isArray(unified)) {
+    for (const id of Object.keys(WINDOWS)) {
+      const window = (unified as Record<string, unknown>)[id];
+      if (typeof window !== "object" || window === null || !("utilization" in window)) continue;
+      const used = window.utilization;
+      if (typeof used !== "number" || !Number.isFinite(used) || used < 0) continue;
+      const reset =
+        "resetsAt" in window && typeof window.resetsAt === "number" ? window.resetsAt : undefined;
+      windows.push(makeWindow(id, used * 100, isoFromEpochSeconds(reset)));
+    }
+  }
+  const available = windows.length > 0;
   const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  if (
+    type &&
+    typeof info.utilization === "number" &&
+    Number.isFinite(info.utilization) &&
+    info.utilization >= 0
+  ) {
+    const usedPercent = info.utilization * 100;
+    const resetsAt = isoFromEpochSeconds(info.resetsAt);
+    if (type in WINDOWS) {
+      // The top-level window describes this event; unifiedWindows can be an older snapshot.
+      const index = windows.findIndex((window) => window.id === type);
+      const unifiedReset = index === -1 ? undefined : windows[index]?.resetsAt;
+      if (index !== -1) windows.splice(index, 1);
+      windows.push(makeWindow(type, usedPercent, resetsAt ?? unifiedReset));
+    } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+      windows.push(scopedWindow(names.overageIncluded, usedPercent, resetsAt));
+    }
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  return windows.length > 0 ? { windows, ...(available ? { available: true } : {}) } : undefined;
 }
 
 /**
@@ -187,13 +210,23 @@ export function claudeRateLimitEventToUpdate(
 export function claudeUsageResponseToLimits(input: {
   readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly checkedAt: string;
+  readonly allowStreamedLimits?: boolean;
 }): { readonly limits: ServerProviderUsageLimits; readonly names: ClaudeScopedLimitNames } {
   const { response, checkedAt } = input;
   if (!response.rate_limits_available || !response.rate_limits) {
     return {
       limits: makeUnavailableUsageLimits({
         checkedAt,
-        reason: response.rate_limits_available ? "probeFailed" : "unsupported",
+        reason:
+          response.rate_limits_available || input.allowStreamedLimits
+            ? "probeFailed"
+            : "unsupported",
+        ...(!response.rate_limits_available && input.allowStreamedLimits
+          ? {
+              message:
+                "This Claude login cannot probe limits. Limits will appear when a turn reports them.",
+            }
+          : {}),
       }),
       names: { overageIncluded: undefined },
     };

@@ -2148,6 +2148,77 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect.each([
+      {
+        tokenSource: "unknown-auth-source",
+        apiKeySource: "none",
+        apiProvider: "firstParty",
+        expected: "unsupported",
+      },
+      {
+        tokenSource: "CLAUDE_CODE_OAUTH_TOKEN",
+        apiKeySource: "none",
+        apiProvider: "firstParty",
+        expected: "probeFailed",
+      },
+      {
+        tokenSource: "ANTHROPIC_AUTH_TOKEN",
+        apiKeySource: "none",
+        apiProvider: "firstParty",
+        expected: "unsupported",
+      },
+      {
+        tokenSource: "oauth",
+        apiKeySource: "none",
+        apiProvider: "firstParty",
+        expected: "probeFailed",
+      },
+      {
+        tokenSource: "none",
+        apiKeySource: "ANTHROPIC_API_KEY",
+        apiProvider: "firstParty",
+        expected: "unsupported",
+      },
+      {
+        tokenSource: "oauth",
+        apiKeySource: "ANTHROPIC_API_KEY",
+        apiProvider: "firstParty",
+        expected: "unsupported",
+      },
+      {
+        tokenSource: undefined,
+        apiKeySource: undefined,
+        apiProvider: undefined,
+        expected: "unsupported",
+      },
+      {
+        tokenSource: "oauth",
+        apiKeySource: "none",
+        apiProvider: "bedrock",
+        expected: "unsupported",
+      },
+    ])(
+      "keeps unavailable OAuth probes eligible for streamed limits: $tokenSource/$apiKeySource/$apiProvider",
+      (account) =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            () =>
+              Effect.succeed({
+                ...account,
+                email: undefined,
+                subscriptionType: undefined,
+                slashCommands: [],
+                usage: { rate_limits_available: false, rate_limits: null },
+              }),
+            { ANTHROPIC_BASE_URL: "" },
+          );
+          assert.strictEqual(status.usageLimits?.unavailable?.reason, account.expected);
+        }).pipe(
+          Effect.provide(layerMockSpawner(() => ({ stdout: "2.1.309\n", stderr: "", code: 0 }))),
+        ),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         // The capability probe resolves for a logged-out CLI, so `tokenSource:
