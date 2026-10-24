@@ -39,6 +39,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var collapsedCommentIds: Set<String> = emptySet()
   private var initialRowIndex = 0
   private var pendingInitialScroll = false
+  private var initialFileId: String? = null
+  private var pendingScrollFileId: String? = null
   private var lastVisibleFileId: String? = null
   private var tokensResetKey = ""
   private var contentResetKey = ""
@@ -66,12 +68,14 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
       )
     }
     canvasView.onRowTap = { row, gesture, target -> handleRowTap(row, gesture, target) }
+    canvasView.onViewportSizeChanged = { applyPendingInitialScroll() }
     canvasView.onVisibleRowsChanged = { first, last ->
       onDebug(
         mapOf(
           "message" to "visible-range",
           "firstRowIndex" to first,
           "lastRowIndex" to last,
+          "totalRows" to rows.size,
         ),
       )
       emitVisibleFile(first)
@@ -92,10 +96,18 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   fun setContentResetKey(value: String) {
     if (contentResetKey == value) return
     contentResetKey = value
+    rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
+    canvasView.setViewportEventsPaused(true)
+    verticalScroller.forceFinished(true)
+    horizontalScroller.forceFinished(true)
+    rows = emptyList()
+    visibleRows = emptyList()
+    canvasView.rows = emptyList()
     canvasView.tokensByRowId = emptyMap()
     lastVisibleFileId = null
     pendingInitialScroll = true
+    pendingScrollFileId = initialFileId
     canvasView.setVerticalOffset(0)
     canvasView.resetHorizontalOffsets()
     applyPendingInitialScroll()
@@ -146,13 +158,24 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun setInitialRowIndex(value: Double) {
-    initialRowIndex = value.toInt().coerceAtLeast(0)
-    pendingInitialScroll = true
+    initialRowIndex = value.toInt()
+    pendingInitialScroll = value.isFinite() && value >= 0
+    canvasView.setViewportEventsPaused(true)
+    applyPendingInitialScroll()
+  }
+
+  fun setInitialFileId(value: String) {
+    val nextFileId = value.takeIf { it.isNotEmpty() }
+    if (nextFileId == initialFileId) return
+    initialFileId = nextFileId
+    pendingScrollFileId = nextFileId
+    canvasView.setViewportEventsPaused(true)
     applyPendingInitialScroll()
   }
 
   fun setRowsJson(value: String) {
     rowsDecodeGeneration += 1
+    canvasView.setViewportEventsPaused(true)
     val generation = rowsDecodeGeneration
     val prepareLayout = canvasView.prepareRows()
     payloadDecodeExecutor.execute {
@@ -180,7 +203,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     }
   }
 
-  fun setTokensPatchJson(value: String) {
+  fun setTokensPatchJson(value: String, completion: (Boolean) -> Unit) {
+    val contentKey = contentResetKey
     payloadDecodeExecutor.execute {
       try {
         val payload = JSONObject(value)
@@ -189,12 +213,19 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
           payload.optJSONObject("tokensByRowId") ?: JSONObject(),
         )
         post {
-          if (resetKey.isNotEmpty() && resetKey != tokensResetKey) return@post
+          if (contentKey != contentResetKey ||
+            (resetKey.isNotEmpty() && resetKey != tokensResetKey)
+          ) {
+            completion(false)
+            return@post
+          }
           if (decodedTokens.isNotEmpty()) {
             canvasView.tokensByRowId = canvasView.tokensByRowId + decodedTokens
           }
+          completion(true)
         }
       } catch (_: Exception) {
+        post { completion(false) }
       }
     }
   }
@@ -354,6 +385,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   private fun rebuildVisibleRows() {
+    canvasView.setViewportEventsPaused(true)
     val filtered = ArrayList<DiffRow>(rows.size)
     var currentFileCollapsed = false
     rows.forEach { row ->
@@ -411,10 +443,20 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   private fun applyPendingInitialScroll() {
-    if (!pendingInitialScroll || visibleRows.isEmpty()) return
-    pendingInitialScroll = false
-    val index = initialRowIndex.coerceIn(0, visibleRows.lastIndex)
-    post { canvasView.setVerticalOffset(canvasView.rowTop(index)) }
+    if (visibleRows.isEmpty() || canvasView.width <= 0 || canvasView.height <= 0) return
+    val fileId = pendingScrollFileId
+    if (fileId != null) {
+      val index = visibleRows.indexOfFirst { it.kind == "file" && it.resolvedFileId == fileId }
+      if (index < 0) return
+      pendingScrollFileId = null
+      pendingInitialScroll = false
+      canvasView.setVerticalOffset(canvasView.rowTop(index))
+    } else if (pendingInitialScroll) {
+      pendingInitialScroll = false
+      val index = initialRowIndex.coerceIn(0, visibleRows.lastIndex)
+      canvasView.setVerticalOffset(canvasView.rowTop(index))
+    }
+    canvasView.setViewportEventsPaused(false)
   }
 
   private fun scrollToY(y: Int, animated: Boolean) {
@@ -718,6 +760,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   private var contentWidthPx = 0
   private val headerPathOffsetsByFileId = mutableMapOf<String, Int>()
   private var lastVisibleRange: Pair<Int, Int>? = null
+  private var viewportEventsPaused = true
   var rows: List<DiffRow> = emptyList()
     set(value) {
       field = value
@@ -772,6 +815,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
   var onVisibleRowsChanged: ((Int, Int) -> Unit)? = null
   var onContentHeightChanged: ((Int) -> Unit)? = null
+  var onViewportSizeChanged: (() -> Unit)? = null
 
   fun prepareRows() = drawing.prepareRows(tokensByRowId, style, width)
   fun useCodeLayouts(layouts: CodeLayoutCache) {
@@ -789,6 +833,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     super.onSizeChanged(width, height, oldWidth, oldHeight)
     // Wrapped rows take their height from the width, so a new width is a new layout.
     if (style.wordWrap && width != oldWidth) layoutRows()
+    onViewportSizeChanged?.invoke()
     setVerticalOffset(verticalOffset)
     setHorizontalOffset(horizontalOffset)
     clampHeaderPathOffsets()
@@ -914,21 +959,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     else -> style.rowHeightPx.toInt()
   }.coerceAtLeast(1)
 
-  @Suppress("ReturnCount")
-  private fun rowIndexAt(y: Int): Int {
-    if (rows.isEmpty()) return 0
-    var low = 0
-    var high = rows.lastIndex
-    while (low <= high) {
-      val middle = (low + high) ushr 1
-      when {
-        y < rowOffsets[middle] -> high = middle - 1
-        y >= rowOffsets[middle + 1] -> low = middle + 1
-        else -> return middle
-      }
-    }
-    return low.coerceIn(0, rows.lastIndex)
-  }
+  private fun rowIndexAt(y: Int): Int = rowIndexAtOffset(y, rowOffsets, rows.size)
 
   private fun rowHitAt(y: Float): RowHit? {
     stickyFileHeader(firstVisibleRow())?.let { sticky ->
@@ -949,14 +980,21 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   private fun firstVisibleRow(): Int = rowIndexAt(verticalOffset)
 
+  fun setViewportEventsPaused(paused: Boolean) {
+    viewportEventsPaused = paused
+    if (paused) lastVisibleRange = null else emitVisibleRange()
+  }
+
   private fun emitVisibleRange() {
-    if (rows.isEmpty()) return
+    if (viewportEventsPaused || rows.isEmpty()) return
+    if (width <= 0 || height <= 0) return
     val first = rowIndexAt(verticalOffset)
     val last = rowIndexAt(verticalOffset + max(1, height))
     val range = first to last
-    if (range == lastVisibleRange) return
-    lastVisibleRange = range
-    onVisibleRowsChanged?.invoke(first, last)
+    if (range != lastVisibleRange) {
+      lastVisibleRange = range
+      onVisibleRowsChanged?.invoke(first, last)
+    }
   }
 
   private fun drawRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
@@ -1464,3 +1502,19 @@ private fun JSONObject.floatDp(key: String, fallbackPx: Float, density: Float): 
 
 private fun JSONObject.floatSp(key: String, fallbackPx: Float, density: Float): Float =
   if (has(key)) optDouble(key).toFloat() * density else fallbackPx
+
+@Suppress("ReturnCount")
+private fun rowIndexAtOffset(y: Int, rowOffsets: IntArray, rowCount: Int): Int {
+  if (rowCount == 0) return 0
+  var low = 0
+  var high = rowCount - 1
+  while (low <= high) {
+    val middle = (low + high) ushr 1
+    when {
+      y < rowOffsets[middle] -> high = middle - 1
+      y >= rowOffsets[middle + 1] -> low = middle + 1
+      else -> return middle
+    }
+  }
+  return low.coerceIn(0, rowCount - 1)
+}

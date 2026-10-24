@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { NativeReviewDiffRow } from "./nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
-import { highlightNativeReviewDiffVisibleRows } from "./nativeReviewDiffHighlighter";
+import {
+  getNativeReviewDiffHighlighter,
+  highlightNativeReviewDiffVisibleRows,
+} from "./nativeReviewDiffHighlighter";
+import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
+import { buildReviewParsedDiff } from "../review/reviewModel";
 
 const tokenization = vi.hoisted(() => ({
   calls: [] as string[],
@@ -83,6 +88,129 @@ function highlight(
 }
 
 describe("highlightNativeReviewDiffVisibleRows", () => {
+  it("keeps overscan within the visible files, including a file header at the viewport edge", async () => {
+    const loadedFiles: string[] = [];
+    const files = Array.from({ length: 14 }, (_, index) => {
+      const id = `file-${index}`;
+      const source = Array.from({ length: 3 }, (_, line) => `const value${line} = ${line};`);
+      return {
+        ...TYPESCRIPT_FILE,
+        id,
+        loadContents: async () => {
+          loadedFiles.push(id);
+          return { oldContents: "", newContents: source.join("\n") };
+        },
+        rows: [
+          { kind: "file", id: `${id}-header`, fileId: id },
+          ...source.map((content, line) => ({
+            ...makeLine({
+              id: `${id}-line-${line + 1}`,
+              content,
+              change: "add",
+              oldLineNumber: null,
+              newLineNumber: line + 1,
+            }),
+            fileId: id,
+          })),
+        ] satisfies NativeReviewDiffRow[],
+      };
+    });
+    const input = {
+      rows: files.flatMap((file) => file.rows),
+      files,
+      scheme: "dark" as const,
+      engine: "javascript" as const,
+      firstRowIndex: 30,
+      lastRowIndex: 32,
+    };
+    const viewport = await highlightNativeReviewDiffVisibleRows({ ...input, overscanRows: 0 });
+    const visibleIds = ["file-7-line-2", "file-7-line-3"];
+    expect(Object.keys(viewport.tokensByRowId)).toEqual(visibleIds);
+    const overscan = await highlightNativeReviewDiffVisibleRows({
+      ...input,
+      overscanRows: 160,
+      alreadyHighlightedRowIds: new Set(visibleIds),
+    });
+    expect(Object.keys(overscan.tokensByRowId).sort()).toEqual([
+      "file-7-line-1",
+      "file-8-line-1",
+      "file-8-line-2",
+      "file-8-line-3",
+    ]);
+    for (const tokens of Object.values({ ...viewport.tokensByRowId, ...overscan.tokensByRowId })) {
+      expect(tokens.some((token) => token.color !== null)).toBe(true);
+    }
+    expect([...new Set(loadedFiles)].sort()).toEqual(["file-7", "file-8"]);
+  });
+
+  it("delivers the dominant viewport file before fetching a smaller blocked neighbor", async () => {
+    const neighborStarted = Promise.withResolvers<void>();
+    const neighborResponse = Promise.withResolvers<{ oldContents: string; newContents: string }>();
+    const source = Array.from({ length: 27 }, (_, index) => `const value${index} = true;`).join(
+      "\n",
+    );
+    const chunks = vi.fn();
+    const rows = [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        ...makeLine({
+          id: `neighbor-${index}`,
+          content: `const value${index} = true;`,
+          change: "add",
+          oldLineNumber: null,
+          newLineNumber: index + 1,
+        }),
+        fileId: "neighbor",
+      })),
+      ...Array.from({ length: 27 }, (_, index) =>
+        makeLine({
+          id: `selected-${index}`,
+          content: `const value${index} = true;`,
+          change: "delete",
+          oldLineNumber: index + 1,
+          newLineNumber: null,
+        }),
+      ),
+    ];
+    const highlighting = highlightNativeReviewDiffVisibleRows({
+      rows,
+      files: [
+        {
+          ...TYPESCRIPT_FILE,
+          id: "neighbor",
+          loadContents: () => {
+            neighborStarted.resolve();
+            return neighborResponse.promise;
+          },
+        },
+        {
+          ...TYPESCRIPT_FILE,
+          loadContents: async () => ({ oldContents: source, newContents: "" }),
+        },
+      ],
+      scheme: "dark",
+      engine: "javascript",
+      firstRowIndex: 0,
+      lastRowIndex: rows.length - 1,
+      overscanRows: 0,
+      onChunk: chunks,
+    });
+    try {
+      await neighborStarted.promise;
+      expect(chunks).toHaveBeenCalledTimes(1);
+      expect(Object.keys(chunks.mock.calls[0]![0].tokensByRowId)).toEqual(
+        Array.from({ length: 27 }, (_, index) => `selected-${index}`),
+      );
+      expect(
+        chunks.mock.calls[0]![0].tokensByRowId["selected-0"].some(
+          (token: { color: string | null }) => token.color !== null,
+        ),
+      ).toBe(true);
+    } finally {
+      neighborResponse.resolve({ oldContents: "", newContents: source });
+      await highlighting;
+    }
+  });
+
   it("does not carry grammar state across hunk boundaries", async () => {
     const exportRow = makeLine({
       id: "export-row",
@@ -297,5 +425,232 @@ describe.each(["native", "javascript"] as const)("%s highlighting budgets", (eng
     expect(tokenization.calls).toHaveLength(1);
     expect(result.rowCount).toBe(0);
     expect(result.tokensByRowId).toEqual({});
+  });
+});
+
+// These complete sources are independent of the diff row selection below.
+const OLD_SOURCE = [
+  "export function render(name: string) {",
+  "  const heading = `Hello ${name}",
+  "Welcome to the archive.",
+  "Your saved reports follow.",
+  "  `;",
+  "  /* Historical formatting rules:",
+  "   * Keep the title and summary together.",
+  "   * Preserve links in the footer.",
+  "   */",
+  "  return heading.trim();",
+  "}",
+];
+const NEW_SOURCE = [
+  "export function render(name: string) {",
+  "  const heading = `Greetings ${name}",
+  "Welcome to the workspace.",
+  "Your saved reports follow.",
+  "  `;",
+  "  /* Current formatting rules:",
+  "   * Keep the title and summary together.",
+  "   * Highlight links in the footer.",
+  "   */",
+  "  return heading.trim();",
+  "}",
+];
+
+async function authoritativeTokens(source: ReadonlyArray<string>, engine: "native" | "javascript") {
+  const highlighter = await getNativeReviewDiffHighlighter(engine);
+  return highlighter.tokenize(source.join("\n"), { lang: "typescript", theme: "t3-pierre-dark" });
+}
+
+function sourceRow(change: "context" | "add" | "delete", lineNumber: number) {
+  return makeLine({
+    id: `${change}-${lineNumber}`,
+    content: (change === "delete" ? OLD_SOURCE : NEW_SOURCE)[lineNumber - 1]!,
+    change,
+    oldLineNumber: change === "add" ? null : lineNumber,
+    newLineNumber: change === "delete" ? null : lineNumber,
+  });
+}
+
+function completeDiffRows() {
+  return [
+    sourceRow("context", 1),
+    sourceRow("delete", 2),
+    sourceRow("delete", 3),
+    sourceRow("add", 2),
+    sourceRow("add", 3),
+    sourceRow("context", 4),
+    sourceRow("context", 5),
+    sourceRow("delete", 6),
+    sourceRow("add", 6),
+    sourceRow("context", 7),
+    sourceRow("delete", 8),
+    sourceRow("add", 8),
+    sourceRow("context", 9),
+    sourceRow("context", 10),
+    sourceRow("context", 11),
+  ];
+}
+
+describe("source context", () => {
+  const engine = "javascript";
+  it("highlights parsed CRLF patch rows using omitted full-source templates and comments", async () => {
+    const newSource = [...OLD_SOURCE];
+    newSource[2] = NEW_SOURCE[2]!;
+    newSource[7] = NEW_SOURCE[7]!;
+    const parsed = buildReviewParsedDiff(
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        "@@ -3,2 +3,2 @@",
+        `-${OLD_SOURCE[2]}\r`,
+        `+${newSource[2]}\r`,
+        ` ${newSource[3]}\r`,
+        "@@ -7,3 +7,3 @@",
+        ` ${newSource[6]}\r`,
+        `-${OLD_SOURCE[7]}\r`,
+        `+${newSource[7]}\r`,
+        ` ${newSource[8]}\r`,
+        "",
+      ].join("\n"),
+      "crlf-context",
+    );
+    expect(parsed.kind).toBe("files");
+    const { rows, files } = buildNativeReviewDiffData(parsed);
+    const lineRows = rows.filter((row) => row.kind === "line");
+    expect(lineRows).toHaveLength(7);
+    const originalContents = lineRows.map((row) => row.content);
+    expect(originalContents.every((content) => content?.endsWith("\r"))).toBe(true);
+    const oldTokens = await authoritativeTokens(OLD_SOURCE, engine);
+    const newTokens = await authoritativeTokens(newSource, engine);
+    const result = await highlightNativeReviewDiffVisibleRows({
+      rows,
+      files: files.map((file) => ({
+        ...file,
+        loadContents: async () => ({
+          oldContents: `${OLD_SOURCE.join("\r\n")}\r\n`,
+          newContents: `${newSource.join("\r\n")}\r\n`,
+        }),
+      })),
+      scheme: "dark",
+      engine,
+      firstRowIndex: 0,
+      lastRowIndex: rows.length - 1,
+      overscanRows: 0,
+    });
+    for (const row of lineRows) {
+      const expected =
+        row.change === "delete"
+          ? oldTokens[row.oldLineNumber! - 1]
+          : newTokens[row.newLineNumber! - 1];
+      const tokens = result.tokensByRowId[row.id];
+      expect(tokens, row.id).toEqual(expected);
+      expect(
+        tokens?.every((token) => token.color !== null),
+        row.id,
+      ).toBe(true);
+      expect(tokens?.[0]?.color, row.id).toBe(
+        (row.newLineNumber ?? row.oldLineNumber)! <= 4 ? "#5ECC71" : "#84848A",
+      );
+    }
+    expect(lineRows.map((row) => row.content)).toEqual(originalContents);
+    expect(result.retryableRowIds).toEqual([]);
+  });
+
+  it("matches full OLD/NEW source across replacement runs and shared multiline context", async () => {
+    const rows = completeDiffRows();
+    const oldTokens = await authoritativeTokens(OLD_SOURCE, engine);
+    const newTokens = await authoritativeTokens(NEW_SOURCE, engine);
+    const result = await highlightNativeReviewDiffVisibleRows({
+      rows,
+      files: [TYPESCRIPT_FILE],
+      scheme: "dark",
+      engine,
+      firstRowIndex: 0,
+      lastRowIndex: rows.length - 1,
+      overscanRows: 0,
+    });
+    for (const row of rows) {
+      const expected =
+        row.change === "delete"
+          ? oldTokens[row.oldLineNumber! - 1]
+          : newTokens[row.newLineNumber! - 1];
+      expect(result.tokensByRowId[row.id], row.id).toEqual(expected);
+    }
+  });
+
+  it("uses NEW grammar for shared rows when OLD remains inside a comment", async () => {
+    const oldSource = ["/* Retired renderer", "const value = 3;", "finish();"];
+    const newSource = ["// Active renderer", "const value = 3;", "finish();"];
+    const rows = [
+      makeLine({
+        id: "old-open",
+        content: oldSource[0],
+        change: "delete",
+        oldLineNumber: 1,
+        newLineNumber: null,
+      }),
+      makeLine({
+        id: "new-open",
+        content: newSource[0],
+        change: "add",
+        oldLineNumber: null,
+        newLineNumber: 1,
+      }),
+      makeLine({
+        id: "shared",
+        content: newSource[1],
+        change: "context",
+        oldLineNumber: 2,
+        newLineNumber: 2,
+      }),
+      makeLine({
+        id: "old-tail",
+        content: oldSource[2],
+        change: "delete",
+        oldLineNumber: 3,
+        newLineNumber: null,
+      }),
+      makeLine({
+        id: "new-tail",
+        content: newSource[2],
+        change: "add",
+        oldLineNumber: null,
+        newLineNumber: 3,
+      }),
+    ];
+    const oldTokens = await authoritativeTokens(oldSource, engine);
+    const newTokens = await authoritativeTokens(newSource, engine);
+    const result = await highlightNativeReviewDiffVisibleRows({
+      rows,
+      files: [TYPESCRIPT_FILE],
+      scheme: "dark",
+      engine,
+      firstRowIndex: 0,
+      lastRowIndex: rows.length - 1,
+      overscanRows: 0,
+    });
+    expect(oldTokens[1]).not.toEqual(newTokens[1]);
+    expect(result.tokensByRowId.shared).toEqual(newTokens[1]);
+    expect(result.tokensByRowId["old-tail"]).toEqual(oldTokens[2]);
+    expect(result.tokensByRowId["new-tail"]).toEqual(newTokens[2]);
+  });
+
+  it("leaves mismatched source revisions and budget-limited files plain", async () => {
+    const rows = [sourceRow("add", 3)];
+    for (const source of [null, { oldContents: "", newContents: "different revision" }]) {
+      const result = await highlightNativeReviewDiffVisibleRows({
+        rows,
+        files: [{ ...TYPESCRIPT_FILE, loadContents: async () => source }],
+        scheme: "dark",
+        engine,
+        firstRowIndex: 0,
+        lastRowIndex: 0,
+        overscanRows: 0,
+      });
+      expect(result.tokensByRowId[rows[0]!.id]).toEqual([
+        { content: NEW_SOURCE[2], color: null, fontStyle: null },
+      ]);
+    }
   });
 });

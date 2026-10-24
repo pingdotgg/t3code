@@ -10,8 +10,13 @@ import typescriptLanguage from "@shikijs/langs/typescript";
 import yamlLanguage from "@shikijs/langs/yaml";
 import * as Schema from "effect/Schema";
 
-import type { NativeReviewDiffFile, NativeReviewDiffLanguage } from "./nativeReviewDiffTypes";
+import type {
+  NativeReviewDiffFile,
+  NativeReviewDiffLanguage,
+  NativeReviewDiffSource,
+} from "./nativeReviewDiffTypes";
 import type { NativeReviewDiffRow, NativeReviewDiffToken } from "./nativeReviewDiffSurface";
+import { diffHighlightTraceId, traceDiffHighlight } from "./nativeReviewDiffTrace";
 
 export type NativeReviewDiffHighlightScheme = "light" | "dark";
 export type NativeReviewDiffHighlightEngine = "native" | "javascript";
@@ -50,6 +55,8 @@ export interface NativeReviewDiffHighlighterHandle {
       readonly lang: NativeReviewDiffLanguage;
       readonly theme: string;
       readonly signal?: AbortSignal;
+      readonly grammarState?: GrammarState;
+      readonly onGrammarState?: (lineCount: number, state: GrammarState | undefined) => void;
     },
   ) => Promise<ReadonlyArray<ReadonlyArray<NativeReviewDiffToken>>>;
 }
@@ -58,11 +65,6 @@ interface NativeReviewDiffLineRow extends NativeReviewDiffRow {
   readonly kind: "line";
   readonly fileId: string;
   readonly content: string;
-}
-
-interface IndexedNativeReviewDiffLineRow {
-  readonly row: NativeReviewDiffLineRow;
-  readonly rowIndex: number;
 }
 
 export interface HighlightNativeReviewDiffVisibleRowsInput {
@@ -76,6 +78,14 @@ export interface HighlightNativeReviewDiffVisibleRowsInput {
   readonly maxRows?: number;
   readonly alreadyHighlightedRowIds?: ReadonlySet<string>;
   readonly signal?: AbortSignal;
+  readonly onChunk?: (chunk: NativeReviewDiffHighlightChunk) => void;
+}
+
+export interface NativeReviewDiffHighlightChunk {
+  readonly tokensByRowId: Record<string, ReadonlyArray<NativeReviewDiffToken>>;
+  readonly retryableRowIds: ReadonlyArray<string>;
+  readonly rowCount: number;
+  readonly durationMs: number;
 }
 
 const NATIVE_REVIEW_DIFF_VISIBLE_OVERSCAN_ROWS = 160;
@@ -217,10 +227,9 @@ function createHighlighterHandle(
 ): NativeReviewDiffHighlighterHandle {
   return {
     engine,
-    async tokenize(code, { lang, theme, signal }) {
+    async tokenize(code, { lang, theme, signal, grammarState, onGrammarState }) {
       const lines = code.split("\n");
       const highlighted: Array<ReadonlyArray<NativeReviewDiffToken>> = [];
-      let grammarState: GrammarState | undefined;
       let start = 0;
 
       while (start < lines.length) {
@@ -235,6 +244,7 @@ function createHighlighterHandle(
           highlighted.push([{ content: lines[start] || " ", color: null, fontStyle: null }]);
           grammarState = undefined;
           start += 1;
+          onGrammarState?.(start, grammarState);
           continue;
         }
 
@@ -261,6 +271,7 @@ function createHighlighterHandle(
         grammarState = highlighter.getLastGrammarState(tokens);
         highlighted.push(...normalizeTokens(tokens));
         start = end;
+        onGrammarState?.(start, grammarState);
         if (start < lines.length) await waitForNextFrame();
       }
 
@@ -357,49 +368,152 @@ function hasConsecutiveLineNumbers(
   return typeof previous === "number" && typeof next === "number" && next === previous + 1;
 }
 
-function hasOnlyCommentRowsBetween(
-  rows: ReadonlyArray<NativeReviewDiffRow>,
-  previousRowIndex: number,
-  nextRowIndex: number,
-): boolean {
-  for (let rowIndex = previousRowIndex + 1; rowIndex < nextRowIndex; rowIndex += 1) {
-    if (rows[rowIndex]?.kind !== "comment") {
-      return false;
-    }
-  }
-  return true;
+interface SourceContext {
+  readonly lines: ReadonlyArray<string>;
+  readonly knownLineCount?: number;
+  readonly checkpoints: Map<string, Map<number, GrammarState | undefined>>;
 }
 
-function canShareGrammarContext(
-  previous: IndexedNativeReviewDiffLineRow,
-  next: IndexedNativeReviewDiffLineRow,
-  rows: ReadonlyArray<NativeReviewDiffRow>,
-): boolean {
-  if (
-    next.row.fileId !== previous.row.fileId ||
-    !hasOnlyCommentRowsBetween(rows, previous.rowIndex, next.rowIndex)
-  ) {
-    return false;
-  }
+const fullSourceContexts = new WeakMap<
+  NativeReviewDiffSource,
+  { old: FullSourceContext; new: FullSourceContext }
+>();
 
-  if (previous.row.change === "delete" || next.row.change === "delete") {
+interface FullSourceContext extends SourceContext {
+  readonly comparisonLines: ReadonlyArray<string>;
+  readonly validation: WeakMap<ReadonlyArray<NativeReviewDiffLineRow>, boolean>;
+}
+
+const sourceRowsByFileCache = new WeakMap<
+  ReadonlyArray<NativeReviewDiffRow>,
+  Map<string, NativeReviewDiffLineRow[]>
+>();
+
+function getSourceRowsByFile(rows: ReadonlyArray<NativeReviewDiffRow>) {
+  let byFile = sourceRowsByFileCache.get(rows);
+  if (!byFile) {
+    byFile = new Map();
+    for (const row of rows) {
+      if (!isHighlightableLineRow(row)) continue;
+      const fileRows = byFile.get(row.fileId);
+      if (fileRows) fileRows.push(row);
+      else byFile.set(row.fileId, [row]);
+    }
+    sourceRowsByFileCache.set(rows, byFile);
+  }
+  return byFile;
+}
+
+function matchesSourceSide(
+  context: FullSourceContext,
+  rows: ReadonlyArray<NativeReviewDiffLineRow>,
+  side: DiffSide,
+) {
+  const cached = context.validation.get(rows);
+  if (cached !== undefined) return cached;
+  // Context participates on both sides, even though it displays NEW tokens.
+  // A known mismatch anywhere invalidates grammar from the entire source side.
+  const matches = rows.every((row) => {
+    if (row.change === (side === "old" ? "add" : "delete")) return true;
+    const lineNumber = side === "old" ? row.oldLineNumber : row.newLineNumber;
     return (
-      previous.row.change !== "add" &&
-      next.row.change !== "add" &&
-      hasConsecutiveLineNumbers(previous.row.oldLineNumber, next.row.oldLineNumber)
+      typeof lineNumber === "number" && context.comparisonLines[lineNumber - 1] === row.content
     );
-  }
+  });
+  context.validation.set(rows, matches);
+  return matches;
+}
 
-  if (previous.row.change === "add" || next.row.change === "add") {
-    return hasConsecutiveLineNumbers(previous.row.newLineNumber, next.row.newLineNumber);
-  }
-
-  return (
-    previous.row.change === "context" &&
-    next.row.change === "context" &&
-    hasConsecutiveLineNumbers(previous.row.oldLineNumber, next.row.oldLineNumber) &&
-    hasConsecutiveLineNumbers(previous.row.newLineNumber, next.row.newLineNumber)
+function createFullSourceContext(contents: string): FullSourceContext {
+  const lines = contents.replace(/\r\n/g, "\n").split("\n");
+  const skippedLine = lines.findIndex(
+    (line) => line.length > NATIVE_REVIEW_DIFF_TOKENIZE_MAX_LINE_LENGTH,
   );
+  return {
+    lines,
+    // The parser removes LF but retains CR on patch rows. Validate against the
+    // same bytes, including a genuine CR at EOF, rather than tokenizer input.
+    comparisonLines: contents.split("\n"),
+    // Skipping an oversized line makes every subsequent incoming grammar state
+    // unknown, even when the rest of the authoritative source is available.
+    knownLineCount: skippedLine === -1 ? lines.length : skippedLine,
+    checkpoints: new Map(),
+    validation: new WeakMap(),
+  };
+}
+
+function getFullSourceContexts(source: NativeReviewDiffSource) {
+  let contexts = fullSourceContexts.get(source);
+  if (!contexts) {
+    contexts = {
+      old: createFullSourceContext(source.oldContents),
+      new: createFullSourceContext(source.newContents),
+    };
+    fullSourceContexts.set(source, contexts);
+  }
+  return contexts;
+}
+
+type DiffSide = "old" | "new";
+
+interface SourceSegment {
+  readonly fileId: string;
+  readonly side: DiffSide;
+  readonly rows: NativeReviewDiffLineRow[];
+  readonly checkpoints: Map<string, Map<number, GrammarState | undefined>>;
+}
+
+// Row arrays are immutable snapshots. Keep only grammar checkpoints, not a second
+// copy of every row's tokens; a sheet release also releases its source context.
+const sourceSegmentsCache = new WeakMap<
+  ReadonlyArray<NativeReviewDiffRow>,
+  Map<string, { readonly segment: SourceSegment; readonly index: number }>
+>();
+
+function getSourceSegments(rows: ReadonlyArray<NativeReviewDiffRow>) {
+  const cached = sourceSegmentsCache.get(rows);
+  if (cached) return cached;
+
+  const segmentsByRowId = new Map<
+    string,
+    { readonly segment: SourceSegment; readonly index: number }
+  >();
+  for (const side of ["old", "new"] as const) {
+    let segment: SourceSegment | undefined;
+    for (const row of rows) {
+      if (row.kind === "comment" || row.kind === "hunk") continue;
+      if (!isHighlightableLineRow(row)) {
+        segment = undefined;
+        continue;
+      }
+      if (row.change === (side === "old" ? "add" : "delete")) continue;
+
+      const previous = segment?.rows.at(-1);
+      const lineNumber = side === "old" ? row.oldLineNumber : row.newLineNumber;
+      const previousLineNumber = side === "old" ? previous?.oldLineNumber : previous?.newLineNumber;
+      if (
+        !segment ||
+        segment.fileId !== row.fileId ||
+        !hasConsecutiveLineNumbers(previousLineNumber, lineNumber)
+      ) {
+        // A gap has no known incoming grammar state. Highlight the available
+        // fragment independently; never join it to an earlier, incomplete hunk.
+        segment = { fileId: row.fileId, side, rows: [], checkpoints: new Map() };
+      }
+      if (displaySide(row) === side) {
+        segmentsByRowId.set(row.id, { segment, index: segment.rows.length });
+      }
+      segment.rows.push(row);
+    }
+  }
+  sourceSegmentsCache.set(rows, segmentsByRowId);
+  return segmentsByRowId;
+}
+
+function displaySide(row: NativeReviewDiffLineRow): DiffSide {
+  // Unified context rows have one token array. Match the NEW side, while OLD
+  // context still advances deletion grammar independently.
+  return row.change === "delete" ? "old" : "new";
 }
 
 function createFileMap(files: ReadonlyArray<NativeReviewDiffFile>) {
@@ -425,12 +539,28 @@ export async function highlightNativeReviewDiffVisibleRows(
 ): Promise<{
   readonly engine: NativeReviewDiffHighlightEngine;
   readonly tokensByRowId: Record<string, ReadonlyArray<NativeReviewDiffToken>>;
+  // Deliver plain tokens for these rows without marking them permanently highlighted.
+  readonly retryableRowIds: ReadonlyArray<string>;
   readonly rowCount: number;
   readonly durationMs: number;
 }> {
+  const request = diffHighlightTraceId(input);
+  traceDiffHighlight("highlight-start", {
+    request,
+    first: input.firstRowIndex,
+    last: input.lastRowIndex,
+    overscan: input.overscanRows ?? NATIVE_REVIEW_DIFF_VISIBLE_OVERSCAN_ROWS,
+  });
   const highlighter = await getNativeReviewDiffHighlighter(input.engine ?? "native");
+  traceDiffHighlight("highlight-ready", { request, engine: highlighter.engine });
   if (input.signal?.aborted) {
-    return { engine: highlighter.engine, tokensByRowId: {}, rowCount: 0, durationMs: 0 };
+    return {
+      engine: highlighter.engine,
+      tokensByRowId: {},
+      retryableRowIds: [],
+      rowCount: 0,
+      durationMs: 0,
+    };
   }
 
   const startedAt = performance.now();
@@ -440,7 +570,16 @@ export async function highlightNativeReviewDiffVisibleRows(
   const maxRows = input.maxRows ?? NATIVE_REVIEW_DIFF_VISIBLE_MAX_ROWS;
   const startIndex = clampRowIndex(input.firstRowIndex - overscanRows, input.rows);
   const endIndex = clampRowIndex(input.lastRowIndex + overscanRows, input.rows);
-  const selectedRows: IndexedNativeReviewDiffLineRow[] = [];
+  const visibleStartIndex = clampRowIndex(input.firstRowIndex, input.rows);
+  const visibleEndIndex = clampRowIndex(input.lastRowIndex, input.rows);
+  const visibleFileIds = new Set<string>();
+  // Overscan warms visible files without loading unrelated neighboring sources.
+  // Headers and already-highlighted rows still identify files in the viewport.
+  for (let rowIndex = visibleStartIndex; rowIndex <= visibleEndIndex; rowIndex += 1) {
+    const fileId = input.rows[rowIndex]?.fileId;
+    if (typeof fileId === "string") visibleFileIds.add(fileId);
+  }
+  const selectedRows: NativeReviewDiffLineRow[] = [];
 
   for (
     let rowIndex = startIndex;
@@ -451,77 +590,213 @@ export async function highlightNativeReviewDiffVisibleRows(
     if (
       row &&
       isHighlightableLineRow(row) &&
+      visibleFileIds.has(row.fileId) &&
       !input.alreadyHighlightedRowIds?.has(row.id) &&
       fileMap.has(row.fileId)
     ) {
-      selectedRows.push({ row, rowIndex });
+      selectedRows.push(row);
     }
   }
 
   const tokensByRowId: Record<string, ReadonlyArray<NativeReviewDiffToken>> = {};
-  let segmentRows: IndexedNativeReviewDiffLineRow[] = [];
-  let segmentFile: NativeReviewDiffFile | undefined;
+  const retryableRowIds: string[] = [];
+  const selectedRowIds = new Set(selectedRows.map((row) => row.id));
   let charactersSinceYield = 0;
 
-  const flushSegment = async () => {
-    if (!segmentFile || segmentRows.length === 0 || input.signal?.aborted) {
-      segmentRows = [];
-      segmentFile = undefined;
-      return;
+  const tokenizeRange = async (
+    context: SourceContext,
+    firstSelected: number,
+    lastSelected: number,
+    language: NativeReviewDiffLanguage,
+  ) => {
+    const checkpointKey = `${highlighter.engine}:${theme}:${language}`;
+    let checkpoints = context.checkpoints.get(checkpointKey);
+    if (!checkpoints) {
+      checkpoints = new Map([[0, undefined]]);
+      context.checkpoints.set(checkpointKey, checkpoints);
     }
-
-    const code = segmentRows.map(({ row }) => row.content).join("\n");
+    let start = 0;
+    for (const index of checkpoints.keys()) {
+      if (index <= firstSelected && index > start) start = index;
+    }
+    const code = context.lines.slice(start, lastSelected + 1).join("\n");
     if (
       charactersSinceYield > 0 &&
       charactersSinceYield + code.length > NATIVE_REVIEW_DIFF_TOKENIZE_MAX_CHARACTERS
     ) {
       await waitForNextFrame();
       charactersSinceYield = 0;
-      if (input.signal?.aborted) return;
     }
     const tokenLines = await highlighter.tokenize(code, {
-      lang: segmentFile.language,
+      lang: language,
       theme,
       signal: input.signal,
+      grammarState: checkpoints.get(start),
+      onGrammarState: (lineCount, state) => checkpoints.set(start + lineCount, state),
+    });
+    traceDiffHighlight("tokenized", {
+      request,
+      start,
+      lastSelected,
+      characters: code.length,
+      lines: tokenLines.length,
+      aborted: input.signal?.aborted ?? false,
     });
     charactersSinceYield += code.length;
-    segmentRows.forEach(({ row }, rowIndex) => {
-      tokensByRowId[row.id] = tokenLines[rowIndex] ?? makePlainTokenFallback(row);
-    });
-    segmentRows = [];
-    segmentFile = undefined;
+    return { tokenLines, start };
   };
 
-  for (const selectedRow of selectedRows) {
+  const sourceFiles = new Map<string, NativeReviewDiffLineRow[]>();
+  for (const row of selectedRows) {
+    if (!fileMap.get(row.fileId)?.loadContents) continue;
+    const fileRows = sourceFiles.get(row.fileId);
+    if (fileRows) fileRows.push(row);
+    else sourceFiles.set(row.fileId, [row]);
+  }
+  const emitFileChunk = (fileRows: ReadonlyArray<NativeReviewDiffLineRow>) => {
+    if (!input.onChunk || input.signal?.aborted) return;
+    const rowIds = new Set(fileRows.map((row) => row.id));
+    input.onChunk({
+      tokensByRowId: Object.fromEntries(fileRows.map((row) => [row.id, tokensByRowId[row.id]!])),
+      retryableRowIds: retryableRowIds.filter((id) => rowIds.has(id)),
+      rowCount: fileRows.length,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  };
+  // The file filling the viewport should not wait for a sliver of its neighbor.
+  for (const [fileId, fileRows] of [...sourceFiles].sort((a, b) => b[1].length - a[1].length)) {
     if (input.signal?.aborted) break;
-    const { row } = selectedRow;
-    const file = fileMap.get(row.fileId);
-    if (!file) {
+    const file = fileMap.get(fileId)!;
+    const fileTraceId = diffHighlightTraceId(fileId);
+    traceDiffHighlight("highlight-source", { request, file: fileTraceId, rows: fileRows.length });
+    let source: NativeReviewDiffSource | null;
+    try {
+      source = await file.loadContents!(input.signal);
+    } catch {
+      traceDiffHighlight("highlight-source-error", { request, file: fileTraceId });
+      for (const row of fileRows) {
+        selectedRowIds.delete(row.id);
+        tokensByRowId[row.id] = makePlainTokenFallback(row);
+        retryableRowIds.push(row.id);
+      }
+      emitFileChunk(fileRows);
       continue;
     }
-
-    const previousRow = segmentRows.at(-1);
-    if (
-      segmentFile &&
-      (segmentFile.id !== file.id ||
-        (previousRow !== undefined &&
-          !canShareGrammarContext(previousRow, selectedRow, input.rows)))
-    ) {
-      await flushSegment();
+    if (input.signal?.aborted) break;
+    const contexts = source ? getFullSourceContexts(source) : null;
+    for (const side of ["old", "new"] as const) {
+      const candidate = contexts?.[side];
+      const context =
+        candidate &&
+        matchesSourceSide(candidate, getSourceRowsByFile(input.rows).get(fileId)!, side)
+          ? candidate
+          : null;
+      traceDiffHighlight("source-validation", {
+        request,
+        file: fileTraceId,
+        side,
+        present: !!candidate,
+        matches: !!context,
+        knownLines: context?.knownLineCount,
+      });
+      const matchingRows: { row: NativeReviewDiffLineRow; lineIndex: number }[] = [];
+      for (const row of fileRows) {
+        if (displaySide(row) !== side) continue;
+        selectedRowIds.delete(row.id);
+        const lineNumber = side === "old" ? row.oldLineNumber : row.newLineNumber;
+        const lineIndex = typeof lineNumber === "number" ? lineNumber - 1 : -1;
+        if (
+          context &&
+          lineIndex >= 0 &&
+          lineIndex < (context.knownLineCount ?? context.lines.length) &&
+          context.comparisonLines[lineIndex] === row.content
+        ) {
+          matchingRows.push({ row, lineIndex });
+        } else {
+          // A changed revision, missing source, or exceeded source budget cannot
+          // supply trustworthy grammar. Do not cache guessed syntax colors.
+          tokensByRowId[row.id] = makePlainTokenFallback(row);
+        }
+      }
+      if (!context || matchingRows.length === 0) continue;
+      const { tokenLines, start } = await tokenizeRange(
+        context,
+        matchingRows[0]!.lineIndex,
+        matchingRows.at(-1)!.lineIndex,
+        file.language,
+      );
+      for (const { row, lineIndex } of matchingRows) {
+        tokensByRowId[row.id] = tokenLines[lineIndex - start] ?? makePlainTokenFallback(row);
+      }
     }
-
-    segmentFile = file;
-    segmentRows.push(selectedRow);
+    emitFileChunk(fileRows);
   }
-  await flushSegment();
+
+  const selectedSegments = new Map<
+    SourceSegment,
+    { firstSelected: number; lastSelected: number }
+  >();
+  if (selectedRowIds.size > 0 && !input.signal?.aborted) {
+    const sourceSegments = getSourceSegments(input.rows);
+    for (const row of selectedRows) {
+      if (!selectedRowIds.has(row.id)) continue;
+      const source = sourceSegments.get(row.id);
+      if (!source) continue;
+      const selection = selectedSegments.get(source.segment);
+      if (selection) {
+        selection.lastSelected = source.index;
+      } else {
+        selectedSegments.set(source.segment, {
+          firstSelected: source.index,
+          lastSelected: source.index,
+        });
+      }
+    }
+  }
+
+  for (const [segment, { firstSelected, lastSelected }] of selectedSegments) {
+    if (input.signal?.aborted) break;
+    const file = fileMap.get(segment.fileId);
+    if (!file) continue;
+
+    const { tokenLines, start } = await tokenizeRange(
+      { lines: segment.rows.map((row) => row.content), checkpoints: segment.checkpoints },
+      firstSelected,
+      lastSelected,
+      file.language,
+    );
+    for (let index = firstSelected; index <= lastSelected; index += 1) {
+      const row = segment.rows[index]!;
+      if (selectedRowIds.has(row.id) && displaySide(row) === segment.side) {
+        tokensByRowId[row.id] = tokenLines[index - start] ?? makePlainTokenFallback(row);
+      }
+    }
+  }
 
   if (input.signal?.aborted) {
-    return { engine: highlighter.engine, tokensByRowId: {}, rowCount: 0, durationMs: 0 };
+    traceDiffHighlight("highlight-aborted", { request });
+    return {
+      engine: highlighter.engine,
+      tokensByRowId: {},
+      retryableRowIds: [],
+      rowCount: 0,
+      durationMs: 0,
+    };
   }
 
+  traceDiffHighlight("highlight-result", {
+    request,
+    selected: selectedRows.length,
+    delivered: Object.keys(tokensByRowId).length,
+    retryable: retryableRowIds.length,
+    colored: Object.values(tokensByRowId).filter((tokens) =>
+      tokens.some((token) => token.color !== null),
+    ).length,
+  });
   return {
     engine: highlighter.engine,
     tokensByRowId,
+    retryableRowIds,
     rowCount: selectedRows.length,
     durationMs: Math.round(performance.now() - startedAt),
   };

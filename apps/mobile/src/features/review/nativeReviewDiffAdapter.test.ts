@@ -38,7 +38,111 @@ function filesPatch(paths: ReadonlyArray<string>) {
     .join("\n");
 }
 
+describe("buildNativeReviewDiffData languages", () => {
+  it.each([
+    ["js", "javascript"],
+    ["cjs", "javascript"],
+    ["mjs", "javascript"],
+    ["jsx", "jsx"],
+    ["ts", "typescript"],
+    ["mts", "typescript"],
+    ["cts", "typescript"],
+    ["tsx", "tsx"],
+  ])("assigns %s files their syntax language when deleted", (extension, language) => {
+    const path = `scripts/dev-runner.${extension}`;
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(
+        [
+          `diff --git a/${path} b/${path}`,
+          "deleted file mode 100644",
+          `--- a/${path}`,
+          "+++ /dev/null",
+          "@@ -1,2 +0,0 @@",
+          '-import process from "node:process";',
+          "-const port = process.env.PORT;",
+          "",
+        ].join("\n"),
+        "deleted-script-language",
+      ),
+    );
+
+    expect(data.files).toMatchObject([{ path, language }]);
+    expect(data.rows.filter((row) => row.kind === "line")).toMatchObject([
+      { content: 'import process from "node:process";', change: "delete" },
+      { content: "const port = process.env.PORT;", change: "delete" },
+    ]);
+  });
+});
+
 describe("getCachedNativeReviewDiffData", () => {
+  it("keeps Pierre's matching lines in the GitHub credential pinning excerpt", () => {
+    const parsed = buildReviewParsedDiff(
+      [
+        "diff --git a/packages/source-control-github/src/server/GitHubPullRequestApi.ts b/packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+        "--- a/packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+        "+++ b/packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+        "@@ -1221,11 +1240,4 @@",
+        "-        operation: input.operation,",
+        "-        path: input.path,",
+        "-        ...(Option.isSome(previous) ? { ifNoneMatch: previous.value.etag } : {}),",
+        "-      })",
+        "-      .pipe(",
+        "-        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {",
+        "-          host,",
+        "-          token,",
+        "-          credentialFingerprint: fingerprint,",
+        "-        }),",
+        "-      );",
+        "+        token,",
+        "+        credentialFingerprint: fingerprint,",
+        "+      }),",
+        "+    );",
+        "",
+      ].join("\n"),
+      "credential-pinning",
+    );
+    expect(parsed.kind).toBe("files");
+    if (parsed.kind !== "files") return;
+    expect(
+      parsed.files[0]?.rows.find((row) => row.kind === "line" && row.newLineNumber === 1242),
+    ).toMatchObject({
+      comparison: { change: "delete", tokenIndex: 9 },
+    });
+    const data = buildNativeReviewDiffData(parsed);
+    expect(
+      data.rows.find((row) => row.kind === "line" && row.newLineNumber === 1242)?.wordDiffRanges,
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [true, false, "Old file has no newline at end of file."],
+    [false, true, "New file has no newline at end of file."],
+    [true, true, "Old and new files have no newline at end of file."],
+    [false, false, null],
+  ])("shows missing-newline notices for old=%s new=%s", (oldMissing, newMissing, notice) => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(
+        [
+          "diff --git a/example.ts b/example.ts",
+          "--- a/example.ts",
+          "+++ b/example.ts",
+          "@@ -1 +1 @@",
+          "-value",
+          ...(oldMissing ? ["\\ No newline at end of file"] : []),
+          "+value",
+          ...(newMissing ? ["\\ No newline at end of file"] : []),
+          "",
+        ].join("\n"),
+        "native-eof",
+      ),
+    );
+    expect(data.rows.filter((row) => row.kind === "notice").map((row) => row.text)).toEqual(
+      notice ? [notice] : [],
+    );
+    expect(data.rows.filter((row) => row.kind === "line")).toHaveLength(2);
+    expect(data.commentTargetsByRowId.size).toBe(2);
+  });
+
   it("keeps cached IDs and targets local to each parsed section and file layout", () => {
     const original = filesPatch(["example.ts", "second.ts"]);
     const variants = [

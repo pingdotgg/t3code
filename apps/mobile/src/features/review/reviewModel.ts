@@ -60,6 +60,8 @@ export interface ReviewRenderableFile {
   readonly languageHint: string | null;
   readonly additionLines: ReadonlyArray<string>;
   readonly deletionLines: ReadonlyArray<string>;
+  readonly noEOFCRAdditions?: boolean;
+  readonly noEOFCRDeletions?: boolean;
   readonly rows: ReadonlyArray<ReviewRenderableRow>;
 }
 
@@ -139,13 +141,13 @@ function splitTruncationMarker(diff: string): {
   readonly text: string;
   readonly truncated: boolean;
 } {
-  const trimmed = diff.trimEnd();
-  if (!trimmed.endsWith("[truncated]")) {
-    return { text: trimmed, truncated: false };
+  const marker = /(?:(?:\r?\n){1,2}|^)\[truncated\]\s*$/.exec(diff);
+  if (!marker) {
+    return { text: diff, truncated: false };
   }
 
   return {
-    text: trimmed.replace(/\n*\[truncated\]\s*$/, "").trimEnd(),
+    text: diff.slice(0, marker.index),
     truncated: true,
   };
 }
@@ -219,14 +221,9 @@ function fnv1a32(input: string, seed: number, multiplier: number): number {
 }
 
 function buildPatchCacheKey(patch: string, scope: string): string {
-  const normalizedPatch = patch.trim();
-  const primary = fnv1a32(normalizedPatch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(
-    normalizedPatch,
-    SECONDARY_HASH_SEED,
-    SECONDARY_HASH_MULTIPLIER,
-  ).toString(36);
-  return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+  const primary = fnv1a32(patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
+  const secondary = fnv1a32(patch, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
+  return `${scope}:${patch.length}:${primary}:${secondary}`;
 }
 
 function getFileExtension(path: string): string | null {
@@ -390,6 +387,8 @@ function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
     languageHint: file.lang ?? null,
     additionLines: file.additionLines,
     deletionLines: file.deletionLines,
+    noEOFCRAdditions: file.hunks.some((hunk) => hunk.noEOFCRAdditions),
+    noEOFCRDeletions: file.hunks.some((hunk) => hunk.noEOFCRDeletions),
     rows: buildRenderableRows(file),
   };
 }
@@ -471,12 +470,11 @@ export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
 ): ReviewParsedDiff {
-  const normalized = diff?.trim();
-  if (!normalized) {
+  if (!diff?.trim()) {
     return { kind: "empty" };
   }
 
-  const { text, truncated } = splitTruncationMarker(normalized);
+  const { text, truncated } = splitTruncationMarker(diff);
   if (text.length === 0) {
     return { kind: "empty" };
   }

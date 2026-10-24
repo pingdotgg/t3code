@@ -333,6 +333,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   private var tokensResetKey = ""
   private var contentResetKey = ""
   private var initialRowIndex: Int?
+  private var initialFileId: String?
   private var hasAppliedInitialRowIndex = false
   private var lastVisibleFileId: String?
   private var pendingScrollFileId: String?
@@ -504,11 +505,12 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     }
   }
 
-  func setTokensPatchJson(_ tokensPatchJson: String) {
+  func setTokensPatchJson(_ tokensPatchJson: String, completion: @escaping (Bool) -> Void) {
     let contentResetKey = self.contentResetKey
 
     payloadDecodeQueue.async { [weak self] in
       guard let data = tokensPatchJson.data(using: .utf8) else {
+        DispatchQueue.main.async { completion(false) }
         return
       }
 
@@ -516,27 +518,34 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
         let patch = try JSONDecoder().decode(ReviewDiffNativeTokenPatch.self, from: data)
         DispatchQueue.main.async { [weak self] in
           guard let self else {
+            completion(false)
             return
           }
           guard contentResetKey == self.contentResetKey else {
+            completion(false)
             return
           }
           // A highlighter request from the previous file can finish after the view has
           // already reset. Never let that stale patch roll the native token state back.
           if let resetKey = patch.resetKey, resetKey != self.tokensResetKey {
+            completion(false)
             return
           }
 
           let tokensByRowId = patch.tokensByRowId ?? [:]
           if tokensByRowId.isEmpty {
+            completion(true)
             return
           }
 
           self.contentView.mergeTokensByRowId(tokensByRowId)
-          if let chunkIndex = patch.chunkIndex, chunkIndex < 5 || chunkIndex.isMultiple(of: 10) {
+          completion(true)
+          if let chunkIndex = patch.chunkIndex {
             self.emitDebug("tokens-patch-decoded", [
+              "resetKey": patch.resetKey ?? "",
               "chunkIndex": chunkIndex,
               "rows": tokensByRowId.count,
+              "tokens": tokensByRowId.values.reduce(0) { $0 + $1.count },
               "totalRows": self.contentView.tokensByRowId.count,
             ])
           }
@@ -545,6 +554,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
         let message = error.localizedDescription
         DispatchQueue.main.async { [weak self] in
           self?.emitDebug("tokens-patch-decode-failed", ["error": message])
+          completion(false)
         }
       }
     }
@@ -587,13 +597,14 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     }
 
     self.contentResetKey = contentResetKey
+    lastVisibleRangeDebugKey = ""
     rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
     contentView.tokensByRowId = [:]
     rows = []
     contentView.rows = []
     hasAppliedInitialRowIndex = false
-    pendingScrollFileId = nil
+    pendingScrollFileId = initialFileId
     isProgrammaticScrollActive = false
     scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.contentInset.top), animated: false)
     updateContentMetrics()
@@ -699,6 +710,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     applyInitialRowIndexIfNeeded()
     applyPendingScrollIfNeeded()
     emitVisibleFileIfNeeded()
+    emitVisibleRange(reason: "layout")
 
     let debugKey = "\(rows.count):\(Int(bounds.width)):\(Int(bounds.height)):\(Int(contentView.contentHeight))"
     if debugKey != lastMetricsDebugKey {
@@ -759,7 +771,8 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   }
 
   private func emitVisibleRange(reason: String) {
-    guard let range = contentView.currentVisibleRowRange() else {
+    guard bounds.width > 0, bounds.height > 0,
+          let range = contentView.currentVisibleRowRange() else {
       return
     }
 
@@ -831,6 +844,16 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     pendingScrollFileId = fileId
     pendingScrollAnimated = animated
     applyPendingScrollIfNeeded()
+  }
+
+  func setInitialFileId(_ fileId: String) {
+    let nextFileId = fileId.isEmpty ? nil : fileId
+    guard nextFileId != initialFileId else { return }
+    initialFileId = nextFileId
+    pendingScrollFileId = nextFileId
+    pendingScrollAnimated = false
+    // Apply after the prop batch and content metrics, before the first range event.
+    setNeedsLayout()
   }
 
   func scrollToTop(animated: Bool) {
@@ -918,7 +941,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     contentView.isVerticalScrollActive = shouldAnimate
     scrollView.setContentOffset(CGPoint(x: 0, y: clampedOffset), animated: shouldAnimate)
     if !shouldAnimate {
-      updateViewportFrame()
+      finishVerticalScroll()
     }
   }
 
@@ -993,12 +1016,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
 
   func mergeTokensByRowId(_ tokensPatch: [String: [ReviewDiffNativeToken]]) {
-    tokensPatch.forEach { rowId, tokens in
-      tokensByRowId[rowId] = tokens
-      tokenAttributedStringsByRowId.removeValue(forKey: rowId)
-    }
-    clampHorizontalOffsets()
-    setNeedsDisplayForVisibleBounds()
+    // One mutation lets didSet invalidate decoration and display once per batch.
+    tokensByRowId.merge(tokensPatch) { _, tokens in tokens }
   }
 
   var collapsedFileIds: Set<String> = [] {

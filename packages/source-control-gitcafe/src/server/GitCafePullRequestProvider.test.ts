@@ -164,6 +164,172 @@ const assertRequestId = (body: unknown) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   );
 
+describe("GitCafePullRequestProvider source contents", () => {
+  const comparisonBase = "a".repeat(40);
+  const snapshot = { version: pull.version, headOid, comparisonBaseOid: comparisonBase };
+  const input = {
+    ...target,
+    changeType: "rename-changed" as const,
+    oldPath: "old name.ts",
+    newPath: "src/new #name.ts",
+  };
+  const blob = (request: SentRequest) => ({
+    commit: request.query.get("oid"),
+    oid: "b".repeat(40),
+    path: request.query.get("path"),
+    size: 16,
+    binary: false,
+    content: "const value = 1;",
+  });
+  const routes = {
+    "GET /repos/owner/repo/pulls/7": pull,
+    "GET /repos/owner/repo/pulls/7/changes": snapshot,
+    "GET /repos/owner/repo/blob": blob,
+  };
+
+  it.effect(
+    "pins rename source to the comparison base and fork head, without reading branches",
+    () => {
+      const server = fakeGitCafe({
+        ...routes,
+        "GET /repos/owner/repo/pulls/7": {
+          ...pull,
+          sourceRepo: { owner: "fork", name: "project" },
+        },
+        "GET /repos/fork/project/blob": blob,
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        const result = yield* provider.getDiffFileContents!(input);
+        assert.deepStrictEqual(result, {
+          oldContents: "const value = 1;",
+          newContents: "const value = 1;",
+        });
+        const changes = server.sent.find((request) => request.path.endsWith("/changes"))!;
+        assert.strictEqual(changes.query.get("expectedVersion"), "4");
+        assert.strictEqual(changes.query.get("limit"), "1");
+        assert.deepStrictEqual(
+          server.sent
+            .filter((request) => request.path.endsWith("/blob"))
+            .map((request) => ({
+              path: request.path,
+              oid: request.query.get("oid"),
+              file: request.query.get("path"),
+              ref: request.query.get("ref"),
+            })),
+          [
+            { path: "/repos/owner/repo/blob", oid: comparisonBase, file: input.oldPath, ref: null },
+            { path: "/repos/fork/project/blob", oid: headOid, file: input.newPath, ref: null },
+          ],
+        );
+        assert.deepStrictEqual(server.writes(), []);
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
+
+  it.effect.each(["new", "deleted"] as const)(
+    "skips the absent side of a %s file",
+    (changeType) => {
+      const server = fakeGitCafe(routes);
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        const result = yield* provider.getDiffFileContents!({ ...input, changeType });
+        assert.strictEqual(result[changeType === "new" ? "oldContents" : "newContents"], "");
+        assert.lengthOf(
+          server.sent.filter((request) => request.path.endsWith("/blob")),
+          1,
+        );
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
+
+  it.effect.each([
+    { ...snapshot, version: 5 },
+    { ...snapshot, headOid: baseOid },
+    { ...snapshot, comparisonBaseOid: "main" },
+  ])("refuses a changed or nonimmutable comparison snapshot", (response) => {
+    const server = fakeGitCafe({ ...routes, "GET /repos/owner/repo/pulls/7/changes": response });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const result = yield* provider.getDiffFileContents!(input).pipe(Effect.result);
+      assert.strictEqual(result._tag, "Failure");
+      assert.isFalse(server.sent.some((request) => request.path.endsWith("/blob")));
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect.each([
+    { binary: true, content: null },
+    { content: "binary\0data" },
+    { size: 1_048_577 },
+    { size: 1, content: "x".repeat(1_048_577) },
+    { size: 1, content: "é".repeat(524_289) },
+    { commit: baseOid },
+    { path: "another.ts" },
+    { content: null },
+  ])("refuses unavailable, oversized, binary, or mismatched blobs", (fields) => {
+    const server = fakeGitCafe({
+      ...routes,
+      "GET /repos/owner/repo/blob": (request: SentRequest) => ({ ...blob(request), ...fields }),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const result = yield* provider.getDiffFileContents!(input).pipe(Effect.result);
+      assert.strictEqual(result._tag, "Failure");
+      assert.deepStrictEqual(server.writes(), []);
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect.each([
+    [413, "oversized"],
+    [501, "unavailable"],
+  ] as const)("marks HTTP %s blob refusals permanently unavailable", ([status, reason]) => {
+    const server = fakeGitCafe({
+      ...routes,
+      "GET /repos/owner/repo/blob": new Response("{}", { status }),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const error = yield* provider.getDiffFileContents!({ ...input, changeType: "new" }).pipe(
+        Effect.flip,
+      );
+      assert.deepInclude(error.cause as object, {
+        _tag: "GitCafeDiffSourceUnavailableError",
+        reason,
+      });
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("preserves authentication failures from blob access", () => {
+    const server = fakeGitCafe({
+      ...routes,
+      "GET /repos/owner/repo/blob": new Response("{}", { status: 401 }),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const error = yield* provider.getDiffFileContents!({ ...input, changeType: "new" }).pipe(
+        Effect.flip,
+      );
+      assert.strictEqual(error.reason, "unauthenticated");
+      assert.strictEqual(error.operation, "getDiffFileContents");
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect(
+    "refuses commit-specific contents consistently with unsupported GitCafe commit diffs",
+    () => {
+      const server = fakeGitCafe({});
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        const result = yield* provider.getDiffFileContents!({ ...input, commit: headOid }).pipe(
+          Effect.result,
+        );
+        assert.strictEqual(result._tag, "Failure");
+        assert.deepStrictEqual(server.sent, []);
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
+});
+
 describe("GitCafePullRequestProvider", () => {
   it.effect("keeps a staging repository's requests and links on staging", () => {
     // CAFE_TOKEN follows CAFE_HOST, so staging reads the env token only when it is the target.

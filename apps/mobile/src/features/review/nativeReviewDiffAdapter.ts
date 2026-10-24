@@ -250,9 +250,21 @@ function getLanguageForPath(
 
   const normalizedPath = filePath.toLowerCase();
   if (normalizedPath.endsWith(".tsx")) return "tsx";
-  if (normalizedPath.endsWith(".ts")) return "typescript";
+  if (
+    normalizedPath.endsWith(".ts") ||
+    normalizedPath.endsWith(".mts") ||
+    normalizedPath.endsWith(".cts")
+  ) {
+    return "typescript";
+  }
   if (normalizedPath.endsWith(".jsx")) return "jsx";
-  if (normalizedPath.endsWith(".js") || normalizedPath.endsWith(".cjs")) return "javascript";
+  if (
+    normalizedPath.endsWith(".js") ||
+    normalizedPath.endsWith(".mjs") ||
+    normalizedPath.endsWith(".cjs")
+  ) {
+    return "javascript";
+  }
   if (normalizedPath.endsWith(".json") || normalizedPath.endsWith(".jsonc")) return "json";
   if (normalizedPath.endsWith(".yml") || normalizedPath.endsWith(".yaml")) return "yaml";
   if (
@@ -342,63 +354,43 @@ function shouldUseWordDiffRanges(
 
 function addNativeWordDiffRanges(
   rows: ReadonlyArray<NativeReviewDiffRow>,
+  lineRows: ReadonlyArray<ReviewRenderableLineRow>,
 ): ReadonlyArray<NativeReviewDiffRow> {
   const nextRows = [...rows];
-  let index = 0;
+  const addedRowIndexes = new Map<number, number>();
+  const pairs: Array<{ deletionRowIndex: number; additionTokenIndex: number }> = [];
+  let lineIndex = 0;
 
-  while (index < nextRows.length) {
-    const deletedRowIndexes: number[] = [];
-    const addedRowIndexes: number[] = [];
-    const fileId = nextRows[index]?.fileId;
-
-    while (
-      nextRows[index]?.kind === "line" &&
-      nextRows[index]?.change === "delete" &&
-      nextRows[index]?.fileId === fileId
-    ) {
-      deletedRowIndexes.push(index);
-      index += 1;
+  // Pierre can split adjacent change blocks to align similar lines. Keep those pairings.
+  rows.forEach((row, rowIndex) => {
+    if (row.kind !== "line") return;
+    const source = lineRows[lineIndex++];
+    if (source?.change === "add" && source.additionTokenIndex !== null) {
+      addedRowIndexes.set(source.additionTokenIndex, rowIndex);
+    } else if (source?.change === "delete" && source.comparison?.change === "add") {
+      pairs.push({ deletionRowIndex: rowIndex, additionTokenIndex: source.comparison.tokenIndex });
     }
+  });
 
-    while (
-      nextRows[index]?.kind === "line" &&
-      nextRows[index]?.change === "add" &&
-      nextRows[index]?.fileId === fileId
-    ) {
-      addedRowIndexes.push(index);
-      index += 1;
+  for (const { deletionRowIndex, additionTokenIndex } of pairs) {
+    const addedRowIndex = addedRowIndexes.get(additionTokenIndex);
+    if (addedRowIndex === undefined) continue;
+    const deletedRow = nextRows[deletionRowIndex];
+    const addedRow = nextRows[addedRowIndex];
+    if (!deletedRow?.content || !addedRow?.content) continue;
+
+    const ranges = computeWordAltDiffRanges({
+      deletionLine: deletedRow.content,
+      additionLine: addedRow.content,
+    });
+    const deletionRanges = trimWordDiffRanges(deletedRow.content, ranges.deletion);
+    const additionRanges = trimWordDiffRanges(addedRow.content, ranges.addition);
+
+    if (shouldUseWordDiffRanges(deletedRow.content, deletionRanges)) {
+      nextRows[deletionRowIndex] = { ...deletedRow, wordDiffRanges: deletionRanges };
     }
-
-    const pairedCount = Math.min(deletedRowIndexes.length, addedRowIndexes.length);
-    for (let pairIndex = 0; pairIndex < pairedCount; pairIndex += 1) {
-      const deletedRowIndex = deletedRowIndexes[pairIndex];
-      const addedRowIndex = addedRowIndexes[pairIndex];
-      if (deletedRowIndex === undefined || addedRowIndex === undefined) {
-        continue;
-      }
-      const deletedRow = nextRows[deletedRowIndex];
-      const addedRow = nextRows[addedRowIndex];
-      if (!deletedRow?.content || !addedRow?.content) {
-        continue;
-      }
-
-      const ranges = computeWordAltDiffRanges({
-        deletionLine: deletedRow.content,
-        additionLine: addedRow.content,
-      });
-      const deletionRanges = trimWordDiffRanges(deletedRow.content, ranges.deletion);
-      const additionRanges = trimWordDiffRanges(addedRow.content, ranges.addition);
-
-      if (shouldUseWordDiffRanges(deletedRow.content, deletionRanges)) {
-        nextRows[deletedRowIndex] = { ...deletedRow, wordDiffRanges: deletionRanges };
-      }
-      if (shouldUseWordDiffRanges(addedRow.content, additionRanges)) {
-        nextRows[addedRowIndex] = { ...addedRow, wordDiffRanges: additionRanges };
-      }
-    }
-
-    if (deletedRowIndexes.length === 0 && addedRowIndexes.length === 0) {
-      index += 1;
+    if (shouldUseWordDiffRanges(addedRow.content, additionRanges)) {
+      nextRows[addedRowIndex] = { ...addedRow, wordDiffRanges: additionRanges };
     }
   }
 
@@ -471,13 +463,21 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
     rows.push(createNoticeRow(file.id, "truncated", TRUNCATED_FILE_NOTICE));
   }
   rows.push(...noticeRowsForFile(file));
+  if (file.noEOFCRAdditions || file.noEOFCRDeletions) {
+    const side = file.noEOFCRAdditions
+      ? file.noEOFCRDeletions
+        ? "Old and new files have"
+        : "New file has"
+      : "Old file has";
+    rows.push(createNoticeRow(file.id, "eof", `${side} no newline at end of file.`));
+  }
   const prepared: PreparedNativeReviewFileRows = {
     fileId: file.id,
     filePath: file.path,
     lineCount: lineRows.length,
     truncated: sourceRows !== file.rows,
-    // Comments must not split the source deletion/addition runs used for word matching.
-    rows: addNativeWordDiffRanges(rows),
+    // Pair source lines before inserting comments so comment rows cannot affect matching.
+    rows: addNativeWordDiffRanges(rows, lineRows),
     commentTargetsByRowId,
     rowIdByCommentLineId,
     commentedRows: null,
