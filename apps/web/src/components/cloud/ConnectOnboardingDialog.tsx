@@ -8,6 +8,7 @@ import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
+  consumeConnectOnboardingAuthPending,
 } from "~/cloud/connectOnboarding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -77,8 +78,8 @@ function ConfiguredConnectOnboardingDialog() {
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [prefilledFromLinkState, setPrefilledFromLinkState] = useState(false);
-  // undefined until auth first settles, so the account already signed in at load
-  // never reads as a fresh sign-in.
+  // An account restored at load only requests onboarding after an explicit
+  // sign-in; Clerk Electron reloads the renderer when auth completes.
   const [observedAccount, setObservedAccount] = useState<string | null | undefined>(undefined);
 
   if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
@@ -94,7 +95,8 @@ function ConfiguredConnectOnboardingDialog() {
     const nextAccount = isSignedIn && userId ? userId : null;
     if (nextAccount !== observedAccount) {
       setObservedAccount(nextAccount);
-      if (observedAccount !== undefined && nextAccount !== null) {
+      const authPromptPending = nextAccount !== null && consumeConnectOnboardingAuthPending();
+      if (nextAccount !== null && (observedAccount !== undefined || authPromptPending)) {
         setRequestedAccount(nextAccount);
       }
     }
