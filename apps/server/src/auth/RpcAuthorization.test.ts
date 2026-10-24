@@ -16,6 +16,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -168,6 +169,34 @@ describe("settings mutation authorization", () => {
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  // The RPC server hands middleware the decoded payload, so durations arrive as Duration values.
+  it.effect("authorizes background activity overrides with decoded duration intervals", () =>
+    Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            ),
+            RpcAuthorization.layer([AuthSettingsWriteScope]),
+          ),
+        ),
+      );
+      const settings = yield* client[WS_METHODS.serverUpdateSettings]({
+        patch: {
+          backgroundActivity: {
+            profile: "custom",
+            overrides: {
+              automaticGitFetchInterval: Duration.seconds(30),
+              pauseWhenHostLocked: false,
+            },
+          },
+        },
+      });
+      expect(settings).toEqual(DEFAULT_SERVER_SETTINGS);
     }).pipe(Effect.scoped),
   );
 
