@@ -33,8 +33,11 @@ export const unlinkPrimaryEnvironment = createRuntimeCommand(connectionAtomRunti
   label: "web:cloud:unlink-primary-environment",
   scheduler: cloudLinkScheduler,
   concurrency: cloudLinkConcurrency,
-  execute: (input: { readonly target: CloudLinkTarget; readonly clerkToken: string | null }) =>
-    unlinkPrimaryEnvironmentFromCloud(input),
+  execute: (input: {
+    readonly target: CloudLinkTarget;
+    readonly clerkToken: string | null;
+    readonly expectedCloudUserId?: string;
+  }) => unlinkPrimaryEnvironmentFromCloud(input),
 });
 
 export const updatePrimaryEnvironmentPreferences = createRuntimeCommand(connectionAtomRuntime, {

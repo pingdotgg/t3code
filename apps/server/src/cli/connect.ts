@@ -313,7 +313,7 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
         baseUrl: runtimeState.value.origin,
       }).pipe(
         Effect.flatMap((client) =>
-          client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
+          client.connect.unlink({ headers: { authorization: `Bearer ${token}` }, query: {} }),
         ),
         Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
       ),

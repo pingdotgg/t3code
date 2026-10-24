@@ -138,6 +138,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly address?: HttpServer.HttpServer["Service"]["address"];
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
+    readonly beforeLinkStateLock?: Effect.Effect<void>;
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -200,7 +201,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
             tunnelConnected: Stream.empty,
             inspectConnector: Effect.succeed(null),
             readinessChanged: Stream.empty,
-            withLinkStateLock: (effect) => effect,
+            withLinkStateLock: (effect) =>
+              harness.beforeLinkStateLock
+                ? harness.beforeLinkStateLock.pipe(Effect.andThen(effect))
+                : effect,
           }),
         ),
         Effect.provideService(
@@ -247,6 +251,78 @@ describe("releaseManagedTunnelOnShutdown", () => {
     [RELAY_URL_SECRET, "https://relay.example.test"],
     [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
   ] as const;
+
+  it.effect(
+    "account unlink stops the connector and prevents startup from recreating its link",
+    () => {
+      const { store, values } = makeMemorySecretStore([
+        ...managedLinkSecrets,
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        yield* link.unlink("user-123");
+
+        expect(applyConfigCalls).toEqual([null]);
+        expect(values.has(CLOUD_LINKED_USER_ID)).toBe(false);
+        expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
+        expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(false);
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(false);
+        expect(yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773")).toBeNull();
+        expect(requests).toEqual([]);
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    },
+  );
+
+  it.effect(
+    "a delayed account unlink preserves a host relinked before it acquired the lock",
+    () => {
+      const { store, values } = makeMemorySecretStore([
+        ...managedLinkSecrets,
+        [CLOUD_LINKED_USER_ID, "user-123"],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        const error = yield* link.unlink("user-123").pipe(Effect.flip);
+
+        expect(error._tag).toBe("CloudLinkAccountMismatchError");
+        expect(applyConfigCalls).toEqual([]);
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(true);
+        expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
+        expect(new TextDecoder().decode(values.get(CLOUD_LINKED_USER_ID))).toBe("other-user");
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          beforeLinkStateLock: store
+            .set(CLOUD_LINKED_USER_ID, new TextEncoder().encode("other-user"))
+            .pipe(Effect.orDie),
+        }),
+      );
+    },
+  );
+
+  it.effect("legacy unlink still stops a host without specifying its account", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      yield* link.unlink();
+
+      expect(applyConfigCalls).toEqual([null]);
+      expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(false);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
 
   it.effect("does not recreate a link that was unlinked while startup registration retried", () => {
     const { store, values } = makeMemorySecretStore(managedLinkSecrets);

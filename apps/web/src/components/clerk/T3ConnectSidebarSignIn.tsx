@@ -1,10 +1,11 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon } from "lucide-react";
+import { LogInIcon, LogOutIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { T3_CONNECT_ACCOUNT_PAGES } from "./T3ConnectAccountPages";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
+import { useT3ConnectSignOut } from "./useT3ConnectSignOut";
 
 export function T3ConnectSidebarSignIn() {
   if (!hasCloudPublicConfig()) return null;
@@ -20,6 +21,7 @@ export function T3ConnectSidebarAvatar() {
 
 function ConfiguredT3ConnectSidebarAvatar() {
   const { isLoaded, isSignedIn } = useAuth();
+  const { signOut, signOutAll, hasOtherSessions } = useT3ConnectSignOut();
 
   if (!isLoaded || !isSignedIn) return null;
 
@@ -29,9 +31,22 @@ function ConfiguredT3ConnectSidebarAvatar() {
         elements: {
           avatarBox: "size-7",
           userButtonTrigger: "rounded-lg p-1 hover:bg-sidebar-row-hover",
+          // Host cleanup must finish before Clerk removes the session or navigates away.
+          userButtonPopoverActionButton__signOut: { display: "none" },
+          userButtonPopoverActionButton__signOutAll: { display: "none" },
         },
       }}
     >
+      <UserButton.MenuItems>
+        <UserButton.Action label="Sign out" labelIcon={<LogOutIcon />} onClick={signOut} />
+        {hasOtherSessions ? (
+          <UserButton.Action
+            label="Sign out of all accounts"
+            labelIcon={<LogOutIcon />}
+            onClick={signOutAll}
+          />
+        ) : null}
+      </UserButton.MenuItems>
       {T3_CONNECT_ACCOUNT_PAGES.map((page) => (
         <UserButton.UserProfilePage
           key={page.url}
