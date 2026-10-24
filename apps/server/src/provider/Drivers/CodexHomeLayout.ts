@@ -66,6 +66,27 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
   };
 });
 
+// Codex trusts the reserved `openai-bundled` marketplace, which carries Computer Use and
+// Browser, only when its configured source is literally
+// `$CODEX_HOME/.tmp/bundled-marketplaces/openai-bundled`. The Codex desktop app writes that
+// source into the shared config.toml using the shared home's path, so a shadow home silently
+// drops every bundled plugin. The shadow's `.tmp` links to the shared one, so naming the same
+// directory through the shadow home passes the check. Codex ignores the override unless
+// config.toml already declares the marketplace with `source_type = "local"`.
+const BUNDLED_MARKETPLACE = "openai-bundled";
+
+const quoteCliArg = (value: string) => `"${value.replace(/["\\$`]/g, "\\$&")}"`;
+
+export function codexHomeLaunchArgs(path: Path.Path, layout: CodexHomeLayout, launchArgs: string) {
+  const homePath = layout.effectiveHomePath;
+  if (layout.mode !== "authOverlay" || homePath === undefined) return launchArgs;
+  const source = path.join(homePath, ".tmp", "bundled-marketplaces", BUNDLED_MARKETPLACE);
+  const setting = `marketplaces.${BUNDLED_MARKETPLACE}.source=${JSON.stringify(source)}`;
+  const override = `-c ${quoteCliArg(setting)}`;
+  // User launch args come last so an explicit source still wins.
+  return launchArgs.length > 0 ? `${override} ${launchArgs}` : override;
+}
+
 const CodexShadowHomeContext = {
   sharedHomePath: Schema.String,
   effectiveHomePath: Schema.String,
