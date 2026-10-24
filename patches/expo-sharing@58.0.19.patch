@@ -1,5 +1,5 @@
 diff --git a/android/src/main/java/expo/modules/sharing/SharingRecords.kt b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
-index 1113a0a..e89529a 100644
+index 1113a0adbb951081dea5214a711fe1dbb5a3e814..e89529a43258ae3bd6ec730c19453aed5e5efac4 100644
 --- a/android/src/main/java/expo/modules/sharing/SharingRecords.kt
 +++ b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
 @@ -51,7 +51,8 @@ enum class ContentType(val value: String) : Enumerable {
@@ -13,7 +13,7 @@ index 1113a0a..e89529a 100644
  
  @OptimizedRecord
 diff --git a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
-index 3381c5f..481cdb4 100644
+index 3381c5fd207ebb4cd8e0301aac59d307939ff162..88984c7237751e3a859aa425a3dfe55ec6f7897e 100644
 --- a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
 +++ b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
 @@ -3,6 +3,7 @@ package expo.modules.sharing
@@ -34,7 +34,7 @@ index 3381c5f..481cdb4 100644
 -
 -        listOf(
 +      val stream = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
-+      val text = intent.getStringExtra(Intent.EXTRA_TEXT)
++      val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
 +      if (stream == null) {
 +        if (!type.startsWith("text/") || text == null) return emptyList()
 +        return listOf(
@@ -93,7 +93,7 @@ index 3381c5f..481cdb4 100644
      }
    }
 diff --git a/build/Sharing.types.d.ts b/build/Sharing.types.d.ts
-index 74544e0..92bd2f5 100644
+index 74544e0728d5f845351693d8d90596abae42eaea..92bd2f53108ac717f1ef7292fe89aea05c676c5e 100644
 --- a/build/Sharing.types.d.ts
 +++ b/build/Sharing.types.d.ts
 @@ -100,6 +100,11 @@ export type SharePayload = {
@@ -175,7 +175,7 @@ index 943c263c0cf58be595bfc9745c91827da81befec..3a99a1822beb25fea3835123b9a4ad7a
  
    if (mainGroupUuid && sharedGroupUuid) {
 diff --git a/src/Sharing.types.ts b/src/Sharing.types.ts
-index 18af320..3a52b70 100644
+index 18af320420e7c01a8ffbd7fa5347320409f905d8..3a52b70a20efbc588ad5ca974c38c951e5757c97 100644
 --- a/src/Sharing.types.ts
 +++ b/src/Sharing.types.ts
 @@ -108,6 +108,12 @@ export type SharePayload = {
