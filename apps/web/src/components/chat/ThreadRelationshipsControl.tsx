@@ -98,11 +98,12 @@ function ThreadLineageRowList(props: {
       {/*
         Plain overflow, not a ScrollArea
         component: this sits inside an already scrolling panel, where a
-        max-height-only virtual viewport measures badly.
+        max-height-only virtual viewport measures badly. The stable gutter keeps
+        rows from narrowing when "Show more" first makes the list scroll.
       */}
       <ul
         aria-label="Related threads"
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 max-h-[13.5rem] list-none scrollbar-gutter-stable overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
