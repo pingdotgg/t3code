@@ -647,6 +647,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
 
     return sortProviderModelItems(result, {
+      favoriteModelOrder:
+        selectedInstanceId === "favorites"
+          ? favorites.map((favorite) => providerModelKey(favorite.provider, favorite.model))
+          : [],
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
       instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
