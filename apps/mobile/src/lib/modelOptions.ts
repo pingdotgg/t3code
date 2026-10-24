@@ -224,12 +224,16 @@ export function resolveDefaultableModelSelection(
 export function resolveNewTaskModelSelection(input: {
   readonly draftSelection: ModelSelection | null;
   readonly projectDefaultSelection: ModelSelection | null;
+  readonly lastUsedSelection?: ModelSelection | null;
+  readonly environmentDefaultSelection?: ModelSelection | null;
   readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
 }): ModelSelection | null {
   return (
     input.draftSelection ??
     input.projectDefaultSelection ??
+    input.lastUsedSelection ??
+    input.environmentDefaultSelection ??
     input.stickySelection ??
     input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
     input.modelOptions.find((option) => !option.isUnavailable)?.selection ??

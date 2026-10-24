@@ -283,6 +283,10 @@
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
     },
+    "./state/project-last-used-settings": {
+      "types": "./src/state/projectLastUsedSettings.ts",
+      "default": "./src/state/projectLastUsedSettings.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"

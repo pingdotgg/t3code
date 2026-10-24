@@ -25,6 +25,8 @@
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
         "knip-schemas.ts",
+        // Loaded directly by the evidence runner, provider subprocess and browser.
+        "fixtures/issue-6508/*.mjs",
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "sign-macos.ts",

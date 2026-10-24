@@ -18,7 +18,8 @@ import {
 } from "../../logicalProject";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { readThreadShells, useProjects } from "../../state/entities";
+import { retargetDraftToProject } from "../../lib/chatThreadActions";
 import type { DraftSessionState } from "../../composerDraftStore";
 
 interface DraftEnvironmentRoutingInput {
@@ -68,9 +69,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   } = input;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSession = useComposerDraftStore((store) => store.getDraftSession);
-  const setLogicalProjectDraftThreadId = useComposerDraftStore(
-    (store) => store.setLogicalProjectDraftThreadId,
-  );
   const allProjects = useProjects();
   const { openScratchProject } = useScratchProject();
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
@@ -117,10 +115,19 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
     if (!target?.projectId) return;
-    setDraftThreadContext(draftId, {
+    retargetDraftToProject({
+      draftId,
       projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
+      project:
+        allProjects.find(
+          (project) =>
+            project.environmentId === target.environmentId && project.id === target.projectId,
+        ) ?? null,
+      environmentSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+      threads: readThreadShells(),
+      logicalProjectKey: null,
+      routing: { environmentSelection: "auto", loadBalancedEnvironmentId: target.environmentId },
+      refreshModel: false,
     });
   }, [
     needsLoadBalancing,
@@ -128,8 +135,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancing.environmentId,
     draftId,
     logicalProjectEnvironments,
+    allProjects,
+    environmentById,
     sendInFlightRef,
-    setDraftThreadContext,
   ]);
   const onAutoEnvironment = () => {
     if (envLocked || !draftId) return;
@@ -218,21 +226,18 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         currentDraft.projectId !== originalDraft.projectId
       )
         return;
-      const projectRef = scopeProjectRef(target.environmentId, project.id);
-      if (activeProjectIsScratch) {
-        setLogicalProjectDraftThreadId(
-          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
-          projectRef,
-          draftId,
-          { environmentSelection: "manual", loadBalancedEnvironmentId: null },
-        );
-      } else {
-        setDraftThreadContext(draftId, {
-          projectRef,
-          environmentSelection: "manual",
-          loadBalancedEnvironmentId: null,
-        });
-      }
+      retargetDraftToProject({
+        draftId,
+        projectRef: scopeProjectRef(target.environmentId, project.id),
+        project,
+        environmentSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+        threads: readThreadShells(),
+        logicalProjectKey: activeProjectIsScratch
+          ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+          : null,
+        routing: { environmentSelection: "manual", loadBalancedEnvironmentId: null },
+        refreshModel: true,
+      });
     };
     const finish = () => {
       if (environmentChangeRef.current === request) environmentChangeRef.current = null;

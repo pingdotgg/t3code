@@ -107,9 +107,10 @@ instance:
 
 ## Model defaults
 
-T3 Code remembers your provider, model, and model options for new threads. A
-project's configured model takes precedence; resetting that project setting
-returns to the remembered selection.
+T3 Code remembers the provider, model, and model options you last used in each
+project for new threads. A project's configured model takes precedence; resetting
+that project setting returns to its remembered selection. A project with no
+previously used thread falls back to your general defaults.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 

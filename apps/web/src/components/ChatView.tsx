@@ -831,10 +831,9 @@ export default function ChatView(props: ChatViewProps) {
     localServerError === null && visibleThreadError === serverRuntime?.lastError;
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
-  const runtimeMode =
-    composerRuntimeMode ??
-    (isServerThread ? activeThread?.runtimeMode : undefined) ??
-    defaultRuntimeMode;
+  // A draft's session holds the mode it was opened with; the composer holds
+  // only modes the user picked, so a reused draft picks up fresh defaults.
+  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;

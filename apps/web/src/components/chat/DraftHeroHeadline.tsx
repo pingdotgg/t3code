@@ -13,7 +13,7 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
-import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
+import { retargetDraftToProject } from "~/lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -42,7 +42,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 const ADD_PROJECT_VALUE = "add-project";
 
@@ -68,12 +67,7 @@ export function DraftHeroHeadline({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
-  const setLogicalProjectDraftThreadId = useComposerDraftStore(
-    (store) => store.setLogicalProjectDraftThreadId,
-  );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
-  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
-  const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
@@ -182,26 +176,17 @@ export function DraftHeroHeadline({
       void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
       return;
     }
-    setLogicalProjectDraftThreadId(
-      logicalProjectKey,
-      scopeProjectRef(project.environmentId, project.id),
+    retargetDraftToProject({
       draftId,
-    );
-    if (!hasExplicitComposerModelSelection(currentDraft)) {
-      applyStickyState(draftId);
-      const environmentSettings = environments.find(
+      projectRef: scopeProjectRef(project.environmentId, project.id),
+      project,
+      environmentSettings: environments.find(
         (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings;
-      const defaultModelSelection = environmentSettings
-        ? resolveProjectSettings(environmentSettings, project.id, project).settings
-            .defaultModelSelection
-        : project.defaultModelSelection;
-      if (defaultModelSelection) {
-        setModelSelection(draftId, defaultModelSelection, {
-          replaceOptions: true,
-        });
-      }
-    }
+      )?.serverConfig?.settings,
+      threads,
+      logicalProjectKey,
+      refreshModel: true,
+    });
   };
   const startScratch = async (): Promise<boolean> => {
     if (scratchTargetEnvironmentId === null || isScratchDraft) {
