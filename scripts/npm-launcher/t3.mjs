@@ -113,20 +113,47 @@ const isComplete = (dir) => {
 };
 
 /**
- * Moves a finished staging folder to `dir`. Rename never replaces an existing
+ * Moves a finished staging folder to `dir`. Rename cannot replace a nonempty
  * folder, so a complete install another launcher (or `t3 update`) published
  * first is kept, never deleted from under a running process. Only a folder
  * without the completion marker, left by an interrupted older installer, is
- * cleared before trying again.
+ * cleared before trying again, and only while holding `<dir>.lock`: two
+ * launchers clearing it at once would let one delete the install the other
+ * just published.
  */
 function publish(staging, dir) {
   try {
     fs.renameSync(staging, dir);
+    return;
   } catch (error) {
     if (isComplete(dir)) return;
     if (!fs.existsSync(dir)) throw error;
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.renameSync(staging, dir);
+  }
+  const lock = `${dir}.lock`;
+  try {
+    fs.mkdirSync(lock);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    throw new Error(
+      `another t3 is installing ${version}. If none is running, delete ${lock} and try again.`,
+      { cause: error },
+    );
+  }
+  const stale = `${staging}.stale`;
+  try {
+    // A peer may have published between our marker check and taking the lock.
+    if (isComplete(dir)) return;
+    // Move it aside rather than deleting in place: once the folder is empty, a
+    // peer's first rename can land in it.
+    fs.renameSync(dir, stale);
+    try {
+      fs.renameSync(staging, dir);
+    } catch (error) {
+      if (!isComplete(dir)) throw error;
+    }
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+    fs.rmSync(stale, { recursive: true, force: true });
   }
 }
 
