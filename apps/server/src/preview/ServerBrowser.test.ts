@@ -12,6 +12,7 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationLoadError,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -276,6 +277,7 @@ const desktopRenders = (tabId: string) => {
   return desktopTabs.has(tabId);
 };
 const releasedDesktopTabs: Array<string> = [];
+const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 const testThread = {
   threadId: ThreadId.make("browser-test-thread"),
@@ -331,6 +333,8 @@ const dependencies = Layer.mergeAll(
       ),
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    loadFailure: (key) =>
+      Effect.sync(() => Option.fromUndefinedOr(desktopLoadFailures.get(key.tabId))),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
         Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
@@ -377,6 +381,7 @@ beforeEach(() => {
   desktopRendersNext = false;
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
+  desktopLoadFailures.clear();
 });
 
 it.live.each(["desktop" as const, undefined])(
@@ -1223,4 +1228,105 @@ it.live(
         });
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+const certificateError = {
+  url: "https://device.local/",
+  code: -202,
+  description: "ERR_CERT_AUTHORITY_INVALID",
+};
+const dataUrl = `data:text/html,${"PAYLOAD".repeat(300)}`;
+
+it.live("reports why a page failed to load while the tab shows the error page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const request = {
+        url: () => certificateError.url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_CERT_AUTHORITY_INVALID" }),
+      };
+      const status = () =>
+        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} });
+      const snapshot = () =>
+        broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+        });
+      expect(yield* status()).not.toHaveProperty("loadError");
+      expect(yield* snapshot()).not.toHaveProperty("loadError");
+      page.emit("request", request);
+      page.emit("requestfailed", request);
+      page.url = () => "chrome-error://chromewebdata/";
+      expect((yield* status()).loadError).toEqual(certificateError);
+      expect((yield* snapshot()).loadError).toEqual(certificateError);
+
+      const subframeRequest = {
+        ...request,
+        url: () => "https://frame.local/",
+        frame: () => ({}),
+      };
+      page.emit("request", subframeRequest);
+      page.emit("requestfailed", subframeRequest);
+      expect((yield* status()).loadError).toEqual(certificateError);
+
+      // Clearing must happen before the next navigation replaces the error page.
+      page.emit("request", { ...request, url: () => "https://device.local/login" });
+      expect(yield* status()).not.toHaveProperty("loadError");
+      expect(yield* snapshot()).not.toHaveProperty("loadError");
+
+      const dataRequest = { ...request, url: () => dataUrl };
+      page.emit("request", dataRequest);
+      page.emit("requestfailed", dataRequest);
+      expect((yield* status()).loadError?.url).toBe("data:text/html,…");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("reports a desktop tab's load failure from before the server connected", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      desktopLoadFailures.set(opened.tabId, certificateError);
+      yield* browser.attachViewer(viewerInput(opened.tabId, false));
+      const page = desktopConnections[0]!.context.page;
+      page.url = () => "chrome-error://chromewebdata/";
+      const status = () =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "status",
+          input: {},
+          tabId: PreviewTabId.make(opened.tabId),
+        });
+      const snapshot = () =>
+        broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          operation: "snapshot",
+          input: {},
+          tabId: PreviewTabId.make(opened.tabId),
+        });
+      expect((yield* status()).loadError).toEqual(certificateError);
+      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      desktopLoadFailures.set(opened.tabId, { ...certificateError, url: dataUrl });
+      expect((yield* status()).loadError?.url).toBe("data:text/html,…");
+      // A navigation the server sees supersedes it, even before the error page goes.
+      page.emit("request", {
+        url: () => "https://device.local/retry",
+        isNavigationRequest: () => true,
+        frame: () => page,
+      });
+      expect(yield* status()).not.toHaveProperty("loadError");
+      expect(yield* snapshot()).not.toHaveProperty("loadError");
+    }),
+  ).pipe(Effect.provide(layer)),
 );

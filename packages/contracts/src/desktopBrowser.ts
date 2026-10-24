@@ -12,6 +12,17 @@ export const DesktopBrowserEvent = Schema.Union([
   /** Its `<webview>` went away: closed, crashed, swapped, or devtools took the debugger. */
   Schema.Struct({ type: Schema.Literal("detached"), ...TabKey }),
   Schema.Struct({ type: Schema.Literal("cdp"), ...TabKey, message: Schema.String }),
+  /**
+   * The tab's page failed to load. The desktop starts a tab's first load before
+   * the server connects, so the server cannot always observe the failure itself.
+   */
+  Schema.Struct({
+    type: Schema.Literal("loadFailed"),
+    ...TabKey,
+    url: Schema.String,
+    code: Schema.Int,
+    description: Schema.String,
+  }),
 ]);
 export type DesktopBrowserEvent = typeof DesktopBrowserEvent.Type;
 

@@ -11,6 +11,7 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserCommand as DesktopBrowserCommandType,
+  type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -52,6 +53,9 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
+    readonly loadFailure: (
+      key: DesktopTabKey,
+    ) => Effect.Effect<Option.Option<PreviewAutomationLoadError>>;
     readonly endpoint: (key: DesktopTabKey) => Effect.Effect<string, never, Scope.Scope>;
     readonly pointer: (
       key: DesktopTabKey,
@@ -66,6 +70,7 @@ const make = Effect.gen(function* () {
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
+  const loadFailures = new Map<string, PreviewAutomationLoadError>();
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
 
@@ -76,6 +81,7 @@ const make = Effect.gen(function* () {
       detached: Stream.empty,
       attached: Stream.empty,
       isAttached: () => Effect.succeed(false),
+      loadFailure: () => Effect.succeedNone,
       endpoint: () => Effect.die("No desktop app is attached to this server."),
       pointer: () => Effect.void,
     });
@@ -117,8 +123,16 @@ const make = Effect.gen(function* () {
         case "attached":
           attachedTabs.add(id);
           return PubSub.publish(changes, { key, attached: true });
+        case "loadFailed":
+          loadFailures.set(id, {
+            url: event.url.slice(0, 2048),
+            code: event.code,
+            description: event.description,
+          });
+          return Effect.void;
         case "detached": {
           attachedTabs.delete(id);
+          loadFailures.delete(id);
           const queue = inbound.get(id);
           return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
             Effect.andThen(PubSub.publish(changes, { key, attached: false })),
@@ -214,6 +228,7 @@ const make = Effect.gen(function* () {
       Stream.map((change) => change.key),
     ),
     isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),
+    loadFailure: (key) => Effect.sync(() => Option.fromUndefinedOr(loadFailures.get(keyOf(key)))),
     endpoint,
     pointer: (key, pointer) => command({ type: "pointer", ...key, ...pointer }),
   });
