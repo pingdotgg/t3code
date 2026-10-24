@@ -16,6 +16,8 @@ type ChildProcessCommand = {
   readonly args: ReadonlyArray<string>;
   readonly options: {
     readonly shell?: boolean | string;
+    readonly detached?: boolean;
+    readonly windowsHide?: boolean;
   };
 };
 
@@ -114,6 +116,40 @@ describe("runProcess", () => {
       Effect.map((result) => {
         expect(result.stdout).toBe("[]");
       }),
+    );
+  });
+
+  it.effect("starts Git for Windows reads without a console", () => {
+    const spawned: Array<{
+      readonly args: ReadonlyArray<string>;
+      readonly detached: boolean | undefined;
+      readonly windowsHide: boolean | undefined;
+    }> = [];
+    const spawner = makeSpawner((command) =>
+      Effect.sync(() => {
+        spawned.push({
+          args: command.args,
+          detached: command.options.detached,
+          windowsHide: command.options.windowsHide,
+        });
+        return makeHandle({});
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* runWith(spawner)({ command: "git", args: ["rev-parse", "HEAD"] });
+      yield* runWith(spawner)({ command: "git", args: ["status", "--porcelain"] });
+
+      expect(spawned).toStrictEqual([
+        { args: ["rev-parse", "HEAD"], detached: true, windowsHide: true },
+        { args: ["status", "--porcelain"], detached: undefined, windowsHide: undefined },
+      ]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(
+        SpawnExecutableResolution,
+        () => "C:\\Program Files\\Git\\mingw64\\bin\\git.exe",
+      ),
     );
   });
 
