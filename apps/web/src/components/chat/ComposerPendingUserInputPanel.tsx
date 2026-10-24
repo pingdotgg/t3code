@@ -12,6 +12,15 @@ import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
+// A drag can release on the row while the highlight sits in the expanded body.
+// Ignore that click only when the selection meets this card, not the document.
+function pendingQuestionSelectionIntersects(node: Element): boolean {
+  const card = node.closest("[data-slot=collapsible]");
+  const selection = window.getSelection();
+  if (!card || !selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  return selection.getRangeAt(0).intersectsNode(card);
+}
+
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
   cwd: string | undefined;
@@ -123,12 +132,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         autoAdvanceTimerRef.current = null;
       }
     };
-    if (disabled || activeQuestion?.id === undefined) clearAutoAdvance();
+    if (responseDisabled || activeQuestion?.id === undefined) clearAutoAdvance();
     return clearAutoAdvance;
-  }, [activeQuestion?.id, disabled]);
+  }, [activeQuestion?.id, responseDisabled]);
 
   const handleOptionSelection = (questionId: string, optionValue: string) => {
-    if (disabled || isResponding) return;
+    if (responseDisabled) return;
     if (activeQuestion?.multiSelect) {
       onToggleOption(questionId, optionValue);
       return;
@@ -184,12 +193,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         setCollapsedQuestionId(open ? null : activeQuestion.id);
       }}
     >
-      <CollapsibleTrigger
-        render={<ComposerBanner.Row render={<button type="button" />} />}
-        title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
-        }
-        data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
+      <ComposerBanner.Row
+        className="cursor-pointer"
+        onClick={(event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          if (target.closest("[data-pending-user-input-toggle]")) return;
+          if (pendingQuestionSelectionIntersects(event.currentTarget)) return;
+          setCollapsedQuestionId(isCollapsed ? null : activeQuestion.id);
+        }}
       >
         <ComposerBanner.Icon />
         <ComposerBanner.Content>
@@ -197,7 +209,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
+            <span
+              data-pending-user-input-selectable=""
+              className="min-w-0 flex-1 cursor-text truncate text-secondary-label select-text"
+            >
               {activeQuestion.question}
             </span>
           ) : null}
@@ -208,7 +223,27 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               {questionIndex + 1}/{prompt.questions.length}
             </span>
           ) : null}
-          <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
+          <CollapsibleTrigger
+            render={
+              <button
+                type="button"
+                className="cursor-pointer rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              />
+            }
+            aria-label={
+              isCollapsed
+                ? "Show the question and its options"
+                : "Hide the question and its options"
+            }
+            title={
+              isCollapsed
+                ? "Show the question and its options"
+                : "Hide the question and its options"
+            }
+            data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
+          >
+            <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
+          </CollapsibleTrigger>
           {prompt.dismissible ? (
             <ComposerBanner.Dismiss
               render={<span role="button" tabIndex={0} />}
@@ -230,10 +265,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             />
           ) : null}
         </ComposerBanner.Actions>
-      </CollapsibleTrigger>
+      </ComposerBanner.Row>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
-          <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
+          <ComposerBanner.Body
+            className="cursor-text pe-1 pb-1 wrap-anywhere select-text"
+            data-pending-user-input-selectable=""
+          >
             <ChatMarkdown
               text={activeQuestion.question}
               cwd={cwd}
@@ -252,20 +290,25 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const isSelected =
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const shortcutKey = index < 9 ? index + 1 : null;
+                const optionDisabled = responseDisabled;
                 const className = cn(
-                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 select-text focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
                   isSelected
                     ? "bg-muted/55 text-foreground"
                     : "bg-transparent text-foreground/85 hover:bg-muted/30",
-                  (disabled || isResponding) && "opacity-50 cursor-not-allowed",
-                  !disabled && !isResponding && "cursor-pointer",
+                  optionDisabled && "cursor-not-allowed opacity-50",
+                  !optionDisabled && "cursor-pointer",
                 );
                 const content = (
                   <>
-                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="cursor-text text-sm font-medium select-text">
+                        {option.label}
+                      </span>
                       {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-2xs">{option.description}</span>
+                        <span className="cursor-text text-secondary-label text-2xs select-text">
+                          {option.description}
+                        </span>
                       ) : null}
                     </div>
                     {isSelected ? (
@@ -282,17 +325,33 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   </>
                 );
                 return (
-                  <button
+                  <div
                     key={`${activeQuestion.id}:${optionValue}`}
-                    type="button"
-                    disabled={disabled || isResponding}
-                    onClick={() => {
+                    role="button"
+                    tabIndex={optionDisabled ? -1 : 0}
+                    aria-disabled={optionDisabled || undefined}
+                    aria-pressed={isSelected}
+                    data-pending-user-input-option=""
+                    onKeyDown={(event) => {
+                      if (event.repeat || optionDisabled) return;
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      handleOptionSelection(activeQuestion.id, optionValue);
+                    }}
+                    onClick={(event) => {
+                      // A pointer drag that highlighted text is a copy, not a choice.
+                      // Keyboard and assistive clicks (detail 0) still choose the option.
+                      if (
+                        event.detail !== 0 &&
+                        pendingQuestionSelectionIntersects(event.currentTarget)
+                      )
+                        return;
                       handleOptionSelection(activeQuestion.id, optionValue);
                     }}
                     className={className}
                   >
                     {content}
-                  </button>
+                  </div>
                 );
               })}
             </div>

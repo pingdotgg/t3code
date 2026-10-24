@@ -38,6 +38,13 @@ export function isInsideCollapsedComposerControls(target: EventTarget | null): b
   );
 }
 
+/** Question and option copy in the pending-question card. */
+export function isInsidePendingUserInputSelectableText(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element && target.closest("[data-pending-user-input-selectable]") !== null
+  );
+}
+
 export function isInsideRestingComposerControlScope(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
