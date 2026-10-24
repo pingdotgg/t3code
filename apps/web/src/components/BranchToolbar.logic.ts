@@ -1,9 +1,10 @@
-import type {
-  EnvironmentId,
-  EnvironmentMachineKind,
-  VcsRef,
-  ProjectId,
-  WorktreeSubmodules,
+import {
+  GitCommandError,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type VcsRef,
+  type ProjectId,
+  type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
@@ -13,6 +14,17 @@ export {
   deriveLocalBranchNameFromRemoteRef,
   sanitizeNewRefName,
 } from "@t3tools/shared/git";
+
+const isGitCommandError = Schema.is(GitCommandError);
+
+// A toast clamps to a few lines, so Git failures show their sanitized detail
+// rather than the message's operation and cwd prefix.
+export function toBranchActionErrorMessage(error: unknown): string {
+  if (isGitCommandError(error)) {
+    return error.reason === undefined ? error.detail : `${error.detail} (${error.reason})`;
+  }
+  return error instanceof Error ? error.message : "An error occurred.";
+}
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;

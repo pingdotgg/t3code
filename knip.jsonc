@@ -20,12 +20,14 @@
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from t3.json) run directly. release-desktop.yml bundles the
       // Windows verify script with esbuild through a path knip does not trace, and
-      // electron-builder loads the macOS signer by path.
+      // electron-builder loads the macOS signer by path. Maintainers run the
+      // checkout-conflict seed by hand to reproduce a blocked branch switch.
       "entry": [
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
+        "seed-branch-checkout-conflict.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "verify-windows-desktop-artifact.ts",

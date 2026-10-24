@@ -571,6 +571,17 @@ function isMissingWorktreeStderr(stderr: string): boolean {
   );
 }
 
+// Checkout stderr lists the blocking file paths, so only this fixed diagnosis
+// may replace the generic failure message.
+const CHECKOUT_LOCAL_CHANGES_PATTERN =
+  /^error: Your local changes to the following files would be overwritten by checkout:/m;
+
+function checkoutFailureDetail(stderr: string): string {
+  return CHECKOUT_LOCAL_CHANGES_PATTERN.test(stderr)
+    ? "Your local changes would be overwritten by switching branches. Commit, stash, or discard them, then switch again."
+    : "git checkout failed";
+}
+
 // Fetch stderr can contain remote credentials. Only fixed diagnoses may enter
 // persisted errors; unrecognized output keeps the generic failure message.
 function fetchFailureDetail(stderr: string): string | undefined {
@@ -4389,15 +4400,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
 
       // A stale ref must not turn into a path checkout that discards local edits.
-      yield* executeGitWithStableDiagnostics(
+      const checkoutResult = yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.switchRef.checkout",
         input.cwd,
         [...checkoutArgs, "--"],
-        {
-          timeoutMs: 10_000,
-          fallbackErrorDetail: "git checkout failed",
-        },
+        { timeoutMs: 10_000, allowNonZeroExit: true },
       );
+      if (checkoutResult.exitCode !== 0) {
+        const reason = classifyGitFailure(checkoutResult.stderr);
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.switchRef.checkout",
+            cwd: input.cwd,
+            args: [...checkoutArgs, "--"],
+          }),
+          ...(reason === null ? {} : { reason }),
+          detail: checkoutFailureDetail(checkoutResult.stderr),
+          ...(checkoutResult.exitCode === null ? {} : { exitCode: checkoutResult.exitCode }),
+          stdoutLength: checkoutResult.stdout.length,
+          stderrLength: checkoutResult.stderr.length,
+        });
+      }
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
         "branch",
