@@ -50,6 +50,7 @@ import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -2059,10 +2060,16 @@ export const layerWithOptions = (
                 cause,
               });
               yield* Ref.set(entry.eventSubscribers, new Map());
+              // lastError is the thread banner, so it gets the same bounded
+              // message as a failed turn; the raw cause survives only in the log.
+              yield* Effect.logWarning("orchestration-v2.provider-session-runtime-failed", {
+                providerSessionId: entry.runtime.providerSessionId,
+                cause,
+              });
               yield* releaseEntry({
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
-                detail: Cause.pretty(cause),
+                detail: makeProviderFailure({ cause }).message,
               }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
             }),
           ),
