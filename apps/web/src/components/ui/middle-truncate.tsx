@@ -29,14 +29,22 @@ export function MiddleTruncate({
     >
       {split ? (
         <>
-          <span className="min-w-0 truncate">{split.head}</span>
-          <span className="shrink-0">{split.tail}</span>
+          {/* whitespace-pre keeps a space at the cut; flex items would otherwise collapse it. */}
+          {/* whitespace-pre would also keep line breaks, so flatten them to stay on one line. */}
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-pre">
+            {flattenLineBreaks(split.head)}
+          </span>
+          <span className="shrink-0 whitespace-pre">{flattenLineBreaks(split.tail)}</span>
         </>
       ) : (
         <span className="min-w-0 truncate">{value}</span>
       )}
     </span>
   );
+}
+
+function flattenLineBreaks(text: string): string {
+  return text.replace(/[\r\n]/g, " ");
 }
 
 const DEFAULT_TAIL = 10;
