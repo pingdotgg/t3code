@@ -809,3 +809,74 @@ it.effect("admits provider and OAuth client credentials and points only clients 
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.effect("lists browser tools only to credentials that grant the preview capability", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const scopeWith = (
+        token: string,
+        capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
+      ): McpInvocationContext.McpThreadInvocationScope => ({
+        ...invocation,
+        requestNamespace: token,
+        capabilities: new Set(capabilities),
+      });
+      const scopes = new Map([
+        ["browserOff", scopeWith("browserOff", ["orchestration"])],
+        ["browserOn", scopeWith("browserOn", ["orchestration", "preview"])],
+      ]);
+      const serverLayer = McpHttpServer.layerPreviewToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerMcpTransport),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => Effect.succeed(scopes.get(token)),
+          }),
+        ),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(PreviewAutomationBroker.layer),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" }),
+        ),
+        Layer.provide(NodeServices.layer),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const listToolNames = (token: string) =>
+        Effect.gen(function* () {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const list = yield* httpClient.post("/mcp", {
+            headers: {
+              ...headers,
+              "mcp-session-id": initialize.headers["mcp-session-id"]!,
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+              "application/json",
+            ),
+          });
+          const response = decodeJsonText(yield* list.text) as {
+            readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
+          };
+          return response.result.tools.map((tool) => tool.name);
+        });
+
+      expect(yield* listToolNames("browserOff")).toEqual([]);
+      expect(yield* listToolNames("browserOn")).toEqual(
+        expect.arrayContaining(["preview_status", "preview_snapshot"]),
+      );
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
