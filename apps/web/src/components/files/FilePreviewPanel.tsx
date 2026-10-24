@@ -144,7 +144,6 @@ interface FilePreviewPanelProps {
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
-const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
 type FilePostRender = <LAnnotation>(
   fileContainer: HTMLElement,
@@ -1078,11 +1077,10 @@ export default function FilePreviewPanel({
     false,
     Schema.Boolean,
   );
-  const [renderBrowserFilePreferred, setRenderBrowserFilePreferred] = useLocalStorage(
-    RENDER_BROWSER_FILE_STORAGE_KEY,
-    true,
-    Schema.Boolean,
-  );
+  // HTML source view belongs to one document, like attachment previews: the
+  // surface is reused across paths, so the choice is paired with its path and
+  // any other document opens rendered.
+  const [htmlSourcePath, setHtmlSourcePath] = useState<string | null>(null);
   const [renderTablePreferred, setRenderTablePreferred] = useLocalStorage(
     RENDER_TABLE_STORAGE_KEY,
     true,
@@ -1102,7 +1100,7 @@ export default function FilePreviewPanel({
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
-  const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
+  const renderBrowserFile = isPdf || (isHtml && htmlSourcePath !== previewPath && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
   const renderedMode = isMarkdown
     ? ("markdown" as const)
@@ -1124,7 +1122,7 @@ export default function FilePreviewPanel({
     ? setRenderMarkdownPreferred
     : tableDelimiter
       ? setRenderTablePreferred
-      : setRenderBrowserFilePreferred;
+      : (pressed: boolean) => setHtmlSourcePath(pressed ? null : previewPath);
   const canOpenInBrowser =
     canOperatePreview &&
     previewPath !== null &&
