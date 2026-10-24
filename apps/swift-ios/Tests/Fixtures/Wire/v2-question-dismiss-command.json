@@ -1,0 +1,6 @@
+{
+  "type": "thread.user-input.dismiss",
+  "commandId": "command-v2-question-dismiss",
+  "threadId": "thread-v2",
+  "requestId": "request-v2-input"
+}

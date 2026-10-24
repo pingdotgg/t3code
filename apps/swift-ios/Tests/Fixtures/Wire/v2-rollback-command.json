@@ -1,0 +1,8 @@
+{
+  "type": "checkpoint.rollback",
+  "restoreFiles": true,
+  "commandId": "command-v2-rollback",
+  "threadId": "thread-v2",
+  "scopeId": "scope-v2",
+  "checkpointId": "checkpoint-v2"
+}

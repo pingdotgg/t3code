@@ -1,0 +1,7 @@
+{
+  "type": "runtime-request.respond",
+  "commandId": "command-v2-approval",
+  "threadId": "thread-v2",
+  "requestId": "request-v2-approval",
+  "decision": "accept"
+}

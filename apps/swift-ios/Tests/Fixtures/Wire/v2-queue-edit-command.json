@@ -1,0 +1,26 @@
+{
+  "type": "queued-run.edit",
+  "commandId": "command-v2-queue-edit",
+  "threadId": "thread-v2",
+  "runId": "run-v2-queued",
+  "text": "Verify both history pages.",
+  "attachments": [
+    {
+      "type": "image",
+      "id": "attachment-v2-image",
+      "name": "screenshot.png",
+      "mimeType": "image/png",
+      "sizeBytes": 128
+    },
+    {
+      "type": "file",
+      "id": "attachment-v2-file",
+      "name": "requirements.txt",
+      "mimeType": "text/plain",
+      "sizeBytes": 256,
+      "source": {
+        "_tag": "pasted-text"
+      }
+    }
+  ]
+}

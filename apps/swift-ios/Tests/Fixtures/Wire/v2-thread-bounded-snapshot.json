@@ -1,0 +1,1059 @@
+{
+  "snapshotSequence": 100,
+  "projection": {
+    "thread": {
+      "createdBy": "user",
+      "creationSource": "mobile",
+      "id": "thread-v2",
+      "projectId": "project-v2",
+      "title": "Verify native V2 support",
+      "providerInstanceId": "codex",
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-5.4"
+      },
+      "runtimeMode": "approval-required",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": null,
+      "activeProviderThreadId": "provider-thread-v2",
+      "lineage": {
+        "parentThreadId": null,
+        "relationshipToParent": null,
+        "rootThreadId": "thread-v2"
+      },
+      "forkedFrom": null,
+      "createdAt": "2026-08-07T12:00:00.000Z",
+      "updatedAt": "2026-08-07T12:00:00.000Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "autoSettleDisabledAt": "2026-08-07T12:00:00.000Z",
+      "activeOrderKey": "nm",
+      "lastVisitedAt": null,
+      "deletedAt": null
+    },
+    "runs": [
+      {
+        "id": "run-v2-history",
+        "threadId": "thread-v2",
+        "ordinal": 1,
+        "providerInstanceId": "codex",
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5.4"
+        },
+        "providerThreadId": "provider-thread-v2",
+        "userMessageId": "message-v2-history-user",
+        "rootNodeId": "node-v2-history",
+        "activeAttemptId": null,
+        "status": "completed",
+        "requestedAt": "2026-08-07T12:00:00.000Z",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "checkpointId": "checkpoint-v2",
+        "contextHandoffId": null
+      },
+      {
+        "id": "run-v2-active",
+        "threadId": "thread-v2",
+        "ordinal": 2,
+        "providerInstanceId": "codex",
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5.4"
+        },
+        "providerThreadId": "provider-thread-v2",
+        "userMessageId": "message-v2-user",
+        "rootNodeId": "node-v2-root",
+        "activeAttemptId": "attempt-v2",
+        "status": "waiting",
+        "requestedAt": "2026-08-07T12:00:00.000Z",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null,
+        "checkpointId": null,
+        "contextHandoffId": null
+      },
+      {
+        "id": "run-v2-queued",
+        "threadId": "thread-v2",
+        "ordinal": 3,
+        "providerInstanceId": "codex",
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5.4"
+        },
+        "providerThreadId": "provider-thread-v2",
+        "userMessageId": "message-v2-queued",
+        "rootNodeId": null,
+        "activeAttemptId": null,
+        "status": "queued",
+        "queuePosition": 1,
+        "queueHeld": true,
+        "requestedAt": "2026-08-07T12:00:00.000Z",
+        "startedAt": null,
+        "completedAt": null,
+        "checkpointId": null,
+        "contextHandoffId": null
+      }
+    ],
+    "attempts": [
+      {
+        "id": "attempt-v2",
+        "runId": "run-v2-active",
+        "attemptOrdinal": 1,
+        "rootNodeId": "node-v2-root",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "reason": "initial",
+        "status": "running",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null
+      }
+    ],
+    "nodes": [
+      {
+        "id": "node-v2-root",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "parentNodeId": null,
+        "rootNodeId": "node-v2-root",
+        "kind": "root_turn",
+        "status": "waiting",
+        "countsForRun": true,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "runtimeRequestId": null,
+        "checkpointScopeId": "scope-v2-active",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null
+      },
+      {
+        "id": "node-v2-history",
+        "threadId": "thread-v2",
+        "runId": "run-v2-history",
+        "parentNodeId": null,
+        "rootNodeId": "node-v2-history",
+        "kind": "root_turn",
+        "status": "completed",
+        "countsForRun": true,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "runtimeRequestId": null,
+        "checkpointScopeId": "scope-v2",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z"
+      },
+      {
+        "id": "node-v2-approval",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "parentNodeId": "node-v2-root",
+        "rootNodeId": "node-v2-root",
+        "kind": "approval_request",
+        "status": "waiting",
+        "countsForRun": true,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "runtimeRequestId": "request-v2-approval",
+        "checkpointScopeId": "scope-v2-active",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null
+      },
+      {
+        "id": "node-v2-input",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "parentNodeId": "node-v2-root",
+        "rootNodeId": "node-v2-root",
+        "kind": "user_input_request",
+        "status": "waiting",
+        "countsForRun": true,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "runtimeRequestId": "request-v2-input",
+        "checkpointScopeId": "scope-v2-active",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null
+      },
+      {
+        "id": "node-v2-plan",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "parentNodeId": "node-v2-root",
+        "rootNodeId": "node-v2-root",
+        "kind": "todo_list",
+        "status": "running",
+        "countsForRun": true,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "runtimeRequestId": null,
+        "checkpointScopeId": "scope-v2-active",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null
+      }
+    ],
+    "subagents": [],
+    "providerSessions": [
+      {
+        "id": "provider-session-v2",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "status": "waiting",
+        "cwd": "/workspace/fixture",
+        "model": "gpt-5.4",
+        "capabilities": {
+          "sessions": {
+            "supportsMultipleProviderThreadsPerSession": true,
+            "supportsModelSwitchInSession": true,
+            "supportsProviderSwitchingViaHandoff": true,
+            "supportsRuntimeModeSwitchInSession": true,
+            "pendingRequestsSurviveRestart": false
+          },
+          "threads": {
+            "canCreateEmptyThread": true,
+            "canReadThreadSnapshot": true,
+            "canRollbackThread": true,
+            "canForkThread": true,
+            "canForkFromTurn": true,
+            "canForkFromSubagentThread": false,
+            "exposesNativeThreadId": true
+          },
+          "turns": {
+            "exposesNativeTurnId": true,
+            "emitsTurnStarted": true,
+            "emitsTurnCompleted": true,
+            "supportsInterrupt": true,
+            "supportsActiveSteering": true,
+            "supportsSteeringByInterruptRestart": true,
+            "supportsQueuedMessages": true,
+            "terminalStatusQuality": "strong"
+          },
+          "streaming": {
+            "streamsAssistantText": true,
+            "streamsReasoning": true,
+            "streamsToolOutput": true,
+            "streamsPlanText": true,
+            "emitsMessageCompleted": true
+          },
+          "tools": {
+            "exposesToolItemIds": true,
+            "emitsToolStarted": true,
+            "emitsToolCompleted": true,
+            "emitsToolOutput": true,
+            "supportsMcpTools": true,
+            "supportsDynamicToolCallbacks": true
+          },
+          "approvals": {
+            "supportsCommandApproval": true,
+            "supportsFileReadApproval": true,
+            "supportsFileChangeApproval": true,
+            "supportsApplyPatchApproval": true,
+            "approvalsHaveNativeRequestIds": true,
+            "approvalCallbacksAreLiveOnly": true,
+            "approvalsCanOriginateFromSubagents": false
+          },
+          "planning": {
+            "emitsPlanUpdated": true,
+            "emitsTodoList": true,
+            "emitsProposedPlan": true,
+            "supportsStructuredQuestions": true,
+            "planDeltasHaveItemIds": true
+          },
+          "subagents": {
+            "supportsSubagents": true,
+            "exposesSubagentThreadIds": true,
+            "emitsSubagentLifecycle": true,
+            "canWaitForSubagents": true,
+            "canCloseSubagents": true,
+            "canForkSubagentThread": false
+          },
+          "context": {
+            "acceptsSystemContext": true,
+            "acceptsDeveloperContext": true,
+            "acceptsSyntheticUserContext": true,
+            "canGenerateSummaries": true,
+            "canConsumeHandoffSummaries": true,
+            "supportsDeltaHandoff": true,
+            "supportsFullThreadHandoff": true,
+            "maxRecommendedHandoffChars": null
+          },
+          "checkpointing": {
+            "appCanCheckpointFilesystem": true,
+            "supportsNestedCheckpointScopes": true,
+            "providerCanRollbackConversation": true,
+            "providerRollbackReturnsSnapshot": true,
+            "providerCanReadConversationSnapshot": true
+          },
+          "identity": {
+            "nativeThreadIds": "strong",
+            "nativeTurnIds": "strong",
+            "nativeItemIds": "strong",
+            "nativeRequestIds": "strong"
+          },
+          "runtimePolicy": {
+            "enforcement": "native"
+          }
+        },
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "lastError": null
+      }
+    ],
+    "providerThreads": [
+      {
+        "id": "provider-thread-v2",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session-v2",
+        "appThreadId": "thread-v2",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "native-thread-v2",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 2,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "pendingBackgroundTasks": [],
+        "contextUsage": null,
+        "nativeMetadata": null,
+        "goal": null,
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z"
+      }
+    ],
+    "providerTurns": [
+      {
+        "id": "provider-turn-v2",
+        "providerThreadId": "provider-thread-v2",
+        "nodeId": "node-v2-root",
+        "runAttemptId": "attempt-v2",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "native-turn-v2",
+          "strength": "strong"
+        },
+        "ordinal": 2,
+        "status": "running",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 1280,
+          "maxTokens": 128000,
+          "inputTokens": 1200,
+          "outputTokens": 80,
+          "updatedAt": "2026-08-07T12:00:00.000Z"
+        }
+      }
+    ],
+    "runtimeRequests": [
+      {
+        "id": "request-v2-approval",
+        "nodeId": "node-v2-approval",
+        "providerTurnId": "provider-turn-v2",
+        "nativeRequestRef": null,
+        "kind": "command",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session-v2"
+        },
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "resolvedAt": null
+      },
+      {
+        "id": "request-v2-input",
+        "nodeId": "node-v2-input",
+        "providerTurnId": "provider-turn-v2",
+        "nativeRequestRef": null,
+        "kind": "user_input",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session-v2"
+        },
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "resolvedAt": null
+      }
+    ],
+    "messages": [
+      {
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "id": "message-v2-user",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": null,
+        "role": "user",
+        "text": "Verify the native wire contract with these attachments.",
+        "attachments": [
+          {
+            "type": "image",
+            "id": "attachment-v2-image",
+            "name": "screenshot.png",
+            "mimeType": "image/png",
+            "sizeBytes": 128
+          },
+          {
+            "type": "file",
+            "id": "attachment-v2-file",
+            "name": "requirements.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 256,
+            "source": {
+              "_tag": "pasted-text"
+            }
+          }
+        ],
+        "streaming": false,
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z"
+      },
+      {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message-v2-assistant",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "role": "assistant",
+        "text": "I checked the contracts.",
+        "attachments": [],
+        "streaming": true,
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z"
+      },
+      {
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "id": "message-v2-queued",
+        "threadId": "thread-v2",
+        "runId": "run-v2-queued",
+        "nodeId": null,
+        "role": "user",
+        "text": "Also verify the history page.",
+        "attachments": [
+          {
+            "type": "file",
+            "id": "attachment-v2-file",
+            "name": "requirements.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 256,
+            "source": {
+              "_tag": "pasted-text"
+            }
+          }
+        ],
+        "streaming": false,
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z"
+      }
+    ],
+    "plans": [
+      {
+        "id": "plan-v2",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-plan",
+        "status": "active",
+        "kind": "todo_list",
+        "steps": [
+          {
+            "id": "read",
+            "text": "Read contracts",
+            "status": "completed",
+            "durationMs": 250
+          },
+          {
+            "id": "verify",
+            "text": "Verify Swift fixtures",
+            "status": "running",
+            "durationAnchorAt": "2026-08-07T12:00:00.000Z"
+          }
+        ]
+      }
+    ],
+    "turnItems": [
+      {
+        "id": "item-v2-user",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": null,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 10,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "type": "user_message",
+        "messageId": "message-v2-user",
+        "inputIntent": "turn_start",
+        "text": "Verify the native wire contract with these attachments.",
+        "attachments": [
+          {
+            "type": "image",
+            "id": "attachment-v2-image",
+            "name": "screenshot.png",
+            "mimeType": "image/png",
+            "sizeBytes": 128
+          },
+          {
+            "type": "file",
+            "id": "attachment-v2-file",
+            "name": "requirements.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 256,
+            "source": {
+              "_tag": "pasted-text"
+            }
+          }
+        ]
+      },
+      {
+        "id": "item-v2-reasoning",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 11,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "reasoning",
+        "text": "Check the snapshot, then apply incremental events.",
+        "streaming": false
+      },
+      {
+        "id": "item-v2-tool",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 12,
+        "status": "completed",
+        "title": "Read contracts",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "command_execution",
+        "input": "cat packages/contracts/src/orchestrationV2.ts",
+        "output": "export const OrchestrationV2ThreadProjection = Schema.Struct({...});",
+        "exitCode": 0
+      },
+      {
+        "id": "item-v2-assistant",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 13,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message-v2-assistant",
+        "text": "I checked the contracts.",
+        "streaming": true
+      },
+      {
+        "id": "item-v2-approval",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-approval",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 14,
+        "status": "waiting",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "approval_request",
+        "requestId": "request-v2-approval",
+        "requestKind": "command",
+        "prompt": "Run the focused wire fixture checks?",
+        "options": [
+          {
+            "decision": "accept",
+            "label": "Allow once"
+          },
+          {
+            "decision": "decline",
+            "label": "Decline"
+          }
+        ]
+      },
+      {
+        "id": "item-v2-input",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-input",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 15,
+        "status": "waiting",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "user_input_request",
+        "requestId": "request-v2-input",
+        "questions": [
+          {
+            "id": "scope",
+            "header": "Scope",
+            "question": "Which clients should be checked?",
+            "options": [
+              {
+                "label": "SwiftUI mobile",
+                "description": "Check the native iOS client.",
+                "value": "swift"
+              }
+            ],
+            "multiSelect": false,
+            "allowCustomAnswer": true,
+            "required": true
+          }
+        ]
+      },
+      {
+        "id": "item-v2-plan",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-plan",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 16,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "todo_list",
+        "planId": "plan-v2",
+        "steps": [
+          {
+            "id": "read",
+            "text": "Read contracts",
+            "status": "completed",
+            "durationMs": 250
+          },
+          {
+            "id": "verify",
+            "text": "Verify Swift fixtures",
+            "status": "running",
+            "durationAnchorAt": "2026-08-07T12:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "id": "item-v2-queued",
+        "threadId": "thread-v2",
+        "runId": "run-v2-queued",
+        "nodeId": null,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 17,
+        "status": "pending",
+        "title": null,
+        "startedAt": null,
+        "completedAt": null,
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "type": "user_message",
+        "messageId": "message-v2-queued",
+        "inputIntent": "queued_turn",
+        "text": "Also verify the history page.",
+        "attachments": [
+          {
+            "type": "file",
+            "id": "attachment-v2-file",
+            "name": "requirements.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 256,
+            "source": {
+              "_tag": "pasted-text"
+            }
+          }
+        ]
+      }
+    ],
+    "checkpointScopes": [
+      {
+        "id": "scope-v2",
+        "threadId": "thread-v2",
+        "runId": "run-v2-history",
+        "nodeId": "node-v2-history",
+        "parentScopeId": null,
+        "providerThreadId": "provider-thread-v2",
+        "kind": "root_run",
+        "ordinalWithinParent": 0,
+        "advancesAppRunCount": true,
+        "cwd": "/workspace/fixture",
+        "createdAt": "2026-08-07T12:00:00.000Z"
+      },
+      {
+        "id": "scope-v2-active",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "parentScopeId": null,
+        "providerThreadId": "provider-thread-v2",
+        "kind": "root_run",
+        "ordinalWithinParent": 0,
+        "advancesAppRunCount": true,
+        "cwd": "/workspace/fixture",
+        "createdAt": "2026-08-07T12:00:00.000Z"
+      }
+    ],
+    "checkpoints": [
+      {
+        "id": "checkpoint-v2",
+        "threadId": "thread-v2",
+        "scopeId": "scope-v2",
+        "runId": "run-v2-history",
+        "nodeId": "node-v2-history",
+        "parentCheckpointId": null,
+        "ordinalWithinScope": 0,
+        "appRunOrdinal": 1,
+        "ref": "refs/t3/checkpoints/fixture-v2",
+        "status": "ready",
+        "files": [
+          {
+            "path": "Sources/Core/Wire.swift",
+            "kind": "modified",
+            "additions": 8,
+            "deletions": 2
+          }
+        ],
+        "capturedAt": "2026-08-07T12:00:00.000Z"
+      }
+    ],
+    "contextHandoffs": [],
+    "contextTransfers": [],
+    "visibleTurnItems": [
+      {
+        "position": 0,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-user",
+        "item": {
+          "id": "item-v2-user",
+          "threadId": "thread-v2",
+          "runId": "run-v2-active",
+          "nodeId": null,
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 10,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-08-07T12:00:00.000Z",
+          "completedAt": "2026-08-07T12:00:00.000Z",
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "createdBy": "user",
+          "creationSource": "mobile",
+          "type": "user_message",
+          "messageId": "message-v2-user",
+          "inputIntent": "turn_start",
+          "text": "Verify the native wire contract with these attachments.",
+          "attachments": [
+            {
+              "type": "image",
+              "id": "attachment-v2-image",
+              "name": "screenshot.png",
+              "mimeType": "image/png",
+              "sizeBytes": 128
+            },
+            {
+              "type": "file",
+              "id": "attachment-v2-file",
+              "name": "requirements.txt",
+              "mimeType": "text/plain",
+              "sizeBytes": 256,
+              "source": {
+                "_tag": "pasted-text"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "position": 1,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-reasoning",
+        "item": {
+          "id": "item-v2-reasoning",
+          "threadId": "thread-v2",
+          "runId": "run-v2-active",
+          "nodeId": "node-v2-root",
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 11,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-08-07T12:00:00.000Z",
+          "completedAt": "2026-08-07T12:00:00.000Z",
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "type": "reasoning",
+          "text": "Check the snapshot, then apply incremental events.",
+          "streaming": false
+        }
+      },
+      {
+        "position": 2,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-tool",
+        "item": {
+          "id": "item-v2-tool",
+          "threadId": "thread-v2",
+          "runId": "run-v2-active",
+          "nodeId": "node-v2-root",
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 12,
+          "status": "completed",
+          "title": "Read contracts",
+          "startedAt": "2026-08-07T12:00:00.000Z",
+          "completedAt": "2026-08-07T12:00:00.000Z",
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "type": "command_execution",
+          "input": "cat packages/contracts/src/orchestrationV2.ts",
+          "output": "export const OrchestrationV2ThreadProjection = Schema.Struct({...});",
+          "exitCode": 0
+        }
+      },
+      {
+        "position": 3,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-assistant",
+        "item": {
+          "id": "item-v2-assistant",
+          "threadId": "thread-v2",
+          "runId": "run-v2-active",
+          "nodeId": "node-v2-root",
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 13,
+          "status": "running",
+          "title": null,
+          "startedAt": "2026-08-07T12:00:00.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "type": "assistant_message",
+          "messageId": "message-v2-assistant",
+          "text": "I checked the contracts.",
+          "streaming": true
+        }
+      },
+      {
+        "position": 4,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-approval",
+        "item": {
+          "id": "item-v2-approval",
+          "threadId": "thread-v2",
+          "runId": "run-v2-active",
+          "nodeId": "node-v2-approval",
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 14,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-08-07T12:00:00.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "type": "approval_request",
+          "requestId": "request-v2-approval",
+          "requestKind": "command",
+          "prompt": "Run the focused wire fixture checks?",
+          "options": [
+            {
+              "decision": "accept",
+              "label": "Allow once"
+            },
+            {
+              "decision": "decline",
+              "label": "Decline"
+            }
+          ]
+        }
+      },
+      {
+        "position": 5,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-input",
+        "item": {
+          "id": "item-v2-input",
+          "threadId": "thread-v2",
+          "runId": "run-v2-active",
+          "nodeId": "node-v2-input",
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 15,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-08-07T12:00:00.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "type": "user_input_request",
+          "requestId": "request-v2-input",
+          "questions": [
+            {
+              "id": "scope",
+              "header": "Scope",
+              "question": "Which clients should be checked?",
+              "options": [
+                {
+                  "label": "SwiftUI mobile",
+                  "description": "Check the native iOS client.",
+                  "value": "swift"
+                }
+              ],
+              "multiSelect": false,
+              "allowCustomAnswer": true,
+              "required": true
+            }
+          ]
+        }
+      },
+      {
+        "position": 6,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-plan",
+        "item": {
+          "id": "item-v2-plan",
+          "threadId": "thread-v2",
+          "runId": "run-v2-active",
+          "nodeId": "node-v2-plan",
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 16,
+          "status": "running",
+          "title": null,
+          "startedAt": "2026-08-07T12:00:00.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "type": "todo_list",
+          "planId": "plan-v2",
+          "steps": [
+            {
+              "id": "read",
+              "text": "Read contracts",
+              "status": "completed",
+              "durationMs": 250
+            },
+            {
+              "id": "verify",
+              "text": "Verify Swift fixtures",
+              "status": "running",
+              "durationAnchorAt": "2026-08-07T12:00:00.000Z"
+            }
+          ]
+        }
+      },
+      {
+        "position": 7,
+        "visibility": "local",
+        "sourceThreadId": "thread-v2",
+        "sourceItemId": "item-v2-queued",
+        "item": {
+          "id": "item-v2-queued",
+          "threadId": "thread-v2",
+          "runId": "run-v2-queued",
+          "nodeId": null,
+          "providerThreadId": "provider-thread-v2",
+          "providerTurnId": "provider-turn-v2",
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 17,
+          "status": "pending",
+          "title": null,
+          "startedAt": null,
+          "completedAt": null,
+          "updatedAt": "2026-08-07T12:00:00.000Z",
+          "createdBy": "user",
+          "creationSource": "mobile",
+          "type": "user_message",
+          "messageId": "message-v2-queued",
+          "inputIntent": "queued_turn",
+          "text": "Also verify the history page.",
+          "attachments": [
+            {
+              "type": "file",
+              "id": "attachment-v2-file",
+              "name": "requirements.txt",
+              "mimeType": "text/plain",
+              "sizeBytes": 256,
+              "source": {
+                "_tag": "pasted-text"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "updatedAt": "2026-08-07T12:00:00.000Z"
+  },
+  "historyCursor": "fixture-v2-before-10",
+  "hasMoreHistory": true,
+  "latestLocalTurnOrdinal": 17
+}
