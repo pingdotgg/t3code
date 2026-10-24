@@ -122,6 +122,34 @@ const layerTest = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect("signs Azure attachments and refuses arbitrary URLs or tampered capabilities", () =>
+    Effect.gen(function* () {
+      const url =
+        "https://dev.azure.com/org/project/_apis/git/repositories/repo/pullRequests/42/attachments/demo.gif";
+      const signed = yield* issueAssetUrl({
+        resource: { _tag: "azure-devops-media", cwd: "/repo", url },
+      });
+      const suffix = signed.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const slash = suffix.indexOf("/");
+      const token = suffix.slice(0, slash);
+      const name = suffix.slice(slash + 1);
+      expect(yield* resolveAsset(token, name)).toEqual({
+        kind: "azure-devops-media",
+        cwd: "/repo",
+        url,
+        expiresAt: signed.expiresAt,
+      });
+      expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "azure-devops-media",
+          cwd: "/repo",
+          url: "https://example.test/private.gif",
+        },
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetAzureDevOpsMediaUrlValidationError");
+    }).pipe(Effect.provide(layerTest)),
+  );
   describe("readMcpAppHtml", () => {
     it.effect("accepts snapshots at the stored HTML byte limit", () =>
       Effect.gen(function* () {

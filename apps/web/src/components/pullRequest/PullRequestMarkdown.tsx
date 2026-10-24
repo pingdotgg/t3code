@@ -4,12 +4,8 @@ import {
   sourceControlClients,
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
-import {
-  SOURCE_CONTROL_MEDIA_ASSET,
-  type AssetResource,
-  type EnvironmentId,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
+import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -26,22 +22,19 @@ export const PullRequestMarkdownContext = createContext<{
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
-function PullRequestHostVideo({
+function PullRequestAssetVideo({
   environmentId,
-  cwd,
   url,
-  fetchUrl,
+  resource,
 }: {
   environmentId: EnvironmentId;
-  cwd: string;
   url: string;
-  fetchUrl: string;
+  resource: Extract<AssetResource, { _tag: "github-media" | "azure-devops-media" }>;
 }) {
-  const resource: AssetResource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: fetchUrl };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
-    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
+    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? resource.url : null;
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
@@ -98,14 +91,15 @@ export function PullRequestMarkdown({
           );
         }
         const hostMedia = sourceControlClients.mediaUrl(segment.url);
-        if (segment.media === "video" && hostMedia !== null) {
+        const resource =
+          segment.media === "video" ? pullRequestMediaResource(segment.url, cwd) : null;
+        if (resource !== null) {
           return (
-            <PullRequestHostVideo
+            <PullRequestAssetVideo
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
-              cwd={cwd}
               url={segment.url}
-              fetchUrl={hostMedia.fetchUrl}
+              resource={resource}
             />
           );
         }

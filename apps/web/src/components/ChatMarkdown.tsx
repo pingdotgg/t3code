@@ -49,6 +49,7 @@ import {
   type ServerProviderSkill,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
+import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -105,8 +106,8 @@ import {
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
-import { markdownImageGallery } from "./chat/markdownImageGallery";
-import { type MediaActionSource } from "./media/MediaActions";
+import { markdownImageGallery, resolveMarkdownImageGallery } from "./chat/markdownImageGallery";
+import type { MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import {
   revealInFileExplorerLabelForKind,
@@ -472,7 +473,7 @@ function useChatMarkdownState({
   } | null>(null);
   const localMediaPreview = localMedia?.scope === mediaScopeKey ? localMedia.preview : null;
   const closeLocalMediaPreview = () => setLocalMedia(null);
-  const expandMedia =
+  const showExpandedMedia =
     onImageExpand ??
     ((preview: ExpandedImagePreview) => setLocalMedia({ scope: mediaScopeKey, preview }));
   const [mediaScope, setMediaScope] = useState(mediaScopeKey);
@@ -505,6 +506,36 @@ function useChatMarkdownState({
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
+  const expandMedia = (preview: ExpandedImagePreview) => {
+    if (!sourceControlMedia) {
+      showExpandedMedia(preview);
+      return;
+    }
+    const requestId = ++mediaRequestId.current;
+    void resolveMarkdownImageGallery(preview, {
+      cwd,
+      threadRef,
+      environmentId: environmentId ?? undefined,
+      sourceControlMedia,
+      httpBaseUrl:
+        environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
+      createAssetUrl,
+    }).then(
+      (resolved) => {
+        if (mediaRequestId.current === requestId) showExpandedMedia(resolved);
+      },
+      () => {
+        if (mediaRequestId.current === requestId)
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Media unavailable",
+              description: "Reconnect to this environment and open the media again.",
+            }),
+          );
+      },
+    );
+  };
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
@@ -522,6 +553,8 @@ function useChatMarkdownState({
       resolvedFilePath,
       cwd,
       threadRef,
+      environmentId: environmentId ?? undefined,
+      sourceControlMedia,
       // Read at click time: a reconnect replaces the prepared connection, and
       // subscribing would hand every rendered markdown element a new context.
       httpBaseUrl:
@@ -1387,22 +1420,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
-    const hostMediaUrl =
-      directUri === null
+    const mediaResource =
+      directUri === null || cwd === undefined
         ? null
-        : (sourceControlClients.mediaUrl(resolveProtocolRelativeMediaUrl(directUri))?.fetchUrl ??
-          null);
+        : pullRequestMediaResource(resolveProtocolRelativeMediaUrl(directUri), cwd);
     if (
       sourceControlMedia &&
       cwd !== undefined &&
       environmentId !== null &&
       directUri !== null &&
-      hostMediaUrl !== null
+      mediaResource !== null
     ) {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: hostMediaUrl }}
+          resource={mediaResource}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
@@ -1413,7 +1445,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           framed={false}
-          fallbackSrc={hostMediaUrl}
+          fallbackSrc={mediaResource.url}
           onImageExpand={imageExpand}
         />
       );
