@@ -154,6 +154,7 @@ export function createAssetEnvironmentAtoms<R, E>(
         error._tag === "AssetWorkspaceContextNotFoundError"
       ) ||
       resource._tag !== "media-file" ||
+      resource.hostOnly ||
       !(resource.path.startsWith("/") || isWindowsAbsolutePath(resource.path)) ||
       mediaMimeTypeFromExtension(resource.path.slice(resource.path.lastIndexOf("."))) === null
     )

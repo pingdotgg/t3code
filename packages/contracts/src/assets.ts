@@ -25,6 +25,9 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    // Authored relative to a document on the thread's host, so only that host may serve it.
+    // Clients read it; servers ignore it.
+    hostOnly: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

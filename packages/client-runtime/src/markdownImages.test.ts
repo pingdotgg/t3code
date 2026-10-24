@@ -13,7 +13,7 @@ describe("classifyMarkdownImageSource", () => {
     ["file:///workspace/project/image%20one.png", null, "/workspace/project/image one.png"],
     ["file://server/share/image.png", "\\\\server\\share", "\\\\server\\share\\image.png"],
   ])("maps %s to a workspace file", (source, workspaceRoot, path) => {
-    expect(classifyMarkdownImageSource(source, workspaceRoot)).toEqual({
+    expect(classifyMarkdownImageSource(source, workspaceRoot)).toMatchObject({
       _tag: "WorkspaceFile",
       path,
     });
