@@ -11,6 +11,7 @@ import {
   ProviderTurnId,
   ThreadId,
   TurnItemId,
+  type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -18,14 +19,19 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -407,7 +413,10 @@ const composerSelection = {
 
 const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function* (
   name: string,
-  canRestart = false,
+  {
+    canRestart = false,
+    activeSteeringInterruptsTools = false,
+  }: { canRestart?: boolean; activeSteeringInterruptsTools?: boolean } = {},
 ) {
   const cwd = yield* checkpointWorkspace(name);
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -419,6 +428,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
       ...CodexProviderCapabilitiesV2.turns,
       supportsActiveSteering: true,
       supportsSteeringByInterruptRestart: canRestart,
+      activeSteeringInterruptsTools,
     },
   };
   const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
@@ -500,10 +510,16 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
         };
       }),
   };
-  const layer = ProviderReplayHarness.layerWithRegistry(
+  const databaseLayer = SqlitePersistence.layerMemory;
+  const layerRuntime = ProviderReplayHarness.layerWithRegistry(
     { name },
     ProviderAdapterRegistry.layerSingle(adapter),
-    { runEffectWorker: false },
+    { runEffectWorker: false, databaseLayer },
+  );
+  const layer = ThreadManagement.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer))),
+    Layer.provideMerge(layerRuntime),
   );
   const startFirstTurn = Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -549,6 +565,131 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   });
   return { events, started, steered, layer, startFirstTurn };
 });
+
+const sendUpdate = Effect.fn("sendUpdate")(function* (
+  threadId: ThreadId,
+  createdBy: "agent" | "user",
+  mode: "auto" | "steer",
+  attachments: ReadonlyArray<ChatAttachment> = [],
+) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const result = yield* threads.sendToThread({
+    projectId: (yield* orchestrator.getThreadProjection(threadId)).thread.projectId,
+    commandId: CommandId.make("update"),
+    threadId,
+    messageId: MessageId.make("message:update"),
+    text: "progress update",
+    attachments,
+    mode,
+    createdBy,
+    creationSource: createdBy === "agent" ? "mcp" : "web",
+  });
+  yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+  return result;
+});
+
+const imageAttachment: ChatAttachment = {
+  type: "image",
+  id: "attachment-1",
+  name: "screen.png",
+  mimeType: "image/png",
+  sizeBytes: 1,
+};
+
+it.effect.each([
+  { mode: "auto", attachments: [] },
+  { mode: "steer", attachments: [] },
+  // Steering an image natively would still cancel the running tool.
+  { mode: "auto", attachments: [imageAttachment] },
+  { mode: "steer", attachments: [imageAttachment] },
+] as const)(
+  "queues an agent $mode update behind a turn whose steering cancels tools (attachments=$attachments.length)",
+  ({ mode, attachments }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { events, started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          `agent-update-queued-${mode}-${attachments.length}`,
+          { activeSteeringInterruptsTools: true },
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          const first = started[0]!;
+          const result = yield* sendUpdate(threadId, "agent", mode, attachments);
+          assert.equal(result.delivery, "queued");
+          assert.deepEqual(steered, []);
+          const pending = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(pending.runs.find((run) => run.id === first.runId)?.status, "running");
+
+          const completed = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === first.runId &&
+                event.payload.status === "waiting",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          const turn = pending.providerTurns[0]!;
+          yield* Queue.offer(events, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+          });
+          yield* Queue.offer(events, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: turn.providerThreadId,
+            providerTurnId: turn.id,
+            runOrdinal: first.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* Fiber.join(completed);
+          yield* worker.drain();
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          assert.deepEqual(
+            started.map((input) => input.message.messageId),
+            [MessageId.make("message:first"), MessageId.make("message:update")],
+          );
+          assert.deepEqual(steered, []);
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+);
+
+it.effect.each([
+  { createdBy: "user", activeSteeringInterruptsTools: true },
+  { createdBy: "agent", activeSteeringInterruptsTools: false },
+] as const)(
+  "steers an update from $createdBy when steering is allowed (interruptsTools=$activeSteeringInterruptsTools)",
+  ({ createdBy, activeSteeringInterruptsTools }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          `update-steered-${createdBy}-${activeSteeringInterruptsTools}`,
+          { activeSteeringInterruptsTools },
+        );
+        yield* Effect.gen(function* () {
+          const threadId = yield* startFirstTurn;
+          const result = yield* sendUpdate(
+            threadId,
+            createdBy,
+            createdBy === "agent" ? "auto" : "steer",
+          );
+          assert.equal(result.delivery, "steered");
+          assert.deepEqual(steered, ["progress update"]);
+          assert.equal(started.length, 1);
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+);
 
 it.effect("sends a selected held message once and preserves the remaining queue order", () =>
   Effect.scoped(
@@ -691,7 +832,7 @@ it.effect(
       Effect.gen(function* () {
         const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
           "steering-selection-change",
-          true,
+          { canRestart: true },
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1051,4 +1192,40 @@ it.effect("queues a plain send behind the stopped queue and releases its hold", 
       }).pipe(Effect.provide(layer));
     }),
   ),
+);
+
+it.effect.each(["auto", "steer"] as const)(
+  "rejects an agent %s update after Stop instead of queueing it behind the stopped run",
+  (mode) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          `agent-update-after-stop-${mode}`,
+          { activeSteeringInterruptsTools: true },
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make("stop"),
+            threadId,
+            runId: started[0]!.runId,
+            holdQueue: true,
+          });
+          // Nothing was queued before Stop, so a queued update would have no hold
+          // and would start on its own once the provider stops.
+          const error = yield* sendUpdate(threadId, "agent", mode).pipe(Effect.flip);
+          yield* worker.drain();
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(error._tag, "OrchestratorDispatchError");
+          assert.include(String(error.cause), "stopping");
+          assert.deepEqual(steered, []);
+          assert.equal(started.length, 1);
+          assert.isFalse(projection.runs.some((run) => run.status === "queued"));
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
 );
