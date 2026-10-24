@@ -297,6 +297,7 @@ export function HostedBrowserWebview(props: {
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
     renderingActive,
+    serverDriven,
     // Electron 43 can permanently blank a macOS webview after `visibility: hidden`.
     keepPaintableWhenInactive: isMacPlatform(navigator.platform),
     cornerRadius: presentation.cornerRadius,
@@ -311,7 +312,7 @@ export function HostedBrowserWebview(props: {
       className="fixed overflow-hidden bg-muted/35"
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
-      data-preview-rendering={renderingActive ? "active" : "suspended"}
+      data-preview-rendering={renderingActive || serverDriven ? "active" : "suspended"}
       data-preview-viewport={runtimeTabId}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>

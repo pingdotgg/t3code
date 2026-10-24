@@ -21,6 +21,7 @@ const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
   readonly renderingActive: boolean;
+  readonly serverDriven?: boolean;
   readonly keepPaintableWhenInactive?: boolean;
   readonly cornerRadius?: number;
   readonly zIndex?: number;
@@ -34,6 +35,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     keepPaintableWhenInactive = false,
     rect,
     renderingActive,
+    serverDriven = false,
     zIndex = 30,
   } = input;
   if (active && rect) {
@@ -48,10 +50,11 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     };
   }
 
-  if (renderingActive) {
+  if (renderingActive || serverDriven) {
     // Electron stops compositing a guest that is fully outside the window, even
     // when background throttling is disabled. Keep capture-active guests inside
-    // the viewport but behind the app so recordings receive complete frames.
+    // the viewport but behind the app. Server-driven tabs also need to paint
+    // before a remote viewer connects: its handshake waits for the first capture.
     return {
       left: 0,
       top: 0,
