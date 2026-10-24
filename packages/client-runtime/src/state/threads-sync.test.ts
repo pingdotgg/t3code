@@ -784,7 +784,7 @@ describe("EnvironmentThreads", () => {
         }
         if (mode === "retry") {
           expect(result._tag).toBe("error");
-          expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+          expect(yield* harness.loadEarlier(message.messageId)).toEqual({ _tag: "loaded" });
         } else expect(result).toEqual({ _tag: "loaded" });
         const complete = yield* SubscriptionRef.get(harness.threadState);
         expect(complete.history).toMatchObject({
@@ -799,6 +799,371 @@ describe("EnvironmentThreads", () => {
         expect(Option.getOrThrow(complete.data).turnItems).toHaveLength(2);
       }),
   );
+
+  describe("loading agent-started history", () => {
+    function row(index: number, kind = "activity", output = "older activity") {
+      const item = {
+        id: `history-${index}`,
+        threadId: THREAD_ID,
+        runId: "agent-run",
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: index + 1,
+        status: "completed",
+        title: null,
+        startedAt: "2026-06-20T00:00:00.000Z",
+        completedAt: "2026-06-20T00:00:00.000Z",
+        updatedAt: "2026-06-20T00:00:00.000Z",
+        ...(kind === "activity"
+          ? { type: "command_execution", input: "pwd", output, exitCode: 0 }
+          : kind === "notification"
+            ? {
+                type: "notification",
+                source: { kind: "system" },
+                outcome: "completed",
+                summary: "Wake",
+              }
+            : {
+                type: "user_message",
+                messageId: `message-${index}`,
+                inputIntent: kind,
+                text: "Earlier prompt",
+                attachments: [],
+                createdBy: "agent",
+                creationSource: "mcp",
+                workflowScript: null,
+              }),
+      };
+      return {
+        position: index,
+        visibility: "local",
+        sourceThreadId: THREAD_ID,
+        sourceItemId: item.id,
+        item,
+      };
+    }
+
+    function page(items: ReturnType<typeof row>[], nextCursor: string | null) {
+      return { snapshotSequence: 14, items, nextCursor, hasMoreHistory: nextCursor !== null };
+    }
+
+    const seed = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
+      Queue.offer(harness.inputs, {
+        ...snapshot(BASE_PROJECTION, 14),
+        historyCursor: "page-0",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 47,
+        payloadBudgetExceeded: false,
+      }).pipe(
+        Effect.andThen(
+          awaitThreadState(harness.observed, (state) => state.history.historyCursor === "page-0"),
+        ),
+      );
+
+    it.effect.each([
+      "turn_start",
+      "queued_turn",
+      "notification",
+      "exhausted",
+      "empty",
+      "inherited",
+      "steer",
+    ])("loads past activity-only pages until %s", (kind) =>
+      Effect.gen(function* () {
+        const requests: string[] = [];
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            const cursor = url.searchParams.get("cursor")!;
+            requests.push(cursor);
+            const index = Number(cursor.split("-")[1]);
+            expect(index).toBeLessThan(3);
+            const boundary = row(
+              0,
+              kind === "empty" || kind === "inherited" || kind === "steer"
+                ? "turn_start"
+                : kind === "exhausted"
+                  ? "activity"
+                  : kind,
+            );
+            if (kind === "inherited") {
+              boundary.visibility = "inherited";
+              boundary.sourceThreadId = ThreadId.make("parent-thread");
+              boundary.item.threadId = boundary.sourceThreadId;
+            }
+            const response =
+              index === 2
+                ? page([boundary], kind === "exhausted" ? null : "older-user-turns")
+                : page(
+                    kind === "empty" && index === 0
+                      ? []
+                      : [row(2 - index, kind === "steer" ? "steer" : "activity")],
+                    `page-${index + 1}`,
+                  );
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(response)));
+          }),
+        });
+        yield* seed(harness);
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        expect(requests).toEqual(["page-0", "page-1", "page-2"]);
+        const state = yield* SubscriptionRef.get(harness.threadState);
+        expect(state.history).toMatchObject({
+          loading: false,
+          error: null,
+          expanded: true,
+          historyCursor: kind === "exhausted" ? null : "older-user-turns",
+          latestLocalTurnOrdinal: 47,
+        });
+        expect(
+          Option.getOrThrow(state.data).visibleTurnItems.map((item) => item.sourceItemId),
+        ).toEqual(
+          kind === "empty" ? ["history-0", "history-1"] : ["history-0", "history-1", "history-2"],
+        );
+        if (kind === "exhausted") expect(yield* harness.loadEarlier()).toEqual({ _tag: "noop" });
+        if (kind === "inherited")
+          expect(
+            Option.getOrThrow(state.data).turnItems.some((item) => String(item.id) === "history-0"),
+          ).toBe(false);
+      }),
+    );
+
+    it.effect("loads a long agent run across row and byte bounded responses", () =>
+      Effect.gen(function* () {
+        const rows = Array.from({ length: 531 }, (_, index) =>
+          row(index, index === 0 ? "turn_start" : "activity"),
+        );
+        rows[250] = row(250, "activity", "x".repeat(900_000));
+        let end = rows.length;
+        const requests: string[] = [];
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            requests.push(url.searchParams.get("cursor")!);
+            const start = Math.max(0, end - 75);
+            const response = page(
+              rows.slice(start, end),
+              start === 0 ? null : `page-${requests.length}`,
+            );
+            end = start;
+            expect(response.items.length).toBeLessThanOrEqual(75);
+            const encoded = JSON.stringify(response);
+            expect(new TextEncoder().encode(encoded).length).toBeLessThan(1_048_576);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(encoded, { headers: { "content-type": "application/json" } }),
+              ),
+            );
+          }),
+        });
+        yield* seed(harness);
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        expect(requests).toHaveLength(8);
+        const state = yield* SubscriptionRef.get(harness.threadState);
+        expect(state.history).toMatchObject({
+          loading: false,
+          hasMoreHistory: false,
+          historyCursor: null,
+        });
+        const projection = Option.getOrThrow(state.data);
+        expect(projection.visibleTurnItems.map((item) => item.sourceItemId)).toEqual(
+          rows.map((item) => item.sourceItemId),
+        );
+        expect(projection.turnItems).toHaveLength(531);
+      }),
+    );
+
+    it.effect("stops after one page when it already contains a turn boundary", () =>
+      Effect.gen(function* () {
+        let requests = 0;
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request) => {
+            expect(++requests).toBe(1);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(page([row(0, "turn_start")], "older-turns")),
+              ),
+            );
+          }),
+        });
+        yield* seed(harness);
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        expect(requests).toBe(1);
+        expect((yield* SubscriptionRef.get(harness.threadState)).history).toMatchObject({
+          historyCursor: "older-turns",
+          loading: false,
+          hasMoreHistory: true,
+        });
+      }),
+    );
+
+    it.effect("clears loading after a later page times out and preserves its retry cursor", () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) =>
+            url.searchParams.get("cursor") === "page-0"
+              ? Effect.succeed(
+                  HttpClientResponse.fromWeb(request, Response.json(page([row(1)], "page-1"))),
+                )
+              : Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+          ),
+        });
+        yield* seed(harness);
+        const loading = yield* harness.loadEarlier().pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("6001 millis");
+        expect((yield* Fiber.join(loading))._tag).toBe("error");
+        const state = yield* SubscriptionRef.get(harness.threadState);
+        expect(state.history).toMatchObject({ historyCursor: "page-1", loading: false });
+        expect(Option.getOrThrow(state.data).visibleTurnItems).toHaveLength(1);
+      }),
+    );
+
+    it.effect("keeps partial progress and retries the failed page", () =>
+      Effect.gen(function* () {
+        const requests: string[] = [];
+        let fail = true;
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            const cursor = url.searchParams.get("cursor")!;
+            requests.push(cursor);
+            if (cursor === "page-1" && fail) {
+              fail = false;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("Unavailable", { status: 503 })),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  cursor === "page-0"
+                    ? page([row(1)], "page-1")
+                    : page([row(0, "turn_start")], null),
+                ),
+              ),
+            );
+          }),
+        });
+        yield* seed(harness);
+        expect((yield* harness.loadEarlier())._tag).toBe("error");
+        const partial = yield* SubscriptionRef.get(harness.threadState);
+        expect(partial.history).toMatchObject({ historyCursor: "page-1", loading: false });
+        expect(Option.getOrThrow(partial.data).visibleTurnItems).toHaveLength(1);
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        expect(requests).toEqual(["page-0", "page-1", "page-1"]);
+        expect((yield* SubscriptionRef.get(harness.threadState)).history.error).toBeNull();
+      }),
+    );
+
+    it.effect.each(["same", "cycle", "missing"])("stops a %s cursor without looping", (mode) =>
+      Effect.gen(function* () {
+        let requests = 0;
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request) => {
+            requests += 1;
+            expect(requests).toBeLessThan(3);
+            const response = page(
+              [row(requests)],
+              mode === "same" ? "page-0" : requests === 1 ? "page-1" : "page-0",
+            );
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  mode === "missing"
+                    ? { ...response, nextCursor: null, hasMoreHistory: true }
+                    : response,
+                ),
+              ),
+            );
+          }),
+        });
+        yield* seed(harness);
+        expect((yield* harness.loadEarlier())._tag).toBe("error");
+        expect(requests).toBe(mode === "cycle" ? 2 : 1);
+        expect((yield* SubscriptionRef.get(harness.threadState)).history.loading).toBe(false);
+      }),
+    );
+
+    it.effect.each(["complete", "interrupt", "replace", "delete"])(
+      "owns the loading state between pages and handles %s",
+      (mode) =>
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const requests: string[] = [];
+          const loadScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+            Scope.close(scope, Exit.void),
+          );
+          const harness = yield* makeHarness({
+            historyHttpClient: HttpClient.make((request, url) =>
+              Effect.gen(function* () {
+                const cursor = url.searchParams.get("cursor")!;
+                requests.push(cursor);
+                if (cursor === "page-1") {
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                }
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(
+                    cursor === "page-0"
+                      ? page([row(1)], "page-1")
+                      : page([row(0, "turn_start")], null),
+                  ),
+                );
+              }),
+            ),
+          }).pipe(Effect.provideService(Scope.Scope, loadScope));
+          yield* seed(harness);
+          const loading = yield* harness.loadEarlier().pipe(Effect.forkScoped);
+          yield* Deferred.await(started);
+          expect((yield* SubscriptionRef.get(harness.threadState)).history).toMatchObject({
+            historyCursor: "page-1",
+            loading: true,
+          });
+          expect(yield* harness.loadEarlier()).toEqual({ _tag: "busy" });
+          if (mode === "interrupt") {
+            yield* Scope.close(loadScope, Exit.void);
+            expect((yield* SubscriptionRef.get(harness.threadState)).history).toMatchObject({
+              historyCursor: "page-1",
+              loading: false,
+            });
+            yield* Deferred.succeed(release, undefined);
+            expect(yield* harness.loadEarlier()).toEqual({ _tag: "noop" });
+            expect(requests).toEqual(["page-0", "page-1"]);
+            return;
+          }
+          if (mode === "replace" || mode === "delete") {
+            yield* SubscriptionRef.update(harness.threadState, (state) =>
+              mode === "delete"
+                ? { ...state, status: "deleted" as const }
+                : {
+                    ...state,
+                    data: Option.some(BASE_PROJECTION),
+                    history: { ...state.history, historyCursor: "replacement", loading: false },
+                  },
+            );
+          }
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(loading)).toEqual({
+            _tag: mode === "complete" ? "loaded" : "noop",
+          });
+          const state = yield* SubscriptionRef.get(harness.threadState);
+          expect(state.history.loading).toBe(false);
+          if (mode === "replace") {
+            expect(state.history.historyCursor).toBe("replacement");
+            expect(Option.getOrThrow(state.data)).toBe(BASE_PROJECTION);
+          }
+          if (mode === "complete")
+            expect(Option.getOrThrow(state.data).visibleTurnItems).toHaveLength(2);
+        }),
+    );
+  });
 
   it.effect("restores compact socket snapshot turnItems before reducing and caching", () =>
     Effect.gen(function* () {

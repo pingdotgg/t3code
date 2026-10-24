@@ -627,9 +627,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       return { _tag: "busy" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
     }
 
-    // Capture the cursor that initiated this request. Completions/failures must
+    // Track the cursor owned by this request. Completions/failures must
     // no-op if a socket or new bounded snapshot replaced progressive meta mid-flight.
-    const requestCursor = current.history.historyCursor;
+    let requestCursor = current.history.historyCursor;
     yield* patchHistoryMeta((history) =>
       isActiveHistoryRequestCursor(requestCursor, history)
         ? { ...history, loading: true, error: null }
@@ -663,7 +663,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
       const views =
         throughEntryId === undefined ? [undefined] : ["conversation" as const, undefined];
-      for (const view of views) {
+      const visitedCursors = new Set<string>();
+      let viewIndex = 0;
+      while (viewIndex < views.length) {
+        const latest = yield* SubscriptionRef.get(state);
+        if (!isActiveHistoryRequestCursor(requestCursor, latest.history))
+          return { _tag: "noop" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
+        const view = views[viewIndex];
         const pageResult = yield* fetchEnvironmentThreadHistoryPage({
           prepared: preparedOption.value,
           threadId,
@@ -677,6 +683,25 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           return yield* failLoad(formatHistoryError(pageResult.failure));
         const page = pageResult.success;
         const complete = view === undefined;
+        const continueLoading =
+          complete &&
+          throughEntryId === undefined &&
+          page.hasMoreHistory &&
+          page.nextCursor !== null &&
+          !page.items.some(
+            ({ item }) =>
+              item.type === "notification" ||
+              (item.type === "user_message" &&
+                (item.inputIntent === "turn_start" || item.inputIntent === "queued_turn")),
+          );
+        if (complete) {
+          visitedCursors.add(requestCursor);
+          if (
+            page.hasMoreHistory &&
+            (page.nextCursor === null || visitedCursors.has(page.nextCursor))
+          )
+            return yield* failLoad("Earlier activity did not advance. Please try again.");
+        }
         const waiting = yield* Ref.get(awaitingCompletion);
         const result = yield* applyLock.withPermits(1)(
           SubscriptionRef.modify(
@@ -691,6 +716,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 return [{ _tag: "noop" }, latest];
               if (Option.isNone(latest.data) || latest.status === "deleted")
                 return [{ _tag: "noop" }, { ...latest, history: EMPTY_THREAD_HISTORY_META }];
+              // Advance ownership with the cursor so interruption clears the in-flight page.
+              if (continueLoading && page.nextCursor !== null) requestCursor = page.nextCursor;
               return [
                 { _tag: "loaded" },
                 {
@@ -698,7 +725,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   data: Option.some(mergeOlderHistoryIntoProjection(latest.data.value, page.items)),
                   status: complete && waiting ? "synchronizing" : latest.status,
                   history: complete
-                    ? applyHistoryPageMeta(latest.history, page)
+                    ? { ...applyHistoryPageMeta(latest.history, page), loading: continueLoading }
                     : { ...latest.history, expanded: true },
                 },
               ];
@@ -706,7 +733,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ),
         );
         if (result._tag !== "loaded") return result;
-        if (complete) yield* remember;
+        if (complete) {
+          // Activity-only pages can all land inside the same collapsed run.
+          // Keep paging to its input without exposing an idle gap between pages.
+          yield* remember;
+          if (continueLoading) continue;
+        }
+        viewIndex += 1;
       }
       return { _tag: "loaded" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
     });
