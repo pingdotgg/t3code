@@ -200,9 +200,7 @@ interface LiveSessionEntry {
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
-  readonly eventSubscribers: Ref.Ref<
-    ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-  >;
+  readonly eventSubscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>;
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
@@ -219,12 +217,15 @@ interface IdleThreadUnload {
   readonly fiber: Fiber.Fiber<void, never> | null;
 }
 
-type ProviderSessionEventSignal =
-  | { readonly type: "event"; readonly event: ProviderAdapter.ProviderAdapterV2Event }
-  | {
-      readonly type: "failure";
-      readonly cause: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
-    };
+type ProviderSessionEventQueue = Queue.Queue<
+  ProviderAdapter.ProviderAdapterV2Event,
+  ProviderAdapter.ProviderAdapterV2Error | Cause.Done
+>;
+
+// A full subscriber pauses the session's event pump instead of growing without
+// bound or dropping events. Ending a subscription must therefore never wait on
+// a consumer: terminal states use the queue's non-blocking completion APIs.
+export const PROVIDER_SESSION_SUBSCRIBER_CAPACITY = 4096;
 
 export interface ProviderSessionManagerV2LayerOptions {
   readonly idleTimeoutMs?: number;
@@ -512,14 +513,12 @@ export const layerWithOptions = (
             );
 
       const publishToSubscribers = (
-        subscribers: Ref.Ref<
-          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-        >,
-        signal: ProviderSessionEventSignal,
+        subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>,
+        event: ProviderAdapter.ProviderAdapterV2Event,
       ) =>
         Ref.get(subscribers).pipe(
           Effect.flatMap((current) =>
-            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal), {
+            Effect.forEach(current.values(), (queue) => Queue.offer(queue, event), {
               discard: true,
             }),
           ),
@@ -535,15 +534,9 @@ export const layerWithOptions = (
           cause: detail,
         });
         const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
-        yield* Effect.forEach(
-          subscribers.values(),
-          (queue) =>
-            Queue.offer(queue, {
-              type: "failure",
-              cause: Cause.fail(error),
-            }),
-          { discard: true },
-        );
+        yield* Effect.forEach(subscribers.values(), (queue) => Queue.fail(queue, error), {
+          discard: true,
+        });
       });
 
       // Server shutdown interrupts subscribers rather than ending them: a
@@ -552,11 +545,9 @@ export const layerWithOptions = (
       const interruptSubscribers = Effect.fn("ProviderSessionManager.interruptSubscribers")(
         function* (entry: LiveSessionEntry) {
           const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
-          yield* Effect.forEach(
-            subscribers.values(),
-            (queue) => Queue.clear(queue).pipe(Effect.andThen(Queue.interrupt(queue))),
-            { discard: true },
-          );
+          yield* Effect.forEach(subscribers.values(), (queue) => Queue.shutdown(queue), {
+            discard: true,
+          });
         },
       );
 
@@ -1675,48 +1666,38 @@ export const layerWithOptions = (
 
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
-          subscribers: Ref.Ref<
-            ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-          >,
+          subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>,
         ): Effect.fn.Return<ProviderAdapter.ProviderAdapterV2EventSubscription> {
-          const queue = yield* Queue.unbounded<ProviderSessionEventSignal, Cause.Done>();
+          const queue = yield* Queue.bounded<
+            ProviderAdapter.ProviderAdapterV2Event,
+            ProviderAdapter.ProviderAdapterV2Error | Cause.Done
+          >(PROVIDER_SESSION_SUBSCRIBER_CAPACITY);
           const subscriberId = yield* Ref.getAndUpdate(nextSubscriberId, (value) => value + 1);
           yield* Ref.update(subscribers, (current) => {
             const updated = new Map(current);
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.modify(subscribers, (current) => {
-            if (!current.has(subscriberId)) {
-              return [false, current] as const;
-            }
+          // Clear even after a release already removed the queue: the pump may
+          // be suspended offering into it, and nobody else will read it.
+          const close = Ref.update(subscribers, (current) => {
+            if (!current.has(subscriberId)) return current;
             const updated = new Map(current);
             updated.delete(subscriberId);
-            return [true, updated] as const;
+            return updated;
           }).pipe(
-            Effect.flatMap((removed) =>
-              removed
-                ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
-                : Effect.void,
-            ),
+            Effect.andThen(Queue.clear(queue).pipe(Effect.ignore)),
+            Effect.andThen(Queue.end(queue)),
+            Effect.asVoid,
           );
-          const events = Stream.fromQueue(queue).pipe(
-            Stream.mapEffect((signal) =>
-              signal.type === "event"
-                ? Effect.succeed(signal.event)
-                : Effect.failCause(signal.cause),
-            ),
-            Stream.ensuring(close),
-          );
+          const events = Stream.fromQueue(queue).pipe(Stream.ensuring(close));
           return { events, close } satisfies ProviderAdapter.ProviderAdapterV2EventSubscription;
         },
       );
 
       const decorateRuntime = (
         runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        eventSubscribers: Ref.Ref<
-          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-        >,
+        eventSubscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
@@ -1936,6 +1917,10 @@ export const layerWithOptions = (
             if (event.type === "command_output.delta") {
               return commandOutput.append(event);
             }
+            // Only run subscribers act on it; unloading is not provider activity.
+            if (event.type === "provider_thread.unloaded") {
+              return publishToSubscribers(entry.eventSubscribers, event);
+            }
             // A settled item carries its final output, so its live tail can go.
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
@@ -2019,7 +2004,7 @@ export const layerWithOptions = (
                     }).pipe(entry.requestEventPermit.withPermits(1));
                     return;
                   }
-                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                  yield* publishToSubscribers(entry.eventSubscribers, event);
                   yield* releaseLiveOutput;
                 }),
               ),
@@ -2054,11 +2039,12 @@ export const layerWithOptions = (
                         cause: "Provider event stream ended unexpectedly.",
                       }),
                     );
-              yield* publishToSubscribers(entry.eventSubscribers, {
-                type: "failure",
-                cause,
-              });
-              yield* Ref.set(entry.eventSubscribers, new Map());
+              const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
+              yield* Effect.forEach(
+                subscribers.values(),
+                (queue) => Queue.failCause(queue, cause),
+                { discard: true },
+              );
               yield* releaseEntry({
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
@@ -2216,7 +2202,7 @@ export const layerWithOptions = (
                   }),
                 );
               const eventSubscribers = yield* Ref.make<
-                ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+                ReadonlyMap<number, ProviderSessionEventQueue>
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const now = yield* Clock.currentTimeMillis;

@@ -5386,6 +5386,702 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // What a restarted server reads back from the projection an earlier
+  // session's events built for a child.
+  const savedSubagentThread = (
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    childThreadId: ThreadId,
+  ): ProviderAdapter.ProviderAdapterV2SubagentThread => {
+    const subagent = events
+      .flatMap((event) =>
+        event.type === "subagent.updated" && event.subagent.childThreadId === childThreadId
+          ? [event.subagent]
+          : [],
+      )
+      .at(-1)!;
+    return {
+      subagent,
+      childThread: events.flatMap((event) =>
+        event.type === "app_thread.created" && event.appThread.id === childThreadId
+          ? [event.appThread]
+          : [],
+      )[0]!,
+      providerThread: events.flatMap((event) =>
+        event.type === "provider_thread.updated" &&
+        event.providerThread.id === subagent.providerThreadId
+          ? [event.providerThread]
+          : [],
+      )[0]!,
+      turnItem: events
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "subagent" &&
+          event.turnItem.subagentId === subagent.id
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1)!,
+      latestProviderTurnOrdinal: Math.max(
+        0,
+        ...events.flatMap((event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.providerThreadId === subagent.providerThreadId
+            ? [event.providerTurn.ordinal]
+            : [],
+        ),
+      ),
+    };
+  };
+
+  const nativeTurnStarted = (
+    threadId: string,
+    turnId: string,
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      method: "turn/started",
+      params: { threadId, turn: makeCodexReplayTurn({ id: turnId, status: "inProgress" }) },
+    },
+  });
+
+  const nativeTurnCompleted = (
+    threadId: string,
+    turnId: string,
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      method: "turn/completed",
+      params: { threadId, turn: makeCodexReplayTurn({ id: turnId, status: "completed" }) },
+    },
+  });
+
+  const nativeFinalAnswer = (
+    threadId: string,
+    turnId: string,
+    text: string,
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: `${turnId}-answer`,
+          text,
+          phase: "final_answer",
+          memoryCitation: null,
+        },
+        threadId,
+        turnId,
+        completedAtMs: 1782622480000,
+      },
+    },
+  });
+
+  const nativeSpawned = (input: {
+    readonly threadId: string;
+    readonly turnId: string;
+    readonly childThreadId: string;
+  }): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "subAgentActivity",
+          id: `spawn-${input.childThreadId}`,
+          kind: "started",
+          agentThreadId: input.childThreadId,
+          agentPath: `/root/${input.childThreadId}`,
+        },
+        threadId: input.threadId,
+        turnId: input.turnId,
+        completedAtMs: 1782622441000,
+      },
+    },
+  });
+
+  it.effect.each([
+    ["while the parent turn runs", false, 1],
+    ["after the parent turn completed", true, 1],
+    // The earlier server stopped after registering the child but before its
+    // first provider turn was saved, and nothing reports the child running
+    // before its turn starts.
+    ["with no saved turn after the parent turn completed", true, 0],
+  ] as const)(
+    "restores an existing child resumed on a fresh adapter session %s",
+    ([, parentCompletesFirst, savedTurns]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-resumed-child-after-restart";
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const childThreadId = idAllocator.derive.threadFromProviderThread({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeThreadId: RESUME_CHILD_THREAD,
+          });
+          const earlier = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: resumeSubagentTranscript.entries.slice(
+                0,
+                resumeSubagentTranscript.entries.findIndex(
+                  (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+                ) + 1,
+              ),
+            }),
+          );
+          yield* earlier.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: earlier.threadId,
+              providerThread: earlier.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-before-restart"),
+              text: RESUME_PROMPT,
+            }),
+          );
+          yield* TestClock.adjust("100 millis");
+          yield* earlier.awaitTerminal(1);
+          const saved = {
+            ...savedSubagentThread(earlier.events, childThreadId),
+            ...(savedTurns === 0 ? { latestProviderTurnOrdinal: 0 } : {}),
+          };
+          assert.equal(saved.latestProviderTurnOrdinal, savedTurns);
+
+          // A fresh harness stands in for a restarted server: the child was spawned
+          // by an earlier adapter session, so this one first hears of it through
+          // the parent's followupTask call.
+          const rootCompleted = resumeSubagentTranscript.entries.find(
+            (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+          )!;
+          const childTurn = [
+            childTurnStarted(RESUME_CHILD_TURN_2),
+            childAgentMessage({
+              id: "child-answer-after-restart",
+              text: "PROBE_AFTER_RESTART",
+              turnId: RESUME_CHILD_TURN_2,
+              completedAtMs: 1782622480000,
+            }),
+            childTurnCompleted(RESUME_CHILD_TURN_2),
+          ];
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                ...codexReplayPreamble({
+                  nativeThreadId: RESUME_NATIVE_THREAD,
+                  nativeTurnId: RESUME_NATIVE_TURN,
+                  prompt: RESUME_PROMPT,
+                }),
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      threadId: RESUME_NATIVE_THREAD,
+                      turnId: RESUME_NATIVE_TURN,
+                      item: {
+                        type: "collabAgentToolCall",
+                        id: "followup-after-restart",
+                        tool: "followupTask",
+                        status: "completed",
+                        senderThreadId: RESUME_NATIVE_THREAD,
+                        receiverThreadIds: [RESUME_CHILD_THREAD],
+                        prompt: "Reply PROBE_AFTER_RESTART.",
+                        model: null,
+                        agentsStates:
+                          savedTurns === 0
+                            ? {}
+                            : { [RESUME_CHILD_THREAD]: { status: "running", message: null } },
+                      },
+                    },
+                  },
+                },
+                ...(parentCompletesFirst
+                  ? [rootCompleted, ...childTurn]
+                  : [...childTurn, rootCompleted]),
+                // Frames are handled in order, so this marks every child frame handled
+                // whether or not the child was restored.
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "thread/goal/updated",
+                    params: {
+                      threadId: RESUME_NATIVE_THREAD,
+                      turnId: RESUME_NATIVE_TURN,
+                      goal: {
+                        threadId: RESUME_NATIVE_THREAD,
+                        objective: "transcript drained",
+                        status: "complete",
+                        tokenBudget: null,
+                        tokensUsed: 0,
+                        timeUsedSeconds: 0,
+                        createdAt: 1782622440,
+                        updatedAt: 1782622450,
+                      },
+                    },
+                  },
+                },
+              ],
+            }),
+          );
+
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-after-restart"),
+              text: RESUME_PROMPT,
+            }),
+            readSubagentThread: (threadId) =>
+              Effect.succeed(threadId === childThreadId ? saved : null),
+          });
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.goal?.objective === "transcript drained",
+            ),
+          );
+          assert.lengthOf(harness.terminalEvents(), 1);
+
+          const childUpdates = harness
+            .subagentUpdates()
+            .filter((event) => event.subagent.childThreadId === childThreadId);
+          assert.deepEqual(
+            [...new Set(childUpdates.map((event) => event.subagent.status))],
+            ["running", "completed"],
+          );
+          assert.isTrue(childUpdates.every((event) => event.subagent.id === saved.subagent.id));
+          assert.equal(childUpdates.at(-1)?.subagent.runId, "run-attempt-after-restart");
+          if (savedTurns > 0) {
+            // A collab item that reports the child running reopens it before the
+            // root turn ends.
+            const reopenedAt = harness.events.findIndex(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.childThreadId === childThreadId &&
+                event.subagent.status === "running",
+            );
+            assert.isAtLeast(reopenedAt, 0);
+            assert.isBelow(
+              reopenedAt,
+              harness.events.findIndex((event) => event.type === "turn.terminal"),
+            );
+          }
+          assert.isFalse(harness.events.some((event) => event.type === "app_thread.created"));
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.providerThreadId === saved.providerThread.id &&
+                event.providerTurn.ordinal === savedTurns + 1,
+            ),
+          );
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.threadId === childThreadId &&
+                event.message.text === "PROBE_AFTER_RESTART",
+            ),
+          );
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("restores a nested child under the child that resumed it after a restart", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-resumed-nested-child-after-restart";
+        const middle = "native-codex-resume-middle-thread";
+        const leaf = "native-codex-resume-leaf-thread";
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const [middleThreadId, leafThreadId] = [middle, leaf].map((nativeThreadId) =>
+          idAllocator.derive.threadFromProviderThread({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeThreadId,
+          }),
+        ) as [ThreadId, ThreadId];
+        const preamble = codexReplayPreamble({
+          nativeThreadId: RESUME_NATIVE_THREAD,
+          nativeTurnId: RESUME_NATIVE_TURN,
+          prompt: RESUME_PROMPT,
+        });
+        // The root spawns the middle child, which spawns the leaf.
+        const earlier = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...preamble,
+              nativeSpawned({
+                threadId: RESUME_NATIVE_THREAD,
+                turnId: RESUME_NATIVE_TURN,
+                childThreadId: middle,
+              }),
+              nativeTurnStarted(middle, "middle-turn-1"),
+              nativeSpawned({ threadId: middle, turnId: "middle-turn-1", childThreadId: leaf }),
+              nativeTurnStarted(leaf, "leaf-turn-1"),
+              nativeFinalAnswer(leaf, "leaf-turn-1", "LEAF_FIRST"),
+              nativeTurnCompleted(leaf, "leaf-turn-1"),
+              nativeFinalAnswer(middle, "middle-turn-1", "MIDDLE_FIRST"),
+              nativeTurnCompleted(middle, "middle-turn-1"),
+              nativeTurnCompleted(RESUME_NATIVE_THREAD, RESUME_NATIVE_TURN),
+            ],
+          }),
+        );
+        yield* earlier.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: earlier.threadId,
+            providerThread: earlier.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-before-restart"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* earlier.awaitTerminal(1);
+        const savedMiddle = savedSubagentThread(earlier.events, middleThreadId);
+        const savedLeaf = savedSubagentThread(earlier.events, leafThreadId);
+        assert.equal(savedLeaf.subagent.threadId, middleThreadId);
+
+        // After the restart the root resumes the middle child, which resumes the leaf.
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...preamble,
+              nativeTurnStarted(middle, "middle-turn-2"),
+              nativeTurnStarted(leaf, "leaf-turn-2"),
+              nativeFinalAnswer(leaf, "leaf-turn-2", "LEAF_AFTER_RESTART"),
+              nativeTurnCompleted(leaf, "leaf-turn-2"),
+              nativeTurnCompleted(middle, "middle-turn-2"),
+              nativeTurnCompleted(RESUME_NATIVE_THREAD, RESUME_NATIVE_TURN),
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-after-restart"),
+            text: RESUME_PROMPT,
+          }),
+          readSubagentThread: (threadId) =>
+            Effect.succeed(
+              threadId === middleThreadId
+                ? savedMiddle
+                : threadId === leafThreadId
+                  ? savedLeaf
+                  : null,
+            ),
+        });
+        yield* harness.awaitTerminal(1);
+
+        const leafUpdates = harness
+          .subagentUpdates()
+          .filter((event) => event.subagent.childThreadId === leafThreadId);
+        assert.equal(leafUpdates.at(-1)?.subagent.status, "completed");
+        assert.equal(leafUpdates.at(-1)?.subagent.result, "LEAF_AFTER_RESTART");
+        assert.isTrue(
+          leafUpdates.every(
+            (event) =>
+              event.subagent.id === savedLeaf.subagent.id &&
+              event.subagent.threadId === middleThreadId,
+          ),
+        );
+        // The leaf's resumed task hangs under the middle child's resumed turn.
+        const middleTurn = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.providerThreadId === savedMiddle.providerThread.id &&
+            event.providerTurn.ordinal === 2,
+        );
+        assert.equal(
+          leafUpdates[0]?.subagent.parentNodeId,
+          middleTurn?.type === "provider_turn.updated" ? middleTurn.providerTurn.nodeId : null,
+        );
+        assert.isFalse(harness.events.some((event) => event.type === "app_thread.created"));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // The turn/start a later root turn on the resumed thread sends.
+  const nextRootTurnStart = (input: {
+    readonly id: number;
+    readonly nativeTurnId: string;
+  }): Array<CodexReplay.CodexAppServerReplayEntry> => {
+    const preamble = codexReplayPreamble({
+      nativeThreadId: RESUME_NATIVE_THREAD,
+      nativeTurnId: input.nativeTurnId,
+      prompt: RESUME_PROMPT,
+    });
+    return preamble
+      .slice(preamble.findIndex((entry) => "label" in entry && entry.label === "turn/start"))
+      .map((entry) =>
+        (entry.type === "expect_outbound" || entry.type === "emit_inbound") &&
+        typeof entry.frame === "object" &&
+        entry.frame !== null &&
+        "id" in entry.frame
+          ? { ...entry, frame: { ...entry.frame, id: input.id } }
+          : entry,
+      );
+  };
+
+  const followupAfterRestart = (turnId: string): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      method: "item/completed",
+      params: {
+        threadId: RESUME_NATIVE_THREAD,
+        turnId,
+        item: {
+          type: "collabAgentToolCall",
+          id: `followup-${turnId}`,
+          tool: "followupTask",
+          status: "completed",
+          senderThreadId: RESUME_NATIVE_THREAD,
+          receiverThreadIds: [RESUME_CHILD_THREAD],
+          prompt: "Reply again.",
+          model: null,
+          agentsStates: { [RESUME_CHILD_THREAD]: { status: "running", message: null } },
+        },
+      },
+    },
+  });
+
+  it.effect("attributes a restored child resumed again to the root turn that resumed it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-restored-child-resumed-twice";
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const childThreadId = idAllocator.derive.threadFromProviderThread({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          nativeThreadId: RESUME_CHILD_THREAD,
+        });
+        const earlier = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: resumeSubagentTranscript.entries.slice(
+              0,
+              resumeSubagentTranscript.entries.findIndex(
+                (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+              ) + 1,
+            ),
+          }),
+        );
+        yield* earlier.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: earlier.threadId,
+            providerThread: earlier.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-before-restart"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* TestClock.adjust("100 millis");
+        yield* earlier.awaitTerminal(1);
+        const saved = savedSubagentThread(earlier.events, childThreadId);
+
+        // After the restart, R1 resumes the saved child and ends before the
+        // child's turn starts. R2 then resumes it again and also ends first.
+        const secondRootTurn = "native-codex-resume-root-turn-2";
+        const childTurn3 = "native-codex-resume-child-turn-3";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId: RESUME_NATIVE_THREAD,
+                nativeTurnId: RESUME_NATIVE_TURN,
+                prompt: RESUME_PROMPT,
+              }),
+              followupAfterRestart(RESUME_NATIVE_TURN),
+              nativeTurnCompleted(RESUME_NATIVE_THREAD, RESUME_NATIVE_TURN),
+              childTurnStarted(RESUME_CHILD_TURN_2),
+              nativeFinalAnswer(RESUME_CHILD_THREAD, RESUME_CHILD_TURN_2, "FIRST_RESUME"),
+              childTurnCompleted(RESUME_CHILD_TURN_2),
+              ...nextRootTurnStart({ id: 4, nativeTurnId: secondRootTurn }),
+              followupAfterRestart(secondRootTurn),
+              nativeTurnCompleted(RESUME_NATIVE_THREAD, secondRootTurn),
+              childTurnStarted(childTurn3),
+              nativeFinalAnswer(RESUME_CHILD_THREAD, childTurn3, "SECOND_RESUME"),
+              childTurnCompleted(childTurn3),
+            ],
+          }),
+        );
+        const readSubagentThread = (threadId: ThreadId) =>
+          Effect.succeed(threadId === childThreadId ? saved : null);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-first-resume"),
+            text: RESUME_PROMPT,
+          }),
+          readSubagentThread,
+        });
+        const childCompletedWith = (result: string) =>
+          harness
+            .subagentUpdates()
+            .some(
+              (event) =>
+                event.subagent.childThreadId === childThreadId &&
+                event.subagent.status === "completed" &&
+                event.subagent.result === result,
+            );
+        yield* harness.until(() => childCompletedWith("FIRST_RESUME"));
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-second-resume"),
+            text: RESUME_PROMPT,
+          }),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          readSubagentThread,
+        });
+        yield* harness.until(() => childCompletedWith("SECOND_RESUME"));
+        assert.lengthOf(harness.terminalEvents(), 2);
+
+        const secondTerminalAt = harness.events.indexOf(harness.terminalEvents()[1]!);
+        const reopenedAfterSecondRoot = harness.events
+          .slice(secondTerminalAt)
+          .filter(
+            (event): event is Extract<typeof event, { readonly type: "subagent.updated" }> =>
+              event.type === "subagent.updated" && event.subagent.childThreadId === childThreadId,
+          );
+        assert.deepEqual(
+          [
+            ...new Set(
+              reopenedAfterSecondRoot.map(
+                (event) => `${event.subagent.status}:${event.subagent.runId}`,
+              ),
+            ),
+          ],
+          ["running:run-attempt-second-resume", "completed:run-attempt-second-resume"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("releases an unloaded thread's turn contexts while its session stays open", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const child = "native-codex-unloaded-child";
+        const unsubscribe = (id: number): Array<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "expect_outbound",
+            frame: { id, method: "thread/unsubscribe", params: { threadId: RESUME_NATIVE_THREAD } },
+          },
+          { type: "emit_inbound", frame: { id, result: { status: "unsubscribed" } } },
+        ];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-unloaded-thread-context",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId: RESUME_NATIVE_THREAD,
+                nativeTurnId: RESUME_NATIVE_TURN,
+                prompt: RESUME_PROMPT,
+              }),
+              nativeSpawned({
+                threadId: RESUME_NATIVE_THREAD,
+                turnId: RESUME_NATIVE_TURN,
+                childThreadId: child,
+              }),
+              nativeTurnStarted(child, "child-turn-1"),
+              nativeTurnCompleted(child, "child-turn-1"),
+              nativeTurnCompleted(RESUME_NATIVE_THREAD, RESUME_NATIVE_TURN),
+              ...unsubscribe(4),
+              // The shared session keeps streaming after the unload.
+              nativeTurnStarted(child, "child-turn-2"),
+              ...unsubscribe(5),
+              // Frames are handled in order, so this marks every earlier frame handled.
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "thread/goal/updated",
+                  params: {
+                    threadId: RESUME_NATIVE_THREAD,
+                    turnId: RESUME_NATIVE_TURN,
+                    goal: {
+                      threadId: RESUME_NATIVE_THREAD,
+                      objective: "transcript drained",
+                      status: "complete",
+                      tokenBudget: null,
+                      tokensUsed: 0,
+                      timeUsedSeconds: 0,
+                      createdAt: 1782622440,
+                      updatedAt: 1782622450,
+                    },
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        const reads: Array<ThreadId> = [];
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-before-unload"),
+            text: RESUME_PROMPT,
+          }),
+          readSubagentThread: (threadId) =>
+            Effect.sync(() => {
+              reads.push(threadId);
+              return null;
+            }),
+        });
+        yield* harness.awaitTerminal(1);
+        const terminalAt = harness.events.length;
+        const unloadThread = harness.runtime.unloadThread!;
+        yield* unloadThread({ providerThread: harness.providerThread });
+        yield* unloadThread({ providerThread: harness.providerThread });
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.objective === "transcript drained",
+          ),
+        );
+
+        // Each unload is announced, and neither the root nor its child still
+        // holds the unloaded turn's input, so the child's later turn emits nothing.
+        const unloaded = {
+          type: "provider_thread.unloaded",
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          providerThreadId: harness.providerThread.id,
+        } as const;
+        assert.deepEqual(harness.events.slice(terminalAt, -1), [unloaded, unloaded]);
+        assert.deepEqual(reads, []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     ["shutdown", "cancelled"],
     ["activity-completed", "completed"],

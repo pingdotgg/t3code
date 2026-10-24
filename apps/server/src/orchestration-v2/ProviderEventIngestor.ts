@@ -678,6 +678,8 @@ export const layer: Layer.Layer<
                 }),
               ];
             }
+            case "provider_thread.unloaded":
+              return [];
             case "command_output.delta":
               // Live output is routed to the command output hub before ingestion.
               return [];

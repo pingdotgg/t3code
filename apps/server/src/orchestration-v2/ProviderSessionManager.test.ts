@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
@@ -1495,6 +1496,136 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
       );
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+const openWithStalledSubscriber = (state: Ref.Ref<TestProviderRuntimeState>, fixtureName: string) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make(`thread-provider-session-manager-${fixtureName}`);
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    yield* eventSink.write({
+      events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+    });
+    const runtime = yield* manager.open({
+      threadId,
+      providerSessionId,
+      modelSelection,
+      runtimePolicy,
+    });
+    // Subscribed first, so the pump offers each event to it before `active`.
+    const stalled = yield* runtime.subscribeEvents!;
+    const active = yield* runtime.subscribeEvents!;
+    const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+    assert.isDefined(adapterQueue);
+    const unloaded: ProviderAdapter.ProviderAdapterV2Event = {
+      type: "provider_thread.unloaded",
+      driver: CODEX_DRIVER,
+      providerThreadId: idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: `${fixtureName}-thread`,
+      }),
+    };
+    const emitOverCapacity = Queue.offerAll(
+      adapterQueue!,
+      Array.from({ length: SUBSCRIBER_CAPACITY + 1 }, () => unloaded),
+    );
+    return { manager, providerSessionId, stalled, active, emitOverCapacity };
+  });
+
+const SUBSCRIBER_CAPACITY = ProviderSessionManager.PROVIDER_SESSION_SUBSCRIBER_CAPACITY;
+const isEventStreamError = Schema.is(ProviderAdapter.ProviderAdapterEventStreamError);
+
+it.effect("ProviderSessionManagerV2 resumes session events when a full subscriber closes", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const { stalled, active, emitOverCapacity } = yield* openWithStalledSubscriber(
+        state,
+        "full-subscriber-close",
+      );
+      const receivedCapacity = yield* Deferred.make<void>();
+      const received = yield* Ref.make(0);
+      const drained = yield* active.events.pipe(
+        Stream.take(SUBSCRIBER_CAPACITY + 1),
+        Stream.runForEach(() =>
+          Ref.updateAndGet(received, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === SUBSCRIBER_CAPACITY
+                ? Deferred.succeed(receivedCapacity, undefined)
+                : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+
+      yield* emitOverCapacity;
+      yield* Deferred.await(receivedCapacity);
+      yield* stalled.close;
+
+      yield* Fiber.join(drained);
+      assert.equal(yield* Ref.get(received), SUBSCRIBER_CAPACITY + 1);
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 releases a session whose subscriber is full", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const { manager, providerSessionId, stalled, active, emitOverCapacity } =
+        yield* openWithStalledSubscriber(state, "full-subscriber-release");
+      const drain = (
+        subscription: ProviderAdapter.ProviderAdapterV2EventSubscription,
+        reached?: Deferred.Deferred<void>,
+      ) =>
+        Effect.gen(function* () {
+          const received = yield* Ref.make(0);
+          const exit = yield* subscription.events.pipe(
+            Stream.runForEach(() =>
+              Ref.updateAndGet(received, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  reached !== undefined && count === SUBSCRIBER_CAPACITY
+                    ? Deferred.succeed(reached, undefined)
+                    : Effect.void,
+                ),
+              ),
+            ),
+            Effect.exit,
+          );
+          return { exit, received: yield* Ref.get(received) };
+        });
+      const activeReachedCapacity = yield* Deferred.make<void>();
+      const activeDrained = yield* drain(active, activeReachedCapacity).pipe(Effect.forkScoped);
+
+      yield* emitOverCapacity;
+      yield* Deferred.await(activeReachedCapacity);
+      // The pump is now suspended offering the overflow event to `stalled`.
+      yield* manager.release({ providerSessionId, reason: "runtime_error" });
+
+      const activeResult = yield* Fiber.join(activeDrained);
+      assert.equal(activeResult.received, SUBSCRIBER_CAPACITY);
+      assert.isTrue(
+        Exit.isFailure(activeResult.exit) &&
+          isEventStreamError(Cause.squash(activeResult.exit.cause)),
+      );
+      // The suspended offer is delivered once the stalled consumer reads again.
+      const stalledResult = yield* drain(stalled);
+      assert.equal(stalledResult.received, SUBSCRIBER_CAPACITY + 1);
+      assert.isTrue(Exit.isFailure(stalledResult.exit));
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));

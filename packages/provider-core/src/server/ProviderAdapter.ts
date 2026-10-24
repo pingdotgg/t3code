@@ -132,6 +132,15 @@ export const ProviderAdapterV2Event = Schema.Union([
     itemId: TurnItemId,
     chunk: Schema.String,
   }),
+  /**
+   * Never persisted: the provider stopped streaming this thread, so a run
+   * still subscribed for its late children can end.
+   */
+  Schema.Struct({
+    type: Schema.Literal("provider_thread.unloaded"),
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+  }),
   Schema.Struct({
     type: Schema.Literal("runtime_request.updated"),
     driver: ProviderDriverKind,
@@ -436,6 +445,21 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /**
+   * Reads a provider-native child of this thread saved by an earlier session,
+   * so activity it resumes after a restart keeps the child's original identity.
+   */
+  readonly readSubagentThread?: (
+    childThreadId: ThreadId,
+  ) => Effect.Effect<ProviderAdapterV2SubagentThread | null>;
+}
+
+export interface ProviderAdapterV2SubagentThread {
+  readonly subagent: OrchestrationV2Subagent;
+  readonly childThread: OrchestrationV2AppThread;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
+  readonly latestProviderTurnOrdinal: number;
 }
 
 export interface ProviderAdapterV2SteerInput {
@@ -576,6 +600,13 @@ export interface ProviderAdapterV2SessionRuntime {
    * thread keeps showing Waiting.
    */
   readonly backgroundTasksEndWithProcess?: true;
+  /**
+   * Set when the provider can resume a saved child after the turn that resumed
+   * it ended, so a completed run keeps an idle subscription for that child
+   * until a newer root turn on its thread, the provider unloads the thread
+   * (`provider_thread.unloaded`), or the session ends.
+   */
+  readonly resumesChildrenAfterRootTurn?: true;
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,
     cwd?: string | null,

@@ -60,6 +60,7 @@ export interface ProviderEventRoutingState {
   // except a workflow member enrolled below: its coordinator keeps this run
   // open, so the member is this run's to follow.
   readonly rootTurnEnded: boolean;
+  readonly adoptsChildrenAfterRootTurn: boolean;
   readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurns: ReadonlyMap<ProviderTurnId, ProviderThreadId>;
@@ -330,10 +331,12 @@ export function makeProviderEventRoutingState(input: {
   readonly providerTurnId: ProviderTurnId | null;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly adoptsChildrenAfterRootTurn?: boolean;
 }): ProviderEventRoutingState {
   return {
     ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
     rootTurnEnded: false,
+    adoptsChildrenAfterRootTurn: input.adoptsChildrenAfterRootTurn ?? false,
     workflowMemberParents: new Map(),
     ownedProviderThreadIds: new Set([
       input.identity.providerThreadId,
@@ -451,10 +454,13 @@ export function routeProviderEvent(
       // A provider-native subagent's child thread follows the live run it is
       // attributed to. A resume reattributes it to the resuming run, which
       // never saw the child thread created when the subagent was not
-      // completed at its start (e.g. cancelled by a server restart).
+      // completed at its start (e.g. cancelled by a server restart). Codex
+      // can start that child's turn after the resuming root turn ended. A
+      // nested one is runless and follows the owned child that resumed it.
       const adopted =
-        ownsRun(coordinator.runId) &&
-        !state.rootTurnEnded &&
+        (!state.rootTurnEnded || state.adoptsChildrenAfterRootTurn) &&
+        (ownsRun(coordinator.runId) ||
+          (coordinator.runId === null && ownsChildThread(coordinator.threadId))) &&
         isOrchestrationV2WorkActive(coordinator.status) &&
         coordinator.origin === "provider_native" &&
         coordinator.childThreadId !== null &&
@@ -510,6 +516,8 @@ export function routeProviderEvent(
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "provider_thread.unloaded":
+      return [false, state];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -571,6 +579,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly readSubagentThread?: ProviderAdapter.ProviderAdapterV2TurnInput["readSubagentThread"];
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
@@ -1031,11 +1040,18 @@ export const layer: Layer.Layer<
             ...(input.relatedProviderThreadIds === undefined
               ? {}
               : { relatedProviderThreadIds: input.relatedProviderThreadIds }),
+            adoptsChildrenAfterRootTurn: input.session.resumesChildrenAfterRootTurn === true,
           }),
         );
         const rootTerminalSeen = yield* Ref.make(false);
         const rootRunFinalized = yield* Ref.make(false);
         const providerThreadOwnerLost = yield* Ref.make(false);
+        // A settled completed root keeps its subscription without ingesting
+        // until a newer root turn on its thread or the session ends: a child
+        // it resumed can start its turn after the root turn ended.
+        const dormant = yield* Ref.make(false);
+        const newerRootTurnSeen = yield* Ref.make(false);
+        const providerThreadUnloaded = yield* Ref.make(false);
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
@@ -1229,6 +1245,9 @@ export const layer: Layer.Layer<
           if (!(yield* Ref.get(rootTerminalSeen))) {
             return false;
           }
+          if (yield* Ref.get(dormant)) {
+            return (yield* Ref.get(newerRootTurnSeen)) || (yield* Ref.get(providerThreadUnloaded));
+          }
           const terminal = yield* Ref.get(terminalEvent);
           if (
             terminal !== null &&
@@ -1268,7 +1287,16 @@ export const layer: Layer.Layer<
               return false;
             }
           }
-          return true;
+          if (
+            input.session.resumesChildrenAfterRootTurn !== true ||
+            terminal?.status !== "completed" ||
+            (yield* Ref.get(newerRootTurnSeen)) ||
+            (yield* Ref.get(providerThreadUnloaded))
+          ) {
+            return true;
+          }
+          yield* Ref.set(dormant, true);
+          return false;
         });
         const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
         // Held text writes nothing, so its item would take a position only
@@ -1277,8 +1305,34 @@ export const layer: Layer.Layer<
         const providerEventFiber = yield* eventSubscription.events.pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
+              if (
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.runAttemptId !== null &&
+                event.providerTurn.runAttemptId !== input.attempt.id &&
+                (event.threadId === input.run.threadId ||
+                  event.providerTurn.providerThreadId === input.providerThread.id)
+              ) {
+                yield* Ref.set(newerRootTurnSeen, true);
+              }
+              if (
+                event.type === "provider_thread.unloaded" &&
+                event.providerThreadId === input.providerThread.id
+              ) {
+                yield* Ref.set(providerThreadUnloaded, true);
+              }
               const previous = yield* Ref.get(eventRouting);
               const [accepted, routing] = routeProviderEvent(event, routeIdentity, previous);
+              if (yield* Ref.get(dormant)) {
+                // Wake only for a provider-native child the provider attributes to
+                // this run, or that an owned child resumed.
+                const resumed =
+                  accepted &&
+                  event.type === "subagent.updated" &&
+                  event.subagent.origin === "provider_native" &&
+                  isOrchestrationV2WorkActive(event.subagent.status);
+                if (!resumed) return { event, accepted: false };
+                yield* Ref.set(dormant, false);
+              }
               yield* Ref.set(eventRouting, routing);
               if (
                 event.type === "subagent.updated" &&
@@ -1471,6 +1525,8 @@ export const layer: Layer.Layer<
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>
               Effect.gen(function* () {
+                // A released session fails its subscribers; a dormant run has nothing left to settle.
+                if (yield* Ref.get(dormant)) return;
                 const completedAt = yield* DateTime.now;
                 yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
                   runId: input.run.id,
@@ -1609,6 +1665,9 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
+          ...(input.readSubagentThread === undefined
+            ? {}
+            : { readSubagentThread: input.readSubagentThread }),
         };
         // Check after the context read: ingestion can settle the run while
         // it awaits. A failed ownership read fails the start below.
