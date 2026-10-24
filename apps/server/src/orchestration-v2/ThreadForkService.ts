@@ -114,6 +114,10 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         // A fork is a new thread; it does not inherit how often the source was opened.
         opens: null,
         deletedAt: null,
+        // A watch wakes the thread that started it; a fork would run every command twice.
+        ...(input.sourceProjection.thread.commandWatches === undefined
+          ? {}
+          : { commandWatches: [] }),
       };
       const transfer: OrchestrationV2ContextTransfer = {
         id: input.transferId,

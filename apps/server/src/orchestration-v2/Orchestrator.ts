@@ -31,6 +31,8 @@ import {
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
+  type ThreadCommandWatch,
+  THREAD_COMMAND_WATCH_LIMIT,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
@@ -443,6 +445,12 @@ function isGoalCommand(message: {
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
+/** Ends a thread's command watches, leaving a thread that never had any untouched. */
+const withoutCommandWatches = (
+  thread: OrchestrationV2AppThread,
+): Pick<OrchestrationV2AppThread, "commandWatches"> =>
+  thread.commandWatches === undefined ? {} : { commandWatches: [] };
+
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -467,6 +475,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request-link.sync":
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
+    case "thread.command-watch.start":
+    case "thread.command-watch.stop":
+    case "thread.command-watch.sync":
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
@@ -2650,6 +2661,150 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Starts, stops and records command watches (`watch_command`). Each change emits the whole
+   * thread so every projection applies it, and a recorded wake is queued in the same step.
+   */
+  const dispatchCommandWatch = Effect.fn("orchestrationV2.dispatch.commandWatch")(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      {
+        readonly type:
+          | "thread.command-watch.start"
+          | "thread.command-watch.stop"
+          | "thread.command-watch.sync";
+      }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const refuse = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    const watches = thread.commandWatches ?? [];
+    const inactive =
+      thread.deletedAt !== null ||
+      thread.archivedAt !== null ||
+      thread.settledOverride === "settled" ||
+      thread.settledAt !== null ||
+      isProviderNativeSubagentThread(thread);
+    const now = yield* DateTime.now;
+    let next: ReadonlyArray<ThreadCommandWatch>;
+    switch (command.type) {
+      case "thread.command-watch.start": {
+        if (inactive) {
+          return yield* refuse(
+            `Thread ${command.threadId} is settled or archived and cannot watch commands.`,
+          );
+        }
+        if (thread.lineage.relationshipToParent === "subagent") {
+          return yield* refuse(
+            `Thread ${command.threadId} is a subagent; its parent thread watches commands.`,
+          );
+        }
+        if (thread.runtimeMode !== "full-access" || thread.interactionMode !== "default") {
+          return yield* refuse(
+            `Thread ${command.threadId} is not in Full access, which command watches need.`,
+          );
+        }
+        // The caller's own run decides, so a slow call from a run Stop reached, or from a run
+        // that already ended, cannot start a watch once a newer run is active.
+        const { runs } = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs"])
+          .pipe(mapDispatchError(command));
+        const callerRun = runs.find((run) => run.id === command.callerRunId);
+        if (
+          callerRun === undefined ||
+          !(
+            callerRun.status === "preparing" ||
+            callerRun.status === "starting" ||
+            callerRun.status === "running"
+          ) ||
+          (yield* stopReachedRun(command, command.threadId, callerRun.id))
+        ) {
+          return yield* refuse(`The run that asked for this watch on ${command.threadId} ended.`);
+        }
+        if (watches.some((watch) => watch.command === command.command)) return;
+        if (watches.length >= THREAD_COMMAND_WATCH_LIMIT) {
+          return yield* refuse(
+            `Thread ${command.threadId} already watches ${THREAD_COMMAND_WATCH_LIMIT} commands.`,
+          );
+        }
+        next = [
+          ...watches,
+          {
+            id: command.watchId,
+            command: command.command,
+            label: command.label,
+            everyMinutes: command.everyMinutes,
+            startedAt: DateTime.formatIso(now),
+            lastOutputHash: null,
+            wakes: 0,
+          },
+        ];
+        break;
+      }
+      case "thread.command-watch.stop":
+        next = watches.filter(
+          (watch) => command.watchId !== undefined && watch.id !== command.watchId,
+        );
+        if (next.length === watches.length) return;
+        break;
+      case "thread.command-watch.sync": {
+        const existing = watches.find((watch) => watch.id === command.watchId);
+        if (existing?.startedAt !== command.startedAt || (command.wake && inactive)) {
+          return yield* refuse("The command watch ended or its thread settled while it ran.");
+        }
+        next = watches.flatMap((watch) =>
+          watch !== existing ? [watch] : command.watch === null ? [] : [command.watch],
+        );
+        break;
+      }
+    }
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.command-watches-updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        ...thread,
+        commandWatches: next,
+        // Starting or stopping is activity; what a run recorded is not.
+        updatedAt: command.type === "thread.command-watch.sync" ? thread.updatedAt : now,
+      },
+    });
+    if (command.type !== "thread.command-watch.sync" || command.wake === undefined) return;
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: command.wake.messageId,
+        text: command.wake.text,
+        notification: command.wake.notification,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      },
+      events,
+      effects,
+    );
+  });
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -3092,6 +3247,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             archivedAt: now,
             titleRegeneration: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
+            ...withoutCommandWatches(thread),
             updatedAt: now,
           };
         case "thread.unarchive":
@@ -3105,6 +3261,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
+            ...withoutCommandWatches(thread),
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,
@@ -3501,10 +3658,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 updatedAt: now,
               }
             : thread;
+        // Command watches run shell commands outside any turn, so they live only in Full access.
         case "thread.runtime-mode.set":
-          return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
+          return {
+            ...thread,
+            runtimeMode: command.runtimeMode,
+            ...(command.runtimeMode === "full-access" ? {} : withoutCommandWatches(thread)),
+            updatedAt: now,
+          };
         case "thread.interaction-mode.set":
-          return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
+          return {
+            ...thread,
+            interactionMode: command.interactionMode,
+            ...(command.interactionMode === "default" ? {} : withoutCommandWatches(thread)),
+            updatedAt: now,
+          };
         case "thread.model-selection.set":
         case "provider.switch":
           return {
@@ -9374,7 +9542,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const pullRequests = thread.pullRequests ?? [];
-    if (pullRequests.some((link) => link.watch !== undefined)) {
+    // One payload ends both kinds of watch: a second full-thread event built from the same
+    // snapshot would bring back whichever watches the first one cleared.
+    if (
+      pullRequests.some((link) => link.watch !== undefined) ||
+      (thread.commandWatches ?? []).length > 0
+    ) {
       yield* emitEvent({
         type: "thread.pull-request-synced",
         threadId: thread.id,
@@ -9383,6 +9556,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...thread,
           pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+          ...withoutCommandWatches(thread),
         },
       });
     }
@@ -11503,6 +11677,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
         break;
+      case "thread.command-watch.start":
+      case "thread.command-watch.stop":
+      case "thread.command-watch.sync":
+        yield* dispatchCommandWatch(command, events, effects);
+        break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -11797,7 +11976,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
-        command.type === "subagent.stop"
+        command.type === "subagent.stop" ||
+        // Watching a command already watched, or stopping a watch that already ended.
+        command.type === "thread.command-watch.start" ||
+        command.type === "thread.command-watch.stop"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

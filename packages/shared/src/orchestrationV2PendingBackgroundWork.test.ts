@@ -404,6 +404,26 @@ describe("derivePendingBackgroundWork kinds", () => {
       ).toEqual(["pull-request-watch:github.com/acme/app#1"]);
     });
 
+    it("lists command watches as monitors, only when passed", () => {
+      const commandWatches = [{ id: "command-watch:1", label: "Maintainer reply" }];
+      const tasks = derivePendingBackgroundWork({
+        latestRun: null,
+        providerThreads: [],
+        turnItems: [],
+        commandWatches,
+      });
+      expect(tasks).toEqual([
+        { taskId: "command-watch:1", description: "Watching: Maintainer reply", kind: "monitor" },
+      ]);
+      expect(
+        derivePendingBackgroundWork({
+          latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+          providerThreads: [],
+          turnItems: [],
+        }),
+      ).toEqual([]);
+    });
+
     it("lists no watch while a run is active", () => {
       expect(
         derivePendingBackgroundWork({

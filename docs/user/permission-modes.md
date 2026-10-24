@@ -15,6 +15,9 @@ and modes you choose in a draft keep their permissions.
 | **Auto**              | Uses the provider's automatic review to approve routine actions and ask about others. |
 | **Full access**       | Allows commands and edits without approval prompts.                                   |
 
+Command watches (`watch_command`) run a command on an interval without asking, so agents can only
+start one in **Full access**, and switching a thread to another mode ends its watches.
+
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task.
 

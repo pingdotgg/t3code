@@ -1,5 +1,7 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as CommandWatchReactor from "./CommandWatchReactor.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
@@ -373,6 +375,17 @@ export const layerProduction = Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,
         layerOrchestratorProvided,
+      ),
+    ),
+  ),
+  CommandWatchReactor.layerStart.pipe(
+    Layer.provide(CommandWatchReactor.layer),
+    Layer.provide(
+      Layer.mergeAll(
+        layerOrchestratorProvided,
+        ProjectionStore.layer,
+        ProjectStore.layer,
+        ProcessRunner.layer,
       ),
     ),
   ),

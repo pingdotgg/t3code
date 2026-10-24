@@ -40,6 +40,7 @@ import type {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
+  ThreadCommandWatch,
 } from "@t3tools/contracts";
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -180,6 +181,23 @@ export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
 >;
+
+/** The thread fields the command watch reactor reads, for a thread with at least one watch. */
+export type ProjectionThreadCommandWatches = Pick<
+  OrchestrationV2AppThread,
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "runtimeMode"
+  | "interactionMode"
+  | "worktreePath"
+> & {
+  readonly commandWatches: ReadonlyArray<ThreadCommandWatch>;
+  /** A run is preparing, queued, starting or running, so a wake would wait behind it. */
+  readonly busy: boolean;
+};
 
 export type ProjectionSettlementCandidate = Pick<
   OrchestrationV2ThreadShell,
@@ -476,6 +494,13 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  /**
+   * Active (not deleted, not archived) threads with at least one command watch, or only
+   * `threadId` when given. Skips message and item reads.
+   */
+  readonly getThreadsWithCommandWatches: (
+    threadId?: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadCommandWatches>, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -780,6 +805,24 @@ function isQueuedProviderThreadPlaceholder(providerThread: OrchestrationV2Provid
   );
 }
 
+function commandWatchThreadOf(
+  thread: OrchestrationV2AppThread,
+  busy: boolean,
+): ProjectionThreadCommandWatches {
+  return {
+    id: thread.id,
+    projectId: thread.projectId,
+    lineage: thread.lineage,
+    settledOverride: thread.settledOverride,
+    settledAt: thread.settledAt,
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+    worktreePath: thread.worktreePath,
+    commandWatches: thread.commandWatches ?? [],
+    busy,
+  };
+}
+
 export function applyToProjection(
   projection: OrchestrationV2ThreadProjection,
   event: OrchestrationV2DomainEvent,
@@ -823,6 +866,7 @@ export function applyToProjection(
     // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
     case "thread.pull-request-synced":
+    case "thread.command-watches-updated":
       return {
         ...base,
         thread: event.payload,
@@ -1596,6 +1640,7 @@ export function threadShellFromProjection(
     activeProviderThreadId: projection.thread.activeProviderThreadId,
     runs: projection.runs,
     pullRequests: projection.thread.pullRequests,
+    commandWatches: projection.thread.commandWatches,
   });
   return {
     createdBy: projection.thread.createdBy,
@@ -1979,6 +2024,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.marked-unread":
             case "thread.metadata-updated":
             case "thread.pull-request-synced":
+            case "thread.command-watches-updated":
             case "thread.runtime-mode-updated":
             case "thread.interaction-mode-updated":
             case "thread.model-selection-updated":
@@ -2812,6 +2858,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.metadata-updated" &&
             event.type !== "thread.pull-request-synced" &&
             event.type !== "thread.pull-request-link-updated" &&
+            event.type !== "thread.command-watches-updated" &&
             event.type !== "thread.runtime-mode-updated" &&
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
@@ -6107,6 +6154,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     activeProviderThreadId: thread.activeProviderThreadId,
                     hasActiveRun: false,
                     pullRequests: thread.pullRequests,
+                    commandWatches: thread.commandWatches,
                   }),
                 } satisfies ProjectionSettlementCandidate;
               }),
@@ -6136,6 +6184,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
+            ),
+          );
+        },
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
+    const getThreadsWithCommandWatches: ProjectionStoreV2Shape["getThreadsWithCommandWatches"] =
+      Effect.fn("ProjectionStore.getThreadsWithCommandWatches")(
+        function* (threadId) {
+          const rows = yield* sql<PayloadRow & { readonly busy: number }>`
+          SELECT t.payload_json, EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs active
+            WHERE active.thread_id = t.thread_id
+              AND active.status IN ('preparing', 'queued', 'starting', 'running')
+          ) AS busy
+          FROM orchestration_v2_projection_threads t
+          WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND json_array_length(t.payload_json, '$.commandWatches') > 0
+          ORDER BY t.updated_at ASC, t.thread_id ASC
+        `;
+          return yield* Effect.forEach(rows, (row) =>
+            decodeThreadPayload(row.payload_json).pipe(
+              Effect.map((thread) => commandWatchThreadOf(thread, row.busy !== 0)),
             ),
           );
         },
@@ -6264,6 +6336,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             activeProviderThreadId: thread.activeProviderThreadId,
             hasActiveRun: row.active_run_id !== null,
             pullRequests: thread.pullRequests,
+            commandWatches: thread.commandWatches,
           }),
         ];
         return {
@@ -6570,6 +6643,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
+      getThreadsWithCommandWatches: readOnReader(getThreadsWithCommandWatches),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getThreadProjection,
       getTurnStartContext: readOnReader(getTurnStartContext),
@@ -6772,6 +6846,37 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
+          ),
+        ),
+      getThreadsWithCommandWatches: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .filter(
+                ({ thread }) =>
+                  (threadId === undefined || thread.id === threadId) &&
+                  thread.deletedAt === null &&
+                  thread.archivedAt === null &&
+                  (thread.commandWatches ?? []).length > 0,
+              )
+              .toSorted(
+                (left, right) =>
+                  DateTime.toEpochMillis(left.thread.updatedAt) -
+                    DateTime.toEpochMillis(right.thread.updatedAt) ||
+                  left.thread.id.localeCompare(right.thread.id),
+              )
+              .map(({ thread, runs }) =>
+                commandWatchThreadOf(
+                  thread,
+                  runs.some(
+                    (run) =>
+                      run.status === "preparing" ||
+                      run.status === "queued" ||
+                      run.status === "starting" ||
+                      run.status === "running",
+                  ),
+                ),
+              ),
           ),
         ),
       getLimitRecoveryCandidates: (options) =>

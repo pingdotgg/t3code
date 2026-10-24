@@ -84,9 +84,12 @@ function makeSourceRun(status: OrchestrationV2Run["status"]): OrchestrationV2Run
   };
 }
 
-function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2ThreadProjection {
+function makeSourceProjection(
+  sourceRun: OrchestrationV2Run,
+  thread = makeSourceThread(),
+): OrchestrationV2ThreadProjection {
   return {
-    thread: makeSourceThread(),
+    thread,
     runs: [sourceRun],
     attempts: [],
     nodes: [],
@@ -156,6 +159,30 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       threadId: sourceThreadId,
       runId: sourceRunId,
     });
+  }),
+);
+
+it.effect("does not copy command watches, which wake the thread that started them", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const result = yield* planFork(
+      sourceRun,
+      makeSourceProjection(sourceRun, {
+        ...makeSourceThread(),
+        commandWatches: [
+          {
+            id: "command-watch:1",
+            command: "gh api",
+            label: "Maintainer reply",
+            everyMinutes: 10,
+            startedAt: "2026-10-15T09:00:00.000Z",
+            lastOutputHash: null,
+            wakes: 0,
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(result.targetThread.commandWatches, []);
   }),
 );
 

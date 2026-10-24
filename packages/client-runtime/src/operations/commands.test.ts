@@ -364,6 +364,38 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("Stop with no run left ends the thread's command watches", () =>
+    Effect.gen(function* () {
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        thread: {
+          ...v2Projection.thread,
+          commandWatches: [
+            {
+              id: "command-watch:1",
+              command: "gh api",
+              label: "Maintainer reply",
+              everyMinutes: 10,
+              startedAt: "2026-10-15T09:00:00.000Z",
+              lastOutputHash: null,
+              wakes: 0,
+            },
+          ],
+        },
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(commands).toEqual([
+        { type: "thread.command-watch.stop", commandId: expect.any(String), threadId: v2ThreadId },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("Stop with no run left ends the thread's pull request watches", () =>
     Effect.gen(function* () {
       const link = {

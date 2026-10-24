@@ -158,7 +158,7 @@ prevent automatic settlement. An open pull request does not prevent inactivity
 settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
-finished background work or a pull request watch starts on its own does not.
+finished background work or a pull request or command watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
@@ -183,6 +183,22 @@ On web and desktop, right-click a pull request link in a thread and choose
 **Link to thread** to select a different PR. Use **Unlink from thread** on the
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
+
+## Wait on a command
+
+Ask the agent to wait for something that is not a pull request, such as a reply on a discussion or
+issue, another repository's CI, or a deploy, and it calls `watch_command` with a short check. The
+server runs the check on an interval in the thread's workspace. The first run records what the
+check prints at that moment, and the agent wakes only when a later run prints something different.
+Runs that change nothing cost nothing. The thread stays in
+the **Working** section as Waiting until the agent stops watching.
+
+The thread details card lists each watched command with a button to stop it. On mobile, tap the
+Waiting status above the composer to see them. Pressing Stop on the thread, settling or archiving
+it, leaving **Full access**, or switching it to plan mode also ends its command watches. A watch also stops
+after 7 days, after 10 wakes, after 8 failed runs in a row, or when the output is longer than 4 KB.
+Agents can only start a command watch in **Full access**, because the server runs the command later
+without asking.
 
 ## Find and reference work
 

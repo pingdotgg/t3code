@@ -388,6 +388,12 @@ export function summarizeT3ToolCalls(
         quantity(selected.length, "pull request"),
       );
       break;
+    case "watch-command":
+      label = phrase("Watching", "watch", quantity(selected.length, "command"));
+      break;
+    case "unwatch-command":
+      label = phrase("Stopped watching", "stop watching", quantity(selected.length, "command"));
+      break;
     case "list-prs":
       label = phrase(
         "Checked",

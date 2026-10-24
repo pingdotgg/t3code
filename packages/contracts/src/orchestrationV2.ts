@@ -54,6 +54,12 @@ import {
   ThreadPullRequestWatch,
 } from "./threadPullRequest.ts";
 import {
+  ThreadCommandWatch,
+  ThreadCommandWatchCommand,
+  ThreadCommandWatchEveryMinutes,
+  ThreadCommandWatchLabel,
+} from "./threadCommandWatch.ts";
+import {
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
@@ -405,6 +411,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  /** Commands the server runs for this thread's agent (`watch_command`). */
+  commandWatches: Schema.optional(Schema.Array(ThreadCommandWatch)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
@@ -1653,6 +1661,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.marked-unread",
       "thread.metadata-updated",
       "thread.pull-request-synced",
+      "thread.command-watches-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
@@ -2467,6 +2476,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
+      "thread.command-watches-updated",
       "thread.metadata-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
@@ -2778,6 +2788,13 @@ export const OrchestrationV2Command = Schema.Union([
       }),
     ),
   }),
+  /** Stop one command watch, or every command watch on the thread when `watchId` is omitted. */
+  Schema.Struct({
+    type: Schema.Literal("thread.command-watch.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    watchId: Schema.optional(TrimmedNonEmptyString),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.sync"),
     commandId: CommandId,
@@ -3059,6 +3076,40 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /**
+   * Starts a command watch for the agent run `callerRunId`. Internal so only the MCP service,
+   * after checking the caller, can make the server run a shell command on an interval.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.command-watch.start"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    callerRunId: RunId,
+    watchId: TrimmedNonEmptyString,
+    command: ThreadCommandWatchCommand,
+    label: ThreadCommandWatchLabel,
+    everyMinutes: ThreadCommandWatchEveryMinutes,
+  }),
+  /**
+   * Records what a command watch run saw, and wakes the agent in the same transaction when
+   * `wake` is set. Rejected once the watch started at `startedAt` has ended.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.command-watch.sync"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    watchId: TrimmedNonEmptyString,
+    startedAt: IsoDateTime,
+    /** The watch to record, or null to end it. */
+    watch: Schema.NullOr(ThreadCommandWatch),
+    wake: Schema.optional(
+      Schema.Struct({
+        messageId: MessageId,
+        text: Schema.String,
+        notification: OrchestrationV2Notification,
+      }),
+    ),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,
