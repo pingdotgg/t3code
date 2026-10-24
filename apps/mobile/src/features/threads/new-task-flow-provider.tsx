@@ -1,3 +1,4 @@
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
@@ -1037,7 +1038,7 @@ export function NewTaskFlowProvider(
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments: draft.attachments,
-      context: draft.context,
+      context: composerRecallContext(text, draft.text, draft.context, editingPendingTask?.text),
       modelSelection: draftModelSelection,
       runtimeMode: draft.runtimeMode ?? defaultRuntimeMode,
       interactionMode: resolvePendingTaskInteractionMode({

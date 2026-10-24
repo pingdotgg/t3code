@@ -1,3 +1,4 @@
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -494,6 +495,8 @@ export function useThreadComposerState() {
     }
     const payload = resolveQueuedEditPayload({
       edit,
+      text,
+      draftText: draft.text,
       draftContext: draft.context,
       draftAttachments: draft.attachments,
       uploaded: prepared.value.attachments,
@@ -507,7 +510,7 @@ export function useThreadComposerState() {
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
-          ...(payload.context ? { context: payload.context } : {}),
+          context: payload.context,
         },
       },
     });
@@ -706,7 +709,7 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
-      context: draft.context,
+      context: composerRecallContext(text, draft.text, draft.context),
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
@@ -725,7 +728,7 @@ export function useThreadComposerState() {
         // at the send limit, which would silently drop this message's images if
         // the user attached new ones while the write was in flight.
         void mergeComposerDraftContent(threadKey, {
-          text,
+          text: draft.text,
           context: draft.context,
           attachments: [],
         });

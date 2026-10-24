@@ -387,6 +387,7 @@ const ComposerDraftProjectSchema = Schema.Struct({
 // attachments. Keep every payload reloadable; send guards ask the user to trim the draft.
 const PersistedComposerContextSchema = Schema.Struct({
   version: Schema.Literal(1),
+  composerRecall: OrchestrationMessageContext.fields.composerRecall,
   records: ForwardCompatibleArray(ComposerContextRecord),
 });
 

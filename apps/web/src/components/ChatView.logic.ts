@@ -1500,6 +1500,15 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
   const images = [...contents.images];
   const files = [...contents.files];
   const terminalContexts = [...contents.sendableTerminalContexts];
+  const composerText = contents.terminalContexts
+    .filter((context) => !terminalContexts.includes(context))
+    .reduce(
+      (text, context) =>
+        removeInlineContextReference(text, terminalContextReference(context).contextId, {
+          preserveTrailingWhitespace: true,
+        }).prompt,
+      contents.prompt,
+    );
   return {
     images,
     files,
@@ -1508,14 +1517,8 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     previewAnnotations: [...contents.previewAnnotations],
     reviewComments: [...contents.reviewComments],
     threadContexts: [...contents.threadContexts],
-    messageText: contents.terminalContexts
-      .filter((context) => !terminalContexts.includes(context))
-      .reduce(
-        (text, context) =>
-          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
-        contents.prompt,
-      )
-      .trim(),
+    composerText,
+    messageText: composerText.trim(),
   };
 }
 

@@ -1,3 +1,4 @@
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -107,10 +108,12 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
 
   return async function submitPlanFollowUp({
     text,
-    context,
+    composerText,
+    context: inputContext,
     interactionMode: nextInteractionMode,
   }: {
     text: string;
+    composerText: string;
     context?: ReturnType<typeof buildMessageContext>;
     interactionMode: "default" | "plan";
   }) {
@@ -145,6 +148,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       effort: sendCtx.selectedPromptEffort,
       text: trimmed,
     });
+    const context = composerRecallContext(outgoingMessageText, composerText, inputContext);
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
@@ -333,6 +337,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
             messageId: newMessageId(),
             role: "user",
             text: outgoingImplementationPrompt,
+            context: { version: 1, records: [], composerRecall: "" },
             attachments: [],
           },
           modelSelection: nextThreadModelSelection,

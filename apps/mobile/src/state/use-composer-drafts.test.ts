@@ -167,6 +167,7 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import {
   collectComposerContextReferences,
+  composerRecallContext,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
@@ -472,6 +473,18 @@ describe("mobile composer drafts", () => {
       expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
     },
   );
+
+  it("keeps recall provenance through a recovered draft's unchanged save", () => {
+    const context = { version: 1, records: [], composerRecall: "  original\n" } as const;
+    const restored = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: { thread: { text: "original", attachments: [], context } },
+    }).drafts.thread!;
+    expect(
+      composerRecallContext("original", restored.text, restored.context, "original")
+        ?.composerRecall,
+    ).toBe("  original\n");
+  });
 
   it("retains a pick matching cached state until the live shell confirms it", () => {
     const environmentId = EnvironmentId.make("environment-1");

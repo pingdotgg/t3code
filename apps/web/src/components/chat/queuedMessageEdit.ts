@@ -1,4 +1,5 @@
-import type { ChatAttachment } from "@t3tools/contracts";
+import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import {
   composerDraftHasUserContent,
   useComposerDraftStore,
@@ -49,4 +50,41 @@ export async function prepareQueuedEditAttachments(input: {
     })),
   );
   return [...input.existingAttachments, ...images, ...files];
+}
+
+export function queuedEditContext(input: {
+  readonly editing: {
+    readonly originalText: string;
+    readonly existingAttachments: ReadonlyArray<ChatAttachment>;
+    readonly context?: OrchestrationMessageContext | undefined;
+  };
+  readonly sentText: string;
+  readonly composerText: string;
+  readonly newRecords: OrchestrationMessageContext["records"];
+}): OrchestrationMessageContext {
+  const { editing } = input;
+  // Kept records for removed attachments would point at nothing.
+  const keptRecords = (editing.context?.records ?? []).filter(
+    (record) =>
+      !("attachmentId" in record) ||
+      editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId),
+  );
+  return (
+    composerRecallContext(
+      input.sentText,
+      input.composerText,
+      {
+        ...editing.context,
+        version: 1,
+        records: [
+          ...new Map(
+            [...keptRecords, ...input.newRecords].map(
+              (record) => [record.contextId, record] as const,
+            ),
+          ).values(),
+        ],
+      },
+      editing.originalText,
+    ) ?? { version: 1, records: [] }
+  );
 }

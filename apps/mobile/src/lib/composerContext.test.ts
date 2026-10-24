@@ -1,4 +1,8 @@
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import {
+  composerRecallContext,
+  recallComposerText,
+} from "@t3tools/shared/composerContextReferences";
 import { buildProjectThreadStartTurnInput } from "./projectThreadStartTurn";
 import {
   ProjectId,
@@ -269,18 +273,35 @@ describe("mobile composer context", () => {
 });
 
 describe("host context compatibility", () => {
+  it("keeps captured whitespace through outbox serialization and attachment rebinding", () => {
+    const authored = "  Ultrathink:\nThis prefix is literal\n";
+    const sentText = authored.trim();
+    const queuedContext = composerRecallContext(sentText, authored, {
+      version: 1,
+      records: [image],
+    });
+    const rebound = uploadedComposerContext(
+      queuedContext,
+      [{ id: "local-image" }],
+      [{ id: "uploaded-image" }],
+    );
+    const sent = serializeComposerMessageForServer(sentText, rebound, true);
+    expect(recallComposerText(sent.text, sent.context)).toBe(authored);
+    expect(sent.context?.records).toEqual([{ ...image, attachmentId: "uploaded-image" }]);
+    expect(serializeComposerMessageForServer(sentText, rebound, false).context).toBeUndefined();
+  });
   it("sends an image-only prompt as the attachment-only prompt and keeps the image", () => {
     const context: OrchestrationMessageContext = { version: 1, records: [image] };
     const reference = formatComposerContextReference(image);
     expect(serializeComposerMessageForServer(reference, context, true)).toEqual({
       text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-      context,
+      context: { ...context, composerRecall: "" },
     });
     const withProse = `${reference} what is this?`;
-    expect(serializeComposerMessageForServer(withProse, context, true)).toEqual({
-      text: withProse,
-      context,
-    });
+    const sent = serializeComposerMessageForServer(withProse, context, true);
+    expect(sent.text).toBe(withProse);
+    expect(sent.context?.records).toEqual(context.records);
+    expect(recallComposerText(sent.text, sent.context)).toBe("what is this?");
   });
 
   it("carries the current PR diff file within the composer wire limits", () => {
@@ -393,7 +414,10 @@ describe("host context compatibility", () => {
     expect(message.text).toContain(review.text);
     expect(message.text).toContain(review.diff);
     expect(message.text).toContain(pr.pullRequest!.url);
-    expect(serializeComposerMessageForServer(text, context, true)).toEqual({ text, context });
+    expect(serializeComposerMessageForServer(text, context, true)).toEqual({
+      text,
+      context: { ...context, composerRecall: "" },
+    });
     expect(context.records).toEqual([terminal, review, pr]);
   });
 });

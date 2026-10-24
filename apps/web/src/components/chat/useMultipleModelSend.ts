@@ -1,3 +1,4 @@
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -172,7 +173,11 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                     attachments,
                     ...withMessageContext({
                       text: target.text,
-                      context,
+                      context: composerRecallContext(
+                        target.text,
+                        sendSnapshot.composerText,
+                        context,
+                      ),
                       supportsInlineMessageContext,
                     }),
                   },
