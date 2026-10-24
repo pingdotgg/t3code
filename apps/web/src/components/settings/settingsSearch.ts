@@ -967,7 +967,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "publish-agent-activity",
     localEnvironmentOnly: true,
-    title: "Publish agent activity",
+    title: "Send agent activity to mobile devices",
     to: "/settings/connections",
     targetId: "connections-environment",
     searchTerms: ["mobile push notifications live activities cloud tunnel"],
