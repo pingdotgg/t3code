@@ -16,9 +16,11 @@ import {
 import { useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { registerCanNotifyOutsideWindow } from "../lib/backgroundActivityReporter";
 import { useEnvironmentIds } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import {
+  canNotifyOutsideWindow,
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
@@ -54,6 +56,8 @@ export function ThreadNotificationCoordinator() {
     }
     if (count !== pending.current.size) setNotificationBadge(pending.current.size);
   }, [environmentIds]);
+
+  useEffect(() => registerCanNotifyOutsideWindow(() => canNotifyOutsideWindow(mode)), [mode]);
 
   useEffect(() => {
     const clear = () => {

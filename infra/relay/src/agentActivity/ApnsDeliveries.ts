@@ -48,6 +48,7 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
+  allowsAlert,
   rowPhasesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -598,11 +599,13 @@ export const make = Effect.gen(function* () {
         threadId: input.threadId,
       })
       .pipe(
+        // A version republished quietly since the job was queued must not ring.
         Effect.map(
           (current) =>
             current !== null &&
             current.phase === input.phase &&
-            current.updatedAt === input.updatedAt,
+            current.updatedAt === input.updatedAt &&
+            allowsAlert(current),
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning("agent-activity state recheck failed; allowing queued delivery", {
@@ -626,12 +629,14 @@ export const make = Effect.gen(function* () {
             current,
           ]),
         );
+        // A quiet flip is a new version; its own job carries the right alert.
         return input.aggregate.activities.every((row) => {
           const current = currentByThread.get(`${row.environmentId}\u0000${row.threadId}`);
           return (
             current !== undefined &&
             current.phase === row.phase &&
-            current.updatedAt === row.updatedAt
+            current.updatedAt === row.updatedAt &&
+            allowsAlert(current) === allowsAlert(row)
           );
         });
       }),

@@ -56,6 +56,11 @@ The relay holds the signing authority for mint requests. DPoP protects an honest
 exchange from credential reuse; it does not make a compromised relay signing
 key harmless. Keep that trust assumption explicit when changing the protocol.
 
+The environment decides whether an agent state may ring the phone, because it
+knows whether someone is at a computer. The `notify` flag lives inside the signed
+`RelayAgentActivityState`, so nobody can make the relay alert for a quiet version.
+Queued delivery jobs treat quietness as part of the version when rechecking staleness.
+
 Managed tunnels expose only a validated loopback HTTP origin. Link proof checks
 reject forwarded authority headers, and the relay resolves endpoints from its
 own managed allocations rather than a caller-supplied URL. Health and mint

@@ -85,6 +85,16 @@ const buffers = new Map<string, Promise<AudioBuffer>>();
 /** When each sound's current playback ends, on the audio context's clock. */
 const playingUntil = new Map<string, number>();
 
+// Sound counts only once a user gesture has unlocked audio, as playback requires.
+export function canNotifyOutsideWindow(mode: NotificationMode): boolean {
+  return (
+    (hasNotificationSound(mode) && audioContext?.state === "running") ||
+    (hasDesktopNotifications(mode) &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted")
+  );
+}
+
 /** Called from a gesture so browsers allow later background playback. */
 export function unlockNotificationAudio() {
   audioContext ??= new AudioContext();

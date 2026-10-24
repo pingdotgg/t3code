@@ -1,5 +1,7 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
+export const GET_USER_IDLE_MS_CHANNEL = "desktop:get-user-idle-ms";
+export const USER_AWAY_CHANGED_CHANNEL = "desktop:user-away-changed";
 export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
 export const SET_THEME_CHANNEL = "desktop:set-theme";

@@ -38,6 +38,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -365,6 +366,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -413,6 +415,7 @@ export const make = Effect.gen(function* () {
   // every other publish, so a confirmed tombstone can never race an in-flight
   // live update; a recovered state clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
+  const quietPhaseByThread = new Map<ThreadId, RelayAgentActivityState["phase"]>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
     ThreadId,
@@ -431,6 +434,7 @@ export const make = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
+    quietPhaseByThread.clear();
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
@@ -472,12 +476,18 @@ export const make = Effect.gen(function* () {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
       const relayClient = cachedRelayClient;
+      // Quiet until the phase changes: the relay alerts on any republish, so a
+      // rename after the person walks away would ring for a result they saw.
+      const notify =
+        !(yield* backgroundPolicy.hasAttendedClient) &&
+        quietPhaseByThread.get(threadId) !== input.state?.phase;
+      const state = input.state && !notify ? { ...input.state, notify: false } : input.state;
       const proof = yield* makePublishProof({
         privateKey: cloudLinkKeyPair.privateKey,
         relayIssuer: relayConfig.issuer,
         environmentId,
         threadId,
-        state: input.state,
+        state,
         jti: yield* crypto.randomUUIDv4(),
       });
 
@@ -487,6 +497,7 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         statePhase: input.state?.phase ?? null,
         hasState: input.state !== null,
+        notify,
         reason: input.reason,
       });
 
@@ -497,7 +508,7 @@ export const make = Effect.gen(function* () {
             threadId,
           },
           payload: {
-            state: input.state,
+            state,
             proof,
           },
         })
@@ -509,6 +520,8 @@ export const make = Effect.gen(function* () {
         ok: response.ok,
         deliveries: deliveryStats(response.deliveries),
       });
+      if (state !== null && !notify) quietPhaseByThread.set(threadId, state.phase);
+      else quietPhaseByThread.delete(threadId);
     });
 
     // Per-thread shell read: this publish runs for every activity-relevant

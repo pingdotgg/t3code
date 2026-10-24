@@ -82,10 +82,46 @@ function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number
   );
 }
 
+// Registered by the mounted notification coordinator.
+let canNotifyOutsideWindow = () => false;
+
+export function registerCanNotifyOutsideWindow(check: () => boolean): () => void {
+  canNotifyOutsideWindow = check;
+  return () => {
+    if (canNotifyOutsideWindow === check) canNotifyOutsideWindow = () => false;
+  };
+}
+
+// Presence silences the phone, so it only counts from a client that can alert
+// the person itself: a focused window, or one able to alert outside it.
+export function resolveUserIdleMs(input: {
+  readonly visible: boolean;
+  readonly focused: boolean;
+  readonly canNotify: boolean;
+  /** `undefined` without a working desktop idle clock, `null` while the computer is locked or asleep. */
+  readonly systemIdleMs: number | null | undefined;
+  /** `undefined` until this page has seen input. */
+  readonly pageIdleMs: number | undefined;
+}): number | undefined {
+  const reachable = (input.visible && input.focused) || input.canNotify;
+  if (!reachable || input.systemIdleMs === null) return undefined;
+  const idleMs = input.systemIdleMs ?? input.pageIdleMs;
+  return idleMs === undefined ? undefined : Math.max(0, idleMs);
+}
+
+const readSystemIdleMs = Effect.tryPromise(async () =>
+  window.desktopBridge?.getUserIdleMs?.(),
+).pipe(Effect.orElseSucceed(() => undefined));
+
 function createActivityReport(
   environmentId: EnvironmentId,
   lastInteractionAtMs: number,
   observedAtMs: number,
+  presence: {
+    readonly visible: boolean;
+    readonly focused: boolean;
+    readonly userIdleMs: number | undefined;
+  },
 ): ClientActivityReportInput {
   const scopes = [...BASELINE_SCOPES];
   for (const entry of retainedScopes.values()) {
@@ -97,10 +133,11 @@ function createActivityReport(
     environmentId,
     clientId: getClientId(),
     clientKind: resolveClientKind(),
-    visible: document.visibilityState === "visible",
-    focused: document.hasFocus(),
+    visible: presence.visible,
+    focused: presence.focused,
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
-    appState: document.visibilityState === "visible" ? "active" : "background",
+    ...(presence.userIdleMs !== undefined ? { userIdleMs: presence.userIdleMs } : {}),
+    appState: presence.visible ? "active" : "background",
     scopes,
     ttlMs: LEASE_TTL_MS,
     observedAt: DateTime.makeUnsafe(observedAtMs),
@@ -181,18 +218,35 @@ export const layer = Layer.effectDiscard(
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let lastInteractionAtMs = clock.currentTimeMillisUnsafe();
+    // Loading or restoring a tab is not input: presence waits for a real event.
+    let lastInputAtMs: number | null = null;
     const recordInteraction = () => {
       const observedAtMs = clock.currentTimeMillisUnsafe();
       const wasRecent = wasRecentlyInteracted(lastInteractionAtMs, observedAtMs);
       lastInteractionAtMs = observedAtMs;
+      lastInputAtMs = observedAtMs;
       if (!wasRecent) {
         requestReport();
       }
+    };
+    // Chromium fires motionless pointermoves when layout shifts under a resting
+    // cursor, as on load or tab restore; only real movement is input.
+    const recordPointerMove = (event: PointerEvent) => {
+      if (event.movementX !== 0 || event.movementY !== 0) recordInteraction();
     };
     const passiveListenerOptions = { passive: true } as const;
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
+      const visible = document.visibilityState === "visible";
+      const focused = document.hasFocus();
+      const userIdleMs = resolveUserIdleMs({
+        visible,
+        focused,
+        canNotify: canNotifyOutsideWindow(),
+        systemIdleMs: yield* readSystemIdleMs,
+        pageIdleMs: lastInputAtMs === null ? undefined : observedAtMs - lastInputAtMs,
+      });
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -202,7 +256,11 @@ export const layer = Layer.effectDiscard(
               environmentId,
               request(
                 WS_METHODS.serverReportClientActivity,
-                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
+                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs, {
+                  visible,
+                  focused,
+                  userIdleMs,
+                }),
               ),
             )
             // Not `ignore`: tearing down an environment mid-request interrupts its report,
@@ -213,13 +271,17 @@ export const layer = Layer.effectDiscard(
     }).pipe(Effect.withSpan("web.backgroundActivity.report"));
 
     yield* Effect.acquireRelease(
+      Effect.sync(() => window.desktopBridge?.onUserAwayChange?.(requestReport)),
+      (unsubscribe) => Effect.sync(() => unsubscribe?.()),
+    );
+    yield* Effect.acquireRelease(
       Effect.sync(() => {
         retainedScopeListeners.add(requestReport);
         document.addEventListener("visibilitychange", requestReport);
         window.addEventListener("focus", requestReport);
         window.addEventListener("blur", requestReport);
         window.addEventListener("online", requestReport);
-        window.addEventListener("pointermove", recordInteraction);
+        window.addEventListener("pointermove", recordPointerMove);
         window.addEventListener("keydown", recordInteraction);
         window.addEventListener("wheel", recordInteraction, passiveListenerOptions);
         window.addEventListener("touchstart", recordInteraction, passiveListenerOptions);
@@ -231,7 +293,7 @@ export const layer = Layer.effectDiscard(
           window.removeEventListener("focus", requestReport);
           window.removeEventListener("blur", requestReport);
           window.removeEventListener("online", requestReport);
-          window.removeEventListener("pointermove", recordInteraction);
+          window.removeEventListener("pointermove", recordPointerMove);
           window.removeEventListener("keydown", recordInteraction);
           window.removeEventListener("wheel", recordInteraction);
           window.removeEventListener("touchstart", recordInteraction);

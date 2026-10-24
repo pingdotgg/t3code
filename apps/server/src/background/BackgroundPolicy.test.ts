@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as BackgroundPolicy from "./BackgroundPolicy.ts";
@@ -72,6 +73,27 @@ function layerFor(
 }
 
 describe("BackgroundPolicy", () => {
+  it.effect("counts a computer as attended until its last input is two minutes old", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      const session = AuthSessionId.make("session-1");
+      const rpcClient = RpcClientId.make(1);
+
+      yield* policy.reportClientActivity(session, rpcClient, makeReport());
+      assert.equal(yield* policy.hasAttendedClient, false);
+
+      yield* policy.reportClientActivity(session, rpcClient, makeReport({ userIdleMs: 100_000 }));
+      assert.equal(yield* policy.hasAttendedClient, true);
+      yield* TestClock.adjust("20 seconds");
+      assert.equal(yield* policy.hasAttendedClient, false);
+
+      yield* policy.reportClientActivity(session, rpcClient, makeReport({ userIdleMs: 0 }));
+      assert.equal(yield* policy.hasAttendedClient, true);
+      yield* policy.removeRpcClient(session, rpcClient);
+      assert.equal(yield* policy.hasAttendedClient, false);
+    }).pipe(Effect.provide(layerFor(nominalHostPower))),
+  );
+
   it.effect("removes all leases for a disconnected websocket connection", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;

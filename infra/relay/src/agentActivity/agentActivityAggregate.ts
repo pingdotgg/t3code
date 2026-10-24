@@ -43,6 +43,9 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
+    // Omitted when true: shouldUpdateLiveActivity compares stored aggregates
+    // as JSON, and an explicit `notify: true` would read as a change.
+    ...(state.notify === false ? { notify: false } : {}),
   };
 }
 
