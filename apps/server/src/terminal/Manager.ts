@@ -530,6 +530,11 @@ function shellCandidateFromCommand(
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
   }
+  // macOS terminals start bash as a login shell, so users keep their setup in ~/.bash_profile,
+  // which a plain interactive bash never reads.
+  if (platform === "darwin" && shellName === "bash") {
+    return { shell: command, args: ["-l"] };
+  }
   return { shell: command };
 }
 
