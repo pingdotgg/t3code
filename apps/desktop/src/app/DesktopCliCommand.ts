@@ -95,6 +95,18 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
+  // The launcher is itself a regular file, so a PATH that lists its folder reaches it with
+  // no link in between. Only a link we made may be removed, which is why this stays apart
+  // from `isOurLink`.
+  const runsOurLauncher = Effect.fn("DesktopCliCommand.runsOurLauncher")(
+    function* (candidate: string) {
+      if (yield* isOurLink(candidate)) return true;
+      const [resolved, ours] = yield* Effect.all([fs.realPath(candidate), fs.realPath(launcher)]);
+      return resolved === ours;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const powershell = (env: Record<string, string>) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -135,7 +147,7 @@ export const make = Effect.gen(function* () {
   const foreignFirstOnPath = Effect.gen(function* () {
     if (windows) return Option.none<string>();
     const first = yield* firstOnPath;
-    if (Option.isNone(first) || (yield* isOurLink(first.value))) return Option.none<string>();
+    if (Option.isNone(first) || (yield* runsOurLauncher(first.value))) return Option.none<string>();
     return first;
   });
 
@@ -165,7 +177,7 @@ export const make = Effect.gen(function* () {
       return { supported: true, installedPath: null, onPath: false, ...shadow };
     }
     const first = yield* firstOnPath;
-    const onPath = windows || (Option.isSome(first) && (yield* isOurLink(first.value)));
+    const onPath = windows || (Option.isSome(first) && (yield* runsOurLauncher(first.value)));
     return { supported: true, installedPath: installed.value, onPath, ...shadow };
   }).pipe(Effect.orElseSucceed(() => ({ supported: false, installedPath: null, onPath: false })));
 

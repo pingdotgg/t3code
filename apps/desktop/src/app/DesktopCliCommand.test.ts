@@ -178,6 +178,31 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not treat its own launcher as another t3 when its folder is first on PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const launcher = path.join(home, ".t3", "bin", "t3");
+      process.env.PATH = [path.dirname(launcher), path.join(home, ".local", "bin")].join(":");
+
+      const command = yield* commandIn({ home });
+      const installed = yield* command.install;
+
+      expect(yield* fs.exists(launcher)).toBe(true);
+      expect(installed).toMatchObject({
+        onPath: true,
+        installedPath: path.join(home, ".local", "bin", "t3"),
+      });
+      expect(installed.shadowedBy).toBeUndefined();
+      expect((yield* command.state).shadowedBy).toBeUndefined();
+
+      // Reaching the launcher through PATH does not make it a link T3 may remove.
+      expect((yield* command.uninstall).installedPath).toBeNull();
+      expect(yield* fs.exists(launcher)).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("leaves the Windows PATH alone when it cannot be read", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
