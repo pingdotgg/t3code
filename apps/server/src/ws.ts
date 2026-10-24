@@ -1466,16 +1466,14 @@ export const layerWsRpc = (
             return threadManagement.getThreadShell(threadId).pipe(
               Effect.map((thread) => ({
                 ...session,
-                // A thread still missing its history lists as importable, so
-                // importing again repairs it.
-                importedThreadId:
-                  thread === null ||
-                  AgentSessionImporter.isNativeHistoryPending({
-                    historyOrigin: thread.historyOrigin,
-                    hasRun: thread.latestRunId !== null,
-                  })
-                    ? null
-                    : threadId,
+                importedThreadId: thread === null ? null : threadId,
+                ...(thread !== null &&
+                AgentSessionImporter.isNativeHistoryPending({
+                  historyOrigin: thread.historyOrigin,
+                  hasRun: thread.latestRunId !== null,
+                })
+                  ? { nativeHistoryPending: true }
+                  : {}),
               })),
               Effect.mapError(
                 (cause) =>
@@ -1525,6 +1523,10 @@ export const layerWsRpc = (
               ),
             );
             if (existing !== null) {
+              const repairing = AgentSessionImporter.isNativeHistoryPending({
+                historyOrigin: existing.historyOrigin,
+                hasRun: existing.latestRunId !== null,
+              });
               yield* agentSessionImporter
                 .importNativeHistory({ threadId, workspaceRoot: project.workspaceRoot })
                 .pipe(
@@ -1537,7 +1539,7 @@ export const layerWsRpc = (
                       }),
                   ),
                 );
-              return { threadId, imported: false } as const;
+              return { threadId, imported: repairing } as const;
             }
 
             const provider = (yield* providerRegistry.getProviders).find(

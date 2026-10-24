@@ -35,6 +35,7 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -186,6 +187,7 @@ const make = Effect.gen(function* () {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+  const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -431,7 +433,7 @@ const make = Effect.gen(function* () {
     readonly workspaceRoot: string;
   }) {
     const pendingThread = Effect.map(
-      orchestrator.getThreadRecords(input.threadId, ["providerThreads", "runs"]),
+      orchestrator.getThreadRecords(input.threadId, ["providerThreads", "runs", "turnItems"]),
       (records) =>
         isNativeHistoryPending({
           historyOrigin: records.thread.historyOrigin,
@@ -440,9 +442,42 @@ const make = Effect.gen(function* () {
           ? records
           : null,
     );
+    const importedItemPrefix = `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:`;
+    // Thread commands write whole thread rows, so hold their lock from the
+    // re-read through the write to keep both this marker and their changes.
+    const commit = (messages: ReadonlyArray<AgentSessionScanner.AgentSessionThreadMessage>) =>
+      threadCommands.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const current = yield* pendingThread;
+          if (current === null) return 0;
+          // Earlier builds copied the history without the marker. Its ids are
+          // deterministic, so copying it again would collide; add the marker alone.
+          const copied = current.turnItems.some((item) => item.id.startsWith(importedItemPrefix));
+          yield* eventSink.write({
+            events: [
+              ...(copied
+                ? []
+                : messages.flatMap((message, index) =>
+                    messageEvents({ threadId: input.threadId, index, message }),
+                  )),
+              {
+                id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),
+                type: "thread.metadata-updated",
+                threadId: input.threadId,
+                providerInstanceId: current.thread.providerInstanceId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...current.thread, historyOrigin: "v1_import" },
+              },
+            ],
+          });
+          return copied ? 0 : messages.length;
+        }),
+      );
     const records = yield* pendingThread;
     if (records === null) return 0;
-    const { thread, providerThreads } = records;
+    const { thread, providerThreads, turnItems } = records;
+    if (turnItems.some((item) => item.id.startsWith(importedItemPrefix))) return yield* commit([]);
     const providerThread = providerThreads.find(
       (candidate) => candidate.appThreadId === input.threadId && candidate.nativeThreadRef !== null,
     );
@@ -487,23 +522,7 @@ const make = Effect.gen(function* () {
         : [],
     );
     // Loading the session can take a while, and the thread is usable meanwhile.
-    const current = yield* pendingThread;
-    if (current === null) return 0;
-    yield* eventSink.write({
-      events: [
-        ...messages.flatMap((message, index) =>
-          messageEvents({ threadId: input.threadId, index, message }),
-        ),
-        {
-          id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),
-          type: "thread.metadata-updated",
-          threadId: input.threadId,
-          occurredAt: yield* DateTime.now,
-          payload: { ...current.thread, historyOrigin: "v1_import" },
-        },
-      ],
-    });
-    return messages.length;
+    return yield* commit(messages);
   });
 
   return { importRecentAgentThreads, importNativeHistory };
