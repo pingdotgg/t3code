@@ -274,10 +274,15 @@ export function V5StackHeader(props: {
       backButtonHidden={options.headerBackVisible === false}
       ios={{
         navigationItemStyle: options.unstable_navigationItemStyle,
-        // Opt-ins apply only on the Duo's short display; unset falls back to the system default.
-        minimizationBehavior: isDuoDevice(deviceType)
-          ? options.unstable_headerMinimizationBehavior
-          : undefined,
+        // Opt-ins apply only where the Duo is short: folded, or held landscape. The Duo
+        // resolves `automatic` to minimize on scroll, so the tall unfolded display opts out.
+        minimizationBehavior: !isDuoDevice(deviceType)
+          ? undefined
+          : deviceType === "duo-unfolded" &&
+              nativeMetrics &&
+              nativeMetrics.height > nativeMetrics.width
+            ? "never"
+            : options.unstable_headerMinimizationBehavior,
         tintColor: options.headerTintColor,
         searchBar:
           mailSearch || searchOptions ? (
