@@ -2181,6 +2181,18 @@ code {
   overflow: visible;
 }
 
+/* The edge fade can land on the gutter between columns and paint nothing, so a
+   clipped table looks complete. The horizontal scrollbar only mounts while the
+   table overflows; keep it visible at rest as the cue, with a thumb that stays
+   readable against a dark page. */
+.chat-markdown
+  .chat-markdown-table-container
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  opacity: 1;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+
 :root {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);
