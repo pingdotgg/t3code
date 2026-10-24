@@ -2,7 +2,7 @@ import type { EnvironmentId, PullRequestRef, PullRequestReviewGuide } from "@t3t
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
-import { isEditableFocused } from "~/lib/editableFocus";
+import { guideTourTakesKey } from "~/components/chat/composerFocusRedirect";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -27,6 +27,7 @@ export function GuideTour({
   guide,
   banner,
   active,
+  engaged,
   commenting,
   onAsk,
   onFinish,
@@ -37,6 +38,8 @@ export function GuideTour({
   guide: PullRequestReviewGuide;
   banner: ReactNode;
   active: boolean;
+  /** Whether the user's last click or focus landed in the guide's panel rather than the chat. */
+  engaged: boolean;
   commenting: ExcerptCommenting | null;
   onAsk: ((stop: number, question: string) => void) | null;
   onFinish: (() => void) | null;
@@ -79,22 +82,23 @@ export function GuideTour({
   const step = (delta: 1 | -1) => goTo(stepTourPosition(position, delta, stopCount));
 
   const stepFromKey = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
-    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-    if (event.key !== "j" && event.key !== "k") return;
-    if (isEditableFocused(event.target)) return;
+    if (!engaged || !guideTourTakesKey(event) || isCommandPaletteOpen()) return;
     event.preventDefault();
     step(event.key === "j" ? 1 : -1);
   });
   useEffect(() => {
-    if (!active) return;
+    if (!active || stopCount < 2) return;
     const onKeyDown = (event: KeyboardEvent) => stepFromKey(event);
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [active]);
+  }, [active, stopCount]);
 
   return (
-    <div ref={scrollRef} className="@container/guide h-full overflow-y-auto scrollbar-gutter-both">
+    <div
+      ref={scrollRef}
+      data-guide-tour-keys={active && stopCount > 1 && engaged ? "jk" : undefined}
+      className="@container/guide h-full overflow-y-auto scrollbar-gutter-both"
+    >
       <div className="mx-auto grid max-w-[100rem] gap-6 px-4 py-4 @min-[56rem]/guide:grid-cols-[16rem_minmax(0,1fr)] @min-[90rem]/guide:gap-8 @min-[90rem]/guide:px-6">
         <aside className="sticky top-4 self-start @max-[56rem]/guide:hidden">
           <GuideRail stops={guide.stops} position={position} seen={tour.seen} onSelect={goTo} />

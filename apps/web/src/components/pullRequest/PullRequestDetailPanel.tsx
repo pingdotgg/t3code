@@ -1724,7 +1724,7 @@ export function PullRequestDetailPanel({
                 <PullRequestGuideTab
                   environmentId={environmentId}
                   reference={reference}
-                  active={tab === "guide"}
+                  active={shortcutsEnabled && tab === "guide"}
                   title={detail.title}
                   workspaceRoot={detail.workspaceRoot}
                   canComment={

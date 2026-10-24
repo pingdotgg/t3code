@@ -10,7 +10,7 @@ import {
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
-import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
+import { guideTourTakesKey, shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
 /** Runs a command. Returning false lets the key event through untouched. */
@@ -63,6 +63,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     if (
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
+      !guideTourTakesKey(event) &&
       shouldTypeToFocusComposer(event) &&
       input.composerRef.current?.insertTextAtEnd(event.key) === true
     ) {

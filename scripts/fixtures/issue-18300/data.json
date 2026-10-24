@@ -1,0 +1,73 @@
+{
+  "reference": {
+    "host": "git.cafe",
+    "repository": "pingdotgg/t3code",
+    "number": 18338
+  },
+  "guide": {
+    "headSha": "af68de7a2a51bf626d630916fdf711383f32fd03",
+    "generatedAt": "2026-10-23T01:00:00.000Z",
+    "modelSelection": {
+      "instanceId": "codex",
+      "model": "gpt-6-astra"
+    },
+    "stops": [
+      {
+        "title": "Stop 1",
+        "summary": "Reproduction guide text for stop 1.",
+        "attention": null,
+        "excerpts": [],
+        "files": [],
+        "notes": [],
+        "questions": []
+      },
+      {
+        "title": "Stop 2",
+        "summary": "Reproduction guide text for stop 2.",
+        "attention": null,
+        "excerpts": [],
+        "files": [],
+        "notes": [],
+        "questions": []
+      },
+      {
+        "title": "Stop 3",
+        "summary": "Reproduction guide text for stop 3.",
+        "attention": null,
+        "excerpts": [],
+        "files": [],
+        "notes": [],
+        "questions": []
+      }
+    ]
+  },
+  "project": {
+    "project_id": "a0efafb6-84bd-491c-84e3-1b1a0749487b",
+    "title": "t3code",
+    "workspace_root": "{{WORKTREE}}",
+    "scripts_json": "[]",
+    "created_at": "2026-10-23T01:24:10.769Z",
+    "updated_at": "2026-10-23T01:24:10.769Z",
+    "deleted_at": null,
+    "default_model_selection_json": null,
+    "default_thread_env_mode": null,
+    "favicon_path": null,
+    "auto_pull": 0,
+    "project_icon_json": null
+  },
+  "thread": {
+    "thread_id": "thread:project:a0efafb6-84bd-491c-84e3-1b1a0749487b:cfeaf609-dc2b-419d-abe4-20626070bcbb",
+    "project_id": "a0efafb6-84bd-491c-84e3-1b1a0749487b",
+    "title": "New thread",
+    "default_provider": "codex",
+    "runtime_mode": "full-access",
+    "interaction_mode": "default",
+    "active_provider_thread_id": null,
+    "created_at": "2026-10-23T01:24:10.983Z",
+    "updated_at": "2026-10-23T01:24:11.026Z",
+    "archived_at": null,
+    "deleted_at": null,
+    "payload_json": "{\"createdBy\":\"system\",\"creationSource\":\"server\",\"id\":\"thread:project:a0efafb6-84bd-491c-84e3-1b1a0749487b:cfeaf609-dc2b-419d-abe4-20626070bcbb\",\"projectId\":\"a0efafb6-84bd-491c-84e3-1b1a0749487b\",\"title\":\"New thread\",\"providerInstanceId\":\"codex\",\"modelSelection\":{\"instanceId\":\"codex\",\"model\":\"gpt-6-astra\"},\"runtimeMode\":\"full-access\",\"interactionMode\":\"default\",\"branch\":\"main\",\"worktreePath\":null,\"pullRequests\":[{\"host\":\"git.cafe\",\"repository\":\"pingdotgg/t3code\",\"number\":18338,\"url\":\"https://git.cafe/pingdotgg/t3code/pulls/18338\",\"source\":\"manual\",\"linkedAt\":\"2026-10-23T01:24:10.983Z\",\"snapshot\":{\"state\":\"open\",\"title\":\"fix(web): J and K step the review guide beside a chat\",\"headBranch\":\"fix/guide-jk-keys\",\"baseBranch\":\"main\",\"isDraft\":false,\"updatedAt\":\"2026-10-21T13:26:46.902Z\",\"syncedAt\":\"2026-10-23T01:25:26.911Z\",\"closedAt\":null,\"mergedAt\":null,\"author\":{\"login\":\"akbarakma\",\"name\":null,\"avatarUrl\":\"https://git.cafe/avatars/v1/a65aceaaeede4a811df9d64053f0301e85959e6c08f83618b0f16473b8c58bad\"},\"additions\":332,\"deletions\":59,\"changedFiles\":6,\"mergeability\":\"unknown\"},\"stack\":null}],\"branchPullRequest\":null,\"activeProviderThreadId\":null,\"lineage\":{\"parentThreadId\":null,\"relationshipToParent\":null,\"rootThreadId\":\"thread:project:a0efafb6-84bd-491c-84e3-1b1a0749487b:cfeaf609-dc2b-419d-abe4-20626070bcbb\"},\"forkedFrom\":null,\"createdAt\":\"2026-10-23T01:24:10.983Z\",\"updatedAt\":\"2026-10-23T01:24:11.026Z\",\"archivedAt\":null,\"settledOverride\":null,\"settledAt\":null,\"snoozedUntil\":null,\"snoozedAt\":null,\"lastVisitedAt\":\"2026-10-23T01:24:11.026Z\",\"deletedAt\":null}",
+    "provider_instance_id": "codex"
+  }
+}

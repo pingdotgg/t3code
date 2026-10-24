@@ -1,6 +1,6 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -46,6 +46,26 @@ export function PullRequestGuideTab({
   onOpenFile: (path: string) => void;
   onTourShown?: (() => void) | undefined;
 }) {
+  // Opening the guide precedes this lazy mount, so it starts engaged. Only the chat competes for
+  // J/K, so clicks anywhere else (the panel's tab bar, header, a standalone page) keep the guide
+  // engaged. Tracking lives here, not in the tour, so a chat click while the guide loads counts.
+  const [engaged, setEngaged] = useState(true);
+  useEffect(() => {
+    const record = (event: Event) => {
+      setEngaged(
+        !event
+          .composedPath()
+          .some((node) => node instanceof Element && node.matches("[data-chat-column]")),
+      );
+    };
+    window.addEventListener("pointerdown", record, true);
+    window.addEventListener("focusin", record, true);
+    return () => {
+      window.removeEventListener("pointerdown", record, true);
+      window.removeEventListener("focusin", record, true);
+    };
+  }, []);
+
   const { query, data, running, canWrite, write } = useReviewGuideWriter({
     environmentId,
     reference,
@@ -147,6 +167,7 @@ export function PullRequestGuideTab({
         guide={guide}
         banner={banner}
         active={active}
+        engaged={engaged}
         commenting={commenting}
         onAsk={
           onAskAboutStop === null

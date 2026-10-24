@@ -1,3 +1,5 @@
+import { isEditableFocused } from "../../lib/editableFocus";
+
 // Type-to-focus: printable keys and pastes that land on no editable target go to
 // the composer, so the user can start typing anywhere in the chat.
 
@@ -68,6 +70,20 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
   return true;
+}
+
+// An engaged review guide owns J/K even when clicking its prose leaves focus on body.
+export function guideTourTakesKey(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return false;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+  if (event.key !== "j" && event.key !== "k") return false;
+  if (isEditableFocused(event.target)) return false;
+  const guide = document.querySelector("[data-guide-tour-keys]");
+  if (guide === null) return false;
+  // A narrow layout hosts the guide in a sheet; only other overlays block its keys.
+  return !Array.from(document.querySelectorAll(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)).some(
+    (layer) => !layer.contains(guide),
+  );
 }
 
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
