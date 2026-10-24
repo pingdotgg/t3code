@@ -1,4 +1,8 @@
-import { ACP_REGISTRY_MAX_AGENTS, AuthProvidersManageScope } from "@t3tools/contracts";
+import {
+  ACP_REGISTRY_MAX_AGENTS,
+  ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH,
+  AuthProvidersManageScope,
+} from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -92,7 +96,7 @@ export function AcpRegistrySearchStep({
 
   const submitSearch = (nextQuery: string) => {
     if (searchTimer.current !== null) clearTimeout(searchTimer.current);
-    const trimmed = nextQuery.trim();
+    const trimmed = nextQuery.trim().slice(0, ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH);
     setQuery(trimmed);
     setPrepareError(null);
     if (trimmed === submittedQuery) {
@@ -150,8 +154,12 @@ export function AcpRegistrySearchStep({
           <InputGroupInput
             aria-label="Search ACP Registry"
             disabled={preparingId !== null}
+            maxLength={ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH}
             onChange={(event) => {
-              const nextQuery = event.currentTarget.value;
+              const nextQuery = event.currentTarget.value.slice(
+                0,
+                ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH,
+              );
               setQuery(nextQuery);
               setPrepareError(null);
               if (searchTimer.current !== null) clearTimeout(searchTimer.current);

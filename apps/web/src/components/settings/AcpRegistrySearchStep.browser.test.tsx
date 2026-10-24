@@ -1,6 +1,12 @@
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import {
+  AcpRegistrySearchInput,
+  EnvironmentId,
+  ProviderDriverKind,
+  type AcpRegistrySearchAgent,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 
@@ -49,6 +55,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 import { AcpRegistrySearchStep } from "./AcpRegistrySearchStep";
 
 const environmentId = EnvironmentId.make("remote-device");
+const isRegistrySearchInput = Schema.is(AcpRegistrySearchInput);
 const gemini: AcpRegistrySearchAgent = {
   id: "gemini",
   name: "Gemini CLI",
@@ -138,4 +145,20 @@ it("ignores prepare completion after unmount", async () => {
   );
 
   expect(onPrepared).not.toHaveBeenCalled();
+});
+
+it("keeps pasted searches valid at the registry request boundary", async () => {
+  setup();
+  state.search.mockImplementation(({ input }: { readonly input: unknown }) => {
+    const valid = isRegistrySearchInput(input);
+    state.error = valid ? null : "Invalid registry search query";
+    state.result = valid && input.query ? { agents: [] } : { agents: [gemini] };
+  });
+  await using _screen = await render(step());
+
+  await page.getByRole("searchbox", { name: "Search ACP Registry" }).fill("agent".repeat(26));
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(page.getByText("No compatible agents found")).toBeVisible();
+  await expect.element(page.getByText("Invalid registry search query")).not.toBeInTheDocument();
 });
