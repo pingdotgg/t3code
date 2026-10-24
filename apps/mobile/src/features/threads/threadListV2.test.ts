@@ -99,6 +99,18 @@ describe("resolveThreadListV2Status", () => {
     );
   });
 
+  it("shows a waiting guest message as Request, after the agent's own requests", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      decodeThreadShell(makeRawThreadShell({ status: "running" })),
+    );
+    const guest = { ...thread, pendingGuestMessageCount: 1 };
+
+    expect(resolveThreadListV2Status(guest)).toBe("request");
+    expect(resolveThreadListV2Status({ ...guest, hasPendingUserInput: true })).toBe("input");
+    expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
+  });
+
   it.each([
     { kind: "command", status: "ready" },
     { kind: "monitor", status: "waiting" },

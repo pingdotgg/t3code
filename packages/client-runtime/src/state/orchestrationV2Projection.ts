@@ -276,6 +276,7 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
+    case "thread.guest-share-updated":
       return { ...base, thread: event.payload };
     // Visited tracking is read state, not activity: skip the updatedAt bump.
     case "thread.visited":

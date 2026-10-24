@@ -15,7 +15,11 @@ export const Route = createFileRoute("/pair")({
       };
     }
 
-    if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
+    if (
+      authGateState.status === "authenticated" ||
+      authGateState.status === "hosted-static" ||
+      authGateState.status === "guest"
+    ) {
       throw redirect({ to: "/", replace: true });
     }
     return {

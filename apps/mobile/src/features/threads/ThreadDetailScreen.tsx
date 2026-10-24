@@ -173,6 +173,7 @@ import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
+import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
@@ -1547,6 +1548,10 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                   <ChatGptUsageLimitNotice
                     key={`chatgpt-limit:${props.selectedThread.latestRun?.runId}`}
                     thread={props.selectedThread}
+                  />
+                  <ThreadGuestShareBar
+                    threadRef={props.selectedThreadDetailRef}
+                    canOperateThread={props.canOperateThread}
                   />
                   {props.feedbackSubmissions.map((submission) => (
                     <ComposerFeedback
