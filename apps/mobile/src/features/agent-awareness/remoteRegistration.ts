@@ -37,6 +37,8 @@ import {
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
+import type { AgentActivityWidgetSource } from "../../widgets/agentActivityWidgetTimeline";
+import { publishAgentActivityWidget } from "../../widgets/publishAgentActivityWidget";
 import {
   dismissEndedAgentLiveActivities,
   getAgentLiveActivities,
@@ -93,6 +95,16 @@ const ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS = 60_000;
 const LIVE_ACTIVITY_STALE_AFTER_MS = 10 * 60_000;
 const liveActivityStaleDate = () => new Date(Date.now() + LIVE_ACTIVITY_STALE_AFTER_MS);
 const registeredActivityPushTokens = new Map<string, number>();
+// What the widget shows, as far as this process knows. A failed read keeps
+// only rows this process painted for the current account; after a cold start
+// the persisted timeline could be any state, so it is "unknown". Rows keep
+// their owner because a provider release forgets the active identity.
+let widgetShows: "unknown" | "placeholder" | { readonly rowsOf: string | null } = "unknown";
+const widgetShowsRowsOf = (identity: string | null) =>
+  typeof widgetShows === "object" && widgetShows.rowsOf === identity;
+// Refreshes can overlap (sign-in, foreground, retry); only the newest read may
+// repaint, so a slow older response never overwrites newer rows.
+let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
@@ -187,6 +199,17 @@ export function setAgentAwarenessRelayTokenProvider(
     if (relayTokenProviderIdentity && identity !== relayTokenProviderIdentity) {
       clearAndroidAgentNotifications();
     }
+    // Sign-in and account switches show loading until the first read. A cold
+    // start doesn't, so a launch never flashes it over the persisted timeline.
+    if (
+      provider &&
+      identity &&
+      (relayTokenProviderIdentity || widgetShows !== "unknown") &&
+      !widgetShowsRowsOf(identity)
+    ) {
+      widgetShows = "placeholder";
+      publishWidget({ kind: "loading" });
+    }
     androidDeviceReplayedAt = null;
     deviceRegistrationGeneration++;
     activeDeviceRegistration = null;
@@ -208,6 +231,8 @@ export function setAgentAwarenessRelayTokenProvider(
     // Without a signed-in user the relay can no longer update or end these
     // activities, so they would sit orphaned on the lock screen.
     endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
+    widgetShows = "placeholder";
+    publishWidget({ kind: "signed-out" });
     setRegistrationStatus("unknown");
     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
       logRegistrationError("clear registration record on sign-out failed", error);
@@ -808,6 +833,15 @@ function ensureAppStateListener(): void {
   });
 }
 
+function publishWidget(source: AgentActivityWidgetSource): void {
+  if (!canRegisterRemoteLiveActivities()) {
+    return;
+  }
+  publishAgentActivityWidget(source).catch((error: unknown) => {
+    logRegistrationError("agent activity widget publish failed", error);
+  });
+}
+
 // Binaries built before the native dismissEnded method throw here.
 function dismissEndedLocalLiveActivities(): void {
   try {
@@ -908,6 +942,8 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   registrationStatusListeners.clear();
   registeredActivityPushTokens.clear();
   activityPushTokenLocks.clear();
+  widgetShows = "unknown";
+  widgetSnapshotReads = 0;
 }
 
 export const unregisterAgentAwarenessDeviceForCurrentUser: (
@@ -1044,6 +1080,35 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
     return;
   }
 
+  // The home-screen widget has no push path of its own, so every foreground
+  // refresh repaints it from one snapshot read. Yields undefined once the
+  // account changed or a newer read started, so a stale result is never
+  // shown or primed.
+  const identity = relayTokenProviderIdentity;
+  const isCurrentAccount = () =>
+    relayTokenProvider !== null && relayTokenProviderIdentity === identity;
+  let read = 0;
+  const isNewestRead = () => isCurrentAccount() && read === widgetSnapshotReads;
+  const refreshWidget = Effect.gen(function* () {
+    // An obsolete refresh must not supersede the current account's read.
+    if (!isCurrentAccount()) {
+      return undefined;
+    }
+    read = ++widgetSnapshotReads;
+    const snapshot = yield* readAgentActivitySnapshot();
+    if (!isNewestRead()) {
+      return undefined;
+    }
+    if (snapshot) {
+      widgetShows = { rowsOf: identity };
+      publishWidget({ kind: "snapshot", aggregate: snapshot.aggregate });
+    } else if (!widgetShowsRowsOf(identity)) {
+      widgetShows = "placeholder";
+      publishWidget({ kind: "unavailable" });
+    }
+    return { snapshot };
+  });
+
   dismissEndedLocalLiveActivities();
   let activities = yield* Effect.try({
     try: () => getAgentLiveActivities(),
@@ -1063,6 +1128,7 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
 
   // The relay tracks exactly one card per device; if concurrent arming ever
   // produced extras, end them so only one keeps receiving updates.
+  const hadActivities = activities.length > 0;
   if (activities.length > 1) {
     for (const extra of activities.slice(1)) {
       extra.end("immediate").catch((error: unknown) => {
@@ -1076,7 +1142,12 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   // update token can be observed and registered immediately — the relay never
   // remote-starts one (background push-to-start wakes proved too unreliable
   // to hand the token over).
-  if (activities.length === 0) {
+  if (!hadActivities) {
+    const widgetRead = yield* refreshWidget;
+    if (!widgetRead) {
+      return;
+    }
+    const { snapshot } = widgetRead;
     const preferences = yield* Effect.tryPromise({
       try: () => loadPreferences(),
       catch: (cause) =>
@@ -1085,10 +1156,14 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
           cause,
         }),
     }).pipe(Effect.orElseSucceed(() => null));
+    // A sign-out, account switch, or newer read during the preference read
+    // makes this snapshot stale; priming now could bring old rows back.
+    if (!isNewestRead()) {
+      return;
+    }
     if (preferences?.liveActivitiesEnabled !== false) {
-      const snapshot = yield* readAgentActivitySnapshot();
-      // The snapshot request yields; an arm-on-send may have created the
-      // card in the meantime. Re-check so two cards are never started.
+      // The snapshot and preference reads yield; an arm-on-send may have
+      // created the card in the meantime. Re-check so two cards are never started.
       const armedMeanwhile = yield* Effect.try({
         try: () => getAgentLiveActivities(),
         catch: () => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>,
@@ -1146,5 +1221,11 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
 
   if (registrationResults.some(Boolean)) {
     scheduleActiveLiveActivityRegistrationRetry();
+  }
+
+  // An existing card keeps its push token registered without waiting on the
+  // relay; the widget still repaints afterwards.
+  if (hadActivities) {
+    yield* refreshWidget;
   }
 });
