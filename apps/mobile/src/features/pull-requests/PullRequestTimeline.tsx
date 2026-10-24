@@ -13,6 +13,7 @@ import { relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
+import { discussionCommentCountLabel } from "./pullRequestDiffComments";
 import type { PullRequestParams } from "./usePullRequestDiff";
 
 function TimelineEvent(props: {
@@ -227,7 +228,7 @@ export function pullRequestTimelineRows(
             <Text className="text-xs text-foreground-muted">
               {thread.isResolved ? "Resolved" : "Unresolved"}
               {thread.isOutdated ? " · Outdated" : ""} ·{" "}
-              {thread.commentCount ?? thread.comments.length} comments
+              {discussionCommentCountLabel(thread.commentCount ?? thread.comments.length)}
             </Text>
           </Pressable>
         </TimelineEvent>
