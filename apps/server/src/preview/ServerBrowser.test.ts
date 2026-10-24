@@ -749,6 +749,47 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a dialog the browser already closed stops blocking the tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173" },
+      });
+      page.emit("dialog", {
+        type: () => "beforeunload",
+        message: () => "",
+        defaultValue: () => "",
+        accept: vi.fn(async () => {
+          throw new Error("Protocol error (Page.handleJavaScriptDialog): No dialog is showing");
+        }),
+        dismiss: vi.fn(async () => {}),
+      });
+      yield* broker
+        .invoke<void>({ scope, tabId, operation: "dialog", input: { accept: true } })
+        .pipe(Effect.flip);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.dialog).toBeNull();
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173/other" },
+      });
+      expect(page.goto).toHaveBeenCalledTimes(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {
