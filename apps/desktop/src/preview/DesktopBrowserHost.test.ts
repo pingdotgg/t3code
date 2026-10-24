@@ -131,6 +131,27 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("reports cookies the server cleared before it replies", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      const cleared: Array<number> = [];
+      host.attach(key, {
+        ...debuggee.tab,
+        cookiesCleared: async () => {
+          cleared.push(debuggee.sent.length);
+        },
+      });
+      const replies = yield* watchReplies(host);
+
+      yield* command(host, 1, "Network.clearBrowserCache");
+      yield* command(host, 2, "Network.clearBrowserCookies");
+      debuggee.release();
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
+      expect(cleared).toEqual([2]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("sends a page one screenshot at a time", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;

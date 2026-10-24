@@ -35,6 +35,8 @@ export interface DesktopBrowserTabKey {
 export interface DesktopBrowserTabDebugger {
   readonly webContents: Electron.WebContents;
   readonly debugger: Electron.Debugger;
+  /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
+  readonly cookiesCleared?: () => Promise<void>;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -124,11 +126,16 @@ export const make = Effect.gen(function* () {
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
-    const { webContents, debugger: debuggee } = tab.debuggee;
-    const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
+    const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
+    const forward = (method: string, params: Record<string, unknown>, sessionId?: string) =>
       sessionId === undefined
         ? sendPageCommand(webContents, debuggee, method, params)
         : debuggee.sendCommand(method, params, sessionId);
+    const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      const result = await forward(method, params, sessionId);
+      if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
+      return result;
+    };
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId) =>
