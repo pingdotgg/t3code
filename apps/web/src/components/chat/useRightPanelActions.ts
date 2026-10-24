@@ -40,7 +40,7 @@ interface RightPanelActionsInput {
   readonly pullRequestPanelTarget: ReturnType<typeof threadPullRequestPanelTarget> | null;
   readonly threadPanelPresentation: ThreadPanelPresentation;
   readonly isServerThread: boolean;
-  readonly isGitRepo: boolean;
+  readonly hasGitSurfaces: boolean;
   readonly browserAvailable: boolean;
   readonly canOperatePreview: boolean;
   readonly diffOpen: boolean;
@@ -73,7 +73,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     pullRequestPanelTarget,
     threadPanelPresentation,
     isServerThread,
-    isGitRepo,
+    hasGitSurfaces,
     browserAvailable,
     canOperatePreview,
     diffOpen,
@@ -125,13 +125,16 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
-    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    if (!activeThreadRef || !isServerThread || !hasGitSurfaces) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   };
   const addDiffSurfaceStable = useStableCallback(addDiffSurface);
-  const openChangesFromThreadPanel = () => {
+  const openChangesFromThreadPanel = (repositoryPath?: string) => {
+    if (activeThreadRef && repositoryPath !== undefined) {
+      useDiffPanelStore.getState().selectRepository(activeThreadRef, repositoryPath);
+    }
     addDiffSurface();
   };
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);

@@ -33,6 +33,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  VcsRepository,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -49,6 +50,8 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   cwd: Schema.NullOr(Schema.String),
+  /** Repositories a multi-repo `cwd` holds, for the agent's instructions. */
+  repositories: Schema.optional(Schema.Array(VcsRepository)),
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   reasoningEffort: Schema.optional(Schema.String),

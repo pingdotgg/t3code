@@ -3137,7 +3137,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (mcpAvailable) state.mcp = wanted;
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          repositories: turnInput.runtimePolicy.repositories,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable),
       ]
         .filter((part) => part !== undefined && part.length > 0)

@@ -58,6 +58,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as WorkspaceWorktrees from "./WorkspaceWorktrees.ts";
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
@@ -4112,6 +4113,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   Effect.andThen(git.createRef(input)),
                 ),
             }),
+            Effect.provide(
+              Layer.mock(WorkspaceWorktrees.WorkspaceWorktrees)({
+                isContainer: () => Effect.succeed(false),
+              }),
+            ),
           ),
         );
         const preparing = yield* Effect.forkChild(

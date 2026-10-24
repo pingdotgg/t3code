@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   buildCodexAdditionalContext,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+  buildCodexRepositoriesContext,
 } from "./CodexDeveloperInstructions.ts";
 
 describe("buildCodexAdditionalContext", () => {
@@ -39,6 +40,16 @@ describe("buildCodexDeveloperInstructions", () => {
 
     NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
+  });
+});
+
+describe("buildCodexRepositoriesContext", () => {
+  it("sends only the repository list, and nothing outside a multi-repo workspace", () => {
+    const context = buildCodexRepositoriesContext([{ relativePath: "api", name: "api" }]);
+    NodeAssert.deepStrictEqual(Object.keys(context ?? {}), ["t3_code_repositories"]);
+    NodeAssert.match(context!.t3_code_repositories!.value, /^<workspace_repositories>/);
+    NodeAssert.strictEqual(buildCodexRepositoriesContext([]), undefined);
+    NodeAssert.strictEqual(buildCodexRepositoriesContext(undefined), undefined);
   });
 });
 

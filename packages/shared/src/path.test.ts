@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   workspaceRelativeFilePath,
+  joinWorkspaceRepositoryPath,
   newProjectFolderName,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
@@ -34,6 +35,16 @@ describe("path helpers", () => {
     expect(newProjectFolderName("Con")).toBe("con-project");
     expect(newProjectFolderName("LPT1")).toBe("lpt1-project");
     expect(newProjectFolderName("console")).toBe("console");
+  });
+
+  it("joins a workspace repository path in the folder's separator style", () => {
+    expect(joinWorkspaceRepositoryPath("/work/app/", "services/api")).toBe(
+      "/work/app/services/api",
+    );
+    expect(joinWorkspaceRepositoryPath("C:\\work\\app", "services/api")).toBe(
+      "C:\\work\\app\\services\\api",
+    );
+    expect(joinWorkspaceRepositoryPath("/", "api")).toBe("/api");
   });
 });
 

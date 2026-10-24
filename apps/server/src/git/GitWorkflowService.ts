@@ -30,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
+import * as WorkspaceWorktrees from "./WorkspaceWorktrees.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -173,6 +174,7 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const workspaceWorktrees = yield* WorkspaceWorktrees.WorkspaceWorktrees;
   const fileSystem = yield* FileSystem.FileSystem;
 
   // Nested projects and path aliases must share the checkout's branch-mutation lease.
@@ -435,8 +437,18 @@ export const make = Effect.gen(function* () {
         Effect.andThen(git.fetchWorktreeBaseCommit(input)),
       ),
     removeWorktree: (input) =>
-      ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
-        Effect.andThen(git.removeWorktree(input)),
+      workspaceWorktrees.isContainer(input.path).pipe(
+        Effect.flatMap((isContainer) =>
+          isContainer
+            ? workspaceWorktrees.remove({
+                workspaceRoot: input.cwd,
+                path: input.path,
+                force: input.force === true,
+              })
+            : ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
+                Effect.andThen(git.removeWorktree(input)),
+              ),
+        ),
       ),
     pruneWorktrees: (input) =>
       ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(

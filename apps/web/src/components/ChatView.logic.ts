@@ -1530,6 +1530,7 @@ export function planComposerTurn(input: {
   readonly sendEnvMode: DraftThreadEnvMode;
   readonly worktreePath: string | null;
   readonly activeThreadBranch: string | null;
+  readonly isMultiRepoWorkspace: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly keepFullHistory: boolean;
   readonly phase: SessionPhase;
@@ -1546,11 +1547,18 @@ export function planComposerTurn(input: {
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&
     !COMPACT_COMMAND_PATTERN.test(input.messageText);
+  // The server starts each repository of a multi-repo workspace from its own default
+  // branch, so there is no base branch to pick.
+  const baseBranchForWorktree = shouldCreateWorktree
+    ? input.isMultiRepoWorkspace
+      ? (input.activeThreadBranch ?? "HEAD")
+      : input.activeThreadBranch
+    : null;
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
-    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+    missingWorktreeBaseBranch: shouldCreateWorktree && !baseBranchForWorktree,
+    baseBranchForWorktree,
     compactBeforeSend,
     turnDispatchMode:
       compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,

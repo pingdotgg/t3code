@@ -53,7 +53,7 @@ it.effect(
             Layer.mergeAll(
               IdAllocator.layer,
               Layer.mock(CheckpointStore.CheckpointStore)({
-                isGitRepository: () => Effect.succeed(true),
+                isCheckpointable: () => Effect.succeed(true),
                 hasCheckpointRef: () => Effect.succeed(false),
                 captureCheckpoint: () => Effect.fail(captureError),
               }),

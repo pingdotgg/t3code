@@ -1080,6 +1080,7 @@ describe("planComposerTurn", () => {
     sendEnvMode: "worktree" as const,
     worktreePath: null,
     activeThreadBranch: "main",
+    isMultiRepoWorkspace: false,
     resumeCompactionTokens: null,
     keepFullHistory: false,
     phase: "ready" as const,
@@ -1099,6 +1100,12 @@ describe("planComposerTurn", () => {
       missingWorktreeBaseBranch: true,
       baseBranchForWorktree: null,
     });
+  });
+
+  it("needs no base branch for a multi-repo workspace", () => {
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, isMultiRepoWorkspace: true }),
+    ).toMatchObject({ missingWorktreeBaseBranch: false, baseBranchForWorktree: "HEAD" });
   });
 
   it("queues behind a compaction of a stale session, except for /compact itself", () => {

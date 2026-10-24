@@ -101,6 +101,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
+  buildCodexRepositoriesContext,
 } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   describeMcpElicitation,
@@ -775,13 +776,17 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const t3Context =
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
-            { model: input.modelSelection.model, reasoningEffort: effort ?? undefined },
+            {
+              model: input.modelSelection.model,
+              reasoningEffort: effort ?? undefined,
+              repositories: input.runtimePolicy.repositories,
+            },
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
             },
           )
-        : undefined;
+        : buildCodexRepositoriesContext(input.runtimePolicy.repositories);
     const additionalContext =
       t3Context === undefined && Object.keys(appContext).length === 0
         ? undefined

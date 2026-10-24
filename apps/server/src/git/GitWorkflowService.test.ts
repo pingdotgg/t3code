@@ -9,8 +9,13 @@ import * as ServerConfig from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as WorkspaceWorktrees from "./WorkspaceWorktrees.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+
+const notAContainer = Layer.mock(WorkspaceWorktrees.WorkspaceWorktrees)({
+  isContainer: () => Effect.succeed(false),
+});
 
 it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
   it.effect("finds a name among the refs of every namespace", () =>
@@ -43,6 +48,7 @@ it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
             }),
           ),
           Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provide(notAContainer),
           Layer.provideMerge(GitVcsDriver.layer),
           Layer.provideMerge(VcsProcess.layer),
           Layer.provideMerge(
