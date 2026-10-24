@@ -1,6 +1,6 @@
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useNavigation } from "@react-navigation/native";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,13 +13,29 @@ export function PullRequestSheetContent(props: {
   readonly busy?: boolean;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
+  /** Sizes the sheet to its content on iOS as well, for short forms. */
+  readonly compact?: boolean;
 }) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const android = Platform.OS === "android";
+  const compactIos = Platform.OS === "ios" && props.compact === true;
+  const [headerHeight, setHeaderHeight] = useState(84);
+  const [bodyHeight, setBodyHeight] = useState(144);
+  const [footerHeight, setFooterHeight] = useState(0);
+  // On iOS 26 the native fit-to-contents wrapper contains a flex SafeAreaView. Bound the
+  // scene with a measured detent instead, so its header and scroll view can lay out normally.
+  const compactDetent = Math.min(
+    0.92,
+    Math.max(
+      0.25,
+      (headerHeight + bodyHeight + (props.footer ? footerHeight : 0) + 24) / windowHeight,
+    ),
+  );
   const footer = props.footer ? (
     <View
+      onLayout={(event) => setFooterHeight(event.nativeEvent.layout.height)}
       className={android ? "bg-sheet-solid pt-3" : "bg-sheet px-4 pt-3"}
       style={{ paddingBottom: Math.max(insets.bottom, 16) }}
     >
@@ -28,6 +44,7 @@ export function PullRequestSheetContent(props: {
   ) : null;
   return (
     <KeyboardAvoidingView
+      enabled={!compactIos}
       automaticOffset
       behavior="padding"
       collapsable={false}
@@ -38,22 +55,37 @@ export function PullRequestSheetContent(props: {
         options={{
           gestureEnabled: !props.busy,
           ...(android ? { sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" } : {}),
+          ...(compactIos
+            ? {
+                sheetAllowedDetents: [compactDetent],
+                contentStyle: { flex: 1, bottom: 0 },
+              }
+            : {}),
         }}
       />
-      <SheetHeader
-        presentation={android ? "inline" : "native"}
-        title={props.title}
-        subtitle={props.subtitle}
-        onCancel={() => navigation.goBack()}
-        dismissDisabled={props.busy}
-      />
+      <View onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}>
+        <SheetHeader
+          presentation={android || compactIos ? "inline" : "native"}
+          title={props.title}
+          subtitle={props.subtitle}
+          onCancel={() => navigation.goBack()}
+          dismissDisabled={props.busy}
+        />
+      </View>
       <ScreenContent fitToContents={android}>
         <ScrollView
           nestedScrollEnabled
           className="android:shrink android:grow-0 ios:flex-1"
-          contentInsetAdjustmentBehavior="automatic"
+          contentInsetAdjustmentBehavior={compactIos ? "never" : "automatic"}
+          onContentSizeChange={(_width, height) => setBodyHeight(height)}
+          automaticallyAdjustKeyboardInsets={compactIos}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 20 }}
+          keyboardDismissMode="interactive"
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingTop: compactIos ? 0 : 16,
+            paddingBottom: props.compact ? Math.max(insets.bottom, 12) : 20,
+          }}
         >
           <View className="gap-4" pointerEvents={props.busy ? "none" : "auto"}>
             {props.children}

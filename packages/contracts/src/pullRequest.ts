@@ -150,7 +150,15 @@ export const PullRequestComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   path: Schema.NullOr(Schema.String),
   reviewState: Schema.NullOr(Schema.String),
+  reviewCommitSha: Schema.optional(Schema.String),
+  /** Absent from a host with no reactions at all, which is a different thing from none on this. */
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  pendingReviewId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The host's own answer to whether this reader may rewrite this remark. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
+   */
   canEdit: Schema.optional(Schema.Boolean),
 });
 export type PullRequestComment = typeof PullRequestComment.Type;
@@ -169,6 +177,12 @@ export const PullRequestThreadComment = Schema.Struct({
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  pendingReviewId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The host's own answer to whether this reader may rewrite this remark. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
+   */
   canEdit: Schema.optional(Schema.Boolean),
 });
 export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
@@ -178,6 +192,8 @@ export const PullRequestReviewThread = Schema.Struct({
   path: TrimmedNonEmptyString,
   line: Schema.NullOr(PositiveInt),
   side: PullRequestDiffSide,
+  startLine: Schema.optional(PositiveInt),
+  startSide: Schema.optional(PullRequestDiffSide),
   isResolved: Schema.Boolean,
   isOutdated: Schema.Boolean,
   comments: Schema.Array(PullRequestThreadComment),
@@ -235,6 +251,9 @@ export const PullRequestReviewCapabilities = Schema.Struct({
    * server that predates it, means one line.
    */
   rangeComment: Schema.optional(Schema.Boolean),
+  /** Pending comments can be saved privately on the host to obtain their real links. */
+  draftComment: Schema.optional(Schema.Boolean),
+  /** An existing thread can be replied to. */
   reply: Schema.Boolean,
   resolve: Schema.Boolean,
   verdicts: ForwardCompatibleArray(PullRequestReviewVerdict),
@@ -258,6 +277,10 @@ export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment
 export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
 
 export const PullRequestCapabilities = Schema.Struct({
+  /** Local media can be published to a host URL before composing a comment or review. */
+  attachments: Schema.optional(Schema.Boolean),
+
+  /** A unified patch can be fetched for the change request. */
   diff: Schema.Boolean,
   comment: Schema.Boolean,
   actions: ForwardCompatibleArray(PullRequestAction),
@@ -288,6 +311,10 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 /** Unreported host permissions are granted. */
 export const PullRequestViewerPermissions = Schema.Struct({
   stackRebase: Schema.optional(Schema.Boolean),
+  adminMerge: Schema.optional(Schema.Boolean),
+  /** May publish local media to the host attachment endpoint. */
+  attachments: Schema.optional(Schema.Boolean),
+  /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
   actions: ForwardCompatibleArray(PullRequestAction),
   comment: Schema.Boolean,
   resolve: Schema.Boolean,
@@ -568,6 +595,8 @@ export const PullRequestDetail = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  /** Whether the host's merge requirements are satisfied, including branch protection. */
+  mergeRequirementsSatisfied: Schema.optional(Schema.Boolean),
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,
@@ -732,6 +761,8 @@ export const PullRequestActionInput = Schema.Struct({
   ...PullRequestRef.fields,
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
+  adminOverride: Schema.optional(Schema.Boolean),
+  /** Only read for `update-branch`, where absent means the host's own default. */
   updateMethod: Schema.optional(PullRequestUpdateMethod),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
@@ -745,6 +776,28 @@ export const PullRequestCommentInput = Schema.Struct({
 });
 export type PullRequestCommentInput = typeof PullRequestCommentInput.Type;
 
+export const PullRequestUploadAttachmentInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  attachmentId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: Schema.Literals([
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+  ]),
+  sizeBytes: PositiveInt.check(Schema.isLessThanOrEqualTo(100 * 1024 * 1024)),
+});
+export type PullRequestUploadAttachmentInput = typeof PullRequestUploadAttachmentInput.Type;
+
+export const PullRequestUploadAttachmentResult = Schema.Struct({ url: TrimmedNonEmptyString });
+export type PullRequestUploadAttachmentResult = typeof PullRequestUploadAttachmentResult.Type;
+
+/** Optional fields preserve untouched text; the service rejects an empty update.
+ * Body whitespace is significant Markdown, and an empty body clears the description. */
 export const PullRequestUpdateInput = Schema.Struct({
   ...PullRequestRef.fields,
   title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1024))),
@@ -780,6 +833,14 @@ export const PullRequestReviewPosition = Schema.Union([
 ]);
 export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type;
 
+export const PullRequestDraftCommentLink = Schema.Struct({
+  reviewId: TrimmedNonEmptyString,
+  commentId: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+});
+export type PullRequestDraftCommentLink = typeof PullRequestDraftCommentLink.Type;
+
+/** One remark in a review that has not been sent yet, anchored to a line of the diff. */
 export const PullRequestReviewCommentDraft = Schema.Struct({
   path: TrimmedNonEmptyString,
   /** GitLab needs both names for renamed-file comments; hosts using one path ignore this. */
@@ -791,12 +852,32 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
    */
   startPosition: Schema.optional(PullRequestReviewPosition),
   body: CommentBody,
+  hostedComment: Schema.optional(PullRequestDraftCommentLink),
 });
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
 
+export const PullRequestSaveDraftCommentInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  comment: PullRequestReviewCommentDraft,
+});
+export type PullRequestSaveDraftCommentInput = typeof PullRequestSaveDraftCommentInput.Type;
+
+export const PullRequestDiscardDraftCommentInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  ...PullRequestDraftCommentLink.fields,
+});
+export type PullRequestDiscardDraftCommentInput = typeof PullRequestDiscardDraftCommentInput.Type;
+
+/**
+ * A whole review, sent in one go. The line comments travel with the verdict rather than being
+ * posted as they are written, so a half-finished review is never visible to anyone else — and
+ * so hosts with no notion of a pending review behave the same as the ones that have it.
+ */
 export const PullRequestSubmitReviewInput = Schema.Struct({
   ...PullRequestRef.fields,
   verdict: PullRequestReviewVerdict,
+  pendingReviewId: Schema.optional(TrimmedNonEmptyString),
+  /** The review's own words. May be empty, which is how an approval with no remarks is sent. */
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),
 });
@@ -818,6 +899,7 @@ export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsRe
 export const PullRequestThreadReplyInput = Schema.Struct({
   ...PullRequestRef.fields,
   threadId: TrimmedNonEmptyString,
+  pendingReviewId: Schema.optional(TrimmedNonEmptyString),
   body: CommentBody,
 });
 export type PullRequestThreadReplyInput = typeof PullRequestThreadReplyInput.Type;

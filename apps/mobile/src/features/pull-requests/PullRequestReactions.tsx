@@ -6,7 +6,7 @@ import {
   pullRequestReactionName,
   pullRequestReactionTooltip,
   pullRequestReactionsSignature,
-} from "@t3tools/client-runtime/pull-request-reactions";
+} from "@t3tools/client-runtime/review-reactions";
 import type {
   PullRequestComment,
   PullRequestReaction,

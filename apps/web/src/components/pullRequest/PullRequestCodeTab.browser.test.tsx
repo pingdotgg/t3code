@@ -177,10 +177,10 @@ async function expectFileHeaderShown(
   const header = screen.getByText(path, { exact: true }).first();
   await expect.element(header).toBeInTheDocument();
   await vi.waitFor(() => {
-    const top = header.element().getBoundingClientRect().top;
+    const headerBounds = header.element().getBoundingClientRect();
     const bounds = container.getBoundingClientRect();
-    expect(top).toBeGreaterThanOrEqual(bounds.top);
-    expect(top).toBeLessThan(bounds.top + bounds.height / 2);
+    expect(headerBounds.top).toBeGreaterThanOrEqual(bounds.top);
+    expect(headerBounds.bottom).toBeLessThanOrEqual(bounds.bottom);
   });
 }
 

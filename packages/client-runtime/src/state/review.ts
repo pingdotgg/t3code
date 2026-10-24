@@ -18,6 +18,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   type QueryAnswerHandler,
 } from "./runtime.ts";
+import { vcsCommandScheduler, vcsCommandConcurrency } from "./vcsCommandScheduler.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export function createReviewEnvironmentAtoms<R, E>(
@@ -55,6 +56,30 @@ export function createReviewEnvironmentAtoms<R, E>(
       label: "environment-data:review:branch-commits",
       tag: WS_METHODS.reviewGetBranchCommits,
       staleTimeMs: 5_000,
+    }),
+    generateCommitMessage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:review:generate-commit-message",
+      tag: WS_METHODS.reviewGenerateCommitMessage,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    commit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:review:commit",
+      tag: WS_METHODS.reviewCommit,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    revert: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:review:revert",
+      tag: WS_METHODS.reviewRevert,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    setStaged: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:review:set-staged",
+      tag: WS_METHODS.reviewSetStaged,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
     }),
     diffPreview,
     diffFilePatch: createEnvironmentQueryAtomFamily(runtime, {
@@ -104,6 +129,7 @@ export function createReviewEnvironmentAtoms<R, E>(
             input.oldPath,
             input.newPath,
             input.changeType,
+            input.workingTreeScope,
           ]),
       },
     }),

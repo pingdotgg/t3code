@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyReviewDiffMetadata,
   buildReviewParsedDiff,
+  buildReviewSectionItems,
+  getDefaultReviewSectionId,
   resolveReviewSelectedSectionId,
   type ReviewSectionItem,
 } from "./reviewModel";
@@ -29,6 +31,28 @@ describe("resolveReviewSelectedSectionId", () => {
   it("shows the default while the picked section loads and returns to the pick once it does", () => {
     expect(resolveReviewSelectedSectionId([changes], "turn:2")).toBe("git:branch-range");
     expect(resolveReviewSelectedSectionId([turn, changes], "turn:2")).toBe("turn:2");
+  });
+});
+
+describe("buildReviewSectionItems", () => {
+  it("holds the uncommitted comparison while git preview is loading", () => {
+    const items = buildReviewSectionItems({
+      checkpoints: [],
+      gitSections: [],
+      turnDiffById: {},
+      loadingGitSections: true,
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        id: "git:working-tree",
+        kind: "working-tree",
+        title: "Uncommitted changes",
+        diff: null,
+        isLoading: true,
+      }),
+    ]);
+    expect(getDefaultReviewSectionId(items)).toBe("git:working-tree");
   });
 });
 

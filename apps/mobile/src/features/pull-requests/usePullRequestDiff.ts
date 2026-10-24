@@ -81,6 +81,7 @@ export function usePullRequestDiffEntry(navigation: {
 export function usePullRequestDiff(
   params: PullRequestDiffParams,
   terminology: ChangeRequestTerminology,
+  ignoreWhitespace = false,
 ) {
   const reference = pullRequestTarget(params);
   const target = {
@@ -110,8 +111,8 @@ export function usePullRequestDiff(
   if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages });
 
   const parsed = useMemo(
-    () => getCachedPullRequestDiffPages(pages, key, terminology),
-    [key, pages, terminology],
+    () => getCachedPullRequestDiffPages(pages, key, terminology, ignoreWhitespace),
+    [key, pages, terminology, ignoreWhitespace],
   );
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;

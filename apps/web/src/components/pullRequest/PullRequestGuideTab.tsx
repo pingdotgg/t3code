@@ -1,16 +1,25 @@
-import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestDetailView,
+  PullRequestRef,
+  PullRequestReviewGuideStop,
+} from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import type { ExcerptCommenting } from "./guide/GuideExcerpt";
+import { PullRequestAttachments } from "./PullRequestAttachments";
+import { guideRunKey } from "./guide/guideRunStore";
 import { GuideProseContext } from "./guide/GuideProse";
 import { GuideTour } from "./guide/GuideTour";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
+import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -22,6 +31,7 @@ export function PullRequestGuideTab({
   environmentId,
   reference,
   title,
+  detail,
   workspaceRoot,
   active,
   canComment,
@@ -31,14 +41,22 @@ export function PullRequestGuideTab({
   onFinishReview,
   onOpenFile,
   onTourShown,
+  renderFallback,
+  viewControlsTarget,
 }: {
+  /** The ordinary diff reader keeps the whole change available until the guide arrives. */
+  renderFallback: (status: ReactNode) => ReactNode;
+  viewControlsTarget: HTMLElement | null;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   title: string | null;
+  detail: Pick<PullRequestDetailView, "capabilities" | "reviewThreads">;
+  /** The checkout the guide's prose renders against, as the description does. */
   workspaceRoot: string;
   active: boolean;
   canComment: boolean;
   rangeComments: boolean;
+  /** Opens an agent thread about lines of the change. Null where no thread can be opened. */
   onAskAboutLines: ((comment: ReviewCommentContext, request: string) => void) | null;
   onAskAboutStop:
     | ((stop: PullRequestReviewGuideStop, index: number, question: string) => void)
@@ -52,29 +70,51 @@ export function PullRequestGuideTab({
     reference,
     title,
   });
+  const runKey = guideRunKey(environmentId, reference);
   const reviewKey = pullRequestReviewKey(reference);
-  const pending = usePendingReviewComments(reference);
-  const addComment = usePullRequestReviewStore((store) => store.addComment);
+  const pending = usePendingReviewComments(reference, detail.reviewThreads);
+  const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const commenting: ExcerptCommenting | null =
-    !canComment && onAskAboutLines === null
+    !canComment && onAskAboutLines === null && !detail.capabilities.review.reply
       ? null
       : {
           canComment,
           rangeComments,
+          renderAttachments: (onTextChange, onBusyChange, textarea) => (
+            <PullRequestAttachments
+              environmentId={environmentId}
+              reference={reference}
+              onTextChange={onTextChange}
+              textareaRef={{ current: textarea }}
+              onBusyChange={onBusyChange}
+            />
+          ),
           pending,
+          threads: detail.reviewThreads.filter((thread) =>
+            thread.comments.some((comment) => !comment.pendingReviewId),
+          ),
+          pendingCommentTarget: {
+            environmentId,
+            reference,
+            canCopyLink: detail.capabilities.review.draftComment === true,
+          },
           onComment: ({ path, oldPath, position, startPosition, body }) =>
-            addComment(reviewKey, {
-              id: nextPendingReviewCommentId(),
-              path,
-              ...(oldPath === null ? {} : { oldPath }),
-              ...(startPosition === undefined ? {} : { startPosition }),
-              position,
-              body,
-            }),
+            addComment(
+              {
+                id: nextPendingReviewCommentId(),
+                path,
+                ...(oldPath === null ? {} : { oldPath }),
+                ...(startPosition === undefined ? {} : { startPosition }),
+                position,
+                body,
+              },
+              detail.capabilities.review.draftComment === true,
+            ),
           onRemove: (commentId) => removeComment(reviewKey, commentId),
           onAskAgent: onAskAboutLines,
         };
+
   const guide = data?.guide ?? null;
   const tourShown = active && guide !== null;
   const reportTourShown = useEffectEvent(() => onTourShown?.());
@@ -87,6 +127,23 @@ export function PullRequestGuideTab({
   const stale = guide !== null && currentHeadSha !== null && currentHeadSha !== guide.headSha;
   const failure =
     runState?._tag === "Failed" && runState.headSha === currentHeadSha ? runState.detail : null;
+  const attemptedGuide = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts remote guide generation once the active host query permits it
+  useEffect(() => {
+    if (
+      !active ||
+      data === null ||
+      data === undefined ||
+      guide !== null ||
+      running ||
+      !canWrite ||
+      failure !== null ||
+      attemptedGuide.current === runKey
+    )
+      return;
+    attemptedGuide.current = runKey;
+    void write();
+  }, [active, data, guide, running, canWrite, failure, runKey, write]);
   const writeButton = (label: string, size: "sm" | "xs") =>
     canWrite ? (
       <Button size={size} variant="outline" disabled={running} onClick={() => void write()}>
@@ -96,33 +153,33 @@ export function PullRequestGuideTab({
     ) : null;
 
   if (guide === null) {
-    if (query.isPending && data === null) {
-      return (
-        <div className="flex min-h-48 items-center justify-center">
-          <Spinner />
-        </div>
-      );
-    }
-    return (
-      <div className="scrollbar-gutter-both flex h-full flex-col items-center justify-center-safe gap-2 overflow-y-auto px-4 py-10 text-center">
-        <p className="text-sm font-medium text-foreground">
+    return renderFallback(
+      <div className="mb-4 flex flex-col gap-2" aria-busy={running}>
+        <style>{`
+          @keyframes guide-status-glimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+          [data-guide-generating] { background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%); background-size: 200% 100%; background-clip: text; color: transparent; animation: guide-status-glimmer 2.4s ease-in-out infinite; animation-play-state: var(--visible-animation-state, paused); }
+          @media (prefers-reduced-motion: reduce) { [data-guide-generating] { animation: none; } }
+        `}</style>
+        <h2
+          ref={running && active ? observeVisibleAnimation : undefined}
+          role="status"
+          data-guide-generating={(running && active) || undefined}
+          className="text-sm font-medium"
+        >
+          {(failure ? "Could not write a review guide" : null) ??
+            query.error ??
+            (running ? "Generating guide…" : query.isPending ? "Loading guide…" : "Review guide")}
+        </h2>
+        <p className="text-xs text-muted-foreground">
           {running
-            ? "Writing a review guide"
-            : failure === null
-              ? "No review guide yet"
-              : "Could not write a review guide"}
+            ? "Organizing this change into chapters. Review the files while you wait."
+            : "Review the files while the guide is prepared."}
         </p>
-        <p className="max-w-md text-xs text-muted-foreground">
-          {running
-            ? "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready."
-            : failure === null
-              ? (query.error ??
-                "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")
-              : FAILURE_HINT}
-        </p>
-        {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
+        {!running && !query.isPending
+          ? writeButton(failure === null ? "Write guide" : "Try again", "xs")
+          : null}
         {failure === null || running ? null : <FailureDetails detail={failure} />}
-      </div>
+      </div>,
     );
   }
 
@@ -152,6 +209,7 @@ export function PullRequestGuideTab({
         environmentId={environmentId}
         reference={reference}
         guide={guide}
+        viewControlsTarget={viewControlsTarget}
         banner={banner}
         active={active}
         commenting={commenting}

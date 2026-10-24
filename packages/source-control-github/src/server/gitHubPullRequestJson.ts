@@ -345,6 +345,7 @@ export interface GitHubPullRequestListItem {
 }
 
 export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
+  readonly mergeRequirementsSatisfied?: boolean;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryOwner: string | null;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -629,6 +630,17 @@ function isReviewVerdict(reviewState: string | null): boolean {
   }
 }
 
+/** GitHub's current changes view uses this anchor for the same saved comment ID. */
+export function gitHubPendingReviewCommentUrl(value: string) {
+  const url = new URL(value);
+  const comment = /^#discussion_r(\d+)$/.exec(url.hash);
+  if (url.hostname === "github.com" && comment && /\/pull\/\d+\/?$/.test(url.pathname)) {
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/changes`;
+    url.hash = `r${comment[1]}`;
+  }
+  return url.href;
+}
+
 interface RemarkFields {
   readonly id: string;
   readonly lastEditedAt: string | null;
@@ -640,7 +652,11 @@ interface RemarkFields {
 function toComments(raw: {
   readonly comments: ReadonlyArray<RemarkFields & { readonly createdAt: string }>;
   readonly reviews: ReadonlyArray<
-    RemarkFields & { readonly state: string; readonly submittedAt: string | null }
+    RemarkFields & {
+      readonly state: string;
+      readonly submittedAt: string | null;
+      readonly commit?: { readonly oid: string } | null;
+    }
   >;
 }): ReadonlyArray<PullRequestComment> {
   const issueComments = raw.comments.map((comment): PullRequestComment => ({
@@ -660,7 +676,9 @@ function toComments(raw: {
     const reviewState = trimmed(review.state);
     if (
       submittedAt === null ||
-      ((review.body ?? "").trim().length === 0 && !isReviewVerdict(reviewState))
+      ((review.body ?? "").trim().length === 0 &&
+        !isReviewVerdict(reviewState) &&
+        !review.commit?.oid)
     ) {
       return [];
     }
@@ -675,6 +693,7 @@ function toComments(raw: {
         url: trimmed(review.url),
         path: null,
         reviewState,
+        ...(review.commit?.oid ? { reviewCommitSha: review.commit.oid } : {}),
       },
     ];
   });
@@ -723,6 +742,7 @@ function toListItem(raw: ListItemFields): GitHubPullRequestListItem {
 }
 
 interface DetailFields extends ListItemFields {
+  readonly mergeStateStatus?: string | null | undefined;
   readonly isCrossRepository?: boolean | undefined;
   readonly headRepositoryOwner?: { readonly login: string } | null | undefined;
   readonly headRefOid?: string | null | undefined;
@@ -737,8 +757,16 @@ interface DetailFields extends ListItemFields {
 
 function toDetail(raw: DetailFields): GitHubPullRequestDetail {
   const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  const mergeState = raw.mergeStateStatus?.toUpperCase();
+  const mergeRequirementsSatisfied =
+    mergeState === "CLEAN" || mergeState === "HAS_HOOKS" || mergeState === "UNSTABLE"
+      ? true
+      : mergeState && ["BEHIND", "BLOCKED", "DIRTY", "DRAFT"].includes(mergeState)
+        ? false
+        : undefined;
   return {
     ...toListItem(raw),
+    ...(mergeRequirementsSatisfied === undefined ? {} : { mergeRequirementsSatisfied }),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),
@@ -963,6 +991,7 @@ export function toPullRequestWatchFingerprint(
     status: [
       pr.state,
       pr.mergeable,
+      pr.mergeStateStatus ?? "",
       pr.headRefOid,
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
@@ -1034,6 +1063,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       pr.headRepository !== null &&
       pr.headRef !== null,
     viewerAccess: {
+      ...(repository.viewerPermission === "ADMIN" ? { canAdmin: true } : {}),
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
       canTriage: toCanTriage(repository.viewerPermission),
@@ -1238,7 +1268,8 @@ export function reviewThreadConversation(
       editedAt: comment.editedAt ?? null,
       url: comment.url,
       path: thread.path,
-      reviewState: null,
+      reviewState: comment.pendingReviewId ? "PENDING" : null,
+      ...(comment.pendingReviewId ? { pendingReviewId: comment.pendingReviewId } : {}),
       reactions: comment.reactions ?? [],
     })),
   );
@@ -1276,7 +1307,13 @@ function toThreadComment(comment: ThreadComment, viewer: string | null): PullReq
     body: comment.body,
     createdAt: comment.createdAt,
     editedAt: comment.lastEditedAt,
-    url: trimmed(comment.url),
+    url:
+      comment.url && comment.pullRequestReview?.state === "PENDING"
+        ? gitHubPendingReviewCommentUrl(comment.url)
+        : trimmed(comment.url),
+    ...(comment.pullRequestReview?.state === "PENDING"
+      ? { pendingReviewId: comment.pullRequestReview.id }
+      : {}),
     reactions: toReactions(comment.reactionGroups, viewer),
   };
 }
@@ -1304,6 +1341,15 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
           // Outdated threads lose their diff line; list them without a line anchor.
           line: thread.line !== null && thread.line > 0 ? thread.line : null,
           side: thread.diffSide.toUpperCase() === "LEFT" ? "left" : "right",
+          ...(thread.line && thread.startLine && thread.startLine > 0
+            ? {
+                startLine: thread.startLine,
+                startSide:
+                  thread.startDiffSide?.toUpperCase() === "LEFT"
+                    ? ("left" as const)
+                    : ("right" as const),
+              }
+            : {}),
           isResolved: thread.isResolved,
           isOutdated: thread.isOutdated,
           comments: comments.map((comment) => toThreadComment(comment, viewer)),
@@ -1558,6 +1604,7 @@ export function buildLabelRequest(labels: ReadonlyArray<string>): {
 }
 
 export interface GitHubViewerAccess {
+  readonly canAdmin?: boolean;
   readonly canWrite: boolean;
   readonly canDeleteBranch?: boolean;
   readonly canTriage: boolean;
@@ -1581,6 +1628,7 @@ export function toViewerPermissions(
       rebase: repository.rebaseMergeAllowed,
     },
     autoMergeAllowed: repository.autoMergeAllowed,
+    ...(repository.viewerPermission === "ADMIN" ? { canAdmin: true } : {}),
     canWrite: toCanWrite(repository.viewerPermission),
     canDeleteBranch: toCanWrite(repository.pullRequest?.headRepository?.viewerPermission),
     canTriage: toCanTriage(repository.viewerPermission),

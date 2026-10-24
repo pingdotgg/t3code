@@ -448,6 +448,9 @@ const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(
 );
 
 const layerReview = ReviewService.layer.pipe(
+  Layer.provide(layerGitWorkflow),
+  Layer.provide(layerServerSettings),
+  Layer.provide(ProjectStore.layer),
   Layer.provideMerge(layerKnownWorkspaces),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerVcsDriverRegistry),

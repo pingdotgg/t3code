@@ -1,3 +1,9 @@
+import { resolvedReviewCommentsLabel } from "@t3tools/client-runtime/review-editing";
+export { reviewPositionLabel } from "@t3tools/client-runtime/review-selection";
+import {
+  reviewPositionLabel,
+  reviewLineRangeLabel,
+} from "@t3tools/client-runtime/review-selection";
 import type { PullRequestReviewPosition, PullRequestReviewThread } from "@t3tools/contracts";
 import type { NativeReviewDiffRow } from "../diffs/nativeReviewDiffSurface";
 import type { NativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
@@ -59,6 +65,7 @@ export function annotatePullRequestDiff(
     id: string,
     body: string,
     label: string,
+    state?: { commentPending?: boolean; commentResolvedSummary?: string },
   ) => {
     if (!anchor) return;
     const rows = anchors.get(anchor.id) ?? [];
@@ -69,6 +76,7 @@ export function annotatePullRequestDiff(
       filePath: anchor.filePath,
       commentText: body,
       commentRangeLabel: label,
+      ...state,
     });
     anchors.set(anchor.id, rows);
   };
@@ -83,7 +91,17 @@ export function annotatePullRequestDiff(
       anchor,
       `discussion:${thread.id}`,
       `${first?.author?.login ?? "Discussion"}${thread.isResolved ? " · Resolved" : ""}\n${first?.body ?? ""}\n${discussionCommentCountLabel(thread.commentCount ?? thread.comments.length)} · Tap to open`,
-      thread.line === null ? "file" : String(thread.line),
+      reviewLineRangeLabel(thread),
+      thread.isResolved
+        ? {
+            commentResolvedSummary: resolvedReviewCommentsLabel(
+              thread.commentCount ?? thread.comments.length,
+              thread.comments.map(
+                (comment) => comment.author?.name ?? comment.author?.login ?? "Unknown author",
+              ),
+            ),
+          }
+        : undefined,
     );
   }
   for (const draft of drafts) {
@@ -98,8 +116,9 @@ export function annotatePullRequestDiff(
     attach(
       lines.get(JSON.stringify([draft.path, side, line])),
       `draft:${draft.id}`,
-      `Pending review · Tap to edit\n${draft.body}`,
-      String(line),
+      draft.body,
+      reviewPositionLabel(draft.position, draft.startPosition),
+      { commentPending: true },
     );
   }
   return { ...data, rows: data.rows.flatMap((row) => [row, ...(anchors.get(row.id) ?? [])]) };

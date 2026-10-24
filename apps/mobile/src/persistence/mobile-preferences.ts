@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
+import { PullRequestViewingPreferences } from "@t3tools/contracts/settings";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
@@ -85,10 +86,12 @@ const ThreadProject = Schema.Struct({
   projectId: Schema.NonEmptyString,
 });
 const isThreadProject = Schema.is(ThreadProject);
+const isPullRequestViewingPreferences = Schema.is(PullRequestViewingPreferences);
 
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
+  readonly pullRequestViewing?: PullRequestViewingPreferences;
   readonly pullRequestHideTestFiles?: boolean;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
@@ -105,6 +108,7 @@ export interface Preferences {
   readonly mathRenderingEnabled?: boolean;
   /** Unset means on: crash reports are sent unless the user turns them off. */
   readonly crashReportsEnabled?: boolean;
+  readonly diffIgnoreWhitespace?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
@@ -171,6 +175,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
+    pullRequestViewing?: PullRequestViewingPreferences;
     pullRequestHideTestFiles?: boolean;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
@@ -186,6 +191,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     codeWordBreak?: boolean;
     mathRenderingEnabled?: boolean;
     crashReportsEnabled?: boolean;
+    diffIgnoreWhitespace?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     dismissedDatabaseStorageNotices?: readonly string[];
@@ -217,6 +223,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.navigationTabOrder = parsed.navigationTabOrder.filter(
       (tab): tab is string => typeof tab === "string",
     );
+  }
+
+  if (isPullRequestViewingPreferences(parsed.pullRequestViewing)) {
+    preferences.pullRequestViewing = parsed.pullRequestViewing;
   }
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -278,6 +288,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.crashReportsEnabled === "boolean") {
     preferences.crashReportsEnabled = parsed.crashReportsEnabled;
   }
+  if (typeof parsed.diffIgnoreWhitespace === "boolean")
+    preferences.diffIgnoreWhitespace = parsed.diffIgnoreWhitespace;
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",
