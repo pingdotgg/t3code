@@ -83,6 +83,18 @@ class AgentSessionThreadModifiedError extends Schema.TaggedError<AgentSessionThr
   }
 }
 
+/**
+ * Whether a thread bound to a native session still lacks its native history.
+ * Once a turn has run, the native session also holds that turn's messages, so
+ * its history can no longer be imported as run-less items.
+ */
+export function isNativeHistoryPending(input: {
+  readonly historyOrigin: OrchestrationV2AppThread["historyOrigin"];
+  readonly hasRun: boolean;
+}): boolean {
+  return input.historyOrigin !== "v1_import" && !input.hasRun;
+}
+
 function dateTime(value: string): DateTime.Utc {
   return DateTime.makeUnsafe(value);
 }
@@ -410,14 +422,27 @@ const make = Effect.gen(function* () {
    * A thread bound to an existing native session starts empty. Loading the
    * session replays its history only into the adapter's own snapshot, so copy
    * that snapshot into the thread as run-less history, as transcript imports do.
+   * The `v1_import` origin it sets is what forks read to keep that history, and
+   * marks the import done, so a call after a failed read repairs the thread and
+   * any later call does nothing.
    */
   const importNativeHistory = Effect.fn("importNativeHistoryV2")(function* (input: {
     readonly threadId: ThreadId;
     readonly workspaceRoot: string;
   }) {
-    const { thread, providerThreads } = yield* orchestrator.getThreadRecords(input.threadId, [
-      "providerThreads",
-    ]);
+    const pendingThread = Effect.map(
+      orchestrator.getThreadRecords(input.threadId, ["providerThreads", "runs"]),
+      (records) =>
+        isNativeHistoryPending({
+          historyOrigin: records.thread.historyOrigin,
+          hasRun: records.runs.length > 0,
+        })
+          ? records
+          : null,
+    );
+    const records = yield* pendingThread;
+    if (records === null) return 0;
+    const { thread, providerThreads } = records;
     const providerThread = providerThreads.find(
       (candidate) => candidate.appThreadId === input.threadId && candidate.nativeThreadRef !== null,
     );
@@ -461,11 +486,22 @@ const make = Effect.gen(function* () {
           ]
         : [],
     );
-    if (messages.length === 0) return 0;
+    // Loading the session can take a while, and the thread is usable meanwhile.
+    const current = yield* pendingThread;
+    if (current === null) return 0;
     yield* eventSink.write({
-      events: messages.flatMap((message, index) =>
-        messageEvents({ threadId: input.threadId, index, message }),
-      ),
+      events: [
+        ...messages.flatMap((message, index) =>
+          messageEvents({ threadId: input.threadId, index, message }),
+        ),
+        {
+          id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),
+          type: "thread.metadata-updated",
+          threadId: input.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...current.thread, historyOrigin: "v1_import" },
+        },
+      ],
     });
     return messages.length;
   });
