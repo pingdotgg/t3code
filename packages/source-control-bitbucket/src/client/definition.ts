@@ -6,16 +6,28 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
+  changeRequestUrlBelow,
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
-  isChangeRequestPath,
+  parseChangeRequestPath,
 } from "@t3tools/source-control-core/client/definition";
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
 const repositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
+const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u;
+
 const KIND = SourceControlProviderKind.make("bitbucket");
+
+function isBitbucketHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "bitbucket.org" ||
+    host.endsWith(".bitbucket.org") ||
+    host.split(".").includes("bitbucket")
+  );
+}
 
 const text = (annotations: Schema.Annotations.Key<string>) =>
   TrimmedString.pipe(
@@ -62,8 +74,13 @@ export const definition = defineSourceControlClient({
   // A new repository belongs to a workspace, which the signed-in account does not name.
   newRepositoryOwner: () => null,
   defaultCloneTransport: "ssh",
-  changeRequestUrl: ({ host, repository, number }) =>
-    `https://${host}/${repository}/pull-requests/${number}`,
+  changeRequestUrl: ({ host, repository, number, webUrl }) =>
+    webUrl
+      ? changeRequestUrlBelow(webUrl, `pull-requests/${number}`)
+      : `https://${host}/${repository}/pull-requests/${number}`,
+  parseChangeRequestUrl: (url) =>
+    isBitbucketHost(url.hostname) ? parseChangeRequestPath(url, CHANGE_REQUEST_PATH) : null,
+  changeRequestUrlFromReferenceAutolink: () => null,
   // No endpoint reopens a declined pull request, and nothing documented moves one in or out of
   // draft, so neither is offered rather than failing when pressed.
   changeRequestActions: new Set(["merge", "close"] as const),
@@ -79,12 +96,10 @@ export const definition = defineSourceControlClient({
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
-  changeRequestUrlHost: (url) => url.hostname,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(KIND, identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(KIND, identity, link),
-  isChangeRequestUrl: (url) => isChangeRequestPath(url, "/pull-requests/"),
   settings,
 });

@@ -70,7 +70,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";

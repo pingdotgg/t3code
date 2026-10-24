@@ -5,8 +5,24 @@ import {
   type RepositoryIdentity,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import type { ChangeRequestLink } from "@t3tools/shared/changeRequestUrl";
 import * as Schema from "effect/Schema";
+
+/**
+ * The two strings are what `pullRequestHostOf` and the project's `repositoryIdentity` produce
+ * from a git remote — lower case, no port, the full path below the host — because links are
+ * matched against those. `authority` keeps the port for hosts whose identity includes it.
+ */
+export interface ChangeRequestLink {
+  readonly host: string;
+  readonly repository: string;
+  readonly number: number;
+  readonly authority?: string;
+}
+
+export interface ParsedChangeRequestUrl extends ChangeRequestLink {
+  /** The repository's browser URL, without query or hash. */
+  readonly repositoryUrl: string;
+}
 
 export interface ChangeRequestTerminology {
   readonly shortLabel: string;
@@ -18,6 +34,7 @@ export interface ChangeRequestUrlInput {
   readonly repository: string;
   readonly number: number;
   readonly remoteUrl?: string | undefined;
+  /** The repository's browser URL; when given, the result is this plus the host's route. */
   readonly webUrl?: string | undefined;
 }
 
@@ -46,6 +63,14 @@ export interface SourceControlClientDefinition {
   readonly newRepositoryOwner: (account: string | null) => { readonly owner: string | null } | null;
   readonly defaultCloneTransport: "https" | "ssh";
   readonly changeRequestUrl: (input: ChangeRequestUrlInput) => string | null;
+  /** Null when the URL is not one of this host's change requests. */
+  readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
+  /**
+   * The change request URL a bare `#123` autolink might name, for hosts that write every
+   * reference through their issue route. Only a candidate: the caller must read it as a change
+   * request before treating it as one.
+   */
+  readonly changeRequestUrlFromReferenceAutolink: (url: URL) => string | null;
   /**
    * The actions this host can take on a change request, the same list its server provider
    * declares in `capabilities.actions`.
@@ -65,9 +90,7 @@ export interface SourceControlClientDefinition {
     identity: ChangeRequestProjectIdentity,
     link: ChangeRequestLink,
   ) => boolean;
-  readonly changeRequestUrlHost: (url: URL) => string;
   readonly checkoutChangeRequestHost: (identity: ChangeRequestProjectIdentity) => string | null;
-  readonly isChangeRequestUrl: (url: string) => boolean;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
@@ -75,14 +98,44 @@ export type SourceControlHostSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
 } & Schema.Decoder<object>;
 
-export function isChangeRequestPath(url: string, route: string): boolean {
+/**
+ * Reads a change request from `url` with `route`, whose first group is the repository path and
+ * second the number.
+ */
+export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeRequestUrl | null {
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const match = route.exec(url.pathname);
+  const repository = match?.[1];
+  const number = Number(match?.[2]);
+  return repository && Number.isSafeInteger(number) && number > 0
+    ? {
+        host: url.hostname.toLowerCase(),
+        repository: repository.toLowerCase(),
+        number,
+        repositoryUrl: `${url.origin}/${repository}`,
+      }
+    : null;
+}
+
+export function changeRequestUrlBelow(webUrl: string, route: string): string {
+  return `${webUrl.replace(/\/+$/u, "")}/${route}`;
+}
+
+/** An HTTP remote on `host` names the server's web origin, port included; SSH remotes do not. */
+export function remoteWebOrigin(host: string, remoteUrl: string | undefined): string {
   try {
-    const path = new URL(url).pathname;
-    const at = path.indexOf(route);
-    return at > 0 && /^\d+(?:\/|$)/u.test(path.slice(at + route.length));
+    const remote = new URL(remoteUrl ?? "");
+    if (
+      (remote.protocol === "http:" || remote.protocol === "https:") &&
+      (remote.hostname.toLowerCase() === host.toLowerCase() ||
+        remote.host.toLowerCase() === host.toLowerCase())
+    ) {
+      return remote.origin;
+    }
   } catch {
-    return false;
+    // SSH remotes do not specify the server's web origin.
   }
+  return `https://${host}`;
 }
 
 export function defineSourceControlClient<const Definition extends SourceControlClientDefinition>(
@@ -150,6 +203,8 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   newRepositoryOwner: () => null,
   defaultCloneTransport: "ssh",
   changeRequestUrl: () => null,
+  parseChangeRequestUrl: () => null,
+  changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set(),
   checkoutCommand: () => null,
   authorProfileUrl: () => null,
@@ -157,26 +212,49 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
-  changeRequestUrlHost: (url) => url.hostname,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(SourceControlProviderKind.make("unknown"), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(SourceControlProviderKind.make("unknown"), identity, link),
-  isChangeRequestUrl: () => false,
 };
+
+export interface ParsedChangeRequest {
+  readonly definition: SourceControlClientDefinition;
+  readonly link: ParsedChangeRequestUrl;
+}
 
 export interface SourceControlClientRegistry {
   readonly definitions: ReadonlyArray<SourceControlClientDefinition>;
   readonly get: (kind: string | null | undefined) => SourceControlClientDefinition;
   readonly find: (kind: string) => SourceControlClientDefinition | undefined;
   readonly findByPublicHost: (hostname: string) => SourceControlClientDefinition | undefined;
+  /** The first host, in registry order, that reads `url` as one of its change requests. */
+  readonly parseChangeRequestUrl: (url: string) => ParsedChangeRequest | null;
   readonly findByChangeRequestUrl: (url: string) => SourceControlClientDefinition | undefined;
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
+  readonly isSameChangeRequest: (left: string, right: string) => boolean;
+  readonly changeRequestUrlFromReferenceAutolink: (url: string) => string | null;
 }
 
+function httpUrl(value: string): URL | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `definitions` is display order, and its first entry is what `get` returns for a repository
+ * that has not reported its host yet. A change request URL goes to the first definition that
+ * reads it, trying `claimChangeRequestUrlsFirst` before the rest, so a host that claims a route
+ * only on its own hostnames can precede one that claims the route everywhere.
+ */
 export function makeSourceControlClientRegistry(
   definitions: ReadonlyArray<SourceControlClientDefinition>,
+  options?: { readonly claimChangeRequestUrlsFirst?: ReadonlyArray<SourceControlProviderKind> },
 ): SourceControlClientRegistry {
   const byKind = new Map<string, SourceControlClientDefinition>();
   for (const definition of definitions) {
@@ -185,6 +263,20 @@ export function makeSourceControlClientRegistry(
     }
     byKind.set(definition.kind, definition);
   }
+  const first = new Set(options?.claimChangeRequestUrlsFirst);
+  const claimOrder = [
+    ...definitions.filter((definition) => first.has(definition.kind)),
+    ...definitions.filter((definition) => !first.has(definition.kind)),
+  ];
+  const parseChangeRequestUrl = (value: string): ParsedChangeRequest | null => {
+    const url = httpUrl(value);
+    if (url === null) return null;
+    for (const definition of claimOrder) {
+      const link = definition.parseChangeRequestUrl(url);
+      if (link !== null) return { definition, link };
+    }
+    return null;
+  };
   return {
     definitions,
     get: (kind) =>
@@ -194,10 +286,31 @@ export function makeSourceControlClientRegistry(
       const host = hostname.toLowerCase();
       return definitions.find((definition) => definition.publicHost === host);
     },
-    findByChangeRequestUrl: (url) =>
-      definitions.find((definition) => definition.isChangeRequestUrl(url)),
+    parseChangeRequestUrl,
+    findByChangeRequestUrl: (url) => parseChangeRequestUrl(url)?.definition,
     hostLabelForChangeRequestUrl: (url) =>
-      definitions.find((definition) => definition.isChangeRequestUrl(url))?.label ?? "the host",
+      parseChangeRequestUrl(url)?.definition.label ?? "the host",
+    isSameChangeRequest: (left, right) => {
+      const a = parseChangeRequestUrl(left)?.link;
+      const b = parseChangeRequestUrl(right)?.link;
+      return (
+        a !== undefined &&
+        b !== undefined &&
+        a.host === b.host &&
+        a.repository === b.repository &&
+        a.number === b.number &&
+        a.authority === b.authority
+      );
+    },
+    changeRequestUrlFromReferenceAutolink: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      for (const definition of claimOrder) {
+        const candidate = definition.changeRequestUrlFromReferenceAutolink(url);
+        if (candidate !== null) return candidate;
+      }
+      return null;
+    },
   };
 }
 

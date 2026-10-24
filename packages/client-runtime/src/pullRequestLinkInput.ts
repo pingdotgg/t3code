@@ -1,5 +1,4 @@
 import { pullRequestHostOf, type RepositoryIdentity } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 
@@ -75,12 +74,12 @@ export function resolveLinkPullRequestInput(input: {
   readonly hasProject: (reference: ResolvedLink) => boolean;
 }): { link: ResolvedLink } | { error: string } | null {
   const parsed =
-    parseChangeRequestUrl(input.reference.trim()) !== null
+    sourceControlClients.parseChangeRequestUrl(input.reference.trim()) !== null
       ? input.reference.trim()
       : parsePullRequestReference(input.reference);
   if (parsed === null) return null;
-  const url = parseChangeRequestUrl(parsed);
-  if (url !== null) {
+  const url = sourceControlClients.parseChangeRequestUrl(parsed)?.link;
+  if (url !== undefined) {
     if (!input.hasProject({ ...url, url: parsed })) {
       return { error: `No project in this environment can read ${url.host}/${url.repository}.` };
     }
@@ -97,11 +96,17 @@ export function resolveLinkPullRequestInput(input: {
     };
   }
   const webUrl = input.project.webUrl(number);
-  const webReference = webUrl === null ? null : parseChangeRequestUrl(webUrl);
-  if (webUrl === null || webReference === null) {
+  const webReference =
+    webUrl === null ? undefined : sourceControlClients.parseChangeRequestUrl(webUrl)?.link;
+  if (webUrl === null || webReference === undefined) {
     return { error: "Paste a full URL; this project's host has no known pull request URL." };
   }
   return {
-    link: { ...webReference, url: webUrl },
+    link: {
+      host: webReference.host,
+      repository: webReference.repository,
+      number: webReference.number,
+      url: webUrl,
+    },
   };
 }

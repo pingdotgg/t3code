@@ -93,6 +93,15 @@ export class PullRequestHostRequiredError extends Schema.TaggedError<PullRequest
   }
 }
 
+export class PullRequestUrlUnavailableError extends Schema.TaggedError<PullRequestUrlUnavailableError>()(
+  "PullRequestUrlUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "This thread's project is on a host with no known pull request URL shape. Pass url.";
+  }
+}
+
 export class PullRequestThreadRequiredError extends Schema.TaggedError<PullRequestThreadRequiredError>()(
   "PullRequestThreadRequiredError",
   {},
@@ -189,6 +198,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestUrlInvalidError,
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
+  PullRequestUrlUnavailableError,
   PullRequestThreadRequiredError,
   PullRequestThreadNotFoundError,
   PullRequestLinkFailedError,

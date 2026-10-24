@@ -8,7 +8,7 @@ import {
   pullRequestListLines,
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
 import {
   ArrowUpRightIcon,
   EyeIcon,
@@ -25,7 +25,8 @@ import {
   encodePullRequestDragPayload,
 } from "~/components/chat/composerMentionDrag";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { findProjectForChangeRequest, useOpenPrLink } from "~/lib/openPullRequestLink";
+import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
+import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "~/shortcutModifierState";
 import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";

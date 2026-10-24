@@ -1,4 +1,3 @@
-import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
   type PullRequestSummary,
@@ -14,7 +13,8 @@ import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
+import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -51,6 +51,20 @@ type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 interface LinkEntry {
   readonly thread: ProjectionStore.ProjectionThreadPullRequests;
   readonly link: ThreadPullRequestLink;
+}
+
+/** Another layer of the stack `url` belongs to, in its host's canonical shape. */
+function siblingChangeRequestUrl(url: string, number: number): string | null {
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  const parsed = sourceControlClients.parseChangeRequestUrl(url);
+  if (parsed === null) return null;
+  const { definition, link } = parsed;
+  return definition.changeRequestUrl({
+    host: link.host,
+    repository: link.repository,
+    number,
+    webUrl: link.repositoryUrl,
+  });
 }
 
 function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
@@ -287,7 +301,7 @@ export const make = Effect.gen(function* () {
         ) {
           continue;
         }
-        const url = siblingPullRequestUrl(link.url, layer.number);
+        const url = siblingChangeRequestUrl(link.url, layer.number);
         if (url === null) continue;
         const uuid = yield* crypto.randomUUIDv4();
         yield* engine.dispatch({

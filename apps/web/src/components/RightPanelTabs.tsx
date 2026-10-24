@@ -4,7 +4,7 @@ import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities
 import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
 import type {
   ContextMenuItem,
   EnvironmentId,

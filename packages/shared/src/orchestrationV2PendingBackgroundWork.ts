@@ -10,7 +10,6 @@ import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
-import { threadPullRequestKeyOf } from "./threadPullRequests.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
@@ -303,7 +302,9 @@ function pullRequestWatchTasks(
       ? []
       : [
           {
-            taskId: `pull-request-watch:${threadPullRequestKeyOf(link)}`,
+            // Links store their normalized identity, and this id only has to be unique within the
+            // thread, so it reads those fields instead of parsing the URL.
+            taskId: `pull-request-watch:${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
           },

@@ -1,5 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { changeRequestUrlFor } from "@t3tools/shared/changeRequestUrl";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
@@ -16,6 +15,7 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitLabCli from "./GitLabCli.ts";
 import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import { definition } from "../client/definition.ts";
 
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
   return GitLabSourceControlProvider.make.pipe(
@@ -166,15 +166,17 @@ it.effect.each([
             ),
         }) ?? Effect.succeed(identity)
       );
-      const [host, ...repository] = refined.canonicalKey.split("/");
-      assert.strictEqual(
-        changeRequestUrlFor(refined.provider, host!, repository.join("/"), 42),
-        expectedProvider === "gitlab"
-          ? "https://code.example.test/team/repo/-/merge_requests/42"
-          : expectedProvider === "github"
-            ? "https://github.com/team/repo/pull/42"
-            : null,
-      );
+      if (expectedProvider === "gitlab") {
+        const [host, ...repository] = refined.canonicalKey.split("/");
+        assert.strictEqual(
+          definition.changeRequestUrl({
+            host: host!,
+            repository: repository.join("/"),
+            number: 42,
+          }),
+          "https://code.example.test/team/repo/-/merge_requests/42",
+        );
+      }
       assert.deepStrictEqual(refined, { ...identity, provider: expectedProvider });
       if (expectedProvider === "github") assert.strictEqual(authCalls, 0);
     }),

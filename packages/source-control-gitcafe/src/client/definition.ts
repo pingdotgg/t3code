@@ -7,14 +7,18 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
+  changeRequestUrlBelow,
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
-  isChangeRequestPath,
+  parseChangeRequestPath,
 } from "@t3tools/source-control-core/client/definition";
 
 /** GitCafe has no self-hosted installs: production and staging are its only hosts. */
 const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
+
+/** GitCafe serves pull requests at `/pull/<n>` and redirects the older `/pulls/<n>` there. */
+const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pulls?\/(\d+)(?:\/|$)/u;
 
 const KIND = SourceControlProviderKind.make("gitcafe");
 
@@ -44,8 +48,17 @@ export const definition = defineSourceControlClient({
   publishHost: () => "git.cafe",
   newRepositoryOwner: (account) => (account ? { owner: account } : null),
   defaultCloneTransport: "ssh",
-  changeRequestUrl: ({ host, repository, number }) =>
-    `https://${host}/${repository}/pulls/${number}`,
+  changeRequestUrl: ({ host, repository, number, webUrl }) =>
+    webUrl
+      ? changeRequestUrlBelow(webUrl, `pulls/${number}`)
+      : `https://${host}/${repository}/pulls/${number}`,
+  // `/pull/` and `/pulls/` are GitHub's and Forgejo's shapes too, so only GitCafe's own hosts
+  // claim them.
+  parseChangeRequestUrl: (url) =>
+    GITCAFE_HOSTS.has(url.hostname.toLowerCase())
+      ? parseChangeRequestPath(url, CHANGE_REQUEST_PATH)
+      : null,
+  changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([
     "ready",
     "draft",
@@ -58,24 +71,12 @@ export const definition = defineSourceControlClient({
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
-  // `/pulls/` is Forgejo's shape too, so only GitCafe's own hosts claim it.
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
-  changeRequestUrlHost: (url) => url.hostname,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(KIND, identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(KIND, identity, link),
-  isChangeRequestUrl: (url) => {
-    try {
-      return (
-        GITCAFE_HOSTS.has(new URL(url).hostname.toLowerCase()) &&
-        (isChangeRequestPath(url, "/pull/") || isChangeRequestPath(url, "/pulls/"))
-      );
-    } catch {
-      return false;
-    }
-  },
   settings,
 });

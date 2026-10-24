@@ -1,6 +1,8 @@
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
+import type { SourceControlClientDefinition } from "../client/definition.ts";
+
 import type { SourceControlProviderDiscoverySpec } from "./discovery.ts";
 import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -14,6 +16,7 @@ export interface SourceControlDriverInstance {
 
 export interface SourceControlDriver<R = never> {
   readonly kind: SourceControlProviderKind;
+  readonly definition: SourceControlClientDefinition;
   readonly make: Effect.Effect<SourceControlDriverInstance, never, R>;
 }
 

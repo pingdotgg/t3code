@@ -22,7 +22,7 @@ import {
 } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
-import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,

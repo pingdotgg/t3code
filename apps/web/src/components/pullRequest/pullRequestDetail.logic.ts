@@ -34,7 +34,7 @@ import {
   resolveThreadCurrentPullRequestLink,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 import { reviewCommentContextId } from "~/lib/composerContextRecords";
@@ -1409,16 +1409,10 @@ export function resolveDisplayedPullRequestDetail(input: {
     return null;
   }
   if (input.reference.host === undefined) return input.cached;
-  try {
-    const url = new URL(input.cached.url);
-    const host = sourceControlClients.get(input.cached.provider).changeRequestUrlHost(url);
-    return (url.protocol === "https:" || url.protocol === "http:") &&
-      host.toLowerCase() === input.reference.host.toLowerCase()
-      ? input.cached
-      : null;
-  } catch {
-    return null;
-  }
+  const link = sourceControlClients.parseChangeRequestUrl(input.cached.url)?.link;
+  return link !== undefined && (link.authority ?? link.host) === input.reference.host.toLowerCase()
+    ? input.cached
+    : null;
 }
 
 export function resolvePullRequestDetailChecks(

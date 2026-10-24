@@ -5,7 +5,7 @@ import {
   readPullRequestDetailSnapshot,
   resolvePullRequestReferenceHost,
 } from "../components/pullRequest/pullRequestDetail.logic";
-import { gitHubPullRequestBrowserUrl } from "../lib/openPullRequestLink";
+import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import { useProject } from "../state/entities";
 import { pullRequestEnvironment } from "../state/pullRequests";
@@ -71,11 +71,7 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
       : null;
   const fallbackUrl = reference
     ? (requestedReference?.url ??
-      gitHubPullRequestBrowserUrl(
-        project?.repositoryIdentity,
-        reference.repository,
-        reference.number,
-      ))
+      projectChangeRequestUrl(project?.repositoryIdentity, reference.repository, reference.number))
     : undefined;
   const detail = useEnvironmentQuery(
     reference && environmentId

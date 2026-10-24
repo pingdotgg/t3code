@@ -1,16 +1,21 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  changeRequestUrlBelow,
   type ChangeRequestProjectIdentity,
   defineSourceControlClient,
   isChangeRequestAuthorityOfProject,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
-  isChangeRequestPath,
+  parseChangeRequestPath,
+  remoteWebOrigin,
 } from "@t3tools/source-control-core/client/definition";
 
 const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https?:\/\/[^/\s]+\/(?:[^/\s]+\/)+[^/\s]+\/pulls\/(\d+)(?:[/?#].*)?$/i;
+
+// Forgejo and Gitea run on any hostname, possibly mounted below a path.
+const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u;
 
 const KIND = SourceControlProviderKind.make("forgejo");
 
@@ -43,20 +48,16 @@ export const definition = defineSourceControlClient({
   defaultCloneTransport: "https",
   // The server's resolved web URL wins; otherwise an HTTP remote on the same host names the
   // origin, which may carry a port. SSH remotes say nothing about the web origin.
-  changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) => {
-    if (webUrl) return `${webUrl.replace(/\/+$/, "")}/pulls/${number}`;
-    try {
-      const remote = new URL(remoteUrl ?? "");
-      if (
-        (remote.protocol === "http:" || remote.protocol === "https:") &&
-        (remote.hostname.toLowerCase() === host.toLowerCase() ||
-          remote.host.toLowerCase() === host.toLowerCase())
-      ) {
-        return `${remote.origin}/${repository}/pulls/${number}`;
-      }
-    } catch {}
-    return `https://${host}/${repository}/pulls/${number}`;
+  changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) =>
+    webUrl
+      ? changeRequestUrlBelow(webUrl, `pulls/${number}`)
+      : `${remoteWebOrigin(host, remoteUrl)}/${repository}/pulls/${number}`,
+  // A server's identity includes its port, so the link carries it.
+  parseChangeRequestUrl: (url) => {
+    const link = parseChangeRequestPath(url, CHANGE_REQUEST_PATH);
+    return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   },
+  changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
   // Neither `fj` nor `tea` checks out by number, so fetch the pull ref from the repository itself.
   checkoutCommand: ({ number, repositoryUrl }) =>
@@ -69,7 +70,6 @@ export const definition = defineSourceControlClient({
   reviewSummaryRequired: (verdict) => verdict === "request-changes",
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
-  changeRequestUrlHost: (url) => url.host,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) => {
     if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
@@ -94,5 +94,4 @@ export const definition = defineSourceControlClient({
       (!mount || link.repository.toLowerCase().startsWith(`${mount.toLowerCase()}/`))
     );
   },
-  isChangeRequestUrl: (url) => isChangeRequestPath(url, "/pulls/"),
 });

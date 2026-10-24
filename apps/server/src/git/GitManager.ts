@@ -62,7 +62,6 @@ import {
   isSshRemoteUrl,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   parseGitHubRepositorySelector,
@@ -71,7 +70,8 @@ import {
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
+import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
 import {
@@ -1202,8 +1202,8 @@ export const make = Effect.gen(function* () {
   >();
   const noteLookupState = (pr: PullRequestInfo) =>
     Effect.suspend(() => {
-      const parsed = parseChangeRequestUrl(pr.url);
-      if (parsed === null || parsed.number !== pr.number) return Effect.void;
+      const parsed = sourceControlClients.parseChangeRequestUrl(pr.url)?.link;
+      if (parsed === undefined || parsed.number !== pr.number) return Effect.void;
       const key = normalizeThreadPullRequestKey(parsed);
       const id = threadPullRequestKeyOf(key);
       const previous = lookupStates.get(id);

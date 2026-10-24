@@ -12,7 +12,7 @@ import {
   threadPullRequestKeyOf,
   threadPullRequestsOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "./threadPullRequests.ts";
 
 const repositoryKey = (repository: PromptLinkRepository) =>
   `github.com/${repository.owner}/${repository.name}`.toLowerCase();

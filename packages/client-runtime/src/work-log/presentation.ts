@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity } from "@t3tools/shared/toolActivity";
@@ -184,7 +184,10 @@ function resolveT3McpToolPresentation(
   const payload = asRecord(data);
   const input =
     asRecord(payload?.arguments) ?? asRecord(payload?.input) ?? asRecord(payload?.rawInput);
-  const urlTarget = typeof input?.url === "string" ? parseChangeRequestUrl(input.url) : null;
+  const urlTarget =
+    typeof input?.url === "string"
+      ? sourceControlClients.parseChangeRequestUrl(input.url)?.link
+      : null;
   const number = urlTarget?.number ?? input?.number;
   const target =
     actionKind !== undefined &&

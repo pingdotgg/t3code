@@ -367,6 +367,18 @@
       "types": "./src/pullRequestLinkInput.ts",
       "default": "./src/pullRequestLinkInput.ts"
     },
+    "./change-request-links": {
+      "types": "./src/changeRequestLinks.ts",
+      "default": "./src/changeRequestLinks.ts"
+    },
+    "./thread-pull-requests": {
+      "types": "./src/threadPullRequests.ts",
+      "default": "./src/threadPullRequests.ts"
+    },
+    "./thread-reference": {
+      "types": "./src/threadReference.ts",
+      "default": "./src/threadReference.ts"
+    },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"

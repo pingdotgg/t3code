@@ -1,14 +1,18 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  changeRequestUrlBelow,
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
-  isChangeRequestPath,
+  parseChangeRequestPath,
 } from "@t3tools/source-control-core/client/definition";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/[^/\s]*gitlab[^/\s]*\/.+\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
+
+// Self-managed GitLab runs on any hostname and nests projects in groups.
+const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
 
 const KIND = SourceControlProviderKind.make("gitlab");
 
@@ -24,8 +28,12 @@ export const definition = defineSourceControlClient({
   publishHost: () => "gitlab.com",
   newRepositoryOwner: (account) => ({ owner: account }),
   defaultCloneTransport: "ssh",
-  changeRequestUrl: ({ host, repository, number }) =>
-    `https://${host}/${repository}/-/merge_requests/${number}`,
+  changeRequestUrl: ({ host, repository, number, webUrl }) =>
+    webUrl
+      ? changeRequestUrlBelow(webUrl, `-/merge_requests/${number}`)
+      : `https://${host}/${repository}/-/merge_requests/${number}`,
+  parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([
     "merge",
     "ready",
@@ -42,11 +50,9 @@ export const definition = defineSourceControlClient({
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
-  changeRequestUrlHost: (url) => url.hostname,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(KIND, identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(KIND, identity, link),
-  isChangeRequestUrl: (url) => isChangeRequestPath(url, "/-/merge_requests/"),
 });

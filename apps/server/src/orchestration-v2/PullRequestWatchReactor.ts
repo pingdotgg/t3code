@@ -13,7 +13,7 @@ import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";

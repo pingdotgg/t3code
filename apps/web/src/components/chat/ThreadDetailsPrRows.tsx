@@ -5,11 +5,12 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
 import { Minus, Plus } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
-import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { findProjectOnChangeRequestHost } from "~/lib/openPullRequestLink";
 
 import { useProjects } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
@@ -34,9 +35,9 @@ function ThreadDetailsPrLinkRow({
   onStopWatching?: (() => void) | undefined;
 }) {
   const projects = useProjects();
-  const parsed = parseChangeRequestUrl(link.url);
+  const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
   const project =
-    parsed === null
+    parsed === undefined
       ? null
       : (findProjectOnChangeRequestHost(
           projects.filter((candidate) => candidate.environmentId === environmentId),

@@ -7,6 +7,10 @@
       "types": "./src/client/definition.ts",
       "import": "./src/client/definition.ts"
     },
+    "./client/threadPullRequests": {
+      "types": "./src/client/threadPullRequests.ts",
+      "import": "./src/client/threadPullRequests.ts"
+    },
     "./server/diffFileRevisions": {
       "types": "./src/server/diffFileRevisions.ts",
       "import": "./src/server/diffFileRevisions.ts"

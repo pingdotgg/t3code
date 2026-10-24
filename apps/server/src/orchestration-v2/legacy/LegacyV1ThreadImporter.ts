@@ -1,7 +1,7 @@
 import {
   threadPullRequestKeysEqual,
   threadPullRequestsOf,
-} from "@t3tools/shared/threadPullRequests";
+} from "../../sourceControl/threadPullRequests.ts";
 import {
   ChatAttachment,
   OrchestrationMessageContext,

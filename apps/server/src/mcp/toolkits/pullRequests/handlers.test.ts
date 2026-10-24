@@ -390,44 +390,22 @@ describe("pull request toolkit handlers", () => {
       });
       expect(result.url).toBe("https://gitlab.com/group/sub/project/-/merge_requests/42");
       expect(result.host).toBe("gitlab.com");
-    }),
-  );
-
-  it.effect("links a numeric Forgejo reference with its remote's web origin and mount path", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        project: makeProject({
-          canonicalKey: "forge.example/git/owner/repo",
-          locator: {
-            source: "git-remote",
-            remoteName: "origin",
-            remoteUrl: "http://forge.example:3000/git/owner/repo.git",
-          },
-          provider: "forgejo",
-          displayName: "git/owner/repo",
-        }),
-      });
-      const result = yield* harness.call("link_pull_request", {
-        repository: "git/owner/repo",
-        number: 42,
-      });
-      expect(result).toEqual({
-        host: "forge.example:3000",
-        repository: "git/owner/repo",
-        number: 42,
-        url: "http://forge.example:3000/git/owner/repo/pulls/42",
-        alreadyLinked: false,
-      });
       const other = yield* harness.call("link_pull_request", {
-        host: "other.example",
-        repository: "owner/repo",
-        number: 42,
+        host: "gitlab.example.test",
+        repository: "team/repo",
+        number: 7,
       });
-      expect(other.url).toBe("https://other.example/owner/repo/pull/42");
+      expect(other.url).toBe("https://gitlab.example.test/team/repo/-/merge_requests/7");
+      const onGitHub = yield* harness.call("link_pull_request", {
+        host: "github.com",
+        repository: "acme/web",
+        number: 9,
+      });
+      expect(onGitHub.url).toBe("https://github.com/acme/web/pull/9");
     }),
   );
 
-  it.effect("links Azure DevOps Server URLs and numeric references without a known provider", () =>
+  it.effect("links a URL but not a bare number when the project's host is unknown", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         project: makeProject({
@@ -441,13 +419,10 @@ describe("pull request toolkit handlers", () => {
           displayName: "tfs/collection/project/_git/repo",
         }),
       });
-      const generated =
-        "http://scm.example.test:8080/tfs/collection/project/_git/repo/pullrequest/124";
-      const fromNumber = yield* harness.call("link_pull_request", {
-        repository: "tfs/Collection/Project/_git/Repo",
-        number: 124,
-      });
-      expect.soft(fromNumber.url).toBe(generated);
+      const error = yield* harness
+        .call("link_pull_request", { repository: "tfs/Collection/Project/_git/Repo", number: 124 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestUrlUnavailableError" });
 
       const supplied = "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/123";
       const fromUrl = yield* harness.call("link_pull_request", { url: supplied });
@@ -459,7 +434,6 @@ describe("pull request toolkit handlers", () => {
         alreadyLinked: false,
       });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.link", number: 124, url: generated },
         { type: "thread.pull-request.link", number: 123, url: supplied },
       ]);
     }),

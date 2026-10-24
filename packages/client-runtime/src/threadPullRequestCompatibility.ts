@@ -4,7 +4,7 @@ import type {
   ThreadId,
   ThreadPullRequestKey,
 } from "@t3tools/contracts";
-import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 type LinkingCapabilities = Pick<
   ExecutionEnvironmentCapabilities,
