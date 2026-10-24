@@ -1,6 +1,8 @@
 import * as NodeUtil from "node:util";
 import {
+  VcsProcessExitError,
   VcsProcessSpawnError,
+  VcsProcessTimeoutError,
   type SourceControlProviderAuth,
   type SourceControlProviderDiscoveryItem,
   type SourceControlProviderInfo,
@@ -187,6 +189,20 @@ function isCliRemoteRefinementSpec(
   return spec.type === "cli" && spec.refineUnknownRemote !== undefined;
 }
 
+const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+
+/** An installed CLI whose version probe failed needs a repair, not install advice. */
+function probeFailureHint(spec: SourceControlCliDiscoverySpec, cause: unknown): string {
+  const command = `\`${[spec.executable, ...spec.versionArgs].join(" ")}\``;
+  const outcome = isVcsProcessTimeoutError(cause)
+    ? `timed out after ${cause.timeoutMs}ms`
+    : isVcsProcessExitError(cause)
+      ? `exited with status ${cause.exitCode}`
+      : "failed";
+  return `${command} ${outcome} on the server. Check that \`${spec.executable}\` runs from the server's PATH.`;
+}
+
 function probeCli(input: {
   readonly spec: SourceControlCliDiscoverySpec;
   readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
@@ -224,7 +240,9 @@ function probeCli(input: {
           executable: input.spec.executable,
           status: "missing" as const,
           version: Option.none<string>(),
-          installHint: input.spec.installHint,
+          installHint: isMissingExecutable(cause)
+            ? input.spec.installHint
+            : probeFailureHint(input.spec, cause),
           detail: detailFromCause(cause),
         } satisfies DiscoveryProbeResult),
       ),
@@ -265,7 +283,7 @@ export function probeSourceControlProvider(input: {
       if (item.status !== "available") {
         return Effect.succeed({
           ...item,
-          auth: unknownAuth("Hosting integration command was not found on the server PATH."),
+          auth: unknownAuth(item.installHint),
         } satisfies SourceControlProviderDiscoveryItem);
       }
 

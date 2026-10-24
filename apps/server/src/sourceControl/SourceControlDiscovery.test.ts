@@ -9,7 +9,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpClient } from "effect/http";
-import { VcsProcessSpawnError } from "@t3tools/contracts";
+import * as PlatformError from "effect/PlatformError";
+import {
+  VcsProcessExitError,
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -242,6 +247,77 @@ Logged in to gitlab.com as gitlab-user
         },
       ],
     );
+  }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("explains a hosting CLI version probe that failed instead of advising an install", () => {
+  const processMock = {
+    run: (input: VcsProcess.VcsProcessInput) => {
+      const context = { operation: input.operation, command: input.command, cwd: input.cwd };
+      if (input.command === "gh") {
+        return Effect.fail(new VcsProcessTimeoutError({ ...context, timeoutMs: 5_000 }));
+      }
+      if (input.command === "az") {
+        return Effect.fail(
+          new VcsProcessExitError({ ...context, exitCode: 1, detail: "az: broken install" }),
+        );
+      }
+      return Effect.fail(
+        new VcsProcessSpawnError({
+          ...context,
+          cause: PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            pathOrDescriptor: input.command,
+          }),
+        }),
+      );
+    },
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
+  const layerTest = SourceControlDiscovery.layer.pipe(
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-source-control-probe-failure-",
+      }),
+    ),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
+    Layer.provide(
+      layerSourceControlProviderRegistryTest({
+        process: processMock,
+        bitbucket: {
+          probeAuth: Effect.succeed({
+            status: "unknown",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const result = yield* discovery.discover;
+    const installHintOf = (kind: string) =>
+      result.sourceControlProviders.find((item) => item.kind === kind)?.installHint ?? "";
+
+    const authDetailOf = (kind: string) =>
+      Option.getOrElse(
+        result.sourceControlProviders.find((item) => item.kind === kind)?.auth.detail ??
+          Option.none(),
+        () => "",
+      );
+
+    assert.include(installHintOf("github"), "timed out");
+    assert.notInclude(installHintOf("github"), "Install the GitHub command-line tool");
+    assert.include(authDetailOf("github"), "timed out");
+    assert.include(installHintOf("azure-devops"), "`az --version` exited with status 1");
+    assert.notInclude(installHintOf("azure-devops"), "Install");
+    assert.include(authDetailOf("azure-devops"), "`az --version` exited with status 1");
+    assert.include(installHintOf("gitlab"), "Install the GitLab command-line tool (`glab`)");
   }).pipe(Effect.provide(layerTest));
 });
 
