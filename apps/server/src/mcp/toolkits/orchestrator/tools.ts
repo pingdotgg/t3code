@@ -12,6 +12,8 @@ import {
   OrchestratorMcpRequestSecretResult,
   OrchestratorMcpFailure,
   OrchestratorMcpListScheduledTasksInput,
+  OrchestratorMcpProviderUsageInput,
+  OrchestratorMcpProviderUsageResult,
   OrchestratorMcpListScheduledTasksResult,
   OrchestratorMcpScheduleTaskInput,
   OrchestratorMcpScheduleTaskResult,
@@ -36,6 +38,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderUsage from "../../../provider/ProviderUsage.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -61,6 +64,20 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   dependencies,
 })
   .annotate(Tool.Title, "Get orchestration capabilities")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const ProviderUsageTool = Tool.make("provider_usage", {
+  description:
+    "Read subscription quota per enabled provider instance, as the provider last reported it. Each window gives usedPercent (0-100), resetsAt (ISO 8601 UTC or null), kind (session, weekly, monthly, other), and scope: 'account' when every model on the instance shares the meter, or 'model:<name>' for a meter that counts one model. source is 'observed' when the provider reported it during this server session, 'stale' for the last value saved before that, or 'none' with no windows when the provider has reported nothing. Judge freshness from measuredAt. Compare usedPercent against your own thresholds and schedule resumes at resetsAt. This never contacts the provider.",
+  parameters: OrchestratorMcpProviderUsageInput,
+  success: OrchestratorMcpProviderUsageResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [ProviderUsage.ProviderUsage],
+})
+  .annotate(Tool.Title, "Get provider usage")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -275,6 +292,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
+  ProviderUsageTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,

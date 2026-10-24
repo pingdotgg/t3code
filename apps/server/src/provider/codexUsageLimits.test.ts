@@ -148,6 +148,34 @@ describe("codexRateLimitsToUpdate", () => {
     expect(codexRateLimitsToUpdate({ planType: "plus" })).toBeUndefined();
   });
 
+  it("maps a captured Pro Lite notification whose primary window is weekly", () => {
+    // `account/rateLimits/updated` params.rateLimits captured from the Codex app server.
+    const captured = {
+      limitId: "codex",
+      limitName: null,
+      normalModelSlug: null,
+      primary: { usedPercent: 76, windowDurationMins: 10080, resetsAt: 1792475200 },
+      secondary: null,
+      credits: { hasCredits: false, unlimited: false, balance: "0" },
+      individualLimit: null,
+      spendControlReached: null,
+      planType: "prolite",
+      rateLimitReachedType: null,
+    };
+    expect(codexRateLimitsToUpdate(captured)).toEqual({
+      windows: [
+        {
+          id: "primary",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 76,
+          windowDurationMins: 10080,
+          resetsAt: "2026-10-20T05:46:40.000Z",
+        },
+      ],
+    });
+  });
+
   it("ignores Spark notifications so they cannot overwrite the main allowance", () => {
     expect(
       codexRateLimitsToUpdate({

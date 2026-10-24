@@ -39,6 +39,7 @@ import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
 } from "@t3tools/provider-testing/replayTranscript";
+import * as ProviderUsage from "../provider/ProviderUsage.ts";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -218,6 +219,7 @@ describe("orchestrator MCP toolkit", () => {
             ),
           ),
           Layer.provide(layerProviderRegistry),
+          Layer.provide(Layer.mock(ProviderUsage.ProviderUsage)({})),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(layerUnusedScheduledTaskStub),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),

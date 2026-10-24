@@ -60,6 +60,7 @@ describe("claudeUsageResponseToLimits", () => {
             label: "Weekly · Fable",
             usedPercent: 73,
             windowDurationMins: 10080,
+            model: "Fable",
             resetsAt: "2026-07-24T08:59:00.000Z",
           },
         ],
@@ -266,6 +267,53 @@ describe("claudeRateLimitEventToUpdate", () => {
           label: "Weekly · Fable",
           usedPercent: 40,
           windowDurationMins: 10080,
+          model: "Fable",
+        },
+      ],
+    });
+  });
+
+  it("reads every window from the undeclared unifiedWindows map of a captured event", () => {
+    // Captured from a Claude CLI `rate_limit_event`; most carry no top-level utilization.
+    const captured = {
+      status: "allowed",
+      resetsAt: 1791714600,
+      rateLimitType: "five_hour",
+      overageStatus: "rejected",
+      overageDisabledReason: "org_level_disabled",
+      isUsingOverage: false,
+      unifiedWindows: {
+        five_hour: { utilization: 0.25, resetsAt: 1791714600 },
+        seven_day: { utilization: 0.32, resetsAt: 1791759600 },
+        seven_day_overage_included: { utilization: 0, resetsAt: 1791759600 },
+      },
+    } as const;
+    expect(claudeRateLimitEventToUpdate(captured, { overageIncluded: "Fable" })).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 25,
+          windowDurationMins: 300,
+          resetsAt: "2026-10-11T10:30:00.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 32,
+          windowDurationMins: 10080,
+          resetsAt: "2026-10-11T23:00:00.000Z",
+        },
+        {
+          id: "seven_day_fable",
+          kind: "weekly",
+          label: "Weekly · Fable",
+          usedPercent: 0,
+          windowDurationMins: 10080,
+          model: "Fable",
+          resetsAt: "2026-10-11T23:00:00.000Z",
         },
       ],
     });

@@ -202,7 +202,8 @@ Returns:
 - the parent runtime and interaction modes;
 - registered provider instances and advertised models;
 - whether each provider can run a child task; and
-- feature flags for polling, cancellation, and batch thread creation.
+- feature flags for polling, cancellation, batch thread creation, and
+  `provider_usage`.
 
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
@@ -214,6 +215,38 @@ models for Codex, Claude, Muse, and Grok, or the first 8 current models in the
 user's model order for other providers. `omittedModels` counts the rest, and the
 `search` input finds them, legacy models included. `delegate_task` still accepts
 any catalog model.
+
+### `provider_usage`
+
+Reads subscription quota per enabled provider instance, optionally filtered by
+`providerInstanceId`. It never contacts a provider. Callers compare
+`usedPercent` against their own thresholds and schedule resumes at `resetsAt`.
+
+```ts
+type ProviderUsageResult = {
+  providers: Array<{
+    providerInstanceId: string;
+    driverKind: string;
+    measuredAt: string | null; // null only when source is "none"
+    source: "observed" | "stale" | "none";
+    windows: Array<{
+      id: string; // stable per provider: five_hour, seven_day, primary, ...
+      kind: "session" | "weekly" | "monthly" | "other";
+      usedPercent: number; // 0 to 100
+      resetsAt: string | null; // ISO 8601 UTC
+      scope: string; // "account", or "model:<name>" for a one-model meter
+    }>;
+  }>;
+};
+```
+
+The windows are the ones the provider snapshot already carries for the usage
+views, fed by Codex `account/rateLimits/updated` notifications, Claude
+`rate_limit_event` messages, and the existing provider probes. `observed` means
+the live snapshot reported them during this server session. Snapshots hydrate
+from the status cache without usage, so `ProviderUsage` keeps the last
+observation per instance in `caches/provider-usage.json` and serves it as
+`stale` until the provider reports again.
 
 ### `delegate_task`
 

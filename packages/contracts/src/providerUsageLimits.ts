@@ -20,6 +20,8 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /** The provider's name for the one model this meter counts; absent when every model shares it. */
+  model: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

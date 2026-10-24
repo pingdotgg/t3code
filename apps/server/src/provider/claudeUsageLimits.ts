@@ -68,6 +68,7 @@ function scopedWindow(
     label: `Weekly · ${displayName}`,
     windowDurationMins: WEEK_MINS,
     usedPercent: clampPercent(usedPercent),
+    model: displayName,
     ...(resetsAt ? { resetsAt } : {}),
   };
 }
@@ -157,28 +158,66 @@ function makeWindow(
   };
 }
 
+// Current CLIs report every window under `unifiedWindows`, which the pinned
+// SDK typings do not declare. Most events carry no top-level `utilization`.
+const decodeStreamedWindow = Schema.decodeUnknownOption(
+  Schema.Struct({
+    utilization: Schema.Number,
+    resetsAt: Schema.optional(Schema.NullOr(Schema.Number)),
+  }),
+);
+
+interface StreamedWindow {
+  readonly type: string;
+  readonly utilization: number;
+  readonly resetsAt: number | undefined;
+}
+
+function readStreamedWindows(info: SDKRateLimitInfo): ReadonlyArray<StreamedWindow> {
+  const unified = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  const windows: StreamedWindow[] = [];
+  if (typeof unified === "object" && unified !== null) {
+    for (const [type, raw] of Object.entries(unified)) {
+      const window = Option.getOrUndefined(decodeStreamedWindow(raw));
+      if (window) {
+        windows.push({
+          type,
+          utilization: window.utilization,
+          resetsAt: window.resetsAt ?? undefined,
+        });
+      }
+    }
+  }
+  if (windows.length === 0 && info.rateLimitType && typeof info.utilization === "number") {
+    windows.push({
+      type: info.rateLimitType,
+      utilization: info.utilization,
+      resetsAt: info.resetsAt,
+    });
+  }
+  return windows;
+}
+
 /**
  * Utilization is a 0–1 fraction on the streamed event. An overage-included
- * event before any probe has named the bucket is dropped: guessing a name
+ * window before any probe has named the bucket is dropped: guessing a name
  * would draw a row the next probe cannot reconcile.
  */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
-  const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  const windows: ServerProviderUsageWindow[] = [];
+  for (const { type, utilization, resetsAt: resetsAtSeconds } of readStreamedWindows(info)) {
+    const usedPercent = utilization * 100;
+    const resetsAt = isoFromEpochSeconds(resetsAtSeconds);
+    if (Object.hasOwn(WINDOWS, type)) {
+      windows.push(makeWindow(type, usedPercent, resetsAt));
+    } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+      windows.push(scopedWindow(names.overageIncluded, usedPercent, resetsAt));
+    }
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  return windows.length > 0 ? { windows } : undefined;
 }
 
 /**

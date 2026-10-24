@@ -577,10 +577,44 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     threadManagement: Schema.Boolean,
     incrementalThreadRead: Schema.Boolean,
     scheduledTasks: Schema.Boolean,
+    providerUsage: Schema.Boolean,
     maxBatchThreads: Schema.Number,
   }),
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
+
+export const OrchestratorMcpProviderUsageInput = Schema.Struct({
+  providerInstanceId: Schema.optional(
+    ProviderInstanceId.annotate({ description: "Report only this provider instance." }),
+  ),
+});
+export type OrchestratorMcpProviderUsageInput = typeof OrchestratorMcpProviderUsageInput.Type;
+
+export const OrchestratorMcpProviderUsageWindow = Schema.Struct({
+  /** Stable per provider, such as `five_hour`, `seven_day`, `primary`, or `secondary`. */
+  id: Schema.String,
+  kind: Schema.Literals(["session", "weekly", "monthly", "other"]),
+  usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  resetsAt: Schema.NullOr(IsoDateTime),
+  /** `account`, or `model:<name>` for a meter that counts one model. */
+  scope: Schema.String,
+});
+export type OrchestratorMcpProviderUsageWindow = typeof OrchestratorMcpProviderUsageWindow.Type;
+
+export const OrchestratorMcpProviderUsage = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+  /** Null only when `source` is `none`. */
+  measuredAt: Schema.NullOr(IsoDateTime),
+  source: Schema.Literals(["observed", "stale", "none"]),
+  windows: Schema.Array(OrchestratorMcpProviderUsageWindow),
+});
+export type OrchestratorMcpProviderUsage = typeof OrchestratorMcpProviderUsage.Type;
+
+export const OrchestratorMcpProviderUsageResult = Schema.Struct({
+  providers: Schema.Array(OrchestratorMcpProviderUsage),
+});
+export type OrchestratorMcpProviderUsageResult = typeof OrchestratorMcpProviderUsageResult.Type;
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,
