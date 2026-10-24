@@ -38,6 +38,7 @@ import {
   preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
   resolveMacWebAuthnEntitlements,
+  resolveNodeHidFileExclusions,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
@@ -1671,3 +1672,31 @@ it.effect.skipIf(!symlinksSupported)("rebases packaged links into the isolated t
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const nodeHidPrebuildsKept = (
+  platform: "mac" | "linux" | "win",
+  arch?: "arm64" | "x64" | "universal",
+) => {
+  const excluded = resolveNodeHidFileExclusions(platform, arch).join("\n");
+  return [
+    "HID-darwin-arm64",
+    "HID-darwin-x64",
+    "HID-linux-x64",
+    "HID_hidraw-linux-x64",
+    "HID-win32-x64",
+    "HID-win32-ia32",
+  ].filter((name) => !excluded.includes(`/${name}/`));
+};
+
+it("resolveNodeHidFileExclusions keeps only the target platform and architecture", () => {
+  assert.deepStrictEqual(nodeHidPrebuildsKept("mac", "arm64"), ["HID-darwin-arm64"]);
+  assert.deepStrictEqual(nodeHidPrebuildsKept("mac", "universal"), [
+    "HID-darwin-arm64",
+    "HID-darwin-x64",
+  ]);
+  assert.deepStrictEqual(nodeHidPrebuildsKept("linux", "x64"), [
+    "HID-linux-x64",
+    "HID_hidraw-linux-x64",
+  ]);
+  assert.deepStrictEqual(nodeHidPrebuildsKept("win", "x64"), ["HID-win32-x64"]);
+});

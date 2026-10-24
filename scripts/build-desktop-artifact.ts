@@ -1029,6 +1029,38 @@ export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
   return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/node-pty/prebuilds/darwin-${unusedArch}/**/*`];
 }
+// node-hid (Codex Micro) ships every platform's prebuild in one package. Keep
+// only the target's: Windows signing rejects the ELF and Mach-O addons, and the
+// others are dead weight that slows mac signing and notarization.
+const NODE_HID_PREBUILDS = [
+  "HID-darwin-arm64",
+  "HID-darwin-x64",
+  "HID-linux-arm",
+  "HID-linux-arm64",
+  "HID-linux-x64",
+  "HID-linux-x64-musl",
+  "HID-win32-arm64",
+  "HID-win32-ia32",
+  "HID-win32-x64",
+  "HID_hidraw-linux-arm",
+  "HID_hidraw-linux-arm64",
+  "HID_hidraw-linux-x64",
+  "HID_hidraw-linux-x64-musl",
+] as const;
+
+export function resolveNodeHidFileExclusions(
+  platform: typeof BuildPlatform.Type,
+  arch?: typeof BuildArch.Type,
+) {
+  const targetOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
+  return NODE_HID_PREBUILDS.filter((name) => {
+    const [, os, prebuildArch] = /^HID(?:_hidraw)?-([a-z0-9]+)-([a-z0-9]+)/.exec(name) ?? [];
+    const kept =
+      os === targetOs && (arch === undefined || arch === "universal" || prebuildArch === arch);
+    return !kept;
+  }).map((name) => `!**/node_modules/node-hid/prebuilds/${name}/**/*`);
+}
+
 // Windows ships the server tree (bundle + node_modules) as a separate
 // resources/server.asar sidecar instead of loose files: the NSIS installer then
 // extracts a handful of large archives instead of thousands of small files,
@@ -2840,6 +2872,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         : platform === "linux"
           ? LINUX_FILE_EXCLUSIONS
           : []),
+      ...resolveNodeHidFileExclusions(platform, arch),
     ],
     directories: {
       buildResources: "apps/desktop/resources",

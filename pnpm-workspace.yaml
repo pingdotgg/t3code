@@ -19,6 +19,8 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   msw: false
+  # Ships N-API prebuilds; its install script only rebuilds from source.
+  node-hid: false
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false

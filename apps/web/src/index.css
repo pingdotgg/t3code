@@ -192,6 +192,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   /* The composer's elevation: a soft drop pulled in under the surface, shared
      by the composer, its context strip and attached banners. */
+  /* Codex Micro preview: the hardware's own materials (see :root below). */
+  --color-micro-body: var(--micro-body);
+  --color-micro-cap: var(--micro-cap);
+  --color-micro-knob: var(--micro-knob);
+  --color-micro-stick-housing: var(--micro-stick-housing);
+  --color-micro-stick: var(--micro-stick);
+  --color-micro-touch: var(--micro-touch);
+  --color-micro-dot: var(--micro-dot);
+  --color-micro-glow: var(--micro-glow);
+  --color-micro-led: var(--micro-led);
+  --color-micro-led-active: var(--micro-led-active);
+  --shadow-micro-body: var(--micro-shadow-body);
+  --shadow-micro-cap: var(--micro-shadow-cap);
+  --shadow-micro-agent: var(--micro-shadow-agent);
+  --shadow-micro-knob: var(--micro-shadow-knob);
+  --shadow-micro-stick: var(--micro-shadow-stick);
+  --shadow-micro-dot: var(--micro-shadow-dot);
+  --shadow-micro-ring: 0 0 0 1px rgb(141 181 255 / 18%), 0 0 14px rgb(141 181 255 / 38%);
   --shadow-composer: 0 12px 28px -18px rgb(0 0 0 / 40%);
   --shadow-composer-dark: 0 14px 32px -18px rgb(0 0 0 / 75%);
   /* Overlap the lower toolbar backdrop by one pixel to cover the composer seam. */
@@ -2473,4 +2491,42 @@ code {
       );
     }
   }
+}
+
+/* Codex Micro preview materials, matching the device and Codex's own preview. */
+:root {
+  --micro-body: #ebe8e2;
+  --micro-cap: #f7f5f1;
+  --micro-knob: #f5f3ee;
+  --micro-stick-housing: #dad4ca;
+  --micro-stick: #111111;
+  --micro-touch: #2d2925;
+  --micro-dot: rgb(104 95 174 / 85%);
+  --micro-glow: #8db5ff;
+  --micro-led: #b8b98b;
+  --micro-led-active: #9ebdff;
+  --micro-shadow-body: inset 0 0 0 1px rgb(255 255 255 / 72%), 0 1px 0 rgb(255 255 255 / 65%);
+  --micro-shadow-cap: inset 0 0 0 1px rgb(228 228 228 / 68%), 0 1px 2px rgb(79 72 63 / 18%);
+  --micro-shadow-agent:
+    inset 0 0 0 1px rgb(228 228 228 / 40%), inset 0 1px 2px rgb(255 255 255 / 50%),
+    0 1px 2px rgb(79 72 63 / 16%);
+  --micro-shadow-knob: inset 0 -1px 2px rgb(92 84 72 / 16%), 0 1px 2px rgb(89 80 67 / 18%);
+  --micro-shadow-stick: inset 0 -1px 2px rgb(255 255 255 / 12%), 0 1px 2px rgb(44 40 35 / 28%);
+  --micro-shadow-dot: 0 0 5px rgb(87 76 151 / 42%);
+}
+
+.dark {
+  --micro-body: #18191e;
+  --micro-cap: #202127;
+  --micro-knob: #262831;
+  --micro-stick-housing: #23252c;
+  --micro-touch: #202127;
+  --micro-dot: rgb(129 119 200 / 90%);
+  --micro-shadow-body: inset 0 0 0 1px rgb(255 255 255 / 8%), 0 1px 0 rgb(0 0 0 / 28%);
+  --micro-shadow-cap: inset 0 0 0 1px rgb(255 255 255 / 8%), 0 1px 2px rgb(0 0 0 / 32%);
+  --micro-shadow-agent:
+    inset 0 0 0 1px rgb(255 255 255 / 9%), inset 0 1px 2px rgb(255 255 255 / 8%),
+    0 1px 2px rgb(0 0 0 / 30%);
+  --micro-shadow-knob: inset 0 -1px 2px rgb(255 255 255 / 8%), 0 1px 2px rgb(0 0 0 / 34%);
+  --micro-shadow-dot: 0 0 6px rgb(118 104 197 / 50%);
 }

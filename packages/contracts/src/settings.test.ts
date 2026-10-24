@@ -198,6 +198,39 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings Codex Micro", () => {
+  it("keeps the rest of the settings when stored Codex Micro values are stale", () => {
+    const settings = decodeClientSettings({
+      chatWidth: "wide",
+      codexMicro: {
+        agentMode: "pinned",
+        brightness: 7,
+        controls: {
+          ACT06: { type: "command", command: "terminal.toggle" },
+          ACT07: { type: "command", command: "removed.command" },
+          RETIRED: { type: "approve" },
+        },
+      },
+    });
+    expect(settings.chatWidth).toBe("wide");
+    expect(settings.codexMicro.agentMode).toBe("pinned");
+    expect(settings.codexMicro.brightness).toBe(0.8);
+    expect(settings.codexMicro.controls.ACT06).toEqual({
+      type: "command",
+      command: "terminal.toggle",
+    });
+    expect(settings.codexMicro.controls.ACT07).toEqual({ type: "decline" });
+    expect(Object.keys(settings.codexMicro.controls)).not.toContain("RETIRED");
+  });
+
+  it("round-trips through encoding", () => {
+    const settings = decodeClientSettings({ codexMicro: { knobMode: "custom" } });
+    expect(decodeClientSettings(encodeClientSettings(settings)).codexMicro).toEqual(
+      settings.codexMicro,
+    );
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

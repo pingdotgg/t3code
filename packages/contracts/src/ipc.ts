@@ -14,6 +14,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
+import type { CodexMicroDeviceState, CodexMicroEvent, CodexMicroLighting } from "./codexMicro.ts";
 import type { PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
@@ -1124,6 +1125,12 @@ export interface DesktopBridge {
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
+  /** Work Louder Codex Micro (desktop only). */
+  codexMicro?: {
+    getState: () => Promise<CodexMicroDeviceState>;
+    setLighting: (lighting: CodexMicroLighting) => Promise<void>;
+    onEvent: (listener: (event: CodexMicroEvent) => void) => () => void;
+  };
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
