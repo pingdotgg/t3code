@@ -44,6 +44,11 @@ export class ElectronSafeStorageDecryptError extends Schema.TaggedError<Electron
   }
 }
 
+// Chromium's v10 Linux prefix marks ciphertext under the fixed "peanuts" key. The async
+// API falls back to it when the keyring provider fails or is cancelled, while still
+// reporting the keyring backend, so it would store credentials effectively in plaintext.
+const LINUX_FALLBACK_CIPHERTEXT_PREFIX = Buffer.from("v10");
+
 export const ElectronSafeStorageError = Schema.Union([
   ElectronSafeStorageAvailabilityError,
   ElectronSafeStorageEncryptError,
@@ -69,19 +74,56 @@ export class ElectronSafeStorage extends Context.Service<
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
 
+  // On Linux the sync API blocks the main loop while a locked keyring shows its
+  // unlock prompt. Prefer the async API, falling back to sync where it is unavailable.
+  const isAsyncEncryptionAvailable = async () => {
+    try {
+      const available = await Electron.safeStorage.isAsyncEncryptionAvailable();
+      // The async API reports the plaintext basic_text backend as available, while
+      // the sync API refuses it. Defer to the sync API there so credentials stay refused.
+      return (
+        available &&
+        !(platform === "linux" && Electron.safeStorage.getSelectedStorageBackend() === "basic_text")
+      );
+    } catch (cause) {
+      if (!Electron.safeStorage.isEncryptionAvailable()) {
+        throw cause;
+      }
+      return false;
+    }
+  };
+
   return ElectronSafeStorage.of({
-    isEncryptionAvailable: Effect.try({
-      try: () => Electron.safeStorage.isEncryptionAvailable(),
+    isEncryptionAvailable: Effect.tryPromise({
+      try: async () =>
+        (await isAsyncEncryptionAvailable()) || Electron.safeStorage.isEncryptionAvailable(),
       catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),
     }),
     encryptString: (value) =>
-      Effect.try({
-        try: () => Electron.safeStorage.encryptString(value),
+      Effect.tryPromise({
+        try: async () => {
+          if (!(await isAsyncEncryptionAvailable())) {
+            return Electron.safeStorage.encryptString(value);
+          }
+          const encrypted = await Electron.safeStorage.encryptStringAsync(value);
+          if (
+            platform === "linux" &&
+            encrypted
+              .subarray(0, LINUX_FALLBACK_CIPHERTEXT_PREFIX.length)
+              .equals(LINUX_FALLBACK_CIPHERTEXT_PREFIX)
+          ) {
+            throw new Error("The keyring fell back to an insecure fixed encryption key.");
+          }
+          return encrypted;
+        },
         catch: (cause) => new ElectronSafeStorageEncryptError({ cause }),
       }),
     decryptString: (value) =>
-      Effect.try({
-        try: () => Electron.safeStorage.decryptString(Buffer.from(value)),
+      Effect.tryPromise({
+        try: async () =>
+          (await isAsyncEncryptionAvailable())
+            ? (await Electron.safeStorage.decryptStringAsync(Buffer.from(value))).result
+            : Electron.safeStorage.decryptString(Buffer.from(value)),
         catch: (cause) => new ElectronSafeStorageDecryptError({ cause }),
       }),
     selectedStorageBackend: Effect.sync(() => {
