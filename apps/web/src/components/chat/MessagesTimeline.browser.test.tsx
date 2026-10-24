@@ -1,12 +1,21 @@
 import { EnvironmentId, MessageId, RunId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
+import {
+  createRef,
+  Profiler,
+  useState,
+  type ComponentProps,
+  type ReactElement,
+  type RefObject,
+} from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
+import type { ChatComposerHandle } from "./ChatComposer";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { useTimelineFollow } from "./useTimelineFollow";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
@@ -217,6 +226,76 @@ describe("MessagesTimeline messages", () => {
     expect(screen.container.innerHTML).not.toContain("javascript:");
     await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+});
+
+function FollowedTimeline(props: {
+  listRef: RefObject<LegendListRef | null>;
+  entries: ReadonlyArray<Entry>;
+}) {
+  const [timelineProps] = useState(baseProps);
+  const [composerRef] = useState(() => createRef<ChatComposerHandle | null>());
+  const [anchor, setAnchor] = useState<{
+    readonly threadKey: string | null;
+    readonly messageId: MessageId | null;
+  }>({ threadKey: null, messageId: null });
+  const follow = useTimelineFollow({
+    legendListRef: props.listRef,
+    composerRef,
+    composerOverlayElement: null,
+    composerTimelineInset: 0,
+    routeThreadKey: timelineProps.routeThreadKey,
+    activeThreadKey: timelineProps.routeThreadKey,
+    isServerThread: false,
+    serverProjection: null,
+    threadStatus: "live",
+    activeActivityRun: null,
+    activeRunningTurnId: null,
+    timelineEntries: props.entries,
+    timelineAnchorMessageId: anchor.messageId,
+    setTimelineAnchor: setAnchor,
+  });
+  return (
+    <>
+      <output data-testid="live-follow">{String(follow.timelineLiveFollowEnabled)}</output>
+      <MessagesTimeline
+        {...timelineProps}
+        listRef={props.listRef}
+        timelineEntries={props.entries}
+        hideEmptyPlaceholder
+        liveFollowEnabled={follow.timelineLiveFollowEnabled}
+        onIsAtEndChange={follow.onIsAtEndChangeStable}
+        onManualNavigation={follow.cancelTimelineLiveFollowForUserNavigationStable}
+        onScrollNodeChange={follow.onTimelineScrollNodeChange}
+      />
+    </>
+  );
+}
+
+describe("MessagesTimeline live follow", () => {
+  it("lets the user scroll away from history that loads after the timeline mounts", async () => {
+    const listRef = createRef<LegendListRef | null>();
+    const history = Array.from({ length: 40 }, (_, index) =>
+      message(`Line ${index}\n\n${"filler ".repeat(80)}`, { role: "assistant" }, `line-${index}`),
+    );
+    // The list mounts no scroll node until history arrives. Every frame the
+    // follow hook could spend looking for one runs before that happens.
+    using loadingTimers = new DisposableStack();
+    loadingTimers.use(fakeTimers());
+    await using screen = await renderElement(<FollowedTimeline listRef={listRef} entries={[]} />);
+    vi.advanceTimersByTime(1_000);
+    loadingTimers.dispose();
+
+    await screen.rerender(<FollowedTimeline listRef={listRef} entries={history} />);
+    const viewport = await vi.waitFor(() => {
+      const node = listRef.current?.getScrollableNode();
+      expect(node && node.scrollHeight > node.clientHeight * 2).toBe(true);
+      return node!;
+    });
+    const row = viewport.querySelector("[data-timeline-root]")!;
+    await act(() => row.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true })));
+
+    await expect.element(screen.getByTestId("live-follow")).toHaveTextContent("false");
   });
 });
 

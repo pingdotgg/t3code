@@ -2050,6 +2050,7 @@ export default function ChatView(props: ChatViewProps) {
     onTimelineAnchorSizeChangedStable,
     onToolOutputCollapsedAtEndStable,
     onIsAtEndChangeStable,
+    onTimelineScrollNodeChange,
     anchorNewTurn,
   } = useTimelineFollow({
     legendListRef,
@@ -2058,7 +2059,6 @@ export default function ChatView(props: ChatViewProps) {
     composerTimelineInset,
     routeThreadKey,
     activeThreadKey,
-    activeThreadId: activeThread?.id,
     isServerThread,
     serverProjection,
     threadStatus,
@@ -3396,6 +3396,7 @@ export default function ChatView(props: ChatViewProps) {
                 contentInsetEndAdjustment={composerTimelineInset}
                 liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
                 onIsAtEndChange={onIsAtEndChangeStable}
+                onScrollNodeChange={onTimelineScrollNodeChange}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEndStable}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigationStable}
