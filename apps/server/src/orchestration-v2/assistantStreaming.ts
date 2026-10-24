@@ -16,6 +16,65 @@ const SECTION_TITLE_PATTERN = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*(?:[^*]|\*(?!\*))
 // blank line between them. A bold line would continue the paragraph instead.
 const TOP_LEVEL_HEADING_PATTERN = /^#{1,6}(?:[ \t]|$)/;
 
+// Sticky helpers that inspect a streaming partial line in place, so a line that
+// grows without a newline is never copied or rescanned from its start.
+const INDENT_PATTERN = /[ \t]*/y;
+const LIST_MARKER_PATTERN = /(?:[-*+]|\d{1,9}[.)])[ \t]/y;
+const TRAILING_SPACE_PATTERN = /[ \t\r]*/y;
+
+interface AssistantTextScan {
+  text: string;
+  lineStart: number;
+  newlineSearchFrom: number;
+  openFence: { marker: string; indent: number } | null;
+  boundary: number;
+  titleAwaitingContent: boolean;
+  partialIndentEnd: number;
+  partialContentSearchFrom: number;
+}
+
+function startScan(): AssistantTextScan {
+  return {
+    text: "",
+    lineStart: 0,
+    newlineSearchFrom: 0,
+    openFence: null,
+    boundary: -1,
+    titleAwaitingContent: false,
+    partialIndentEnd: 0,
+    partialContentSearchFrom: 0,
+  };
+}
+
+function trimLineEnd(text: string, start: number, end: number): string {
+  while (end > start) {
+    const char = text.charCodeAt(end - 1);
+    if (char !== 32 && char !== 9 && char !== 13) break;
+    end--;
+  }
+  return text.slice(start, end);
+}
+
+function stickyMatchEnd(pattern: RegExp, text: string, from: number): number {
+  pattern.lastIndex = from;
+  return pattern.exec(text) === null ? -1 : pattern.lastIndex;
+}
+
+// Matches LIST_ITEM_START_PATTERN against the trimmed partial line. Every
+// search resumes where the previous call on this line stopped.
+function partialLineStartsListItem(scan: AssistantTextScan, text: string): boolean {
+  scan.partialIndentEnd = stickyMatchEnd(INDENT_PATTERN, text, scan.partialIndentEnd);
+  const markerEnd = stickyMatchEnd(LIST_MARKER_PATTERN, text, scan.partialIndentEnd);
+  if (markerEnd === -1) return false;
+  // Trimming would drop the marker's trailing space unless content follows it.
+  scan.partialContentSearchFrom = stickyMatchEnd(
+    TRAILING_SPACE_PATTERN,
+    text,
+    Math.max(markerEnd, scan.partialContentSearchFrom),
+  );
+  return scan.partialContentSearchFrom < text.length;
+}
+
 /**
  * Only fully terminated lines count, so a trailing partial line never leaks; a
  * list item start is the one lookahead that may sit on the partial line, since
@@ -24,35 +83,37 @@ const TOP_LEVEL_HEADING_PATTERN = /^#{1,6}(?:[ \t]|$)/;
  *
  * A section title holds the boundary until a content line follows it, so a
  * title never lands alone and waits above a block that is still streaming.
+ *
+ * Text that extends the previously scanned text resumes from its last partial
+ * line, so a streamed reply is scanned once rather than once per update.
  */
-export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
-  let openFence: { marker: string; indent: number } | null = null;
-  let boundary = -1;
-  let lineStart = 0;
-  let titleAwaitingContent = false;
+function advanceScan(previous: AssistantTextScan, text: string): AssistantTextScan {
+  const scan = text.startsWith(previous.text) ? { ...previous } : startScan();
+  scan.text = text;
   for (;;) {
-    const newline = text.indexOf("\n", lineStart);
-    const line = text
-      .slice(lineStart, newline === -1 ? text.length : newline)
-      .replace(/[ \t\r]+$/, "");
+    const lineStart = scan.lineStart;
+    const newline = text.indexOf("\n", scan.newlineSearchFrom);
+    if (newline === -1) {
+      scan.newlineSearchFrom = text.length;
+      break;
+    }
+    const line = trimLineEnd(text, lineStart, newline);
+    const { openFence, titleAwaitingContent } = scan;
     if (
       openFence === null &&
       lineStart > 0 &&
       !titleAwaitingContent &&
       LIST_ITEM_START_PATTERN.test(line)
     ) {
-      boundary = lineStart;
-    }
-    if (newline === -1) {
-      break;
+      scan.boundary = lineStart;
     }
     const fenceMatch = MARKDOWN_FENCE_PATTERN.exec(line);
     if (fenceMatch) {
       const indent = fenceMatch[1]!.length;
       const marker = fenceMatch[2]!;
       if (openFence === null) {
-        openFence = { marker, indent };
-        titleAwaitingContent = false;
+        scan.openFence = { marker, indent };
+        scan.titleAwaitingContent = false;
       } else if (
         marker[0] === openFence.marker[0] &&
         marker.length >= openFence.marker.length &&
@@ -60,21 +121,43 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
         line.length === indent + marker.length
       ) {
         // CommonMark: a closing fence carries no info string.
-        openFence = null;
-        boundary = newline + 1;
+        scan.openFence = null;
+        scan.boundary = newline + 1;
       }
     } else if (openFence === null && BLANK_LINE_PATTERN.test(line) && lineStart > 0) {
       if (!titleAwaitingContent) {
-        boundary = newline + 1;
+        scan.boundary = newline + 1;
       }
     } else if (openFence === null) {
       if (lineStart > 0 && !titleAwaitingContent && TOP_LEVEL_HEADING_PATTERN.test(line)) {
-        boundary = lineStart;
+        scan.boundary = lineStart;
       }
-      titleAwaitingContent = SECTION_TITLE_PATTERN.test(line);
+      scan.titleAwaitingContent = SECTION_TITLE_PATTERN.test(line);
     }
-    lineStart = newline + 1;
+    scan.lineStart = newline + 1;
+    scan.newlineSearchFrom = newline + 1;
+    scan.partialIndentEnd = newline + 1;
+    scan.partialContentSearchFrom = newline + 1;
   }
+  return scan;
+}
+
+// The partial line's list item start is not kept in the scan, because the
+// line may still be replaced before it ends.
+function readyBoundary(scan: AssistantTextScan): number {
+  if (
+    scan.openFence === null &&
+    scan.lineStart > 0 &&
+    !scan.titleAwaitingContent &&
+    partialLineStartsListItem(scan, scan.text)
+  ) {
+    return scan.lineStart;
+  }
+  return scan.boundary;
+}
+
+export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
+  const boundary = readyBoundary(advanceScan(startScan(), text));
   if (boundary === -1) {
     return { ready: "", rest: text };
   }
@@ -82,7 +165,10 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
 }
 
 export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
-  const delivered = new Map<string, { text: string; at: number }>();
+  const streams = new Map<
+    string,
+    { scan: AssistantTextScan; delivered: { text: string; at: number } | null }
+  >();
   return (
     event: ProviderAdapter.ProviderAdapterV2Event,
     now: number,
@@ -103,15 +189,21 @@ export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
     if (!message) return event;
     const key = `${event.type}:${message.id}`;
     if (!message.streaming) {
-      delivered.delete(key);
+      streams.delete(key);
       return event;
     }
     if (mode === "turn") return null;
-    const previous = delivered.get(key);
+    const stream = streams.get(key);
+    const previous = stream?.delivered ?? null;
     if (previous && now - previous.at < 400) return null;
-    const { ready } = splitBufferedAssistantText(message.text);
-    if (!ready || ready === previous?.text) return null;
-    delivered.set(key, { text: ready, at: now });
+    const scan = advanceScan(stream?.scan ?? startScan(), message.text);
+    const boundary = readyBoundary(scan);
+    const ready = boundary === -1 ? "" : message.text.slice(0, boundary);
+    if (!ready || ready === previous?.text) {
+      streams.set(key, { scan, delivered: previous });
+      return null;
+    }
+    streams.set(key, { scan, delivered: { text: ready, at: now } });
     if (event.type === "message.updated")
       return { ...event, message: { ...event.message, text: ready } };
     if (
