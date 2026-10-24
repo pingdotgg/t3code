@@ -777,6 +777,11 @@ export const layer: Layer.Layer<
         if (resumed._tag === "Success") {
           return resumed.success;
         }
+        // Another client is still writing to the native thread. A fresh
+        // session here would silently split the conversation from it.
+        if (resumed.failure._tag === "ProviderAdapterThreadInUseError") {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
+        }
 
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {
           driver: session.driver,
