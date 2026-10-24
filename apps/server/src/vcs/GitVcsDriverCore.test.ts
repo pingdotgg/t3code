@@ -3,8 +3,11 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -13,6 +16,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -46,7 +50,7 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
 });
 const layerTest = GitVcsDriver.layer.pipe(
-  Layer.provide(layerServerConfig),
+  Layer.provideMerge(layerServerConfig),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -290,6 +294,603 @@ it.effect("invalidates origin remote cache when a driver mutation adds origin", 
     const after = yield* driver.statusDetailsLocal(cwd);
     assert.equal(after.hasOriginRemote, true);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { hookExitCode: 0, commonDirFailure: "none" },
+  { hookExitCode: 1, commonDirFailure: "none" },
+  { hookExitCode: 0, commonDirFailure: "error" },
+  { hookExitCode: 1, commonDirFailure: "error" },
+  { hookExitCode: 0, commonDirFailure: "non-repository" },
+  { hookExitCode: 1, commonDirFailure: "non-repository" },
+])(
+  "invalidates sibling worktree refs and status after checkout hook exit $hookExitCode with common-dir failure $commonDirFailure",
+  ({ hookExitCode, commonDirFailure }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawnedArgs: Array<ReadonlyArray<string>> = [];
+        let invalidationFailure = "none";
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("expected a standard Git command");
+            }
+            spawnedArgs.push(command.args);
+            if (invalidationFailure !== "none" && command.args.includes("--git-common-dir")) {
+              if (invalidationFailure === "non-repository") return makeNonRepositoryHandle();
+              return ChildProcessSpawner.makeHandle({
+                ...makeNonRepositoryHandle(),
+                stderr: Stream.encodeText(Stream.make("fatal: could not read repository metadata")),
+              });
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const siblingPath = path.join(yield* makeTmpDir("git-worktrees-"), "sibling");
+        yield* git(cwd, ["worktree", "add", "-b", "cache-sibling", siblingPath, "HEAD"]);
+
+        const before = yield* driver.listRefs({ cwd: siblingPath, refresh: true });
+        assert.isTrue(before.refs.find((ref) => ref.name === "cache-sibling")?.current);
+        const statusBefore = yield* driver.statusDetailsLocal(siblingPath);
+        assert.isFalse(statusBefore.hasOriginRemote);
+        assert.isFalse(statusBefore.isDefaultBranch);
+        yield* driver.listRefs({ cwd, refresh: true });
+        yield* git(cwd, ["checkout", "-b", "creator-current"]);
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/post-checkout",
+          "#!/bin/sh\n" +
+            "git remote add origin https://example.invalid/repo.git || exit 2\n" +
+            "git update-ref refs/remotes/origin/cache-sibling HEAD || exit 2\n" +
+            "git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/cache-sibling || exit 2\n" +
+            `exit ${hookExitCode}\n`,
+        );
+        yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "created");
+        spawnedArgs.length = 0;
+        invalidationFailure = commonDirFailure;
+
+        const created = yield* driver
+          .createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/cache-created",
+          })
+          .pipe(Effect.result);
+
+        assert.equal(Result.isSuccess(created), hookExitCode === 0);
+        if (Result.isFailure(created)) {
+          assert.equal(created.failure.operation, "GitVcsDriver.createWorktree");
+          assert.equal(created.failure.detail, "git worktree add failed");
+          assert.equal(created.failure.exitCode, hookExitCode);
+        }
+        const metadataQueries = spawnedArgs.filter((args) => args.includes("--git-common-dir"));
+        assert.deepStrictEqual(metadataQueries[0], [
+          "rev-parse",
+          "--git-common-dir",
+          "--show-toplevel",
+          "--symbolic-full-name",
+          "HEAD",
+        ]);
+        assert.equal(metadataQueries.length, commonDirFailure === "none" ? 1 : 2);
+        assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
+        invalidationFailure = "none";
+
+        spawnedArgs.length = 0;
+        const creatorStatus = yield* driver.statusDetailsLocal(cwd);
+        assert.equal(creatorStatus.branch, "creator-current");
+        assert.equal(
+          spawnedArgs.some((args) => args.includes("--git-common-dir")),
+          commonDirFailure !== "none",
+        );
+        const siblingRefs = yield* driver.listRefs({ cwd: siblingPath });
+        const createdRef = siblingRefs.refs.find((ref) => ref.name === "feature/cache-created");
+        assert.isDefined(createdRef?.worktreePath);
+        assert.equal(
+          NodeFS.realpathSync.native(createdRef!.worktreePath!),
+          NodeFS.realpathSync.native(worktreePath),
+        );
+        assert.isTrue(siblingRefs.hasPrimaryRemote);
+        assert.isTrue(siblingRefs.refs.find((ref) => ref.name === "cache-sibling")?.current);
+        const statusAfter = yield* driver.statusDetailsLocal(siblingPath);
+        assert.isTrue(statusAfter.hasOriginRemote);
+        assert.isTrue(statusAfter.isDefaultBranch);
+        const creatorRefs = yield* driver.listRefs({ cwd });
+        assert.isTrue(creatorRefs.refs.find((ref) => ref.name === "creator-current")?.current);
+        assert.isFalse(creatorRefs.refs.find((ref) => ref.name === initialBranch)?.current);
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"] as const)(
+  "primes fresh original-cwd metadata with one batch after cold creation from %s",
+  (location) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawnedArgs: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args);
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        if (location === "detached") yield* git(cwd, ["checkout", "--detach"]);
+        const isNested = location === "nested" || location === "aliased-nested";
+        const physicalCwd = isNested ? path.join(cwd, "nested") : cwd;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(physicalCwd, { recursive: true });
+        const isAliased = location === "aliased-root" || location === "aliased-nested";
+        const creationCwd = isAliased
+          ? path.join(yield* makeTmpDir("git-alias-"), "link")
+          : physicalCwd;
+        if (isAliased) NodeFS.symlinkSync(physicalCwd, creationCwd, "junction");
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "cold");
+
+        yield* driver.createWorktree({
+          cwd: creationCwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/cold",
+        });
+
+        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
+        assert.equal(spawnedArgs.filter((args) => args.includes("--symbolic-full-name")).length, 1);
+        assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
+        spawnedArgs.length = 0;
+        const originalStatus = yield* driver.statusDetailsLocal(creationCwd);
+        assert.equal(originalStatus.branch, location === "detached" ? null : initialBranch);
+        const originalRefs = yield* driver.listRefs({ cwd: creationCwd });
+        assert.equal(originalRefs.isAtRepositoryRoot, !isNested);
+        assert.deepStrictEqual(
+          originalRefs.refs.filter((ref) => ref.current).map((ref) => ref.name),
+          location === "detached" ? [] : [initialBranch],
+        );
+        assert.isFalse(spawnedArgs.some((args) => args.includes("--git-common-dir")));
+        const refs = yield* driver.listRefs({ cwd: worktreePath });
+        assert.isTrue(refs.refs.find((ref) => ref.name === "feature/cold")?.current);
+        assert.equal(
+          yield* git(worktreePath, ["rev-parse", "HEAD"]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  "extra-line",
+  "trailing-blank",
+  "empty-root",
+  "missing-head",
+  "quoted-common-dir",
+  "quoted-root",
+  "carriage-return-common-dir",
+  "carriage-return-root",
+  "unsupported-ref",
+])("falls back to full discovery for ambiguous batch output: %s", (shape) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnedArgs: Array<ReadonlyArray<string>> = [];
+      const validLines = [".git", cwd, `refs/heads/${initialBranch}`];
+      const lines =
+        shape === "extra-line"
+          ? [".git", cwd, "extra", validLines[2]]
+          : shape === "trailing-blank"
+            ? [...validLines, ""]
+            : shape === "empty-root"
+              ? [".git", "", validLines[2]]
+              : shape === "missing-head"
+                ? validLines.slice(0, 2)
+                : shape === "quoted-common-dir"
+                  ? ['".git"', cwd, validLines[2]]
+                  : shape === "quoted-root"
+                    ? [".git", `"${cwd}"`, validLines[2]]
+                    : shape === "carriage-return-common-dir"
+                      ? [".git\r", cwd, validLines[2]]
+                      : shape === "carriage-return-root"
+                        ? [".git", `${cwd}\r`, validLines[2]]
+                        : [".git", cwd, "refs/tags/unsupported"];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) {
+          spawnedArgs.push(command.args);
+          if (command.args.includes("--symbolic-full-name")) {
+            return Effect.succeed(makeSuccessfulHandle(`${lines.join("\n")}\n`));
+          }
+        }
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const path = yield* Path.Path;
+      const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "fallback");
+      yield* driver.createWorktree({
+        cwd,
+        path: worktreePath,
+        refName: initialBranch,
+        newRefName: "feature/fallback",
+      });
+      assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
+      assert.isTrue(spawnedArgs.some((args) => args[0] === "symbolic-ref"));
+      spawnedArgs.length = 0;
+      const status = yield* driver.statusDetailsLocal(cwd);
+      assert.equal(status.branch, initialBranch);
+      assert.equal(status.workingTree.rootPath, NodeFS.realpathSync.native(cwd));
+      const refs = yield* driver.listRefs({ cwd });
+      assert.isTrue(refs.refs.find((ref) => ref.name === initialBranch)?.current);
+      assert.isTrue(refs.refs.some((ref) => ref.name === "feature/fallback"));
+      assert.isFalse(spawnedArgs.some((args) => args.includes("--git-common-dir")));
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["bare", "unborn"] as const)(
+  "preserves original discovery for a %s repository after worktree creation",
+  (state) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const source = yield* makeTmpDir();
+        const cwd = yield* makeTmpDir("git-discovery-fallback-");
+        if (state === "bare") {
+          yield* initRepoWithCommit(source);
+          yield* git(source, ["clone", "--bare", source, cwd]);
+        } else {
+          yield* git(cwd, ["init"]);
+        }
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawnedArgs: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args);
+          return delegate.spawn(
+            state === "bare" ? ChildProcess.setEnv(command, { GIT_DIR: cwd }) : command,
+          );
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const path = yield* Path.Path;
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "fallback");
+        const result = yield* driver
+          .createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: "HEAD",
+            newRefName: "feature/fallback",
+          })
+          .pipe(Effect.result);
+        assert.equal(Result.isSuccess(result), state === "bare");
+        if (Result.isFailure(result)) {
+          assert.equal(result.failure.operation, "GitVcsDriver.createWorktree");
+          assert.equal(result.failure.detail, "git worktree add failed");
+        }
+        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
+        assert.isTrue(spawnedArgs.some((args) => args[0] === "symbolic-ref"));
+        spawnedArgs.length = 0;
+        const refs = yield* driver.listRefs({ cwd });
+        assert.isTrue(refs.isRepo);
+        if (state === "bare") {
+          assert.isTrue(refs.refs.some((ref) => ref.name === "feature/fallback"));
+        } else {
+          assert.isEmpty(refs.refs);
+        }
+        assert.isFalse(spawnedArgs.some((args) => args.includes("--git-common-dir")));
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "preserves embedded newlines in repository paths through full discovery fallback",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = path.join(yield* makeTmpDir(), "repo\nwith-newline");
+        yield* fs.makeDirectory(cwd);
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "newline");
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/newline",
+        });
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.equal(status.branch, initialBranch);
+        const refs = yield* driver.listRefs({ cwd });
+        assert.isTrue(refs.refs.find((ref) => ref.name === initialBranch)?.current);
+        assert.isTrue(refs.refs.some((ref) => ref.name === "feature/newline"));
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "preserves a trailing carriage return in the repository root after creation through an alias",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const sandbox = yield* makeTmpDir();
+        const repository = path.join(sandbox, "repo\r");
+        const cwd = path.join(sandbox, "alias");
+        yield* fs.makeDirectory(repository);
+        const { initialBranch } = yield* initRepoWithCommit(repository);
+        NodeFS.symlinkSync(repository, cwd, "junction");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: path.join(yield* makeTmpDir("git-worktrees-"), "created"),
+          refName: initialBranch,
+          newRefName: "feature/carriage-return",
+        });
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.equal(status.workingTree.rootPath, NodeFS.realpathSync.native(repository));
+        assert.equal(status.branch, initialBranch);
+        const refs = yield* driver.listRefs({ cwd });
+        assert.isTrue(refs.isAtRepositoryRoot);
+        assert.isTrue(refs.refs.some((ref) => ref.name === "feature/carriage-return"));
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "does not prime stale metadata when another mutation completes after batch discovery",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const commit = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const batchComplete = yield* Deferred.make<void>();
+        const releaseBatch = yield* Deferred.make<void>();
+        let holdBatch = true;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const handle = yield* delegate.spawn(command);
+            if (
+              !holdBatch ||
+              !ChildProcess.isStandardCommand(command) ||
+              !command.args.includes("--symbolic-full-name") ||
+              !command.args.includes("--show-toplevel")
+            )
+              return handle;
+            holdBatch = false;
+            const output = yield* Stream.runCollect(handle.stdout);
+            yield* handle.exitCode;
+            yield* Deferred.succeed(batchComplete, undefined);
+            yield* Deferred.await(releaseBatch);
+            return ChildProcessSpawner.makeHandle({
+              ...handle,
+              stdout: Stream.fromIterable(output),
+            });
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        yield* driver.listRefs({ cwd, refresh: true });
+        const path = yield* Path.Path;
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "concurrent");
+        const creation = yield* driver
+          .createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: "HEAD",
+            newRefName: "feature/concurrent",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.gen(function* () {
+          yield* Deferred.await(batchComplete);
+          yield* driver.switchRef({ cwd, refName: commit });
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseBatch, undefined)));
+        const created = yield* Fiber.join(creation);
+        assert.equal(created.worktree.path, worktreePath);
+        const refs = yield* driver.listRefs({ cwd });
+        assert.isEmpty(refs.refs.filter((ref) => ref.current));
+        assert.isTrue(refs.refs.some((ref) => ref.name === "feature/concurrent"));
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).branch, null);
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("invalidates cached metadata after interrupted worktree creation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const batchComplete = yield* Deferred.make<void>();
+      const releaseBatch = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const handle = yield* delegate.spawn(command);
+          if (
+            !ChildProcess.isStandardCommand(command) ||
+            !command.args.includes("--symbolic-full-name") ||
+            !command.args.includes("--show-toplevel")
+          )
+            return handle;
+          const output = yield* Stream.runCollect(handle.stdout);
+          yield* handle.exitCode;
+          yield* Deferred.succeed(batchComplete, undefined);
+          yield* Deferred.await(releaseBatch);
+          return ChildProcessSpawner.makeHandle({ ...handle, stdout: Stream.fromIterable(output) });
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      yield* driver.listRefs({ cwd, refresh: true });
+      yield* driver.statusDetailsLocal(cwd);
+      yield* git(cwd, ["checkout", "-b", "creator-current"]);
+      const path = yield* Path.Path;
+      const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "interrupted");
+      const creation = yield* driver
+        .createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: "HEAD",
+          newRefName: "feature/interrupted",
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const cancellation = yield* Effect.gen(function* () {
+        yield* Deferred.await(batchComplete);
+        return yield* Fiber.interrupt(creation).pipe(Effect.forkChild({ startImmediately: true }));
+      }).pipe(Effect.ensuring(Deferred.succeed(releaseBatch, undefined)));
+      yield* Fiber.join(cancellation);
+      const exit = yield* Fiber.await(creation);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+      const refs = yield* driver.listRefs({ cwd });
+      assert.isTrue(refs.refs.find((ref) => ref.name === "creator-current")?.current);
+      const interruptedRef = refs.refs.find((ref) => ref.name === "feature/interrupted");
+      assert.isDefined(interruptedRef?.worktreePath);
+      assert.equal(
+        NodeFS.realpathSync.native(interruptedRef!.worktreePath!),
+        NodeFS.realpathSync.native(worktreePath),
+      );
+      assert.equal((yield* driver.statusDetailsLocal(cwd)).branch, "creator-current");
+      const nextPath = path.join(yield* makeTmpDir("git-worktrees-"), "after-interruption");
+      yield* driver.createWorktree({
+        cwd,
+        path: nextPath,
+        refName: "HEAD",
+        newRefName: "feature/after",
+      });
+      assert.isTrue(
+        (yield* driver.listRefs({ cwd })).refs.some((ref) => ref.name === "feature/after"),
+      );
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("does not expose stale metadata at the cache publication scheduler handoff", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = NodeFS.realpathSync.native(yield* makeTmpDir());
+      yield* initRepoWithCommit(cwd);
+      const commit = yield* git(cwd, ["rev-parse", "HEAD"]);
+      const path = yield* Path.Path;
+      const clock = yield* Clock.Clock;
+      const baseScheduler = yield* Scheduler.Scheduler;
+      const baseDispatcher = baseScheduler.makeDispatcher();
+      const normalizedCwd = path.normalize(path.resolve(cwd));
+      const firstHandoff = yield* Deferred.make<boolean>();
+      const publishedHandoff = yield* Deferred.make<void>();
+      const pendingTasks: Array<() => void> = [];
+      let normalizations = 0;
+      let publicationRequested = false;
+      let publicationClockRead = false;
+      let firstYield = false;
+      let publicationBeforeFirstYield = false;
+      let secondYield = false;
+      let paused = false;
+      let finished = false;
+      const watchedPath = {
+        ...path,
+        normalize: (input: string) => {
+          const normalized = path.normalize(input);
+          // Root discovery and invalidation precede the key normalization immediately before set.
+          if (normalized === normalizedCwd && ++normalizations === 3) publicationRequested = true;
+          return normalized;
+        },
+      };
+      const watchedClock = {
+        ...clock,
+        currentTimeMillisUnsafe: () => {
+          // Native Cache.set reads its TTL clock within its synchronous publication primitive.
+          if (publicationRequested) publicationClockRead = true;
+          return clock.currentTimeMillisUnsafe();
+        },
+      };
+      const resume = () => {
+        paused = false;
+        for (const task of pendingTasks.splice(0)) task();
+      };
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: baseScheduler.executionMode,
+        makeDispatcher: () => ({
+          scheduleTask: (task, priority) => {
+            if (paused) pendingTasks.push(() => baseDispatcher.scheduleTask(task, priority));
+            else baseDispatcher.scheduleTask(task, priority);
+          },
+          flush: () => baseDispatcher.flush(),
+        }),
+        shouldYield: () => {
+          if (finished) return false;
+          if (publicationRequested && !firstYield) {
+            firstYield = true;
+            paused = true;
+            publicationBeforeFirstYield = publicationClockRead;
+            Deferred.doneUnsafe(firstHandoff, Effect.succeed(publicationBeforeFirstYield));
+            return true;
+          }
+          if (firstYield && !publicationBeforeFirstYield && publicationClockRead && !secondYield) {
+            secondYield = true;
+            paused = true;
+            Deferred.doneUnsafe(publishedHandoff, Effect.void);
+            return true;
+          }
+          return false;
+        },
+      };
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(Path.Path, watchedPath),
+      );
+      const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "publication");
+      const creation = yield* driver
+        .createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: "HEAD",
+          newRefName: "feature/publication",
+        })
+        .pipe(
+          Effect.provideService(Clock.Clock, watchedClock),
+          Effect.provideService(Scheduler.Scheduler, scheduler),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Effect.gen(function* () {
+        const published = yield* Deferred.await(firstHandoff);
+        yield* driver.switchRef({ cwd, refName: commit });
+        assert.isEmpty((yield* driver.listRefs({ cwd })).refs.filter((ref) => ref.current));
+        if (!published) {
+          resume();
+          yield* Deferred.await(publishedHandoff);
+          assert.isEmpty((yield* driver.listRefs({ cwd })).refs.filter((ref) => ref.current));
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            finished = true;
+            resume();
+          }),
+        ),
+      );
+      const created = yield* Fiber.join(creation);
+      assert.equal(created.worktree.path, worktreePath);
+      assert.isEmpty((yield* driver.listRefs({ cwd })).refs.filter((ref) => ref.current));
+      assert.equal((yield* driver.statusDetailsLocal(cwd)).branch, null);
+    }),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 describe("pullCurrentBranch", () => {
@@ -2343,10 +2944,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(repo, ["checkout", "-b", "real-only"]);
 
           // The decoy must exist before the first lookup, which caches repository paths.
-          const refs = yield* (yield* GitVcsDriver.GitVcsDriver).listRefs({ cwd: link });
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const refs = yield* driver.listRefs({ cwd: link });
           assert.isTrue(refs.isRepo);
           assert.isFalse(refs.refs.some((ref) => ref.name === "decoy-only"));
           assert.isTrue(refs.refs.some((ref) => ref.name === "real-only"));
+
+          yield* driver.createWorktree({
+            cwd: link,
+            path: pathService.join(yield* makeTmpDir("git-worktrees-"), "real"),
+            refName: "real-only",
+            newRefName: "feature/real-created",
+          });
+          const primedRefs = yield* driver.listRefs({ cwd: link });
+          assert.isFalse(primedRefs.isAtRepositoryRoot);
+          assert.isFalse(primedRefs.refs.some((ref) => ref.name === "decoy-only"));
+          assert.isTrue(primedRefs.refs.some((ref) => ref.name === "real-only" && ref.current));
+          assert.isTrue(primedRefs.refs.some((ref) => ref.name === "feature/real-created"));
         }),
     );
 
