@@ -1052,6 +1052,7 @@ interface ActiveAcpTurn {
   readonly reasoning: ActiveTextStream;
   providerRetry?:
     | {
+        readonly source: "provider" | "busy-queue";
         readonly failure: OrchestrationV2ProviderFailure;
         readonly retry: OrchestrationV2ProviderRetry;
         readonly startedAt: DateTime.Utc;
@@ -2155,8 +2156,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const reportProviderRetry = Effect.fnUntraced(function* (notice: {
+          readonly source?: "busy-queue";
           readonly sessionId: string;
           readonly failure: OrchestrationV2ProviderFailure;
+          readonly retry?: OrchestrationV2ProviderRetry;
         }) {
           const context = yield* Ref.get(activeTurn);
           if (
@@ -2169,8 +2172,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           const previous = context.providerRetry;
           context.providerRetry = {
+            source: notice.source ?? "provider",
             failure: notice.failure,
-            retry: {
+            retry: notice.retry ?? {
               attempt: (previous?.retry.attempt ?? 0) + 1,
               maxAttempts: null,
               retryDelayMs: null,
@@ -4891,7 +4895,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             update.sessionUpdate !== "plan" &&
             update.sessionUpdate !== "plan_update" &&
             update.sessionUpdate !== "plan_removed" &&
-            acpRootSessionUpdateIngestsOutput(notification)
+            acpRootSessionUpdateIngestsOutput(notification) &&
+            context.providerRetry?.source !== "busy-queue"
           ) {
             yield* emitProviderRetry(context, "completed");
           }
@@ -7537,7 +7542,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
-            yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
+            const promptRequest = runtime.prompt(
+              { prompt: promptParts!.prompt },
+              {
+                onBusy: (retry) =>
+                  runRuntimeCallbackAtGeneration(
+                    promptGeneration,
+                    reportProviderRetry({
+                      source: "busy-queue",
+                      sessionId: requestedSessionId,
+                      failure: makeProviderFailure({
+                        class: "provider_error",
+                        message:
+                          "The agent is busy. Your message is queued and will be retried automatically.",
+                        retryable: true,
+                      }),
+                      retry,
+                    }),
+                  ).pipe(Effect.asVoid),
+              },
+            );
+            yield* promptRequest.pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
                   if (promptParts?.instructionState === undefined) return current;

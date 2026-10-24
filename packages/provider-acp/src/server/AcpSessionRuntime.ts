@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -1188,7 +1189,14 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
-      options?: { readonly dispatched?: Deferred.Deferred<void> },
+      options?: {
+        readonly dispatched?: Deferred.Deferred<void>;
+        readonly onBusy?: (retry: {
+          readonly attempt: number;
+          readonly maxAttempts: null;
+          readonly retryDelayMs: number;
+        }) => Effect.Effect<void>;
+      },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly processContainment:
@@ -1254,6 +1262,11 @@ interface EnsureActiveAssistantSegmentResult {
 interface AcpActivePrompt {
   readonly fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
   readonly completed: Deferred.Deferred<void>;
+  readonly queueState: {
+    phase: "dispatching" | "queued" | "cancelling";
+    cancelRequested: boolean;
+  };
+  readonly queueCancelled: Deferred.Deferred<void>;
 }
 
 export const make = Effect.fn("AcpSessionRuntime.make")(function* (
@@ -2345,6 +2358,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       sessionId: started.sessionId,
       ...(options.cancelMeta === undefined ? {} : { _meta: options.cancelMeta }),
     } satisfies EffectAcpSchema.CancelNotification;
+    if (Option.isSome(activePrompt)) {
+      activePrompt.value.queueState.cancelRequested = true;
+    }
+    if (Option.isSome(activePrompt) && activePrompt.value.queueState.phase === "queued") {
+      activePrompt.value.queueState.phase = "cancelling";
+      return yield* acp.agent
+        .cancel(cancelPayload)
+        .pipe(Effect.ensuring(Deferred.succeed(activePrompt.value.queueCancelled, undefined)));
+    }
     if (options.cancelBehavior !== "wait-for-prompt") {
       if (options.interruptPromptOnCancel === false) {
         return yield* acp.agent.cancel(cancelPayload);
@@ -2593,12 +2615,59 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                 ...payload,
               } satisfies EffectAcpSchema.PromptRequest;
               const completed = yield* Deferred.make<void>();
-              const fiber = yield* runLoggedRequest(
-                "session/prompt",
-                requestPayload,
-                acp.agent.prompt(requestPayload),
-              ).pipe(Effect.forkIn(runtimeScope));
-              const active = { fiber, completed } satisfies AcpActivePrompt;
+              const queueCancelled = yield* Deferred.make<void>();
+              const queueState: AcpActivePrompt["queueState"] = {
+                phase: "dispatching",
+                cancelRequested: false,
+              };
+              const fiber = yield* Effect.gen(function* () {
+                // ACP v1 has no idle signal or steer/follow-up RPC. Only this explicit
+                // rejection guarantees the prompt was not accepted and is safe to queue.
+                const delays = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+                for (let attempt = 0; ; attempt++) {
+                  if (queueState.phase === "cancelling") {
+                    yield* Deferred.await(queueCancelled);
+                    return { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse;
+                  }
+                  queueState.phase = "dispatching";
+                  const result = yield* runLoggedRequest(
+                    "session/prompt",
+                    requestPayload,
+                    acp.agent.prompt(requestPayload),
+                  ).pipe(Effect.result);
+                  if (Result.isSuccess(result)) return result.success;
+                  const error = result.failure;
+                  if (
+                    error._tag !== "AcpRequestError" ||
+                    error.code !== -32603 ||
+                    error.errorMessage !==
+                      "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion."
+                  ) {
+                    return yield* error;
+                  }
+                  if (queueState.cancelRequested) {
+                    return { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse;
+                  }
+                  const retryDelayMs = delays[Math.min(attempt, delays.length - 1)]!;
+                  queueState.phase = "queued";
+                  yield* (
+                    promptOptions?.onBusy?.({
+                      attempt: attempt + 1,
+                      maxAttempts: null,
+                      retryDelayMs,
+                    }) ?? Effect.void
+                  );
+                  yield* Effect.sleep(retryDelayMs).pipe(
+                    Effect.raceFirst(Deferred.await(queueCancelled)),
+                  );
+                }
+              }).pipe(Effect.forkIn(runtimeScope));
+              const active = {
+                fiber,
+                completed,
+                queueState,
+                queueCancelled,
+              } satisfies AcpActivePrompt;
               yield* Ref.set(activePromptRef, Option.some(active));
               if (promptOptions?.dispatched) {
                 yield* Deferred.succeed(promptOptions.dispatched, undefined);
