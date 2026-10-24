@@ -2,10 +2,15 @@
 
 Orchestration v2 snapshots `state.sqlite` into `statev2.sqlite` before opening writable persistence
 on its first launch. Only the copy receives v2 migrations; the original remains available to v1.
-Subsequent launches reuse the copy without refreshing it from v1. It creates v2 thread shell events first and imports
+Later launches reuse a committed copy without refreshing it from v1. It creates v2 thread shell events first and imports
 the complete user and assistant transcript lazily when a client reads or continues the thread. The
 v1 projection tables remain the import source and provide a read-only recovery source if an import
 needs investigation.
+
+A server commits the copy after its launcher commit and before it accepts commands. Any other
+process commits it on open, since it may write. A launcher that rolls a trial back restores only
+`state.sqlite`, so the next server start copies v1 again when v1 has newer events than an
+uncommitted copy.
 
 ## Imported data
 

@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Deferred from "effect/Deferred";
@@ -10,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -175,9 +177,16 @@ it.effect("parks automatic pull until activation without delaying command readin
           address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
         }),
         Path.layer,
+        NodeSqliteClient.layer({ filename: ":memory:" }).pipe(Layer.orDie),
       );
 
       yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`CREATE TABLE uncommitted_v1_copy (last_event_id TEXT)`;
+        const uncommitted =
+          sql`SELECT 1 FROM sqlite_schema WHERE name = 'uncommitted_v1_copy'`.pipe(
+            Effect.map((rows) => rows.length === 1),
+          );
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
 
@@ -185,17 +194,20 @@ it.effect("parks automatic pull until activation without delaying command readin
         expect(yield* Deferred.isDone(activation)).toBe(false);
         expect(yield* Deferred.isDone(statusCalled)).toBe(false);
         expect(yield* Deferred.isDone(prepared)).toBe(true);
+        // A rollback would still restore only state.sqlite and leave this copy behind.
+        expect(yield* uncommitted).toBe(true);
 
         yield* Deferred.succeed(commitTrial, undefined);
         yield* Deferred.await(activation);
         expect(yield* Deferred.await(statusCalled)).toBe(cwd);
         yield* startup.awaitCommandReady;
+        expect(yield* uncommitted).toBe(false);
       }).pipe(
         Effect.provide(
           ServerRuntimeStartup.layerWithOptions({
             activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
             awaitAuxiliaryParked: Effect.void,
-          }).pipe(Layer.provide(dependencies)),
+          }).pipe(Layer.provideMerge(dependencies)),
         ),
         Effect.provideService(ServerActivation, Deferred.await(activation)),
       );
