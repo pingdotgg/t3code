@@ -84,6 +84,7 @@ import {
   workflowOpeningParentThreadId,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import { isCompactCommandText } from "@t3tools/client-runtime/state/composer-dispatch";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
@@ -1398,9 +1399,18 @@ export default function ChatView(props: ChatViewProps) {
       item.runId === activeRuntime?.activeRunId &&
       item.status === "running",
   );
+  const compactCommandIsActive = compactRequestIsActive && !compactionSettled;
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
-    (compactionRunning || (compactRequestIsActive && !compactionSettled));
+    (compactionRunning || compactCommandIsActive);
+  // Only an explicit compaction refuses steering. Automatic compaction runs
+  // inside an ordinary turn, which still accepts it.
+  const explicitCompactionIsActive =
+    compactCommandIsActive ||
+    (compactionRunning &&
+      latestServerUserItem?.type === "user_message" &&
+      latestServerUserItem.runId === activeRuntime?.activeRunId &&
+      isCompactCommandText(latestServerUserItem.text));
   const isWorking =
     phase === "running" ||
     isSendBusy ||
@@ -3523,7 +3533,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isLocalDraftThread && activeProject === null
                               }
                               phase={phase}
-                              isCompacting={isCompacting}
+                              canSteer={!explicitCompactionIsActive}
                               canInterrupt={canInterruptRunningThread}
                               isConnecting={isConnecting}
                               isSendBusy={
