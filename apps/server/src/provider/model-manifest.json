@@ -51,6 +51,15 @@
       ]
     },
     {
+      "driver": "commandCode",
+      "t3CodeRange": ">=0.0.42",
+      "recommendedRange": ">=1.80.0",
+      "ranges": [
+        { "range": ">=1.80.0", "status": "supported" },
+        { "range": "<1.80.0", "status": "unsupported" }
+      ]
+    },
+    {
       "driver": "opencode",
       "t3CodeRange": ">=0.0.42 <0.0.46",
       "recommendedRange": ">=1.14.19 <2.0.0",

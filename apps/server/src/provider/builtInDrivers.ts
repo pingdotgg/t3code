@@ -2,6 +2,10 @@ import {
   AcpRegistryDriver,
   type AcpRegistryDriverEnv,
 } from "@t3tools/provider-acp-registry/server";
+import {
+  CommandCodeDriver,
+  type CommandCodeDriverEnv,
+} from "@t3tools/provider-command-code/server";
 import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
@@ -20,6 +24,7 @@ export type BuiltInDriversEnv =
   | AntigravityDriverEnv
   | ClaudeDriverEnv
   | CodexDriverEnv
+  | CommandCodeDriverEnv
   | CursorDriverEnv
   | GrokDriverEnv
   | OpenCodeDriverEnv
@@ -33,6 +38,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GrokDriver,
   OpenCodeDriver,
   AntigravityDriver,
+  CommandCodeDriver,
   PiDriver,
   MuseDriver,
   AcpRegistryDriver,
