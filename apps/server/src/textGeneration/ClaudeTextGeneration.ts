@@ -188,16 +188,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
-      const workingDirectory =
-        operation === "generateThreadTitle"
-          ? yield* fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
-                ),
-              )
-          : cwd;
+      // Titles need only the supplied prompt, not configuration from the checkout.
+      const workingDirectory = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, {
+        operation,
+        cwd: operation === "generateThreadTitle" ? null : cwd,
+      });
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",

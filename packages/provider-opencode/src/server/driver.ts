@@ -159,6 +159,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
+    explainProviderFailure: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.explainProviderFailure(input),
+        v2: v2.explainProviderFailure(input),
+      }),
   };
 }
 

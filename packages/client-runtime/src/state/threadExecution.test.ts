@@ -11,6 +11,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2RunStatus,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -96,6 +97,53 @@ describe("thread execution presentation", () => {
     expect(
       deriveThreadRuntime({ ...projection, runs: [failed, run("new", 2, "running")] }),
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
+  });
+
+  it("uses the newest current-account session even when an earlier session is updated", () => {
+    const session = {
+      id: ProviderSessionId.make("earlier-session"),
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      status: "error" as const,
+      cwd: "/workspace",
+      model: null,
+      capabilities: {} as OrchestrationV2ProviderCapabilities,
+      createdAt: now,
+      updatedAt: DateTime.makeUnsafe("2026-07-28T11:00:00.000Z"),
+      lastError: "Current failure",
+    };
+    const stale = {
+      ...session,
+      id: ProviderSessionId.make("later-session"),
+      updatedAt: now,
+      lastError: "Stale failure",
+    };
+    const unrelated = {
+      ...session,
+      id: ProviderSessionId.make("other-account"),
+      providerInstanceId: ProviderInstanceId.make("other"),
+      updatedAt: DateTime.makeUnsafe("2026-07-28T12:00:00.000Z"),
+      lastError: "Other account",
+    };
+    for (const sessions of [
+      [session, stale, unrelated],
+      [unrelated, stale, session],
+    ]) {
+      expect(
+        deriveThreadRuntime({
+          ...v2Projection,
+          runs: [run("failed", 1, "failed")],
+          providerSessions: sessions,
+        }),
+      ).toMatchObject({ lastError: "Current failure" });
+    }
+    expect(
+      deriveThreadRuntime({
+        ...v2Projection,
+        runs: [run("failed", 1, "failed")],
+        providerSessions: [unrelated],
+      }),
+    ).toMatchObject({ lastError: null });
   });
 
   // regression: #15029 working timers no longer reset on every background wake

@@ -8,6 +8,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -35,9 +36,11 @@ type Outcome =
 const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   connection: OpenCode2Server.OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
+  fileSystem: FileSystem.FileSystem,
 ) {
   const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
   const { client } = connection;
+  const cwd = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, input);
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
   if (parsed === null) {
     return yield* new TextGenerationError({
@@ -122,7 +125,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   );
   const session = yield* client.session.create({
     title: `T3 Code ${input.operation}`,
-    location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
+    location: Location.PublicRef.make({ directory: AbsolutePath.make(cwd) }),
     model: Model.Ref.make({
       providerID: Provider.ID.make(parsed.providerID),
       id: Model.ID.make(parsed.modelID),
@@ -178,9 +181,10 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const host = yield* ProviderHost.ProviderHost;
+  const fileSystem = yield* FileSystem.FileSystem;
   const run: TextGenerationOperations.Runner = (input) =>
     server
-      .withConnection((connection) => runOnServer(connection, input))
+      .withConnection((connection) => runOnServer(connection, input, fileSystem))
       .pipe(
         Effect.provideService(ProviderHost.ProviderHost, host),
         Effect.mapError((cause) =>

@@ -12,6 +12,12 @@ import { toastManager } from "../ui/toast";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { ThreadErrorExplanation } from "./ThreadErrorExplanation";
+import {
+  canExplainThreadError,
+  threadErrorExplanationKey,
+  type ThreadErrorExplainTarget,
+} from "./ThreadErrorExplanation.logic";
 import { ExpandableText } from "../settings/ExpandableText";
 
 function copyAdminRequest() {
@@ -73,17 +79,21 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
   errorClass,
+  explainTarget = null,
   errorCode,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   errorCode?: string | null;
   onDismiss?: () => void;
+  explainTarget?: ThreadErrorExplainTarget | null;
 }) {
   if (!error) return null;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
   const variant = errorClass === "usage_limit" || chatGptLimit ? "warning" : "error";
+  const canExplain =
+    !chatGptLimit && canExplainThreadError({ errorClass, hasTarget: explainTarget !== null });
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="glass" controlAlignment="first-line" data-variant={variant}>
@@ -105,6 +115,15 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           ) : (
             <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />
           )}
+          {canExplain && explainTarget !== null ? (
+            <ThreadErrorExplanation
+              key={threadErrorExplanationKey(explainTarget, error)}
+              environmentId={explainTarget.environmentId}
+              threadId={explainTarget.threadId}
+              runId={explainTarget.runId}
+              error={error}
+            />
+          ) : null}
         </AlertDescription>
         {(chatGptLimit || onDismiss) && (
           <AlertAction>

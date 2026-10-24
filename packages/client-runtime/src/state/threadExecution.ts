@@ -75,12 +75,22 @@ function summarizeThreadRun(
   };
 }
 
+function latestProviderSession(projection: ThreadStructure) {
+  return projection.providerSessions.reduce<
+    OrchestrationV2ThreadProjection["providerSessions"][number] | null
+  >((latest, session) => {
+    if (session.providerInstanceId !== projection.thread.providerInstanceId) return latest;
+    return latest === null ||
+      DateTime.toEpochMillis(session.updatedAt) > DateTime.toEpochMillis(latest.updatedAt)
+      ? session
+      : latest;
+  }, null);
+}
+
 function presentedUsageLimitRun(
   projection: ThreadStructure,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
-  const providerSession = projection.providerSessions.findLast(
-    (session) => session.providerInstanceId === projection.thread.providerInstanceId,
-  );
+  const providerSession = latestProviderSession(projection);
   return usageLimitRunPresentedAsLatest(
     projection.runs,
     projection.turnItems,
@@ -222,9 +232,7 @@ export function deriveThreadStructureRuntime(
   projection: ThreadStructure,
 ): ThreadStructureRuntime | null {
   const latestRun = deriveLatestThreadRun(projection);
-  const providerSession = projection.providerSessions.findLast(
-    (session) => session.providerInstanceId === projection.thread.providerInstanceId,
-  );
+  const providerSession = latestProviderSession(projection);
   const usageLimitedRun = presentedUsageLimitRun(projection);
   const latestRunProjection = presentedLatestRun(projection);
   const activityRun = deriveThreadActivityRun(projection);

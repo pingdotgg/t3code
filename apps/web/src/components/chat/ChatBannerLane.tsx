@@ -1,3 +1,4 @@
+import type { ThreadErrorExplainTarget } from "./ThreadErrorExplanation.logic";
 import type {
   OrchestrationV2ProviderFailureClass,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ export function ChatBannerLane(props: {
   threadError: string | null;
   threadErrorClass: OrchestrationV2ProviderFailureClass | null;
   threadErrorCode: string | null;
+  explainTarget: ThreadErrorExplainTarget | null;
   threadErrorBannerKey: string | null;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   setThreadErrorBannerDismissTick: Dispatch<SetStateAction<number>>;
@@ -49,6 +51,7 @@ export function ChatBannerLane(props: {
         error={threadError}
         errorClass={threadErrorClass}
         errorCode={threadErrorCode}
+        explainTarget={props.explainTarget}
         onDismiss={() => {
           setThreadError(threadId, null);
           dismissThreadErrorBannerForSession(threadErrorBannerKey);

@@ -7,12 +7,13 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
@@ -43,7 +44,9 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
-  mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
+  /** The process must run in an empty directory other than this one. */
+  isolatedFrom?: string;
+  mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number | string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -56,6 +59,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     forbidArg: input.forbidArg ?? null,
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
+    isolatedFrom: input.isolatedFrom ?? null,
     mcpServers: input.mcpServers ?? [],
     stderr: input.stderr ?? null,
     output: input.output,
@@ -82,7 +86,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
             ]),
         "if (isMcpList) {",
         '  if (typeof check.mcpServers === "number") process.exit(check.mcpServers);',
-        "  process.stdout.write(JSON.stringify(check.mcpServers));",
+        "  process.stdout.write(typeof check.mcpServers === 'string' ? check.mcpServers : JSON.stringify(check.mcpServers));",
         "  process.exit(0);",
         "}",
         'const originalArgs = ` ${args.join(" ")} `;',
@@ -138,6 +142,12 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         "if (check.stdinMustNotContain !== null && stdinContent.includes(check.stdinMustNotContain)) {",
         '  fail("stdin contained forbidden content", 4);',
+        "}",
+        "if (",
+        "  check.isolatedFrom !== null &&",
+        "  (process.cwd() === check.isolatedFrom || NodeFS.readdirSync(process.cwd()).length > 0)",
+        ") {",
+        '  fail("not run in an empty directory away from " + check.isolatedFrom, 10);',
         "}",
         'if (check.stderr !== null) process.stderr.write(check.stderr + "\\n");',
         'if (outputPath !== null) NodeFS.writeFileSync(outputPath, check.output + "\\n");',
@@ -235,6 +245,57 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           }),
       ),
   );
+  it.effect(
+    "explains provider failures read-only in an empty directory away from the project",
+    () =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ summary: "The session ended.", likelyFix: "Start a new turn." }),
+          isolatedFrom: process.cwd(),
+          requireArg: "-s read-only --config features.shell_tool=false",
+          stdinMustContain: "Message: boom",
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const explained = yield* textGeneration.explainProviderFailure({
+              context: "Message: boom",
+              modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5"),
+            });
+            expect(explained).toEqual({
+              summary: "The session ended.",
+              likelyFix: "Start a new turn.",
+            });
+          }),
+      ),
+  );
+  it.effect("generates and sanitizes commit messages without branch by default", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject:
+            "  Add important change to the system with too much detail and a trailing period.\nsecondary line",
+          body: "\n- added migration\n- updated tests\n",
+        }),
+        stdinMustNotContain: "branch must be a short semantic git branch fragment",
+        forbidArg: "features.shell_tool=false",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/codex-effect",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(generated.subject.length).toBeLessThanOrEqual(72);
+          expect(generated.subject.endsWith(".")).toBe(false);
+          expect(generated.body).toBe("- added migration\n- updated tests");
+          expect(generated.branch).toBeUndefined();
+        }),
+    ),
+  );
 
   it.effect("omits a persisted service tier for managed ChatGPT text generation", () =>
     withFakeCodexEnv(
@@ -298,6 +359,28 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           expect(result.branch).toBe("remove-default-shapes");
         }),
     ),
+  );
+
+  it.effect.each([2, "{not-json"])(
+    "refuses isolated text generation when MCP discovery fails (%s)",
+    (mcpServers) =>
+      withFakeCodexEnv(
+        { output: JSON.stringify({ title: "Should never run" }), mcpServers },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration
+              .explainProviderFailure({
+                context: "Untrusted failure report",
+                modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              })
+              .pipe(Effect.result);
+            expect(Result.isFailure(result)).toBe(true);
+            if (Result.isFailure(result)) {
+              expect(result.failure).toBeInstanceOf(TextGenerationError);
+              expect(result.failure.detail).toContain("Could not discover Codex MCP servers");
+            }
+          }),
+      ),
   );
 
   it.effect("keeps plugins and apps off over launch args that turn them on", () =>

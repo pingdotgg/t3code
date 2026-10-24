@@ -3106,6 +3106,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
   getTurnItem: "orchestration.getTurnItem",
+  explainProviderFailure: "orchestration.explainProviderFailure",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
@@ -3371,6 +3372,15 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   },
 ) {}
 
+/** The message is fixed T3 text, safe to show the user. The cause stays in the server log. */
+export class OrchestrationV2ExplainProviderFailureError extends Schema.TaggedError<OrchestrationV2ExplainProviderFailureError>()(
+  "OrchestrationV2ExplainProviderFailureError",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
+  },
+) {}
+
 export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedError<OrchestrationV2GetShellSnapshotError>()(
   "OrchestrationV2GetShellSnapshotError",
   {
@@ -3486,6 +3496,28 @@ export const OrchestrationV2GetTurnItemResult = Schema.Struct({
   item: Schema.NullOr(OrchestrationV2TurnItem),
 });
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
+
+export const OrchestrationV2ExplainProviderFailureInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The thread's latest run as the client shows it. A server that has moved to another run refuses. */
+  runId: Schema.optional(RunId),
+  /** The error text the client is showing. A server whose error differs refuses. */
+  revision: Schema.optional(Schema.String),
+});
+export type OrchestrationV2ExplainProviderFailureInput =
+  typeof OrchestrationV2ExplainProviderFailureInput.Type;
+
+/** A model's reading of a thread's latest provider failure. */
+export const OrchestrationV2ExplainProviderFailureResult = Schema.Struct({
+  /** The error that was explained: the thread's `lastError`, which the client checks against the one it shows. */
+  failureMessage: Schema.String,
+  /** What probably happened, in one or two sentences. */
+  summary: Schema.String,
+  /** What the user can try next. */
+  likelyFix: Schema.String,
+});
+export type OrchestrationV2ExplainProviderFailureResult =
+  typeof OrchestrationV2ExplainProviderFailureResult.Type;
 
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
@@ -3608,6 +3640,10 @@ export const OrchestrationV2RpcSchemas = {
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,
     output: OrchestrationV2GetTurnItemResult,
+  },
+  explainProviderFailure: {
+    input: OrchestrationV2ExplainProviderFailureInput,
+    output: OrchestrationV2ExplainProviderFailureResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
