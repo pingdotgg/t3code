@@ -373,7 +373,9 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
   return { isBrowseNavigating, pathInput, setPathInput, navigateToBrowsePath };
 }
 
-function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
+function useEnvironmentOptions(
+  selectedEnvironmentId: EnvironmentId | null = null,
+): ReadonlyArray<EnvironmentOption> {
   const serverConfigByEnvironmentId = useServerConfigs();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const { connectedEnvironments } = useRemoteConnectionStatus();
@@ -399,25 +401,30 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
       };
     });
     return Arr.sort(
-      options.filter((environment) => canCreateProjectInEnvironment(environment.connectionState)),
+      options.filter(
+        (environment) =>
+          canCreateProjectInEnvironment(environment.connectionState) ||
+          environment.environmentId === selectedEnvironmentId,
+      ),
       environmentOptionOrder,
     );
   })();
 }
 
-function useSelectedEnvironment(): {
+function useSelectedEnvironment(requestedEnvironmentId: EnvironmentId | null): {
   readonly environmentOptions: ReadonlyArray<EnvironmentOption>;
   readonly selectedEnvironment: EnvironmentOption | null;
   readonly setSelectedEnvironmentId: (environmentId: EnvironmentId) => void;
 } {
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
-  const environmentOptions = useEnvironmentOptions();
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(requestedEnvironmentId);
+  const [previousRequest, setPreviousRequest] = useState(requestedEnvironmentId);
+  if (previousRequest !== requestedEnvironmentId) {
+    setPreviousRequest(requestedEnvironmentId);
+    setSelectedEnvironmentId(requestedEnvironmentId);
+  }
+  const environmentOptions = useEnvironmentOptions(selectedEnvironmentId);
   const selectedEnvironment =
-    environmentOptions.find(
-      (environment) =>
-        environment.environmentId === selectedEnvironmentId &&
-        canCreateProjectInEnvironment(environment.connectionState),
-    ) ??
+    environmentOptions.find((environment) => environment.environmentId === selectedEnvironmentId) ??
     environmentOptions.find((environment) =>
       canCreateProjectInEnvironment(environment.connectionState),
     ) ??
@@ -504,10 +511,10 @@ function SourceControlRow(props: {
   );
 }
 
-export function AddProjectSourceScreen() {
+export function AddProjectSourceScreen(props: { readonly environmentId?: string | string[] }) {
   const navigation = useNavigation();
   const { environmentOptions, selectedEnvironment, setSelectedEnvironmentId } =
-    useSelectedEnvironment();
+    useSelectedEnvironment(stringParam(props.environmentId) as EnvironmentId | null);
   const canWriteSourceControl = useEnvironmentScope(
     selectedEnvironment?.environmentId ?? null,
     AuthSourceControlWriteScope,
@@ -516,9 +523,10 @@ export function AddProjectSourceScreen() {
     selectedEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const canCloneProject = canWriteSourceControl && canCreateProject;
+  const isConnected = canCreateProjectInEnvironment(selectedEnvironment?.connectionState);
+  const canCloneProject = isConnected && canWriteSourceControl && canCreateProject;
   const discoveryState = useEnvironmentQuery(
-    selectedEnvironment === null
+    selectedEnvironment === null || !isConnected
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: selectedEnvironment.environmentId,
@@ -582,6 +590,7 @@ export function AddProjectSourceScreen() {
               <ListRow
                 title="New project"
                 subtitle="Start a new Git repository from a name"
+                disabled={!isConnected}
                 icon={
                   <SymbolView
                     name="plus"
@@ -616,7 +625,7 @@ export function AddProjectSourceScreen() {
                 />
               }
               isFirst={selectedEnvironment.newProjectsRoot === null}
-              disabled={!canCreateProject}
+              disabled={!isConnected || !canCreateProject}
               onPress={() =>
                 navigation.dispatch(
                   StackActions.push("AddProjectLocal", {
@@ -653,6 +662,13 @@ export function AddProjectSourceScreen() {
   );
 }
 
+function getActiveRouteKey(navigation: {
+  getState: () => NavigationState<ParamListBase> | undefined;
+}): string | undefined {
+  const state = navigation.getState();
+  return state?.routes[state.index]?.key;
+}
+
 function openNewTaskDraft(
   navigation: {
     dispatch: (action: ReturnType<typeof CommonActions.reset>) => void;
@@ -665,13 +681,22 @@ function openNewTaskDraft(
     cloning?: "1";
     draftId?: string;
   },
+  originRouteKey: string | undefined,
 ) {
   const state = navigation.getState();
-  if (!state) return;
-  const threadIndex = state.routes.findLastIndex((route) => route.name === "Thread");
+  // Async creation can finish after this flow was dismissed or another route opened.
+  if (!state || state.routes[state.index]?.key !== originRouteKey) return;
+  const activeRoutes = state.routes.slice(0, state.index + 1);
+  const threadIndex = activeRoutes.findLastIndex((route) => route.name === "Thread");
+  const flowIndex = activeRoutes.findIndex(
+    (route) => route.name === "NewTaskProject" || route.name.startsWith("AddProject"),
+  );
+  const startIndex = threadIndex >= 0 ? threadIndex : flowIndex >= 0 ? flowIndex : state.index;
+  // Native screen identity is the route key, even when its name changes. Reuse
+  // the draft or first flow controller so completion only pops its children.
   const routes = [
-    ...state.routes.slice(0, threadIndex < 0 ? state.index : threadIndex),
-    { key: uuidv4(), name: "Thread", params: { draft: params } },
+    ...activeRoutes.slice(0, startIndex),
+    { key: activeRoutes[startIndex]!.key, name: "Thread", params: { draft: params } },
   ];
   navigation.dispatch(CommonActions.reset({ ...state, index: routes.length - 1, routes }));
 }
@@ -692,7 +717,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const projects = useProjects();
 
-  return async (workspaceRoot: string) => {
+  return async (workspaceRoot: string, originRouteKey = getActiveRouteKey(navigation)) => {
     if (
       !environment ||
       !canCreateProjectInEnvironment(environment.connectionState) ||
@@ -712,11 +737,15 @@ function useCreateProject(environment: EnvironmentOption | null) {
     });
     if (existing) {
       Dialog.alert("Project already exists", existing.title);
-      openNewTaskDraft(navigation, {
-        environmentId: existing.environmentId,
-        projectId: existing.id,
-        title: existing.title,
-      });
+      openNewTaskDraft(
+        navigation,
+        {
+          environmentId: existing.environmentId,
+          projectId: existing.id,
+          title: existing.title,
+        },
+        originRouteKey,
+      );
       return;
     }
 
@@ -733,11 +762,28 @@ function useCreateProject(environment: EnvironmentOption | null) {
     if (AsyncResult.isFailure(result)) {
       return result;
     }
-    openNewTaskDraft(navigation, {
-      environmentId: environment.environmentId,
-      projectId,
-      title: inferProjectTitleFromPath(workspaceRoot),
-    });
+    // A successful command can precede its project in the client store. The
+    // draft treats a missing project as a reason to return to the chooser.
+    const project = await waitForProject(
+      { environmentId: environment.environmentId, projectId },
+      15_000,
+    );
+    if (project === null) {
+      Dialog.alert(
+        "Project added",
+        "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+      );
+      return result;
+    }
+    openNewTaskDraft(
+      navigation,
+      {
+        environmentId: environment.environmentId,
+        projectId,
+        title: inferProjectTitleFromPath(workspaceRoot),
+      },
+      originRouteKey,
+    );
     return result;
   };
 }
@@ -1020,6 +1066,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   const submittingRef = useRef(false);
   const submit = async () => {
     if (!environment || trimmedName.length === 0 || submittingRef.current) return;
+    const originRouteKey = getActiveRouteKey(navigation);
     submittingRef.current = true;
     setError(null);
     setIsSubmitting(true);
@@ -1070,11 +1117,15 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       );
       return;
     }
-    openNewTaskDraft(navigation, {
-      environmentId: environment.environmentId,
-      projectId,
-      title: trimmedName,
-    });
+    openNewTaskDraft(
+      navigation,
+      {
+        environmentId: environment.environmentId,
+        projectId,
+        title: trimmedName,
+      },
+      originRouteKey,
+    );
   };
 
   return (
@@ -1316,6 +1367,7 @@ export function AddProjectDestinationScreen(props: {
       return;
     }
 
+    const originRouteKey = getActiveRouteKey(navigation);
     setIsSubmitting(true);
     if (environment.supportsCloneTracking) {
       const projectId = ProjectId.make(uuidv4());
@@ -1345,18 +1397,22 @@ export function AddProjectDestinationScreen(props: {
             "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
           );
         } else {
-          openNewTaskDraft(navigation, {
-            environmentId: environment.environmentId,
-            projectId,
-            title,
-            cloning: "1",
-            ...(prompt
-              ? await draftWithPrompt(environment.environmentId, projectId, prompt).then(
-                  (draftId) => ({ draftId }),
-                  () => ({}),
-                )
-              : {}),
-          });
+          openNewTaskDraft(
+            navigation,
+            {
+              environmentId: environment.environmentId,
+              projectId,
+              title,
+              cloning: "1",
+              ...(prompt
+                ? await draftWithPrompt(environment.environmentId, projectId, prompt).then(
+                    (draftId) => ({ draftId }),
+                    () => ({}),
+                  )
+                : {}),
+            },
+            originRouteKey,
+          );
         }
       }
       setIsSubmitting(false);
@@ -1372,7 +1428,7 @@ export function AddProjectDestinationScreen(props: {
     if (AsyncResult.isFailure(cloneResult)) {
       setError(errorMessage(Cause.squash(cloneResult.cause)));
     } else {
-      const createResult = await createProject(cloneResult.value.cwd);
+      const createResult = await createProject(cloneResult.value.cwd, originRouteKey);
       if (createResult && AsyncResult.isFailure(createResult)) {
         setError(errorMessage(Cause.squash(createResult.cause)));
       }
