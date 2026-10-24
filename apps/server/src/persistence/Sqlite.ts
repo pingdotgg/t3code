@@ -33,6 +33,12 @@ const layerSetup = Layer.effectDiscard(
     // Checkpoints are now the only sync, and macOS fsync() does not flush the
     // drive cache. F_FULLFSYNC makes them reach disk; other platforms ignore it.
     yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
+    // Statement journals past 64 KiB and large sorts otherwise go to temp
+    // files, created on the main thread. On a busy copy-on-write filesystem
+    // such as btrfs, each create can wait seconds for a filesystem commit and
+    // blocks the event loop. Temporary data stays in memory; large statements
+    // and open savepoints can increase peak memory use.
+    yield* sql`PRAGMA temp_store = MEMORY;`;
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
