@@ -363,7 +363,35 @@ export const make = Effect.gen(function* () {
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
-            Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
+            Effect.provideService(ConnectionDriver.ConnectionDriver, {
+              ...driver,
+              connect: Effect.fn(function* (current, reportProgress) {
+                const target = current.target;
+                if (
+                  target._tag !== "BearerConnectionTarget" ||
+                  !(yield* Ref.get(platformEnvironmentIds)).has(environmentId)
+                ) {
+                  return yield* driver.connect(current, reportProgress);
+                }
+                const before = yield* credentials
+                  .get(target.connectionId)
+                  .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
+                return yield* driver.connect(current, reportProgress).pipe(
+                  Effect.tapError((error) =>
+                    error._tag === "ConnectionBlockedError" && error.reason === "authentication"
+                      ? Effect.gen(function* () {
+                          if (Option.isSome(before)) {
+                            yield* (
+                              credentials.removeIfMatches?.(target.connectionId, before.value) ??
+                                Effect.void
+                            );
+                          }
+                        }).pipe(Effect.ignore)
+                      : Effect.void,
+                  ),
+                );
+              }),
+            }),
             Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),
             Scope.provide(scope),
             Effect.onError(() => Scope.close(scope, Exit.void)),
@@ -639,24 +667,31 @@ export const make = Effect.gen(function* () {
           // the resolver's bearer broker looks it up.
           let bearerReplaced = false;
           if (registration._tag === "BearerConnectionRegistration") {
-            const stored = yield* credentials
-              .get(registration.target.connectionId)
-              .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
-            const changed =
-              Option.isSome(stored) && !Equal.equals(stored.value, registration.credential);
-            // Only a bearer that was actually stored can be retried with; a
-            // failed write leaves the rejected one in place.
-            bearerReplaced = yield* credentials
-              .put(registration.target.connectionId, registration.credential)
-              .pipe(
-                Effect.as(changed),
-                Effect.catch((error) =>
-                  Effect.logWarning("Could not store the platform bearer credential.", {
-                    environmentId: target.environmentId,
-                    error,
-                  }).pipe(Effect.as(false)),
-                ),
-              );
+            const rejected = yield* (
+              credentials
+                .wasRejected?.(registration.target.connectionId, registration.credential)
+                .pipe(Effect.orElseSucceed(() => false)) ?? Effect.succeed(false)
+            );
+            if (!rejected) {
+              const stored = yield* credentials
+                .get(registration.target.connectionId)
+                .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
+              const changed =
+                Option.isNone(stored) || !Equal.equals(stored.value, registration.credential);
+              // Only a bearer that was actually stored can be retried with; a
+              // failed write leaves the rejected one in place.
+              bearerReplaced = yield* credentials
+                .put(registration.target.connectionId, registration.credential)
+                .pipe(
+                  Effect.as(changed),
+                  Effect.catch((error) =>
+                    Effect.logWarning("Could not store the platform bearer credential.", {
+                      environmentId: target.environmentId,
+                      error,
+                    }).pipe(Effect.as(false)),
+                  ),
+                );
+            }
           }
 
           if (persisted) {
@@ -680,9 +715,16 @@ export const make = Effect.gen(function* () {
             );
           }
 
+          const existingScope = (yield* SubscriptionRef.get(serviceScopes)).get(
+            target.environmentId,
+          );
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
 
-          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
+          if (
+            existingScope !== undefined &&
+            bearerReplaced &&
+            registration._tag === "BearerConnectionRegistration"
+          ) {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
               const state = yield* SubscriptionRef.get(scope.supervisor.state);

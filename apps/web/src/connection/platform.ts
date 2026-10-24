@@ -12,6 +12,7 @@ import {
   type ConnectionAttemptError,
   ConnectionTransientError,
   Connectivity,
+  CredentialStore,
   mapRemoteEnvironmentError,
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
@@ -530,6 +531,9 @@ interface CachedPlatformRegistration {
   readonly expiresAtEpochMs?: number;
   readonly refreshAtEpochMs?: number;
   readonly bootstrapToken?: string;
+  readonly stale?: boolean;
+  readonly recoverySignature?: string;
+  readonly recoveryStartedAtEpochMs?: number;
 }
 
 export type PrimaryEnvironmentTargetRead =
@@ -582,6 +586,7 @@ export function canRetainCachedPlatformRegistrationAfterRefreshFailure(
   );
 }
 
+const SECONDARY_BEARER_RECOVERY_WINDOW_MS = 5 * 60_000;
 const REJECTED_BOOTSTRAP_RETRY_INITIAL_MS = 60_000;
 const REJECTED_BOOTSTRAP_RETRY_MAX_MS = 30 * 60_000;
 
@@ -602,7 +607,7 @@ export function isRejectedSecondaryBootstrap(
   rejected: RejectedSecondaryBootstrap | undefined,
   signature: string,
   nowEpochMs: number,
-): rejected is RejectedSecondaryBootstrap {
+): boolean {
   return (
     rejected !== undefined &&
     rejected.signature === signature &&
@@ -641,7 +646,7 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
   );
 }
 
-const layerPlatformConnectionSource = Layer.effect(
+export const layerPlatformConnectionSource = Layer.effect(
   PlatformConnectionSource.PlatformConnectionSource,
   Effect.gen(function* () {
     if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
@@ -649,6 +654,7 @@ const layerPlatformConnectionSource = Layer.effect(
         registrations: Stream.empty,
       });
     }
+    const credentials = yield* CredentialStore.ConnectionCredentialStore;
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
     const rejectedRef = yield* Ref.make(new Map<string, RejectedSecondaryBootstrap>());
 
@@ -712,7 +718,7 @@ const layerPlatformConnectionSource = Layer.effect(
           cause: topologyRead.cause,
         });
       } else {
-        const rejected = yield* Ref.get(rejectedRef);
+        const rejected = new Map(yield* Ref.get(rejectedRef));
         const nextRejected = new Map<string, RejectedSecondaryBootstrap>();
         for (const bootstrap of topologyRead.bootstraps) {
           // The cached bearer belongs to the endpoint, not to the bootstrap
@@ -721,12 +727,55 @@ const layerPlatformConnectionSource = Layer.effect(
           // token only decides whether a rejected exchange is retried.
           const endpointSignature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}`;
           const signature = `${endpointSignature}|${bootstrap.bootstrapToken ?? ""}`;
-          const cached = previous.get(bootstrap.id);
+          let cached = previous.get(bootstrap.id);
+          if (cached?.registration._tag === "BearerConnectionRegistration" && !cached.stale) {
+            const invalidated = yield* (
+              credentials
+                .wasRejected?.(
+                  cached.registration.target.connectionId,
+                  cached.registration.credential,
+                )
+                .pipe(Effect.orElseSucceed(() => undefined)) ?? Effect.succeed(undefined)
+            );
+            if (invalidated) {
+              cached = { ...cached, stale: true };
+              if (cached.recoverySignature === signature) {
+                rejected.set(
+                  bootstrap.id,
+                  nextRejectedSecondaryBootstrap(rejected.get(bootstrap.id), signature, nowEpochMs),
+                );
+              }
+            } else if (
+              invalidated === false &&
+              cached.recoverySignature === signature &&
+              cached.recoveryStartedAtEpochMs !== undefined &&
+              nowEpochMs - cached.recoveryStartedAtEpochMs >=
+                Math.max(
+                  rejected.get(bootstrap.id)?.delayMs ?? 0,
+                  SECONDARY_BEARER_RECOVERY_WINDOW_MS,
+                )
+            ) {
+              // A slow connection can reject a bearer after several clean polls.
+              // Require sustained survival before treating a revocation as independent.
+              const {
+                recoverySignature: _recoverySignature,
+                recoveryStartedAtEpochMs: _recoveryStartedAtEpochMs,
+                ...healthy
+              } = cached;
+              cached = healthy;
+              rejected.delete(bootstrap.id);
+            }
+          }
+          const priorRejection = rejected.get(bootstrap.id);
+          if (cached?.recoverySignature === signature && priorRejection?.signature === signature) {
+            nextRejected.set(bootstrap.id, priorRejection);
+          }
           // A new token from the desktop means something changed (rotation, a
           // restarted backend): exchange it rather than reusing a bearer that
           // may be dead. The old bearer stays registered if that exchange fails.
           if (
             cached !== undefined &&
+            !cached.stale &&
             cached.bootstrapToken === bootstrap.bootstrapToken &&
             canReuseCachedPlatformRegistration(cached, endpointSignature, nowEpochMs)
           ) {
@@ -735,7 +784,10 @@ const layerPlatformConnectionSource = Layer.effect(
             continue;
           }
           const previouslyRejected = rejected.get(bootstrap.id);
-          if (isRejectedSecondaryBootstrap(previouslyRejected, signature, nowEpochMs)) {
+          if (
+            previouslyRejected !== undefined &&
+            isRejectedSecondaryBootstrap(previouslyRejected, signature, nowEpochMs)
+          ) {
             nextRejected.set(bootstrap.id, previouslyRejected);
             if (
               cached !== undefined &&
@@ -784,7 +836,21 @@ const layerPlatformConnectionSource = Layer.effect(
                 ? {}
                 : { bootstrapToken: bootstrap.bootstrapToken }),
               ...built.value,
+              ...(cached?.stale ||
+              cached?.recoverySignature === signature ||
+              previouslyRejected?.signature === signature
+                ? {
+                    recoverySignature: signature,
+                    recoveryStartedAtEpochMs: yield* Clock.currentTimeMillis,
+                  }
+                : {}),
             };
+            if (
+              cacheEntry.recoverySignature === signature &&
+              previouslyRejected?.signature === signature
+            ) {
+              nextRejected.set(bootstrap.id, previouslyRejected);
+            }
             next.set(bootstrap.id, cacheEntry);
             registrations.push(built.value.registration);
           } else if (
@@ -839,25 +905,12 @@ const layerRpcRequestObserver = Layer.succeed(
   }),
 );
 
-type ConnectionPlatformLayerSource =
-  | typeof ConnectionStorage.layer
-  | typeof layerConnectivity
-  | typeof layerWakeups
-  | typeof layerCapabilities
-  | typeof layerPlatformConnectionSource
-  | typeof layerEnvironmentOwnedDataCleanup
-  | typeof layerRpcRequestObserver;
-
-export const layer: Layer.Layer<
-  Layer.Success<ConnectionPlatformLayerSource>,
-  Layer.Error<ConnectionPlatformLayerSource>,
-  Layer.Services<ConnectionPlatformLayerSource>
-> = Layer.mergeAll(
+export const layer = Layer.mergeAll(
   ConnectionStorage.layer,
   layerConnectivity,
   layerWakeups,
   layerCapabilities,
-  layerPlatformConnectionSource,
+  layerPlatformConnectionSource.pipe(Layer.provide(ConnectionStorage.layer)),
   layerEnvironmentOwnedDataCleanup,
   layerRpcRequestObserver,
 );

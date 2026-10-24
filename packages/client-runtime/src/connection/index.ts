@@ -2,7 +2,11 @@ export * from "./catalog.ts";
 export * from "./diagnosis.ts";
 export * as Connectivity from "./connectivity.ts";
 export * as CredentialStore from "./credentialStore.ts";
-export { type ConnectionDriverProgress, type EnvironmentConnectionLease } from "./driver.ts";
+export {
+  ConnectionDriver,
+  type ConnectionDriverProgress,
+  type EnvironmentConnectionLease,
+} from "./driver.ts";
 export * from "./errors.ts";
 export * from "./githubRoutingPermissions.ts";
 export * from "./hostFreeze.ts";

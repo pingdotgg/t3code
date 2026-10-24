@@ -1,3 +1,4 @@
+import * as Equal from "effect/Equal";
 import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
@@ -22,6 +23,7 @@ import {
   ConnectionTransientError,
   ConnectionBlockedError,
   CredentialStore,
+  type ConnectionCredential,
   ProfileStore,
   GitHubRoutingPermissions,
   StoredGitHubRoutingPermission,
@@ -681,6 +683,7 @@ export const layer = Layer.effectContext(
           ),
         })),
     });
+    const rejectedCredentials = new Map<string, ConnectionCredential>();
     const credentialStore = CredentialStore.make({
       get: (connectionId) =>
         catalog.read.pipe(
@@ -698,6 +701,26 @@ export const layer = Layer.effectContext(
             credential,
           }),
         })),
+      wasRejected: (connectionId, credential) =>
+        Effect.sync(() => Equal.equals(rejectedCredentials.get(connectionId), credential)),
+      removeIfMatches: Effect.fn("ConnectionCredentialStore.removeIfMatches")(
+        function* (connectionId, credential) {
+          let removed = false;
+          yield* catalog.update((document) => {
+            const credentials = document.credentials.filter((entry) => {
+              if (
+                entry.connectionId !== connectionId ||
+                !Equal.equals(entry.credential, credential)
+              )
+                return true;
+              removed = true;
+              return false;
+            });
+            return { ...document, credentials };
+          });
+          if (removed) rejectedCredentials.set(connectionId, credential);
+        },
+      ),
       remove: (connectionId) =>
         catalog.update((document) => ({
           ...document,
