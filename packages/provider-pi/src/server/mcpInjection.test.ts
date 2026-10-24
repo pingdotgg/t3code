@@ -39,6 +39,8 @@ describe("pi T3 MCP injection", () => {
       "--mode",
       "rpc",
       "--extension",
+      "/tmp/cache/pi-t3-mcp-extension.ts",
+      "--extension",
       "/home/user/.pi/agent/extensions/demo.ts",
       "--session-dir",
       "/tmp/pi-sessions",
@@ -51,8 +53,6 @@ describe("pi T3 MCP injection", () => {
       "--name",
       "-review",
       "--extension-flag=kept",
-      "--extension",
-      "/tmp/cache/pi-t3-mcp-extension.ts",
     ]);
     assert.notInclude(launch.args, "--no-extensions");
     assert.equal(launch.env[T3_MCP_URL_ENV], "http://127.0.0.1:43123/mcp");
@@ -85,6 +85,24 @@ describe("pi T3 MCP injection", () => {
       permissionOnly.env[T3_PI_MCP_EXTENSION_PATH_ENV],
       "/tmp/cache/pi-t3-mcp-extension.ts",
     );
+  });
+
+  it("loads the lifecycle bridge first when it is also in user launch args", () => {
+    const bridge = "/tmp/cache/pi-t3-mcp-extension.ts";
+    const launch = buildPiRpcLaunch({
+      launchArgs: ["-e", "/user/extension.ts", "--extension", bridge],
+      environment: {},
+      mcpSession: undefined,
+      extensionPath: bridge,
+    });
+    assert.deepEqual(launch.args, [
+      "--mode",
+      "rpc",
+      "--extension",
+      bridge,
+      "-e",
+      "/user/extension.ts",
+    ]);
   });
 
   it("forces tools and user extensions off for unattended text generation", () => {

@@ -170,28 +170,29 @@ function normalizedPiPath(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
-function hasExplicitExtension(args: ReadonlyArray<string>, extensionPath: string): boolean {
-  const wanted = normalizedPiPath(extensionPath);
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg !== "--extension" && arg !== "-e") continue;
-    const configured = args[index + 1];
-    if (configured !== undefined && normalizedPiPath(configured) === wanted) return true;
-    index += 1;
-  }
-  return false;
-}
-
-function withoutExplicitExtensions(args: ReadonlyArray<string>): ReadonlyArray<string> {
+function withoutExplicitExtensions(
+  args: ReadonlyArray<string>,
+  extensionPath?: string,
+): ReadonlyArray<string> {
+  const wanted = extensionPath === undefined ? undefined : normalizedPiPath(extensionPath);
   const filtered: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined) continue;
     if (arg === "--extension" || arg === "-e") {
-      index += 1;
-      continue;
+      const configured = args[index + 1];
+      if (
+        wanted === undefined ||
+        (configured !== undefined && normalizedPiPath(configured) === wanted)
+      ) {
+        index += 1;
+        continue;
+      }
     }
-    if (arg.startsWith("--extension=") || arg.startsWith("-e=")) continue;
+    if (arg.startsWith("--extension=") || arg.startsWith("-e=")) {
+      if (wanted === undefined || normalizedPiPath(arg.slice(arg.indexOf("=") + 1)) === wanted)
+        continue;
+    }
     filtered.push(arg);
   }
   return filtered;
@@ -260,7 +261,9 @@ export function buildPiRpcLaunch(input: {
   const extensionSafeArgs =
     input.disableExtensions === true
       ? withoutExplicitExtensions(input.launchArgs)
-      : input.launchArgs;
+      : hasT3Extension
+        ? withoutExplicitExtensions(input.launchArgs, input.extensionPath)
+        : input.launchArgs;
   const launchArgs =
     input.disableTools === true ? withoutToolSelectionArgs(extensionSafeArgs) : extensionSafeArgs;
   const args = [
@@ -271,19 +274,17 @@ export function buildPiRpcLaunch(input: {
       : input.sessionPath !== undefined
         ? ["--session", input.sessionPath]
         : []),
+    // Pi invokes lifecycle hooks in extension order. Our start marker must
+    // precede any new background work reported by user extensions.
+    ...(hasT3Extension && input.extensionPath !== undefined
+      ? ["--extension", input.extensionPath]
+      : []),
     ...launchArgs,
     // Restrictions follow user launch args so a configured --tools or
     // --extension cannot silently re-enable unattended text-generation code.
     ...(input.disableExtensions === true ? ["--no-extensions"] : []),
     ...(input.disableTools === true ? ["--no-tools"] : []),
   ];
-  if (
-    hasT3Extension &&
-    input.extensionPath !== undefined &&
-    !hasExplicitExtension(args, input.extensionPath)
-  ) {
-    args.push("--extension", input.extensionPath);
-  }
   const environment = { ...input.environment };
   // These values belong to the current T3 session. Never let a Pi child reuse
   // credentials inherited from the server or a parent provider process.

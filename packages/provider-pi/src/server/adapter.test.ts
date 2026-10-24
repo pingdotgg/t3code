@@ -30,8 +30,10 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { vi } from "vite-plus/test";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -51,6 +53,13 @@ import {
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
+
+// ESM exports cannot be spied on directly; keep every queue operation real
+// except the drain offer intercepted by the registration failure tests.
+vi.mock("effect/Queue", async (importOriginal) => {
+  const actual = await importOriginal<typeof Queue>();
+  return { ...actual, offer: vi.fn(actual.offer) };
+});
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
@@ -161,7 +170,9 @@ interface FakePi {
   readonly deferNextState: () => void;
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   readonly failNextState: () => void;
-  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork") => void;
+  readonly deferNextLifecycle: (
+    type: "switch_session" | "new_session" | "fork" | "get_entries",
+  ) => void;
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
@@ -1265,6 +1276,425 @@ describe("PiAdapterV2", () => {
         }),
       );
       assert.isFalse(dispatched);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("lists extension background work until it ends or Pi swaps sessions", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const setStatus = (statusKey: string, statusText?: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          ...(statusText === undefined ? {} : { statusText }),
+        });
+      const takeRoster = Effect.fnUntraced(function* () {
+        const event = yield* takeEvent((event) => event.type === "provider_thread.updated");
+        assert.isTrue(event.type === "provider_thread.updated");
+        if (event.type !== "provider_thread.updated") return [];
+        return (event.providerThread.pendingBackgroundTasks ?? []).map((task) => [
+          event.providerThread.id,
+          task.taskId,
+          task.description,
+        ]);
+      });
+
+      assert.lengthOf(yield* takeRoster(), 0);
+      yield* setStatus("lint", "Lint clean");
+      yield* setStatus("t3:background:build", "\u001b[32mBuild running\u001b[0m");
+      assert.deepStrictEqual(yield* takeRoster(), [
+        [providerThread.id, "t3:background:build", "Build running"],
+      ]);
+      yield* setStatus("t3:background:tests", "Tests running");
+      assert.lengthOf(yield* takeRoster(), 2);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      yield* setStatus("t3:background:build");
+      assert.deepStrictEqual(yield* takeRoster(), [
+        [providerThread.id, "t3:background:tests", "Tests running"],
+      ]);
+
+      // While a switch waits on Pi's hooks, the outgoing session still owns its
+      // jobs: they stay listed and keep the run listening for their updates.
+      const switchSession = Effect.fnUntraced(function* (
+        duringSwitch: Effect.Effect<void>,
+        cancelled: boolean,
+      ) {
+        fake.deferNextLifecycle("new_session");
+        const switching = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          })
+          .pipe(Effect.result, Effect.forkScoped);
+        const newSession = yield* fake.takeRequest("new_session");
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+        yield* duringSwitch;
+        yield* fake.emit({
+          type: "response",
+          id: newSession["id"],
+          command: "new_session",
+          success: true,
+          data: { cancelled },
+        });
+        return yield* Fiber.join(switching);
+      });
+
+      // A vetoed switch keeps the outgoing session and every job it still runs.
+      yield* setStatus("t3:background:docs", "Docs building");
+      assert.lengthOf(yield* takeRoster(), 2);
+      const vetoed = yield* switchSession(
+        Effect.gen(function* () {
+          yield* setStatus("t3:background:docs");
+          assert.lengthOf(yield* takeRoster(), 1);
+        }),
+        true,
+      );
+      assert.equal(vetoed._tag, "Failure");
+      // The veto left no bound thread, but the roster still follows the work.
+      yield* setStatus("t3:background:docs", "Docs building");
+      assert.lengthOf(yield* takeRoster(), 2);
+
+      // Shutdown handlers can still report progress before Pi invalidates the
+      // outgoing contexts. Only statuses after session_start belong to the new session.
+      fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
+      const replaced = yield* switchSession(
+        Effect.gen(function* () {
+          yield* setStatus("t3:background:tests", "Tests 50%");
+          assert.lengthOf(yield* takeRoster(), 2);
+          yield* setStatus("t3:session-end", "ended");
+          assert.lengthOf(yield* takeRoster(), 0);
+          yield* setStatus("t3:background:docs", "Outgoing cleanup still running");
+          yield* setStatus("t3:session-start", "started");
+          yield* setStatus("t3:background:tests", "Tests restarted");
+          yield* setStatus("t3:background:deploy", "Deploying");
+        }),
+        false,
+      );
+      assert.equal(replaced._tag, "Success");
+      if (replaced._tag !== "Success") return;
+      // The replacement's jobs land only on the replacement binding.
+      const registered = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(
+        registered.type === "provider_thread.updated" &&
+          registered.providerThread.id === replaced.success.id &&
+          replaced.success.id !== providerThread.id,
+      );
+      assert.deepStrictEqual(
+        replaced.success.pendingBackgroundTasks?.map((task) => [task.taskId, task.description]),
+        [
+          ["t3:background:tests", "Tests restarted"],
+          ["t3:background:deploy", "Deploying"],
+        ],
+      );
+      yield* setStatus("t3:background:tests");
+      yield* setStatus("t3:background:deploy");
+      assert.lengthOf(yield* takeRoster(), 1);
+      assert.lengthOf(yield* takeRoster(), 0);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("binds a replacement session's work only after Pi's teardown is applied", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const setStatus = (statusKey: string, statusText: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          statusText,
+        });
+      yield* setStatus("t3:background:build", "Build running");
+      fake.deferNextLifecycle("new_session");
+      fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
+      const switching = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      const newSession = yield* fake.takeRequest("new_session");
+      // Pi writes the teardown, the replacement's start hooks and its reply in
+      // one burst; the reply skips the event queue the statuses wait in.
+      yield* setStatus("t3:session-end", "new");
+      yield* setStatus("t3:background:build", "Outgoing cleanup still running");
+      yield* setStatus("t3:session-start", "started");
+      yield* setStatus("t3:background:watch", "Watching");
+      yield* fake.emit({
+        type: "response",
+        id: newSession["id"],
+        command: "new_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      const replacement = yield* Fiber.join(switching);
+      assert.deepStrictEqual(
+        replacement.pendingBackgroundTasks?.map((task) => task.taskId),
+        ["t3:background:watch"],
+      );
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(replacement));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["rejected", "unacknowledged"] as const)(
+    "rejects replacement registration when its event drain is %s",
+    (drainFailure) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const drainOffered = yield* Deferred.make<void>();
+        const offer = vi.mocked(Queue.offer).getMockImplementation()!;
+        const drainOffer = vi.mocked(Queue.offer).mockImplementation((queue, event) => {
+          if (
+            typeof event === "object" &&
+            event !== null &&
+            "type" in event &&
+            event.type === "t3.drain"
+          ) {
+            return Deferred.succeed(drainOffered, undefined).pipe(
+              Effect.as(drainFailure === "unacknowledged"),
+            );
+          }
+          return offer(queue, event);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => drainOffer.mockImplementation(offer)));
+        const stateRequestsBefore = fake
+          .allRequests()
+          .filter((request) => request["type"] === "get_state").length;
+        const switching = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          })
+          .pipe(Effect.result, Effect.forkScoped);
+        yield* Deferred.await(drainOffered);
+        if (drainFailure === "unacknowledged") yield* TestClock.adjust(Duration.seconds(15));
+        const result = yield* Fiber.join(switching);
+        assert.equal(
+          result._tag,
+          "Failure",
+          "Registration must not bind a session whose preceding events were not drained",
+        );
+        assert.equal(
+          fake.allRequests().filter((request) => request["type"] === "get_state").length,
+          stateRequestsBefore,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves background task changes while turn model selection waits", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeEvent((event) => event.type === "provider_thread.updated");
+      const setStatus = (statusKey: string, statusText?: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          ...(statusText === undefined ? {} : { statusText }),
+        });
+      yield* setStatus("t3:background:build", "Build running");
+      const before = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(before.type === "provider_thread.updated");
+      if (before.type !== "provider_thread.updated") return;
+      fake.deferNextModelSelection();
+      const starting = yield* startTurn(
+        runtime,
+        before.providerThread,
+        "default",
+        [],
+        "Continue the review",
+        modelSelection("xai/grok-4.6"),
+      ).pipe(Effect.forkScoped);
+      const modelRequest = yield* fake.takeRequest("set_model");
+      yield* setStatus("t3:background:build");
+      yield* takeEvent((event) => event.type === "provider_thread.updated");
+      yield* setStatus("t3:background:tests", "Tests running");
+      const latest = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(latest.type === "provider_thread.updated");
+      if (latest.type !== "provider_thread.updated") return;
+      assert.deepStrictEqual(
+        latest.providerThread.pendingBackgroundTasks?.map((task) => task.taskId),
+        ["t3:background:tests"],
+      );
+      yield* fake.emit({
+        type: "response",
+        id: modelRequest["id"],
+        command: "set_model",
+        success: true,
+        data: { provider: "xai", id: "grok-4.6" },
+      });
+      yield* Fiber.join(starting);
+      const installed = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(installed.type === "provider_thread.updated");
+      if (installed.type !== "provider_thread.updated") return;
+      assert.equal(installed.providerThread.status, "active");
+      assert.deepStrictEqual(
+        installed.providerThread.pendingBackgroundTasks,
+        latest.providerThread.pendingBackgroundTasks,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps the thread binding when Pi reloads its extensions", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const setStatus = (statusKey: string, statusText: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          statusText,
+        });
+      const takeRoster = (taskCount: number) =>
+        takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.id === providerThread.id &&
+            event.providerThread.pendingBackgroundTasks?.length === taskCount,
+        );
+      yield* setStatus("t3:background:build", "Build running");
+      yield* takeRoster(1);
+      // Later shutdown handlers can await cleanup while old contexts still report.
+      yield* setStatus("t3:session-end", "reload");
+      yield* takeRoster(0);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* setStatus("t3:background:build", "Outgoing cleanup still running");
+      yield* setStatus("t3:session-start", "started");
+      yield* setStatus("t3:background:tests", "Tests restarted");
+      const restarted = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.some(
+            (task) => task.taskId === "t3:background:tests",
+          ) === true,
+      );
+      assert.isTrue(restarted.type === "provider_thread.updated");
+      if (restarted.type !== "provider_thread.updated") return;
+      assert.equal(restarted.providerThread.id, providerThread.id);
+      assert.deepStrictEqual(
+        restarted.providerThread.pendingBackgroundTasks?.map((task) => task.taskId),
+        ["t3:background:tests"],
+      );
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps background work reported while a thread registers", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      fake.deferNextLifecycle("get_entries");
+      const registering = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      const entries = yield* fake.takeRequest("get_entries");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "status",
+        method: "setStatus",
+        statusKey: "t3:background",
+        statusText: "Build running",
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.length === 1,
+      );
+      yield* fake.emit({
+        type: "response",
+        id: entries["id"],
+        command: "get_entries",
+        success: true,
+        data: { entries: [], leafId: null },
+      });
+      const providerThread = yield* Fiber.join(registering);
+      const registered = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      for (const thread of [
+        providerThread,
+        registered.type === "provider_thread.updated" ? registered.providerThread : null,
+      ]) {
+        assert.deepStrictEqual(
+          thread?.pendingBackgroundTasks?.map((task) => task.taskId),
+          ["t3:background"],
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("lets Stop end a process kept alive by extension background work", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "status",
+        method: "setStatus",
+        statusKey: "t3:background",
+        statusText: "Build running",
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.length === 1,
+      );
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: ProviderTurnId.make("settled-turn"),
+        requestRuntimeRestart: true,
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "stopped",
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

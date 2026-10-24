@@ -17,6 +17,13 @@ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
  */
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
+/**
+ * Pi has no RPC lifecycle events. These markers bracket shutdown callbacks,
+ * which can still report progress until Pi invalidates their contexts.
+ */
+export const PI_T3_SESSION_END_STATUS_KEY = "t3:session-end";
+export const PI_T3_SESSION_START_STATUS_KEY = "t3:session-start";
+
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
@@ -31,6 +38,8 @@ const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRU
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
+const SESSION_END_STATUS_KEY = ${JSON.stringify(PI_T3_SESSION_END_STATUS_KEY)};
+const SESSION_START_STATUS_KEY = ${JSON.stringify(PI_T3_SESSION_START_STATUS_KEY)};
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
@@ -339,10 +348,17 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
+  // Later shutdown handlers can await cleanup while their contexts still work.
+  // The adapter ignores their progress until the next session_start marker.
+  pi.on("session_shutdown", (event, ctx) => {
+    ctx.ui.setStatus(SESSION_END_STATUS_KEY, event.reason ?? "ended");
+  });
+
   const endpoint = env(URL_ENV);
   const token = env(TOKEN_ENV);
   if (endpoint === undefined || token === undefined) {
     pi.on("session_start", async (_event, ctx) => {
+      ctx.ui.setStatus(SESSION_START_STATUS_KEY, "started");
       ctx.ui.notify(
         "t3-code MCP unavailable: T3_MCP_URL or T3_MCP_BEARER_TOKEN is missing.",
         "warning",
@@ -445,6 +461,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("model_select", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("session_start", async (_event, ctx) => {
+    ctx.ui.setStatus(SESSION_START_STATUS_KEY, "started");
     reconcileDiscovery(ctx);
     try {
       await ensureStarted();

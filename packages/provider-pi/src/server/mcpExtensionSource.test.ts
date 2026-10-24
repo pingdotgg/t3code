@@ -6,7 +6,7 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SESSION_END_STATUS_KEY } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -77,6 +77,36 @@ describe("Pi orchestration prompt section", () => {
   });
 });
 
+describe("Pi session teardown", () => {
+  it.each(["MCP", "permission-only"])(
+    "marks shutdown and replacement start with %s",
+    async (mode) => {
+      const handlers = mode === "MCP" ? (await loadMcpBridge()).handlers : await loadHooks();
+      const statuses: Array<readonly [string, string | undefined]> = [];
+      const ui = {
+        notify: () => undefined,
+        setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
+      };
+      type LifecycleHook = (
+        event: { systemPrompt: string; reason?: string },
+        ctx: { ui: typeof ui },
+      ) => unknown;
+      const shutdown = handlers.get("session_shutdown") as LifecycleHook;
+      const start = handlers.get("session_start") as LifecycleHook;
+      for (const reason of ["reload", "new"]) {
+        await shutdown(Object.assign({ systemPrompt: "" }, { reason }), { ui });
+        await start({ systemPrompt: "" }, { ui });
+      }
+      assert.deepStrictEqual(statuses, [
+        [PI_T3_SESSION_END_STATUS_KEY, "reload"],
+        ["t3:session-start", "started"],
+        [PI_T3_SESSION_END_STATUS_KEY, "new"],
+        ["t3:session-start", "started"],
+      ]);
+    },
+  );
+});
+
 describe("Pi MCP tool results", () => {
   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
     const content = [
@@ -133,7 +163,7 @@ describe("Pi MCP tool results", () => {
 describe("Pi MCP tool exposure", () => {
   const discoveryContext = {
     model: { api: "anthropic-messages" },
-    ui: { notify: () => undefined },
+    ui: { notify: () => undefined, setStatus: () => undefined },
   };
 
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
