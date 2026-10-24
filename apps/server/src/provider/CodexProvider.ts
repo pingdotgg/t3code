@@ -167,12 +167,12 @@ export function codexDefaultReasoningEffortOverride(model: string): "medium" | u
   return codexModelFamily(model) === "gpt-6-astra" ? "medium" : undefined;
 }
 
-export function mapCodexModelCapabilities(
-  model: CodexSchema.V2ModelListResponse__Model,
-): ModelCapabilities {
+export function mapCodexReasoningEffortDescriptor(model: {
+  readonly supportedReasoningEfforts: ReadonlyArray<{ readonly reasoningEffort: string }>;
+  readonly defaultReasoningEffort?: string;
+}) {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
-    reasoningEffort ===
-    (codexDefaultReasoningEffortOverride(model.model) ?? model.defaultReasoningEffort)
+    reasoningEffort === model.defaultReasoningEffort
       ? {
           id: reasoningEffort,
           label: reasoningEffortLabel(reasoningEffort),
@@ -183,7 +183,25 @@ export function mapCodexModelCapabilities(
           label: reasoningEffortLabel(reasoningEffort),
         },
   );
+  if (reasoningOptions.length === 0) return undefined;
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
+  return {
+    id: "reasoningEffort",
+    label: "Reasoning",
+    type: "select" as const,
+    options: reasoningOptions,
+    ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
+  };
+}
+
+export function mapCodexModelCapabilities(
+  model: CodexSchema.V2ModelListResponse__Model,
+): ModelCapabilities {
+  const reasoningDescriptor = mapCodexReasoningEffortDescriptor({
+    supportedReasoningEfforts: model.supportedReasoningEfforts,
+    defaultReasoningEffort:
+      codexDefaultReasoningEffortOverride(model.model) ?? model.defaultReasoningEffort,
+  });
   const serviceTiers =
     model.serviceTiers && model.serviceTiers.length > 0
       ? model.serviceTiers
@@ -200,15 +218,7 @@ export function mapCodexModelCapabilities(
   const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
   const optionDescriptors: ProviderOptionDescriptor[] = [];
 
-  if (reasoningOptions.length > 0) {
-    optionDescriptors.push({
-      id: "reasoningEffort",
-      label: "Reasoning",
-      type: "select",
-      options: reasoningOptions,
-      ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
-    });
-  }
+  if (reasoningDescriptor) optionDescriptors.push(reasoningDescriptor);
   if (serviceTiers.length > 0) {
     optionDescriptors.push({
       id: "serviceTier",
