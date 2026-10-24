@@ -5,10 +5,51 @@ import {
   changeRequestUrlFor,
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
+  parseCommitUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
   siblingPullRequestUrl,
 } from "./changeRequestUrl.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
+
+describe("parseCommitUrl", () => {
+  const sha = "5235a682169a69d18261c8bf4f1017dfb01b28fe";
+
+  it.each([
+    `https://github.com/pingdotgg/t3code/pull/19941/commits/${sha}`,
+    `https://github.com/PingDotGG/T3Code/commit/${sha.toUpperCase()}/?diff=split#diff-1`,
+  ])("reads a full GitHub commit URL: %s", (url) => {
+    expect(parseCommitUrl(url)).toEqual({
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      sha,
+    });
+  });
+
+  it("normalizes the host of full SHA-256 commits to the repository key", () => {
+    expect(
+      parseCommitUrl(`http://code.github.example:8443/team/repo/commit/${"a".repeat(64)}`),
+    ).toEqual({
+      host: "code.github.example",
+      repository: "team/repo",
+      sha: "a".repeat(64),
+    });
+  });
+
+  it.each([
+    "not a URL",
+    `ftp://github.com/team/repo/commit/${sha}`,
+    `https://github-evil.test/team/repo/commit/${sha}`,
+    `https://gitlab.com/team/repo/-/commit/${sha}`,
+    `https://github.com/team/repo/pull/19941/commits`,
+    `https://github.com/team/repo/pull/0/commits/${sha}`,
+    `https://github.com/team/repo/commit/${sha}/extra`,
+    ...["", "5235a68", "a".repeat(39), "a".repeat(41), "g".repeat(40), "a".repeat(65)].map(
+      (value) => `https://github.com/team/repo/commit/${value}`,
+    ),
+  ])("leaves invalid or unsupported links unchanged: %s", (url) => {
+    expect(parseCommitUrl(url)).toBeNull();
+  });
+});
 
 describe("parseChangeRequestUrl", () => {
   it("reads a GitHub pull request, lower-casing the repository", () => {

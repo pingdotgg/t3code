@@ -129,6 +129,61 @@ describe("RPC scope middleware", () => {
   );
 });
 
+describe("commit description authorization", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<
+        keyof typeof RPC_REQUIRED_SCOPES,
+        typeof WS_METHODS.reviewGenerateCommitDescriptions
+      > => tag !== WS_METHODS.reviewGenerateCommitDescriptions,
+    ),
+  );
+
+  it.effect.each([
+    { scopes: [AuthFilesystemReadScope], missing: AuthOrchestrationOperateScope },
+    { scopes: [AuthOrchestrationOperateScope], missing: AuthFilesystemReadScope },
+    { scopes: [AuthFilesystemReadScope, AuthOrchestrationOperateScope], missing: undefined },
+  ])("checks both grants before running commit generation with $scopes", ({ scopes, missing }) =>
+    Effect.gen(function* () {
+      let handled = 0;
+      const result = {
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "text-model" },
+        descriptions: [],
+      };
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.reviewGenerateCommitDescriptions, () =>
+              Effect.sync(() => {
+                handled++;
+                return result;
+              }),
+            ),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+      );
+      const call = client[WS_METHODS.reviewGenerateCommitDescriptions]({
+        cwd: "/repo",
+        threadId: ThreadId.make("thread-0"),
+        shas: ["a".repeat(40)],
+      });
+      if (missing) {
+        expect(yield* call.pipe(Effect.flip)).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: missing,
+        });
+        expect(handled).toBe(0);
+      } else {
+        expect(yield* call).toEqual(result);
+        expect(handled).toBe(1);
+      }
+    }).pipe(Effect.scoped),
+  );
+});
+
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(

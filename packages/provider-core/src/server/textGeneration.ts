@@ -25,6 +25,22 @@ export interface CommitMessageGenerationResult {
   branch?: string | undefined;
 }
 
+export interface CommitDescriptionsGenerationInput {
+  cwd: string;
+  commits: ReadonlyArray<{
+    sha: string;
+    subject: string;
+    body: string;
+    files: ReadonlyArray<string>;
+    patch: string;
+  }>;
+  modelSelection: ModelSelection;
+}
+
+export interface CommitDescriptionsGenerationResult {
+  descriptions: ReadonlyArray<{ sha: string; description: string }>;
+}
+
 export interface PrContentGenerationInput {
   cwd: string;
   baseBranch: string;
@@ -96,6 +112,10 @@ export type ReviewGuideGenerationResult = Omit<
 >;
 
 export interface ProviderTextGeneration {
+  readonly generateCommitDescriptions: (
+    input: CommitDescriptionsGenerationInput,
+  ) => Effect.Effect<CommitDescriptionsGenerationResult, TextGenerationError>;
+
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;

@@ -115,6 +115,7 @@ interface RightPanelStoreState {
   userActionRevisionByThreadKey: Record<string, number>;
   closeRevisionByThreadKey: Record<string, number>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
+  markUserAction: (ref: ScopedThreadRef) => number;
   /**
    * Refused when the user made a panel choice after
    * `expectedUserActionRevision` was read.
@@ -612,6 +613,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       closeRevisionByThreadKey: {},
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
+      markUserAction: (ref) => {
+        const revision = get().getUserActionRevision(ref) + 1;
+        set((state) => ({
+          userActionRevisionByThreadKey: {
+            ...state.userActionRevisionByThreadKey,
+            [scopedThreadKey(ref)]: revision,
+          },
+        }));
+        return revision;
+      },
       openProactive: (ref, request, expectedUserActionRevision, activateExisting = false) => {
         let opened = false;
         set((state) => {

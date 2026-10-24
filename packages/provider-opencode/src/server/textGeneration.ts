@@ -11,6 +11,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
+  "generateCommitDescriptions",
   "generateCommitMessage",
   "generatePrContent",
   "generateBranchName",

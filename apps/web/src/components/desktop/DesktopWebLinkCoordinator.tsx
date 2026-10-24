@@ -1,7 +1,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, parseCommitUrl } from "@t3tools/shared/changeRequestUrl";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { useRouter } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
@@ -119,9 +119,14 @@ export function DesktopWebLinkCoordinator() {
       await router.navigate({ href: appPath });
       return;
     }
-    if (openChangeRequest(externalClick, url)) return;
-    const isFile = url.startsWith("file:");
     const routeParams = router.state.matches.at(-1)?.params ?? {};
+    const routeTarget = resolveThreadRouteTarget(routeParams);
+    const commitThreadRef =
+      parseCommitUrl(url) !== null && routeTarget?.kind === "server"
+        ? routeTarget.threadRef
+        : undefined;
+    if (openChangeRequest(externalClick, url, commitThreadRef)) return;
+    const isFile = url.startsWith("file:");
     const threadRef =
       threadShowingBrowser(
         routeParams,
@@ -151,11 +156,11 @@ export function DesktopWebLinkCoordinator() {
   });
 
   const receiveLink = useEffectEvent((url: string) => {
-    // A connected server publishes its config before its project snapshot, so a PR link
-    // delivered at launch would miss its project and fall through to the browser. Hold PR
-    // links, and only those, until discovery settles; an ordinary link never waits for it.
+    // A connected server publishes its config before its project snapshot, so a source control
+    // link delivered at launch would miss its project and fall through to the browser. Hold
+    // those links until discovery settles; an ordinary link never waits for it.
     const hold =
-      openPullRequestsInApp && parseChangeRequestUrl(url) !== null
+      openPullRequestsInApp && (parseChangeRequestUrl(url) !== null || parseCommitUrl(url) !== null)
         ? projectsSettled()
         : Promise.resolve();
     void hold.then(() => {

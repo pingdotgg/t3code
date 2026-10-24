@@ -25,6 +25,7 @@ import {
   GitCommandError,
   type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
+  type ReviewBranchCommitsInput,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
@@ -68,6 +69,11 @@ const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // totals are reported incomplete instead.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+const REVIEW_BRANCH_COMMIT_LIMIT = 100;
+const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
+const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
+const REVIEW_COMMIT_DESCRIPTION_PATCH_MAX_OUTPUT_BYTES = 6_000;
+const REVIEW_COMMIT_DESCRIPTION_FILES_MAX_OUTPUT_BYTES = 8_000;
 // Patches the clients render are parsed against git's default a/ and b/ path
 // prefixes. A repository or global diff.noprefix or diff.mnemonicPrefix would
 // otherwise leak into the patch and leave every parsed file unnamed.
@@ -3074,6 +3080,188 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { baseRef, insertions, deletions };
   }, Effect.scoped);
 
+  const reviewCommitError = (cwd: string, detail: string) =>
+    new GitCommandError({
+      operation: "GitVcsDriver.reviewCommit",
+      command: "git rev-list",
+      cwd,
+      detail,
+    });
+
+  const resolveReviewCommit = Effect.fn("resolveReviewCommit")(function* (
+    cwd: string,
+    sha: string,
+  ) {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+      return yield* reviewCommitError(cwd, "Selected commit is invalid or no longer available.");
+    }
+    const reachable = yield* executeGit(
+      "GitVcsDriver.reviewCommit.reachable",
+      cwd,
+      ["merge-base", "--is-ancestor", sha, "HEAD"],
+      { allowNonZeroExit: true },
+    );
+    if (reachable.exitCode !== 0) {
+      return yield* reviewCommitError(cwd, "Selected commit is invalid or no longer available.");
+    }
+    const parents = yield* runGitStdout("GitVcsDriver.reviewCommit.parents", cwd, [
+      "rev-list",
+      "--parents",
+      "-n",
+      "1",
+      sha,
+    ]);
+    const [resolvedSha, firstParent] = parents.trim().split(" ");
+    if (resolvedSha?.toLowerCase() !== sha.toLowerCase()) {
+      return yield* reviewCommitError(cwd, "Selected commit is invalid or no longer available.");
+    }
+    return { sha: resolvedSha, parent: firstParent ?? (yield* readEmptyTreeHash(cwd)) };
+  });
+
+  const readReviewCommitMessage = Effect.fn("GitVcsDriver.readReviewCommitMessage")(function* (
+    cwd: string,
+    sha: string,
+  ) {
+    const result = yield* executeGit(
+      "GitVcsDriver.readReviewCommitMessage",
+      cwd,
+      ["show", "-s", "--no-notes", "--no-show-signature", "--format=%B", sha],
+      { maxOutputBytes: 8_192, appendTruncationMarker: true },
+    );
+    const endOfSubject = result.stdout.indexOf("\n");
+    return {
+      subject: result.stdout.slice(0, endOfSubject < 0 ? undefined : endOfSubject).slice(0, 300),
+      body: endOfSubject < 0 ? "" : result.stdout.slice(endOfSubject).trim().slice(0, 2_000),
+    };
+  });
+
+  const resolveReviewCommits = Effect.fn("GitVcsDriver.resolveReviewCommits")(function* (input: {
+    cwd: string;
+    shas: ReadonlyArray<string>;
+  }) {
+    const repository = yield* resolveRepositoryPathsUncached(input.cwd);
+    if (!repository?.worktreeRoot) {
+      return yield* reviewCommitError(
+        input.cwd,
+        "Selected commit is invalid or no longer available.",
+      );
+    }
+    const cwd = repository.worktreeRoot;
+    const commits = yield* Effect.forEach(input.shas, (sha) => resolveReviewCommit(cwd, sha));
+    return { cwd, repositoryKey: repository.gitCommonDir, commits };
+  });
+
+  const getReviewCommitDescriptionContext = Effect.fn(
+    "GitVcsDriver.getReviewCommitDescriptionContext",
+  )(function* (input: { cwd: string; shas: ReadonlyArray<string> }) {
+    const resolved = yield* resolveReviewCommits(input);
+    const { cwd } = resolved;
+    const commits = yield* Effect.forEach(resolved.commits, (commit) =>
+      Effect.gen(function* () {
+        const message = yield* readReviewCommitMessage(cwd, commit.sha);
+        const files = yield* executeGit(
+          "GitVcsDriver.getReviewCommitDescriptionContext.files",
+          cwd,
+          ["diff", "--name-only", "-z", commit.parent, commit.sha, "--"],
+          {
+            maxOutputBytes: REVIEW_COMMIT_DESCRIPTION_FILES_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        );
+        const completeFiles = files.stdout.slice(0, files.stdout.lastIndexOf("\0") + 1);
+        const patch = yield* executeGit(
+          "GitVcsDriver.getReviewCommitDescriptionContext.patch",
+          cwd,
+          [...REVIEW_DIFF_ARGS, "--patch", commit.parent, commit.sha, "--"],
+          {
+            maxOutputBytes: REVIEW_COMMIT_DESCRIPTION_PATCH_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        );
+        return {
+          sha: commit.sha,
+          ...message,
+          files: completeFiles.split("\0").filter(Boolean).slice(0, 40),
+          patch: patch.stdout,
+        };
+      }),
+    );
+    return { repositoryKey: resolved.repositoryKey, commits };
+  });
+
+  const getReviewBranchCommits = Effect.fn("getReviewBranchCommits")(function* (
+    input: ReviewBranchCommitsInput,
+  ) {
+    const repository = yield* resolveRepositoryPathsUncached(input.cwd);
+    if (!repository?.worktreeRoot) return { commits: [], truncated: false };
+    const cwd = repository.worktreeRoot;
+    const head = yield* executeGit(
+      "GitVcsDriver.getReviewBranchCommits.head",
+      cwd,
+      ["rev-parse", "--verify", "--quiet", "HEAD"],
+      { allowNonZeroExit: true },
+    );
+    if (head.exitCode !== 0) {
+      if (head.exitCode === 1 && head.stderr.trim() === "") {
+        return { commits: [], truncated: false };
+      }
+      return yield* reviewCommitError(cwd, "Could not resolve the current branch commit.");
+    }
+    const { mergeBase } = yield* resolveReviewMergeBase(
+      cwd,
+      repository.currentBranch,
+      input.baseRef,
+    );
+    const result = yield* executeGit(
+      "GitVcsDriver.getReviewBranchCommits",
+      cwd,
+      [
+        "log",
+        "-z",
+        "--no-notes",
+        "--no-show-signature",
+        "--format=%H%x00%s%x00%cI",
+        `--max-count=${REVIEW_BRANCH_COMMIT_LIMIT + 1}`,
+        `${mergeBase}..HEAD`,
+      ],
+      {
+        maxOutputBytes: REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES,
+        appendTruncationMarker: true,
+      },
+    );
+    if (!result.stdoutTruncated && result.stdout.length > 0 && !result.stdout.endsWith("\0")) {
+      return yield* reviewCommitError(cwd, "Could not read branch commit metadata.");
+    }
+    const fields = result.stdout.split("\0");
+    const completeFieldCount = fields.length - 1;
+    const commits: Array<{ sha: string; subject: string; committedAt: string }> = [];
+    for (
+      let index = 0;
+      index + 2 < completeFieldCount && commits.length <= REVIEW_BRANCH_COMMIT_LIMIT;
+      index += 3
+    ) {
+      const sha = fields[index];
+      const subject = fields[index + 1];
+      const committedAt = fields[index + 2];
+      if (
+        !sha ||
+        subject === undefined ||
+        !committedAt ||
+        !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)
+      ) {
+        return yield* reviewCommitError(cwd, "Could not read branch commit metadata.");
+      }
+      commits.push({ sha, subject: subject.slice(0, REVIEW_BRANCH_SUBJECT_LIMIT), committedAt });
+    }
+    if (result.stdoutTruncated && commits.length === 0) {
+      return yield* reviewCommitError(cwd, "Branch commit metadata exceeds the response limit.");
+    }
+    return {
+      commits: commits.slice(0, REVIEW_BRANCH_COMMIT_LIMIT),
+      truncated: result.stdoutTruncated || commits.length > REVIEW_BRANCH_COMMIT_LIMIT,
+    };
+  });
+
   const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
     input: ReviewDiffPreviewInput,
   ) {
@@ -3100,6 +3288,64 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const cwd = repository.worktreeRoot;
+    const hashDiff = (diff: string, files: ReadonlyArray<ReviewDiffFileStat>) =>
+      crypto.digest("SHA-256", new TextEncoder().encode(JSON.stringify([diff, files]))).pipe(
+        Effect.map(Hex.encode),
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.getReviewDiffPreview.hash",
+              command: "crypto.digest SHA-256",
+              cwd,
+              detail: "Failed to hash review diff.",
+              cause,
+            }),
+        ),
+      );
+    if (input.commitSha !== undefined || input.file?.sourceKind === "commit") {
+      if (!input.commitSha || (input.file && input.file.sourceKind !== "commit")) {
+        return yield* reviewCommitError(cwd, "Selected commit request is invalid.");
+      }
+      const commit = yield* resolveReviewCommit(cwd, input.commitSha);
+      const { subject } = yield* readReviewCommitMessage(cwd, commit.sha);
+      const diffArgs = [
+        ...REVIEW_DIFF_ARGS,
+        ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+      ];
+      const stat = yield* executeGit(
+        "GitVcsDriver.getReviewDiffPreview.commitStat",
+        cwd,
+        [...diffArgs, "--numstat", "-z", commit.parent, commit.sha, "--", ...pathArgs],
+        { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+      );
+      const files = parseReviewNumstat(stat.stdout);
+      const patch = yield* executeGit(
+        "GitVcsDriver.getReviewDiffPreview.commitPatch",
+        cwd,
+        [...diffArgs, "--patch", commit.parent, commit.sha, "--", ...pathArgs],
+        { maxOutputBytes: patchLimit, appendTruncationMarker: true },
+      );
+      const diffHash = yield* hashDiff(patch.stdout, files);
+      return {
+        cwd: input.cwd,
+        generatedAt: yield* DateTime.now,
+        sources: [
+          {
+            id: commit.sha,
+            kind: "commit" as const,
+            title: `Commit ${commit.sha.slice(0, 7)}`,
+            ...(subject.trim() ? { commitSubject: subject.trim() } : {}),
+            baseRef: commit.parent,
+            headRef: commit.sha,
+            diff: patch.stdout,
+            files,
+            diffHash,
+            truncated: patch.stdoutTruncated,
+          },
+        ],
+      };
+    }
+
     const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
     const review =
       input.file?.sourceKind === "working-tree"
@@ -3179,20 +3425,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const baseFiles = baseResult.files;
     const dirtyDiff = dirtyTrackedResult.stdout;
     const baseDiff = baseResult.stdout;
-    const hashDiff = (diff: string, files: ReadonlyArray<ReviewDiffFileStat>) =>
-      crypto.digest("SHA-256", new TextEncoder().encode(JSON.stringify([diff, files]))).pipe(
-        Effect.map(Hex.encode),
-        Effect.mapError(
-          (cause) =>
-            new GitCommandError({
-              operation: "GitVcsDriver.getReviewDiffPreview.hash",
-              command: "crypto.digest SHA-256",
-              cwd,
-              detail: "Failed to hash review diff.",
-              cause,
-            }),
-        ),
-      );
     const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff, dirtyFiles ?? []),
       hashDiff(baseDiff, baseFiles ?? []),
@@ -3343,6 +3575,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((value) => value.trim()));
     if (repositoryRoot.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
+    }
+    if (input.sourceKind === "commit") {
+      if (!input.headRef) {
+        return yield* reviewDiffFileError(input, "Selected commit is no longer available.");
+      }
+      const commit = yield* resolveReviewCommit(input.cwd, input.headRef);
+      if (input.baseRef !== commit.parent) {
+        return yield* reviewDiffFileError(
+          input,
+          "Selected commit changed. Refresh the comparison.",
+        );
+      }
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new"
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, commit.parent, input.oldPath),
+          input.changeType === "deleted"
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, commit.sha, input.newPath),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
     }
     const oldRevision =
       input.sourceKind === "working-tree"
@@ -4503,6 +4759,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options)),
     pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),
     readRangeContext,
+    getReviewBranchCommits,
+    resolveReviewCommits,
+    getReviewCommitDescriptionContext,
     getReviewDiffPreview,
     getReviewDiffFileContents,
     readConfigValue,

@@ -5,15 +5,21 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type {
+  CommitDescriptionsGenerationInput,
+  CommitDescriptionsGenerationResult,
+  ProviderTextGeneration,
+} from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildCommitDescriptionsPrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
+  sanitizeCommitDescription,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
@@ -74,6 +80,18 @@ export const decodeJsonReply = <S extends Schema.Top>(
 };
 
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
+  const generateCommitDescriptions: ProviderTextGeneration["generateCommitDescriptions"] =
+    Effect.fn(`${name}.generateCommitDescriptions`)(function* (input) {
+      yield* validateCommitDescriptionsInput(input.commits);
+      const generated = yield* run({
+        operation: "generateCommitDescriptions",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        ...buildCommitDescriptionsPrompt(input.commits),
+      });
+      return yield* validateCommitDescriptionsResult(input.commits, generated);
+    });
+
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
   )(function* (input) {
@@ -171,10 +189,68 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   });
 
   return {
+    generateCommitDescriptions,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
   } satisfies ProviderTextGeneration;
+}
+
+export function validateCommitDescriptionsInput(
+  commits: CommitDescriptionsGenerationInput["commits"],
+): Effect.Effect<void, TextGenerationError> {
+  if (commits.length < 1 || commits.length > 10) {
+    return Effect.fail(
+      new TextGenerationError({
+        operation: "generateCommitDescriptions",
+        detail: "Expected 1 to 10 commits.",
+      }),
+    );
+  }
+  if (
+    commits.some((commit) => !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(commit.sha)) ||
+    new Set(commits.map((commit) => commit.sha)).size !== commits.length
+  ) {
+    return Effect.fail(
+      new TextGenerationError({
+        operation: "generateCommitDescriptions",
+        detail: "Commit SHAs must be valid and unique.",
+      }),
+    );
+  }
+  return Effect.void;
+}
+
+export function validateCommitDescriptionsResult(
+  commits: CommitDescriptionsGenerationInput["commits"],
+  generated: CommitDescriptionsGenerationResult,
+): Effect.Effect<CommitDescriptionsGenerationResult, TextGenerationError> {
+  const bySha = new Map(generated.descriptions.map((item) => [item.sha, item.description]));
+  if (
+    generated.descriptions.length !== commits.length ||
+    bySha.size !== commits.length ||
+    commits.some((commit) => !bySha.has(commit.sha))
+  ) {
+    return Effect.fail(
+      new TextGenerationError({
+        operation: "generateCommitDescriptions",
+        detail: "Generated descriptions must match the requested commit SHAs exactly.",
+      }),
+    );
+  }
+  const descriptions = commits.map((commit) => ({
+    sha: commit.sha,
+    description: sanitizeCommitDescription(bySha.get(commit.sha)!),
+  }));
+  if (descriptions.some((item) => item.description.length === 0)) {
+    return Effect.fail(
+      new TextGenerationError({
+        operation: "generateCommitDescriptions",
+        detail: "Generated descriptions must not be empty.",
+      }),
+    );
+  }
+  return Effect.succeed({ descriptions });
 }

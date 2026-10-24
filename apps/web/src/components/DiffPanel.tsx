@@ -6,13 +6,14 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
+import { GitCommandError, type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
   ChevronDownIcon,
   Columns2Icon,
   FolderTreeIcon,
+  GitCommitHorizontalIcon,
   PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
@@ -30,6 +31,7 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import {
+  selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
@@ -51,7 +53,7 @@ import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollaps
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadCheckpointSummaries, useQuietThreadShell } from "../state/entities";
 import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
-import { formatShortTimestamp } from "../timestampFormat";
+import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
@@ -74,6 +76,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSub,
@@ -91,13 +94,17 @@ import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
+import { useCommitDescriptions } from "./diffs/useCommitDescriptions";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
+import { gitHubCommitBrowserUrl, useOpenPrLink } from "../lib/openPullRequestLink";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
+const isGitCommandError = Schema.is(GitCommandError);
 const fileEntryCache = new WeakMap<
   FileDiffMetadata,
   { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
@@ -213,6 +220,7 @@ export default function DiffPanel({
     Schema.Boolean,
   );
   const [baseRefQuery, setBaseRefQuery] = useState("");
+  const [commitMenuOpen, setCommitMenuOpen] = useState(false);
   const [codeViewRevision, setCodeViewRevision] = useState(0);
   const [codeView, setCodeView] = useState<AnnotatableCodeViewHandle | null>(null);
 
@@ -254,6 +262,9 @@ export default function DiffPanel({
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
+  const rememberedBaseRef = useDiffPanelStore((state) =>
+    selectThreadBranchBaseRef(state, routeThreadRef),
+  );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
@@ -272,8 +283,15 @@ export default function DiffPanel({
   }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
 
   const selectedRunId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
-  const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
-  const selectedBaseRef = diffSelection.kind === "branch" ? diffSelection.baseRef : null;
+  const selectedGitScope =
+    diffSelection.kind === "unstaged" || diffSelection.kind === "commit"
+      ? diffSelection.kind
+      : "branch";
+  const selectedCommitSha = diffSelection.kind === "commit" ? diffSelection.sha : null;
+  const selectedBaseRef =
+    diffSelection.kind === "branch" || diffSelection.kind === "commit"
+      ? diffSelection.baseRef
+      : null;
   const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
@@ -284,24 +302,15 @@ export default function DiffPanel({
         orderedTurnDiffSummaries[0]);
   const selectedCheckpointTurnCount = selectedTurn?.checkpointTurnCount;
   const latestTurn = orderedTurnDiffSummaries[0];
-  const selectedScopeLabel =
-    selectedRunId === null
-      ? selectedGitScope === "unstaged"
-        ? "Uncommitted"
-        : "Changes"
-      : selectedTurn?.runId === latestTurn?.runId
-        ? "Latest turn"
-        : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
-  const reviewSectionId = selectedTurn ? `turn:${selectedTurn.runId}` : selectedGitScope;
+  const reviewSectionId = selectedTurn
+    ? `turn:${selectedTurn.runId}`
+    : selectedCommitSha !== null
+      ? `commit:${selectedCommitSha}`
+      : selectedGitScope;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
-  const reviewSectionTitle = selectedTurn
-    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
-    : selectedGitScope === "unstaged"
-      ? "Uncommitted"
-      : "Changes";
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -327,11 +336,29 @@ export default function DiffPanel({
           input: {
             cwd: activeCwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
       : null,
   );
+  const branchCommits = useEnvironmentQuery(
+    visible && isGitRepo && canReadFiles && activeThread && activeCwd
+      ? reviewEnvironment.branchCommits({
+          environmentId: activeThread.environmentId,
+          input: {
+            cwd: activeCwd,
+            ...(rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
+          },
+        })
+      : null,
+  );
+  const commitPreviewFailed =
+    selectedCommitSha !== null && isGitCommandError(branchDiffPreview.failure);
+  useEffect(() => {
+    if (!routeThreadRef || selectedCommitSha === null || !commitPreviewFailed) return;
+    useDiffPanelStore.getState().fallbackFromCommit(routeThreadRef, selectedCommitSha);
+  }, [commitPreviewFailed, routeThreadRef, selectedCommitSha]);
   const canRefreshGitDiff =
     isGitRepo && selectedRunId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
@@ -339,8 +366,55 @@ export default function DiffPanel({
     : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
+    (source) =>
+      source.kind ===
+      (selectedGitScope === "unstaged"
+        ? "working-tree"
+        : selectedGitScope === "commit"
+          ? "commit"
+          : "branch-range"),
   );
+  const selectedCommitSubject =
+    selectedCommitSha !== null && selectedGitSource?.headRef === selectedCommitSha
+      ? selectedGitSource.commitSubject
+      : undefined;
+  const selectedGitScopeLabel =
+    selectedCommitSha !== null
+      ? (selectedCommitSubject ?? `Commit ${selectedCommitSha.slice(0, 7)}`)
+      : selectedGitScope === "unstaged"
+        ? "Uncommitted"
+        : "Changes";
+  const selectedScopeLabel =
+    selectedRunId === null
+      ? selectedCommitSha !== null
+        ? (selectedCommitSubject ?? "Commit")
+        : selectedGitScopeLabel
+      : selectedTurn?.runId === latestTurn?.runId
+        ? "Latest turn"
+        : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
+  const reviewSectionTitle = selectedTurn
+    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
+    : selectedGitScopeLabel;
+  const selectedCommitUrl =
+    selectedRunId === null && selectedCommitSha !== null
+      ? gitHubCommitBrowserUrl(activeProject?.repositoryIdentity, selectedCommitSha)
+      : null;
+  const openPrLink = useOpenPrLink(routeThreadRef ?? undefined);
+  const commitDescriptions = useCommitDescriptions({
+    environmentId: activeThread?.environmentId ?? null,
+    threadId: activeThreadId,
+    cwd: activeCwd,
+    modelKey: JSON.stringify(
+      serverConfig?.settings && activeProjectId
+        ? resolveProjectSettings(serverConfig.settings, activeProjectId).settings
+            .textGenerationModelSelection
+        : null,
+    ),
+    shas: branchCommits.data?.commits.map((commit) => commit.sha) ?? [],
+    enabled: isGitRepo && canReadFiles && !!serverConfig?.settings && !!activeProjectId,
+    visible,
+    open: commitMenuOpen,
+  });
   const refreshPreviewQuery = branchDiffPreview.refresh;
   const refreshDiffFromUserAction = refreshPreviewQuery;
 
@@ -454,7 +528,8 @@ export default function DiffPanel({
     environmentId: activeThread?.environmentId,
     cwd: branchDiffPreview.data?.cwd,
     source: lazySource,
-    baseRef: lazySource?.baseRef ?? selectedBaseRef,
+    baseRef:
+      selectedCommitSha !== null ? selectedBaseRef : (lazySource?.baseRef ?? selectedBaseRef),
     ignoreWhitespace: diffIgnoreWhitespace,
     theme: resolvedTheme,
     revision: branchDiffPreview.data
@@ -644,15 +719,22 @@ export default function DiffPanel({
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
+  const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
   const selectedScopeValue =
     selectedRunId === null
-      ? selectedGitScope
+      ? selectedCommitValue || selectedGitScope
       : selectedTurn?.runId === latestTurn?.runId
         ? "latest"
         : selectedTurnValue;
   const selectScopeValue = (value: string) => {
     if (value === "unstaged" || value === "branch") {
       selectGitScope(value);
+    } else if (value === selectedCommitValue) {
+      selectGitScope("branch");
+    } else if (value.startsWith("commit:")) {
+      if (routeThreadRef) {
+        useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
+      }
     } else if (value === "latest") {
       if (latestTurn) selectTurn(latestTurn.runId);
     } else {
@@ -670,7 +752,11 @@ export default function DiffPanel({
             className="max-w-full"
             aria-label={`Diff scope: ${selectedScopeLabel}`}
           >
-            <span className="truncate">{selectedScopeLabel}</span>
+            {selectedCommitSha !== null ? (
+              <GitCommitHorizontalIcon className="size-3.5 shrink-0 opacity-70" />
+            ) : (
+              <span className="truncate">{selectedScopeLabel}</span>
+            )}
             <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -709,8 +795,143 @@ export default function DiffPanel({
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+            <DropdownMenuSub
+              onOpenChange={(open) => {
+                setCommitMenuOpen(open);
+                if (open) {
+                  commitDescriptions.retry();
+                  branchCommits.refresh();
+                }
+              }}
+            >
+              <DropdownMenuSubTrigger>Commits</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-80 max-w-96">
+                <DropdownMenuRadioGroup
+                  value={selectedCommitValue}
+                  onValueChange={selectScopeValue}
+                >
+                  {branchCommits.data?.commits.map((commit, index) => {
+                    const description = commitDescriptions.descriptions.get(commit.sha);
+                    const commitUrl = gitHubCommitBrowserUrl(
+                      activeProject?.repositoryIdentity,
+                      commit.sha,
+                    );
+                    return (
+                      <div
+                        key={commit.sha}
+                        className="flex items-start rounded-sm has-data-highlighted:bg-accent *:data-highlighted:bg-transparent"
+                      >
+                        <Tooltip>
+                          <TooltipTrigger
+                            ref={
+                              index === commitDescriptions.lastIndex
+                                ? commitDescriptions.observeLast
+                                : undefined
+                            }
+                            render={
+                              <DropdownMenuRadioItem
+                                className="min-w-0 flex-1"
+                                value={`commit:${commit.sha}`}
+                                closeOnClick
+                              />
+                            }
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="min-w-0 truncate">{commit.subject}</span>
+                              <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+                                {formatRelativeTimeLabel(commit.committedAt)}
+                              </span>
+                            </span>
+                            {description ? (
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {description}
+                              </span>
+                            ) : null}
+                          </TooltipTrigger>
+                          <TooltipPopup side="right" className="max-w-80">
+                            {commit.subject}
+                            {description ? (
+                              <span className="block text-muted-foreground">{description}</span>
+                            ) : null}
+                          </TooltipPopup>
+                        </Tooltip>
+                        {commitUrl ? (
+                          <DropdownMenuItem
+                            className="shrink-0"
+                            render={
+                              <a
+                                href={commitUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={`Open commit ${commit.sha.slice(0, 7)}`}
+                              />
+                            }
+                            onClick={(event) => openPrLink(event, commitUrl)}
+                          >
+                            <span className="font-mono text-xs text-muted-foreground underline underline-offset-4">
+                              {commit.sha.slice(0, 7)}
+                            </span>
+                          </DropdownMenuItem>
+                        ) : (
+                          <span className="shrink-0 px-2 py-1 font-mono text-xs text-muted-foreground">
+                            {commit.sha.slice(0, 7)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </DropdownMenuRadioGroup>
+                {branchCommits.error ? (
+                  <DropdownMenuItem disabled>{branchCommits.error}</DropdownMenuItem>
+                ) : !canReadFiles ? (
+                  <DropdownMenuItem disabled>
+                    {fileAccess.isPending
+                      ? "Checking file access..."
+                      : (fileAccess.error ?? "This connection cannot read local diffs.")}
+                  </DropdownMenuItem>
+                ) : branchCommits.isPending ? (
+                  <DropdownMenuItem disabled>Loading commits...</DropdownMenuItem>
+                ) : !branchCommits.data ? null : branchCommits.data.commits.length === 0 ? (
+                  <DropdownMenuItem disabled>No commits on this branch.</DropdownMenuItem>
+                ) : branchCommits.data.truncated ? (
+                  <DropdownMenuItem disabled>
+                    {`Showing latest ${branchCommits.data.commits.length} commits`}
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
           </DropdownMenuContent>
         </DropdownMenu>
+        {selectedCommitSha !== null ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                selectedCommitUrl ? (
+                  <a
+                    href={selectedCommitUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex min-w-0 items-center gap-2 text-xs underline decoration-muted-foreground/60 underline-offset-4 hover:decoration-foreground"
+                    onClick={(event) => openPrLink(event, selectedCommitUrl)}
+                  />
+                ) : (
+                  <span className="flex min-w-0 items-center gap-2 text-xs" />
+                )
+              }
+            >
+              <span className="truncate">{selectedScopeLabel}</span>
+              <span className="shrink-0 font-mono text-muted-foreground">
+                {selectedCommitSha.slice(0, 7)}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="top" className="max-w-80">
+              {selectedScopeLabel}
+              {selectedCommitUrl ? (
+                <span className="block font-mono text-muted-foreground">{selectedCommitUrl}</span>
+              ) : null}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {selectedRunId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
@@ -1014,7 +1235,9 @@ export default function DiffPanel({
                       ? "Loading checkpoint diff..."
                       : selectedGitScope === "unstaged"
                         ? "Loading uncommitted changes..."
-                        : "Loading changes..."
+                        : selectedGitScope === "commit"
+                          ? "Loading commit..."
+                          : "Loading changes..."
                   }
                 />
               ) : (

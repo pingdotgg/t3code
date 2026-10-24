@@ -17,10 +17,15 @@ import * as Schema from "effect/Schema";
 import { createMuseSdkHost, createMuseSdkHostEffect, type MuseSdkHost } from "./sdk.ts";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
-import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
+import {
+  investigationUnsupported,
+  validateCommitDescriptionsInput,
+  validateCommitDescriptionsResult,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildCommitDescriptionsPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "@t3tools/provider-core/server/textGenerationPrompts";
@@ -310,6 +315,16 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
         : {}),
     };
   });
+  const generateCommitDescriptions: ProviderTextGeneration["generateCommitDescriptions"] =
+    Effect.fn("MuseTextGeneration.generateCommitDescriptions")(function* (input) {
+      yield* validateCommitDescriptionsInput(input.commits);
+      const generated = yield* runMuseJson({
+        operation: "generateCommitDescriptions",
+        ...buildCommitDescriptionsPrompt(input.commits),
+        modelSelection: input.modelSelection,
+      });
+      return yield* validateCommitDescriptionsResult(input.commits, generated);
+    });
   const generatePrContent: ProviderTextGeneration["generatePrContent"] = Effect.fn(
     "MuseTextGeneration.generatePrContent",
   )(function* (input) {
@@ -343,6 +358,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
   return {
+    generateCommitDescriptions,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

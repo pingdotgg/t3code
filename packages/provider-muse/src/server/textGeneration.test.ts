@@ -110,6 +110,42 @@ const finish =
   };
 
 it.layer(NodeServices.layer)("Muse text generation", (it) => {
+  it.effect("generates one commit description from supplied data", () =>
+    Effect.gen(function* () {
+      const sha = "a".repeat(40);
+      const test = fixture(
+        finish(
+          JSON.stringify({
+            descriptions: [{ sha, description: "  Fix selected commit preview  " }],
+          }),
+        ),
+      );
+      const service = yield* test.make;
+      const result = yield* service.generateCommitDescriptions({
+        cwd: "/repo",
+        commits: [{ sha, subject: "Fix preview", body: "", files: ["a.ts"], patch: "diff" }],
+        modelSelection,
+      });
+      expect(result.descriptions).toEqual([{ sha, description: "Fix selected commit preview" }]);
+      expect(test.host.connection.command).toHaveBeenCalledTimes(2);
+      expect(test.host.connection.command).toHaveBeenCalledWith(
+        "session/start",
+        expect.objectContaining({ modelId: modelSelection.model }),
+      );
+    }),
+  );
+
+  it.effect("rejects an empty commit batch without starting a host", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const service = yield* test.make;
+      yield* service
+        .generateCommitDescriptions({ cwd: "/repo", commits: [], modelSelection })
+        .pipe(Effect.flip);
+      expect(test.createHost).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("validates the final item once and closes an isolated restrictive host", () =>
     Effect.gen(function* () {
       const test = fixture(finish('{"title":"Fix login form"}'));

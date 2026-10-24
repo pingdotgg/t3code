@@ -4,6 +4,7 @@ import {
   changeRequestRepositoryUrl,
   findProjectForChangeRequest,
   findProjectOnChangeRequestHost,
+  gitHubCommitBrowserUrl,
   gitHubPullRequestBrowserUrl,
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
@@ -111,6 +112,39 @@ describe("gitHubPullRequestBrowserUrl", () => {
       ).toBeNull();
     },
   );
+});
+
+describe("gitHubCommitBrowserUrl", () => {
+  const sha = "750fbd658298c15316289306f6a2a6b4400e1afb";
+
+  it("links the project's commit on its GitHub web origin", () => {
+    expect(
+      gitHubCommitBrowserUrl(
+        repositoryIdentity(
+          "github",
+          "github.acme.test/team/api",
+          "http://token@github.acme.test:8443/team/api.git",
+        ),
+        sha,
+      ),
+    ).toBe(`http://github.acme.test:8443/team/api/commit/${sha}`);
+    expect(
+      gitHubCommitBrowserUrl(
+        repositoryIdentity("github", "github.com/acme/repo", "git@github.com:acme/repo.git"),
+        sha,
+      ),
+    ).toBe(`https://github.com/acme/repo/commit/${sha}`);
+  });
+
+  it("does not link other hosts", () => {
+    expect(
+      gitHubCommitBrowserUrl(
+        repositoryIdentity("gitlab", "gitlab.com/acme/repo", "https://gitlab.com/acme/repo.git"),
+        sha,
+      ),
+    ).toBeNull();
+    expect(gitHubCommitBrowserUrl(null, sha)).toBeNull();
+  });
 });
 
 describe("changeRequestRepositoryUrl", () => {

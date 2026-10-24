@@ -1,5 +1,5 @@
 import type { RepositoryIdentity, ThreadLinkedPullRequest } from "@t3tools/contracts";
-import { canonicalRepositoryKey } from "./sourceControl.ts";
+import { canonicalRepositoryKey, sourceControlRepositorySelector } from "./sourceControl.ts";
 
 /**
  * The two strings are what `pullRequestHostOf` and the project's `repositoryIdentity` produce
@@ -16,6 +16,35 @@ export interface ChangeRequestLink {
 function isHostOf(hostname: string, apex: string, label?: string): boolean {
   if (hostname === apex || hostname.endsWith(`.${apex}`)) return true;
   return label !== undefined && hostname.split(".").includes(label);
+}
+
+export function parseCommitUrl(targetUrl: string): {
+  readonly host: string;
+  readonly repository: string;
+  readonly sha: string;
+} | null {
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return null;
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    !isHostOf(url.hostname.toLowerCase(), "github.com", "github")
+  )
+    return null;
+  const match =
+    /^\/([^/]+\/[^/]+)\/(?:commit|pull\/[1-9]\d*\/commits)\/([0-9a-f]{40}|[0-9a-f]{64})\/?$/iu.exec(
+      url.pathname,
+    );
+  return match?.[1] && match[2]
+    ? {
+        host: url.hostname.toLowerCase(),
+        repository: match[1].toLowerCase(),
+        sha: match[2].toLowerCase(),
+      }
+    : null;
 }
 
 export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
@@ -113,7 +142,27 @@ export function gitHubPullRequestBrowserUrl(
   repository: string,
   number: number,
 ): string | null {
-  if (identity?.provider !== "github" || !Number.isSafeInteger(number) || number < 1) return null;
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  return gitHubRepositoryBrowserUrl(identity, repository, `pull/${number}`);
+}
+
+export function gitHubCommitBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  sha: string,
+): string | null {
+  const repository =
+    sourceControlRepositorySelector(identity) ??
+    identity?.canonicalKey.split("/").slice(1).join("/") ??
+    "";
+  return gitHubRepositoryBrowserUrl(identity, repository, `commit/${sha}`);
+}
+
+function gitHubRepositoryBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  repository: string,
+  route: string,
+): string | null {
+  if (identity?.provider !== "github") return null;
   const repositoryPath = repository.split("/");
   if (
     repositoryPath.length !== 2 ||
@@ -134,7 +183,7 @@ export function gitHubPullRequestBrowserUrl(
 
   try {
     const url = new URL(origin ?? `https://${hostname}`);
-    url.pathname = `/${repositoryPath.join("/")}/pull/${number}`;
+    url.pathname = `/${repositoryPath.join("/")}/${route}`;
     return url.toString();
   } catch {
     return null;

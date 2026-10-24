@@ -44,6 +44,25 @@ export function sanitizeCommitSubject(raw: string): string {
   return subject.trimEnd() || "Update project files";
 }
 
+export function sanitizeCommitDescription(raw: string): string {
+  const normalized = raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[-*]\s*/, "")
+    .split(/\s+/)
+    .slice(0, 10)
+    .join(" ");
+  if (normalized.length <= 80) return normalized;
+  let description = "";
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+    normalized,
+  )) {
+    if (description.length + segment.length > 80) break;
+    description += segment;
+  }
+  return description.trimEnd();
+}
+
 export function sanitizePrTitle(raw: string): string {
   const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
   if (singleLine.length > 0) {

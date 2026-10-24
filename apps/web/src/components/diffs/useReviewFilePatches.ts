@@ -160,7 +160,7 @@ export function useReviewFilePatches({
 }
 
 // The refresh effect keys on the identity of these queries.
-function reviewFileQueries({
+export function reviewFileQueries({
   environmentId,
   cwd,
   source,
@@ -193,6 +193,7 @@ function reviewFileQueries({
                 request: {
                   cwd,
                   ...(baseRef ? { baseRef } : {}),
+                  ...(source.kind === "commit" ? { commitSha: source.id } : {}),
                   ignoreWhitespace,
                   file: {
                     path: file.path,
