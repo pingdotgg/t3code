@@ -66,6 +66,58 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
   describe("materializeCodexShadowHome", () => {
     it.effect.skipIf(!symlinksSupported)(
+      "preserves SQLite files when shared sidecars appear after the shadow home starts",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          yield* writeTextFile(path.join(sharedHome, "logs_2.sqlite"), "shared logs");
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "shared state");
+          // An existing overlay may already link the database. Never remove its
+          // live WAL or replace files while another Codex process has them open.
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "state_5.sqlite"),
+            path.join(shadowHome, "state_5.sqlite"),
+          );
+          yield* materializeCodexShadowHome(layout);
+
+          const localFiles = ["logs_2.sqlite-shm", "logs_2.sqlite-wal", "state_5.sqlite-journal"];
+          for (const name of localFiles) {
+            yield* writeTextFile(path.join(shadowHome, name), `local ${name}`);
+            yield* writeTextFile(path.join(sharedHome, name), `shared ${name}`);
+          }
+          yield* materializeCodexShadowHome(layout);
+          yield* writeTextFile(path.join(shadowHome, "goals_1.sqlite"), "local goals");
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared goals");
+          yield* materializeCodexShadowHome(layout);
+
+          for (const name of localFiles) {
+            expect(yield* fileSystem.readFileString(path.join(shadowHome, name))).toBe(
+              `local ${name}`,
+            );
+            expect(yield* fileSystem.readFileString(path.join(sharedHome, name))).toBe(
+              `shared ${name}`,
+            );
+          }
+          expect(yield* fileSystem.exists(path.join(shadowHome, "logs_2.sqlite"))).toBe(false);
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "goals_1.sqlite"))).toBe(
+            "local goals",
+          );
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "state_5.sqlite"))).toBe(
+            path.join(sharedHome, "state_5.sqlite"),
+          );
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "sessions"))).toBe(
+            path.join(sharedHome, "sessions"),
+          );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "keeps Finder metadata local across repeated shadow home setup",
       () =>
         Effect.gen(function* () {

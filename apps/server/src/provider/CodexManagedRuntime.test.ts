@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
 import * as NodeURL from "node:url";
+import * as NodeHttp from "node:http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -9,6 +10,7 @@ import { assert, it } from "@effect/vitest";
 import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -19,7 +21,9 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
-import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
+import { makeCodexManagedRuntime, type CodexEffectiveRuntime } from "./CodexManagedRuntime.ts";
+import { checkCodexProviderStatus, withCodexAppServerClient } from "./CodexProvider.ts";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
 
@@ -28,6 +32,166 @@ const decodeSettings = Schema.decodeSync(CodexSettings);
 const decodeCommand = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Array(Schema.String)])),
 );
+// An explicit binary enables native protocol proof without making routine tests
+// depend on a globally installed CLI or a real ChatGPT account.
+const nativeCodexBinary = process.env.T3CODE_TEST_CODEX_BINARY;
+const exerciseNativeRenewal = Effect.fn("CodexManagedRuntime.test.nativeRenewal")(function* <
+  A,
+  E,
+  R,
+>(binaryPath: string, effective: CodexEffectiveRuntime, renew: Effect.Effect<A, E, R>) {
+  const expiredRequest = Promise.withResolvers<NodeHttp.ServerResponse>();
+  const requests: string[] = [];
+  const server = yield* Effect.acquireRelease(
+    Effect.callback<NodeHttp.Server, Error>((resume) => {
+      const server = NodeHttp.createServer((request, response) => {
+        request.on("error", () => response.destroy());
+        request.resume();
+        if (request.url !== "/v1/responses") {
+          response.writeHead(404).end();
+          return;
+        }
+        const credential =
+          request.headers.authorization === "Bearer dummy-owned-access"
+            ? "initial"
+            : request.headers.authorization === "Bearer renewed-access"
+              ? "renewed"
+              : "unexpected";
+        requests.push(credential);
+        if (credential === "initial") {
+          expiredRequest.resolve(response);
+          return;
+        }
+        if (credential !== "renewed") {
+          response.writeHead(403).end();
+          return;
+        }
+        const message = {
+          id: "msg_fixture",
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "renewal survived", annotations: [] }],
+        };
+        const events = [
+          {
+            type: "response.created",
+            response: { id: "resp_fixture", status: "in_progress", output: [] },
+          },
+          { type: "response.output_item.done", output_index: 0, item: message },
+          {
+            type: "response.completed",
+            response: {
+              id: "resp_fixture",
+              status: "completed",
+              output: [message],
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+            },
+          },
+        ];
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(
+          events
+            .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+        );
+      });
+      server.once("error", (error) => resume(Effect.fail(error)));
+      server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+    }),
+    (server) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+  );
+  const address = server.address();
+  assert.isNotNull(address);
+  if (!address || typeof address === "string") return yield* Effect.die("Missing fixture port");
+  const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+  const args = [
+    `model_providers.openai_token_sharing.base_url=${JSON.stringify(baseUrl)}`,
+    `model_providers.openai_token_sharing.model_catalog_url=${JSON.stringify(`${baseUrl}/models`)}`,
+    "features.apps=false",
+    "features.plugins=false",
+    "check_for_update_on_startup=false",
+  ]
+    .map((value) => `-c ${JSON.stringify(value)}`)
+    .join(" ");
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const children: ChildProcessSpawner.ChildProcessHandle[] = [];
+  yield* Effect.gen(function* () {
+    const { client } = yield* withCodexAppServerClient({
+      binaryPath,
+      homePath: effective.config.homePath,
+      launchArgs: `${effective.config.launchArgs} ${args}`,
+      cwd: effective.config.homePath,
+      environment: effective.environment,
+    });
+    const completed = yield* Deferred.make<CodexSchema.V2TurnCompletedNotification>();
+    yield* client.handleServerNotification("turn/completed", (payload) =>
+      Deferred.succeed(completed, payload),
+    );
+    const thread = yield* client.request("thread/start", {
+      cwd: effective.config.homePath,
+      model: "gpt-5.4-mini",
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+    });
+    const turn = yield* client.request("turn/start", {
+      threadId: thread.thread.id,
+      input: [{ type: "text", text: "Reply with a short greeting." }],
+    });
+    const response = yield* Effect.promise(() => expiredRequest.promise);
+    yield* renew;
+    response.writeHead(401, { "content-type": "application/json" }).end(
+      JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "token_expired",
+          message: "Provided authentication token is expired.",
+        },
+      }),
+    );
+    const finished = yield* Deferred.await(completed);
+    assert.equal(finished.threadId, thread.thread.id);
+    assert.equal(finished.turn.id, turn.turn.id);
+    assert.equal(finished.turn.status, "completed");
+    assert.deepEqual(requests, ["initial", "renewed"]);
+    assert.lengthOf(children, 1);
+    assert.isTrue(yield* children[0]!.isRunning);
+  }).pipe(
+    Effect.scoped,
+    Effect.provideService(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        spawner.spawn(command).pipe(
+          Effect.tap((child) =>
+            Effect.sync(() => {
+              children.push(child);
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+  assert.isFalse(yield* children[0]!.isRunning);
+  const provider = yield* checkCodexProviderStatus(
+    {
+      ...effective.config,
+      binaryPath,
+      launchArgs: `${effective.config.launchArgs} ${args}`,
+    },
+    undefined,
+    effective.environment,
+    { status: "authenticated", type: "chatgpt", label: "ChatGPT" },
+  );
+  assert.equal(provider.status, "ready");
+  assert.equal(provider.auth.status, "authenticated");
+});
 it.live.each(
   (["managed", "local"] as const).flatMap((source) =>
     (["primary", "additional"] as const).map((account) => ({ source, account })),
@@ -94,8 +258,11 @@ it.live.each(
           email: null,
         });
         yield* store.set(new TextEncoder().encode(json));
+        const sqliteOverride =
+          source === "local" ? path.join(sharedHome, "sqlite-override") : undefined;
         const ambient = {
           CODEX_HOME: "/user/.codex",
+          ...(sqliteOverride ? { CODEX_SQLITE_HOME: sqliteOverride } : {}),
           ACCESS_TOKEN: "ambient-bearer",
           T3CODE_HOME: path.join(sharedHome, "wrong-server-home"),
           OPENAI_API_KEY: "dummy-global-key",
@@ -116,12 +283,16 @@ it.live.each(
           assert.strictEqual(effective.config.binaryPath, executable.executablePath);
           assert.notStrictEqual(effective.config.homePath, ambient.CODEX_HOME);
           assert.equal(runtime.homeLayout.sharedHomePath, sharedHome);
+          assert.equal(
+            effective.environment.CODEX_SQLITE_HOME,
+            sqliteOverride ?? (account === "additional" ? sharedHome : undefined),
+          );
           if (account === "primary") {
             assert.equal(effective.config.homePath, sharedHome);
             assert.equal(runtime.homeLayout.mode, "direct");
           } else {
             assert.include(effective.config.homePath, instanceId);
-            assert.include(effective.config.homePath, "userdata/providers/codex");
+            assert.include(effective.config.homePath, path.join("userdata", "providers", "codex"));
             assert.equal(runtime.homeLayout.mode, "authOverlay");
             assert.equal(
               yield* fs.readLink(path.join(effective.config.homePath, "sessions")),
@@ -146,6 +317,31 @@ it.live.each(
           assert.include(provider, 'model_catalog_url="https://api.openai.com/v1/models"');
           assert.notInclude(provider, "env_key");
           assert.include(provider, "refresh_interval_ms=0");
+          if (nativeCodexBinary && source === "managed" && account === "additional") {
+            yield* exerciseNativeRenewal(
+              nativeCodexBinary,
+              effective,
+              Effect.gen(function* () {
+                const saved = Option.getOrThrow(yield* runtime.auth.read);
+                const expired = yield* encodeJson({ ...saved, expiresAt: 0 });
+                yield* store.set(new TextEncoder().encode(expired));
+                assert.equal((yield* runtime.auth.access).accessToken, "renewed-access");
+                assert.equal(
+                  Option.getOrThrow(yield* runtime.auth.read).refreshToken,
+                  "renewed-refresh",
+                );
+                assert.equal(renewals, 1);
+              }),
+            );
+            assert.isTrue(yield* fs.exists(path.join(sharedHome, "state_5.sqlite")));
+            assert.deepEqual(
+              (yield* fs.readDirectory(runtime.homePath)).filter((name) =>
+                name.includes(".sqlite"),
+              ),
+              [],
+            );
+            assert.equal((yield* runtime.resolve).revision, effective.revision);
+          }
           // regression: #16132 Codex fetches each token through this helper, so a running
           // session picks up renewals instead of keeping the token it launched with.
           if (source === "managed" && account === "primary") {

@@ -11,7 +11,7 @@ import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeR
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
-import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
+import { codexHomeEnvironment, materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
@@ -115,7 +115,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     );
     // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
     const environment: NodeJS.ProcessEnv = {
-      ...options.environment,
+      ...codexHomeEnvironment(homeLayout, options.environment),
       CODEX_HOME: homePath,
     };
     delete environment.ACCESS_TOKEN;

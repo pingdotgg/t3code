@@ -31,6 +31,9 @@ const KNOWN_SHARED_DIRECTORIES = [
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 // Finder maintains metadata separately for each directory, including shadow homes.
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
+// SQLite can create WAL/SHM beside the link on Windows. Route databases through
+// CODEX_SQLITE_HOME instead; never replace existing databases or live sidecars.
+const SQLITE_ENTRY_NAME = /\.sqlite(?:-(?:shm|wal|journal))?$/u;
 // Codex creates these runtime locks itself when it starts in a shadow home before the shared
 // home has one. They guard shared state, so a local copy is replaced with the shared link.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set(["mcp-oauth-locks", ".sqlite-maintenance.lock"]);
@@ -65,6 +68,14 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
     continuationKey: `codex:home:${sharedHomePath}`,
   };
 });
+
+export const codexHomeEnvironment = (layout: CodexHomeLayout, environment: NodeJS.ProcessEnv) =>
+  layout.mode === "authOverlay"
+    ? {
+        ...environment,
+        CODEX_SQLITE_HOME: environment.CODEX_SQLITE_HOME?.trim() || layout.sharedHomePath,
+      }
+    : environment;
 
 const CodexShadowHomeContext = {
   sharedHomePath: Schema.String,
@@ -373,7 +384,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   );
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    if (
+      !PRIVATE_ENTRY_NAMES.has(entryName) &&
+      !SHADOW_LOCAL_ENTRY_NAMES.has(entryName) &&
+      !SQLITE_ENTRY_NAME.test(entryName)
+    ) {
       entries.add(entryName);
     }
   }
