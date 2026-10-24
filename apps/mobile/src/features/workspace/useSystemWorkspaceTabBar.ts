@@ -41,7 +41,14 @@ export function useCompactWorkspaceTabs() {
 
 export function useSystemWorkspaceTabBar() {
   const deviceType = useDeviceType();
+  const { layout } = useAdaptiveWorkspaceLayout();
   const sidebarTabs = useSidebarWorkspaceTabs();
   const compactTabs = useCompactWorkspaceTabs();
-  return Platform.OS === "ios" && deviceType !== "pad" && sidebarTabs === null && !compactTabs;
+  return (
+    Platform.OS === "ios" &&
+    deviceType !== "pad" &&
+    !layout.primarySidebarOverlaysContent &&
+    sidebarTabs === null &&
+    !compactTabs
+  );
 }

@@ -233,6 +233,24 @@ function AdaptiveWorkspaceLayoutContent(
     () => deriveLayout({ width: viewportWidth, height, nativeMetrics, nativeWorkspace }),
     [height, viewportWidth, nativeMetrics, nativeWorkspace],
   );
+  const [overlaySidebar, setOverlaySidebar] = useState({
+    active: baseLayout.primarySidebarOverlaysContent,
+    pathname,
+    visible: pathname === "/",
+  });
+  if (
+    overlaySidebar.active !== baseLayout.primarySidebarOverlaysContent ||
+    (overlaySidebar.active && overlaySidebar.pathname !== pathname)
+  ) {
+    setOverlaySidebar({
+      active: baseLayout.primarySidebarOverlaysContent,
+      pathname,
+      visible: pathname === "/",
+    });
+  }
+  const preferredSidebarVisible = baseLayout.primarySidebarOverlaysContent
+    ? overlaySidebar.visible
+    : primarySidebarPreferredVisible;
   const primarySidebarPinned = isPrimarySidebarPinned({
     pathname,
     nativeWorkspace,
@@ -250,7 +268,7 @@ function AdaptiveWorkspaceLayoutContent(
   );
   const showPrimarySidebar =
     !workspacePage &&
-    (primarySidebarPinned || (primarySidebarPreferredVisible && !composerKeyboardActive));
+    (primarySidebarPinned || (preferredSidebarVisible && !composerKeyboardActive));
   const shouldRenderNavigationRail = Platform.OS === "android" && baseLayout.usesSplitView;
   const navigationRailWidth =
     shouldRenderNavigationRail && (showPrimarySidebar || workspacePage)
@@ -282,7 +300,7 @@ function AdaptiveWorkspaceLayoutContent(
         viewportWidth: width,
         preferredWidth: fileInspectorPreferredWidth ?? undefined,
         reservedLeadingWidth:
-          shouldRenderPrimarySidebar && showPrimarySidebar
+          shouldRenderPrimarySidebar && showPrimarySidebar && !layout.primarySidebarOverlaysContent
             ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
             : 0,
       }),
@@ -366,6 +384,13 @@ function AdaptiveWorkspaceLayoutContent(
       setFocusedAuxiliaryPaneRole(null);
     };
   };
+  const setPrimarySidebarVisible = (visible: boolean) => {
+    if (layout.primarySidebarOverlaysContent) {
+      setOverlaySidebar((current) => ({ ...current, visible }));
+    } else {
+      setPrimarySidebarPreferredVisible(visible);
+    }
+  };
   const togglePrimarySidebar = () => {
     if (primarySidebarPinned) {
       return;
@@ -381,14 +406,14 @@ function AdaptiveWorkspaceLayoutContent(
       setPrimarySidebarPreferredVisible(true);
       return;
     }
-    setPrimarySidebarPreferredVisible((current) => !current);
+    setPrimarySidebarVisible(!preferredSidebarVisible);
   };
   const revealPrimarySidebar = () => {
     if (composerKeyboardActive) void KeyboardController.dismiss();
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
     }
-    setPrimarySidebarPreferredVisible(true);
+    setPrimarySidebarVisible(true);
   };
   const handleToggleSidebarCommand = () => {
     togglePrimarySidebar();
@@ -745,6 +770,7 @@ function AdaptiveWorkspaceLayoutContent(
     showAuxiliaryPane,
     toggleAuxiliaryPane,
     togglePrimarySidebar,
+    setPrimarySidebarVisible,
     setAuxiliaryPaneWidth,
     composerKeyboardActive,
     setComposerEditing,

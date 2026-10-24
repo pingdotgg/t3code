@@ -50,6 +50,40 @@ describe("deriveThreadFeedInitialContentInset", () => {
 });
 
 describe("native workspace sizing", () => {
+  it.each([
+    { width: 669, height: 951, hasHinge: true, nativeWorkspace: true, overlay: true },
+    { width: 951, height: 669, hasHinge: true, nativeWorkspace: true, overlay: false },
+    { width: 669, height: 951, hasHinge: false, nativeWorkspace: true, overlay: false },
+    { width: 669, height: 951, hasHinge: true, nativeWorkspace: false, overlay: false },
+  ])(
+    "overlays only a native unfolded portrait Duo sidebar: %j",
+    ({ overlay, nativeWorkspace, ...size }) => {
+      const nativeMetrics = {
+        ...size,
+        horizontalSizeClass: "regular" as const,
+        verticalBarEdge: "none" as const,
+        safeArea: { top: 24, bottom: 20, left: 0, right: 0 },
+        reservedRegions: [],
+      };
+      const layout = deriveLayout({ ...size, nativeMetrics, nativeWorkspace });
+      expect(layout.primarySidebarOverlaysContent).toBe(overlay);
+      for (const primarySidebarPreferredVisible of [true, false]) {
+        expect(
+          deriveWorkspacePaneLayout({
+            layout,
+            viewportWidth: size.width,
+            primarySidebarPreferredVisible,
+            auxiliaryPanePreferredVisible: false,
+          }).contentPaneWidth,
+        ).toBe(
+          !overlay && primarySidebarPreferredVisible
+            ? size.width - (layout.listPaneWidth ?? 0)
+            : size.width,
+        );
+      }
+    },
+  );
+
   it("keeps the detail mounted in a narrow iPad window while UIKit still has two columns", () => {
     const nativeMetrics = {
       width: 715,

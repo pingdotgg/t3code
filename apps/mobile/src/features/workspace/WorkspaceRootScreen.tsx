@@ -110,24 +110,26 @@ function WorkspaceRootContent() {
   );
   const tab = state.tabs[state.selectedTab];
   const bottomClearance =
-    Platform.OS === "ios" && isDuoDevice(deviceType)
-      ? workspaceSearchBottomClearance({
-          bottomInset: insets.bottom,
-          bottomBarInset,
-          keyboardHeight,
-        })
-      : compactTabs || deviceType === "pad"
-        ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
-        : Platform.OS === "ios"
-          ? Math.max(insets.bottom, keyboardHeight) +
-            (systemTabBar || sidebarTabs || tab.searchMode !== "resting"
-              ? sidebarPicker
-                ? 80
-                : 16
-              : WORKSPACE_DOCK.height + WORKSPACE_DOCK.bottomGap + 16)
-          : keyboardHeight > 0 && tab.searchMode !== "resting"
-            ? keyboardHeight + 64
-            : Math.max(insets.bottom, 12) + workspaceToolbarHeight(tab.searchMode) + 16;
+    layout.primarySidebarOverlaysContent && state.selectedTab === "usage"
+      ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
+      : Platform.OS === "ios" && isDuoDevice(deviceType)
+        ? workspaceSearchBottomClearance({
+            bottomInset: insets.bottom,
+            bottomBarInset,
+            keyboardHeight,
+          })
+        : compactTabs || deviceType === "pad"
+          ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
+          : Platform.OS === "ios"
+            ? Math.max(insets.bottom, keyboardHeight) +
+              (systemTabBar || sidebarTabs || tab.searchMode !== "resting"
+                ? sidebarPicker
+                  ? 80
+                  : 16
+                : WORKSPACE_DOCK.height + WORKSPACE_DOCK.bottomGap + 16)
+            : keyboardHeight > 0 && tab.searchMode !== "resting"
+              ? keyboardHeight + 64
+              : Math.max(insets.bottom, 12) + workspaceToolbarHeight(tab.searchMode) + 16;
   const context = useMemo(() => ({ ...workspace, bottomClearance }), [workspace, bottomClearance]);
 
   return (

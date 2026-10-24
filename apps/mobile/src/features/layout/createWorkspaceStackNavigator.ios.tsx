@@ -78,15 +78,17 @@ function ColumnScreen(props: {
   readonly navigation: ViewProps["navigation"];
 }) {
   const { descriptor } = props;
+  const [presented, setPresented] = useState(false);
   const primaryColumn = useMemo(
     () =>
       props.primary
         ? {
+            presented,
             selectedThreadKey: props.selectedThreadKey ?? null,
             selectedPullRequestKey: props.selectedPullRequestKey ?? null,
           }
         : null,
-    [props.primary, props.selectedThreadKey, props.selectedPullRequestKey],
+    [props.primary, props.selectedThreadKey, props.selectedPullRequestKey, presented],
   );
   const key = descriptor.route.key;
   return (
@@ -101,10 +103,12 @@ function ColumnScreen(props: {
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: false } });
       }}
       onDidAppear={() => {
+        setPresented(true);
         props.onAppearance("didAppear", key);
         props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: false } });
       }}
       onWillDisappear={() => {
+        setPresented(false);
         props.onAppearance("willDisappear", key);
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: true } });
       }}
@@ -145,8 +149,14 @@ function ColumnScreen(props: {
 function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
-  const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane, startNewTask } =
-    useAdaptiveWorkspaceLayout();
+  const {
+    layout,
+    panes,
+    togglePrimarySidebar,
+    setPrimarySidebarVisible,
+    toggleAuxiliaryPane,
+    startNewTask,
+  } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
   // Split screens must remain mounted while UIKit animates a detached route away.
   const [screens, setScreens] = useState({
@@ -179,7 +189,7 @@ function WorkspaceColumns(
   const selectedTab = useWorkspaceTabs()?.state.selectedTab;
   const openNewTask = startNewTask;
   // The cover detail rail needs room for thread tools above the fixed tabs.
-  // The unfolded Duo keeps compose beside its sidebar control.
+  // The unfolded Duo keeps compose in its detail bar.
   const detailCompose =
     deviceType === "duo-unfolded" && selectedTab !== "pullRequests" ? openNewTask : undefined;
   const inspector = use(NativeWorkspaceInspectorContext);
@@ -255,7 +265,7 @@ function WorkspaceColumns(
     <Split.Host
       ref={hostRef}
       testID="adaptive-workspace-layout"
-      preferredSplitBehavior="tile"
+      preferredSplitBehavior={layout.primarySidebarOverlaysContent ? "overlay" : "tile"}
       primaryBackgroundStyle={deviceType === "pad" ? "none" : "default"}
       topColumnForCollapsing={compactColumn}
       onCollapse={() => {
@@ -270,9 +280,16 @@ function WorkspaceColumns(
         // collapsed split already carries the sidebar the expanded one will show.
         (layout.usesSplitView ? panes.primarySidebarVisible : panes.primarySidebarWhenExpanded) ||
         (!layout.usesSplitView && !activeDetailKey)
-          ? "oneBesideSecondary"
+          ? layout.primarySidebarOverlaysContent
+            ? "oneOverSecondary"
+            : "oneBesideSecondary"
           : "secondaryOnly"
       }
+      onDisplayModeWillChange={({ nativeEvent }) => {
+        if (!layout.primarySidebarOverlaysContent) return;
+        if (nativeEvent.nextDisplayMode === "oneOverSecondary") setPrimarySidebarVisible(true);
+        else if (nativeEvent.nextDisplayMode === "secondaryOnly") setPrimarySidebarVisible(false);
+      }}
       displayModeButtonVisibility="never"
       presentsWithGesture
       showInspector={inspector.visible}

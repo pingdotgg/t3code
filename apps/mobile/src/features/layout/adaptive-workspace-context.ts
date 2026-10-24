@@ -25,6 +25,7 @@ interface AdaptiveWorkspaceContextValue {
   readonly showAuxiliaryPane: (role: WorkspaceAuxiliaryPaneRole) => void;
   readonly toggleAuxiliaryPane: () => void;
   readonly togglePrimarySidebar: () => void;
+  readonly setPrimarySidebarVisible: (visible: boolean) => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
   /**
    * Android split view while the thread composer has the soft keyboard: the
@@ -61,6 +62,7 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   showAuxiliaryPane: () => undefined,
   toggleAuxiliaryPane: () => undefined,
   togglePrimarySidebar: () => undefined,
+  setPrimarySidebarVisible: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
   composerKeyboardActive: false,
   setComposerEditing: () => undefined,

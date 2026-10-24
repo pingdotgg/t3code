@@ -7,6 +7,7 @@ export const NativeWorkspaceTabActivityContext = createContext<{
   readonly isActive: () => boolean;
 } | null>(null);
 export const NativePrimaryColumnContext = createContext<{
+  readonly presented: boolean;
   readonly selectedThreadKey: string | null;
   readonly selectedPullRequestKey: string | null;
 } | null>(null);

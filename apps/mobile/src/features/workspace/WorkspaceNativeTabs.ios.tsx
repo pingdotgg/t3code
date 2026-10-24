@@ -17,6 +17,7 @@ import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import {
   NATIVE_WORKSPACE_TAB_SLOTS,
   workspaceTabForNativeSlot,
+  workspaceUsesColumns,
   type WorkspaceTab,
 } from "./workspace-tabs-state";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
@@ -162,7 +163,11 @@ export function WorkspaceNativeTabs(props: {
           );
         })}
       </Tabs.Host>
-      {(deviceType === "pad" || compactTabs) && !props.hidden ? (
+      {(deviceType === "pad" ||
+        compactTabs ||
+        (layout.primarySidebarOverlaysContent &&
+          (workspace.settingsOpen || !workspaceUsesColumns(selectedTab)))) &&
+      !props.hidden ? (
         <View
           pointerEvents="box-none"
           style={{

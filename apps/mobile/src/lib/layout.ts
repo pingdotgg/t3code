@@ -51,6 +51,7 @@ export type LayoutVariant = "compact" | "split";
 export interface Layout {
   readonly variant: LayoutVariant;
   readonly usesSplitView: boolean;
+  readonly primarySidebarOverlaysContent: boolean;
   readonly listPaneWidth: number | null;
   readonly listPaneGap?: number;
   readonly shellPadding: number;
@@ -115,6 +116,7 @@ export function deriveLayout(input: {
     return {
       variant: "compact",
       usesSplitView: false,
+      primarySidebarOverlaysContent: false,
       listPaneWidth: null,
       shellPadding: 0,
     };
@@ -130,6 +132,8 @@ export function deriveLayout(input: {
   return {
     variant: "split",
     usesSplitView: true,
+    primarySidebarOverlaysContent:
+      input.nativeWorkspace === true && metrics?.hasHinge === true && width < height,
     listPaneWidth:
       division?.x ??
       clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
@@ -191,9 +195,10 @@ export function deriveWorkspacePaneLayout(input: {
   const auxiliaryPaneRole = input.auxiliaryPaneRole ?? "supplementary";
   const preferredPrimarySidebarVisible =
     input.layout.usesSplitView && input.primarySidebarPreferredVisible;
-  const preferredPrimarySidebarWidth = preferredPrimarySidebarVisible
-    ? (input.layout.listPaneWidth ?? 0) + (input.layout.listPaneGap ?? 0)
-    : 0;
+  const preferredPrimarySidebarWidth =
+    preferredPrimarySidebarVisible && !input.layout.primarySidebarOverlaysContent
+      ? (input.layout.listPaneWidth ?? 0) + (input.layout.listPaneGap ?? 0)
+      : 0;
 
   if (auxiliaryPaneRole === "inspector") {
     const fileInspector = deriveFileInspectorPaneLayout({
@@ -205,6 +210,7 @@ export function deriveWorkspacePaneLayout(input: {
     const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
     const primarySidebarSuppressedByAuxiliary =
       preferredPrimarySidebarVisible &&
+      !input.layout.primarySidebarOverlaysContent &&
       auxiliaryPaneVisible &&
       fileInspector.width !== null &&
       input.layout.listPaneWidth !== null &&
