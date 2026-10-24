@@ -3133,7 +3133,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               </>
             }
             ListFooterComponent={
-              props.pendingHandoff ? (
+              // The server commits the handoff divider with the sent message, so
+              // an undelivered one would leave the stale pending row below it.
+              props.pendingHandoff &&
+              !presentedFeed.some((entry) => entry.pendingMessage !== undefined) ? (
                 <ThreadHandoffDivider
                   environmentId={props.environmentId}
                   endpoints={props.pendingHandoff}
