@@ -43,7 +43,7 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 
 const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
   ProjectFaviconResolver.make.pipe(
-    Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer]),
+    Effect.provide([Layer.fresh(WorkspacePaths.layer), T3ProjectFileLoader.layer]),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
   );
 
@@ -79,6 +79,28 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 
         expect(yield* resolver.resolvePath(cwd)).toBeNull();
       }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("looks up a missing workspace root once within the negative cache window", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = path.join(yield* makeTempDir, "deleted-project");
+        let rootStats = 0;
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) => {
+              if (filePath === cwd) rootStats += 1;
+              return fileSystem.stat(filePath);
+            },
+          }),
+        );
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+        expect(rootStats).toBe(1);
+      }),
     );
 
     it.effect("prefers a t3.json iconPath over well-known files", () =>
