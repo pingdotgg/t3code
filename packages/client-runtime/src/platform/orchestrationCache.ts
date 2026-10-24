@@ -10,7 +10,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
-export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 4 as const;
+// Older caches may contain human turns that bypassed server history budgets.
+export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 5 as const;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),

@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -36,6 +37,11 @@ import {
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
+import {
+  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationThreadSnapshot,
+  decodeOrDiscardOrchestrationCache,
+} from "../platform/orchestrationCache.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
@@ -328,6 +334,65 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect("discards an oversized version-4 cache and requests a fresh bounded snapshot", () =>
+    Effect.gen(function* () {
+      const item: OrchestrationV2TurnItem = {
+        id: TurnItemId.make("old-unbounded-cache-item"),
+        threadId: THREAD_ID,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: BASE_PROJECTION.updatedAt,
+        completedAt: BASE_PROJECTION.updatedAt,
+        updatedAt: BASE_PROJECTION.updatedAt,
+        type: "system_notice",
+        message: "x".repeat(1_100_000),
+      };
+      const schema = Schema.fromJsonString(StoredOrchestrationThreadSnapshot);
+      const encoded = yield* Schema.encodeEffect(schema)({
+        schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+        environmentId: TARGET.environmentId,
+        threadId: THREAD_ID,
+        snapshot: {
+          snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+          projection: { ...BASE_PROJECTION, turnItems: [item] },
+        },
+      });
+      const stale = encoded.replace(
+        `"schemaVersion":${ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION}`,
+        '"schemaVersion":4',
+      );
+      let discarded = false;
+      const h = yield* makeHarness({
+        loadCached: decodeOrDiscardOrchestrationCache(
+          Schema.decodeUnknownEffect(schema)(stale).pipe(
+            Effect.map((stored) => Option.some(stored.snapshot)),
+          ),
+          Effect.sync(() => {
+            discarded = true;
+          }),
+        ),
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+          history: { historyCursor: "fresh-bounded-cursor", hasMoreHistory: true },
+        },
+      });
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(discarded).toBe(true);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(1);
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(state.history.historyCursor).toBe("fresh-bounded-cursor");
+      expect(state.history.hasMoreHistory).toBe(true);
+    }),
+  );
+
   it.effect("loads the server thread when its local cache read fails", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({
@@ -1084,7 +1149,6 @@ describe("EnvironmentThreads", () => {
         historyCursor: "socket-history-cursor",
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 47,
-        payloadBudgetExceeded: false,
       });
 
       const state = yield* awaitThreadState(
@@ -1199,7 +1263,6 @@ describe("EnvironmentThreads", () => {
           historyCursor: "progressive-cursor",
           hasMoreHistory: true,
           latestLocalTurnOrdinal: 47,
-          payloadBudgetExceeded: false,
         });
         yield* awaitThreadState(
           harness.observed,
@@ -1308,7 +1371,6 @@ describe("EnvironmentThreads", () => {
         historyCursor: "compact-cursor",
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 2,
-        payloadBudgetExceeded: false,
         turnItemsOmitLocalVisible: true,
       });
 

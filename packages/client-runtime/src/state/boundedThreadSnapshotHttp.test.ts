@@ -115,7 +115,6 @@ const boundedBody = (compact: boolean) => ({
   historyCursor: "bounded-cursor",
   hasMoreHistory: true,
   latestLocalTurnOrdinal: 2,
-  payloadBudgetExceeded: false,
   ...(compact ? { turnItemsOmitLocalVisible: true } : {}),
 });
 

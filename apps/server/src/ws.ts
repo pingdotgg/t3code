@@ -1968,13 +1968,12 @@ export const layerWsRpc = (
                   rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
                 })
                 .pipe(
-                  Effect.map((snapshot) =>
-                    projectThreadProjectionForWire(
+                  Effect.map(
+                    (snapshot) =>
                       buildBoundedThreadProjection({
-                        projection: snapshot.projection,
+                        projection: projectThreadProjectionForWire(snapshot.projection),
                         snapshotSequence: snapshot.snapshotSequence,
                       }).projection,
-                    ),
                   ),
                   Effect.mapError(
                     (cause) =>

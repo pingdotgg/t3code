@@ -11,9 +11,15 @@ import {
   TRANSFER_MEASURED_MCP_RESULT_BYTES,
   TRANSFER_MEASURED_TOOLS,
 } from "./fixtures/transferBudget.ts";
+import { LONG_TURN_WORK_ROWS } from "./TransferBudgetV2Fixture.integration.ts";
 
 export interface WebSocketCatchUpMeasurement extends WebSocketTransferTotals {
   readonly mode: "replay" | "snapshot";
+}
+
+export interface TimelineHttpMeasurement {
+  readonly http: HttpTransferMeasurement;
+  readonly rows: number;
 }
 
 export interface TransferBudgetRun {
@@ -27,6 +33,9 @@ export interface TransferBudgetRun {
   readonly reconnectShell: WebSocketCatchUpMeasurement;
   readonly measuredTurnSqlStatements: number;
   readonly reconnectSqlStatements: number;
+  /** The compact bounded snapshot web and mobile load when the long-turn thread opens. */
+  readonly longTurnColdOpen: TimelineHttpMeasurement;
+  readonly longTurnHistoryPage: TimelineHttpMeasurement;
 }
 
 interface ProviderTransferBudget {
@@ -48,6 +57,15 @@ const TRANSFER_BUDGET = {
 const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
   codex: TRANSFER_BUDGET,
   claudeAgent: TRANSFER_BUDGET,
+};
+
+// Decoded bytes, not wire bytes: phones parse and keep the decoded JSON. About
+// 30% above the observed 92 KB; without row budgets inside user turns the cold
+// open carried all 920 rows (1.07 MB). Kept apart from TRANSFER_BUDGET because
+// the PR comment validates that object's keys.
+const LONG_TURN_BUDGET = {
+  decodedBytes: 120_000,
+  rows: 75,
 };
 
 function totalWireBytes(run: TransferBudgetRun): number {
@@ -144,6 +162,24 @@ function webSocketRows(
   ];
 }
 
+function longTurnRows(
+  provider: ProviderDriverKind,
+  phase: string,
+  measured: TimelineHttpMeasurement,
+): string[] {
+  return [
+    infoRow(provider, phase, "HTTP wire", measured.http.wireBytes),
+    row(
+      provider,
+      phase,
+      "HTTP decoded",
+      measured.http.decodedBodyBytes,
+      LONG_TURN_BUDGET.decodedBytes,
+    ),
+    row(provider, phase, "rows", measured.rows, LONG_TURN_BUDGET.rows, String),
+  ];
+}
+
 export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>): string[] {
   const violations: string[] = [];
   for (const run of runs) {
@@ -170,6 +206,18 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
         run.measuredTurnWebSocket.messages,
         budget.measuredTurnWebSocketMessages,
       ],
+      [
+        "long-turn cold open decoded bytes",
+        run.longTurnColdOpen.http.decodedBodyBytes,
+        LONG_TURN_BUDGET.decodedBytes,
+      ],
+      ["long-turn cold open rows", run.longTurnColdOpen.rows, LONG_TURN_BUDGET.rows],
+      [
+        "long-turn history page decoded bytes",
+        run.longTurnHistoryPage.http.decodedBodyBytes,
+        LONG_TURN_BUDGET.decodedBytes,
+      ],
+      ["long-turn history page rows", run.longTurnHistoryPage.rows, LONG_TURN_BUDGET.rows],
     ] as const;
     for (const [metric, observed, maximum] of checks) {
       if (observed > maximum) {
@@ -187,6 +235,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
     "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are the SQL client's per-statement spans, counted across V2 persistence and the HTTP/WebSocket handlers.",
     `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Synthetic V2 domain events exercise persistence, wire projection, and production HTTP/subscription handlers; this does not measure provider adapter ingestion. Payloads contain no user data.`,
+    `The long-turn rows open a second thread through the compact bounded snapshot web and mobile use, then load one older page. Its last user turn holds ${LONG_TURN_WORK_ROWS} rows of reasoning, commands, file changes, MCP calls, progress messages, checkpoints, and subagents.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",
@@ -264,6 +313,8 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
         run.reconnectShell,
       ),
       infoRow(run.provider, "reconnect", "SQL statements", run.reconnectSqlStatements, String),
+      ...longTurnRows(run.provider, "long-turn cold open", run.longTurnColdOpen),
+      ...longTurnRows(run.provider, "long-turn history page", run.longTurnHistoryPage),
     );
   }
 

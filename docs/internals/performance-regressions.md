@@ -12,8 +12,11 @@ client can produce reassuring timings while missing the active transport path.
 
 The v2 checks pin these invariants:
 
-- Client cold opens target 75 recent timeline rows and about 1 MiB of encoded data. Required
-  control records and the at-least-one-row rule can exceed the byte target; it is not a hard cap.
+- Cold opens and history pages stop at about 1 MiB of encoded rows. A window that holds a user
+  turn also stops at 10 user turns (20 on older pages) or 500 rows, so ordinary turns stay whole.
+  Any other window, including the inside of one turn longer than 500 rows, stops at 75 rows. The
+  snapshot query applies the same rule before it decodes payloads. Required control records and
+  the at-least-one-row rule can exceed the byte target; it is not a hard cap.
 - The bounded snapshot does not retain the full duplicate conversation-message table.
 - Older activity is fetched in bounded HTTP pages and merged without disturbing the live scroll
   window.
@@ -29,8 +32,10 @@ The v2 checks pin these invariants:
   projects small can increase server allocations on repeated large tool updates.
 - Raw command output, dynamic-tool result bodies, and inline file-change bodies are omitted at
   the wire boundary, including small outputs. Explicit failure flags and bounded result IDs
-  preserve status and grouped action counts without shipping those bodies. Persisted events
-  remain complete; the existing diff endpoints still provide file content when requested.
+  preserve status and grouped action counts without shipping those bodies. Subagent prompts and
+  results, reasoning text, command lines, search results, and checkpoint file lists still ship.
+  Persisted events remain complete; the existing diff endpoints still provide file content when
+  requested.
   Explicit cross-environment transcript exports preserve full tool bodies so the destination
   agent can read the context. The export rejects timeline JSON above the file attachment limit
   before sending it; the client still applies its attachment limit to the complete file.
@@ -57,7 +62,10 @@ transport performance fixtures validate contract encoding and compare pre-compre
 for the same synthetic workload, preserving historical application-object counts separately.
 These are neither compressed WebSocket captures nor measurements of server RSS, and command
 fixtures exclude unrelated settings calls and subscription events. Payload budgets belong in
-these tests so regressions fail locally.
+these tests so regressions fail locally. The transfer budget integration test
+(`apps/server/integration/transferBudgetV2.integration.test.ts`) caps the decoded bytes and rows
+of the compact bounded snapshot that web and mobile load, and of one older page, for a 900-row
+agent turn.
 
 ## Event store and startup
 
