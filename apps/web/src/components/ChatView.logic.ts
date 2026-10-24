@@ -1521,6 +1521,22 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
 
 export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
 
+/** Timeline activity survives a remount without making setup sends busy. */
+export function deriveTimelineWorking(input: {
+  readonly phase: SessionPhase;
+  readonly isSendBusy: boolean;
+  readonly isCompacting: boolean;
+  readonly runlessWorkStartedAt: string | null;
+}): boolean {
+  return (
+    input.phase === "connecting" ||
+    input.phase === "running" ||
+    input.isSendBusy ||
+    input.isCompacting ||
+    input.runlessWorkStartedAt !== null
+  );
+}
+
 /** How a composer send dispatches: where it runs and whether it waits behind other work. */
 export function planComposerTurn(input: {
   readonly messageText: string;
