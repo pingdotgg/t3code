@@ -147,7 +147,13 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const token = "reusable-dev-auth-token-that-is-long-enough";
       const devExchange = yield* serverAuth.createBrowserSession(token, requestMetadata);
-      for (const authorization of ["Bearer invalid", ""] as const) {
+      for (const authorization of [
+        "Bearer invalid",
+        "bearer invalid",
+        "bEaReR invalid",
+        "Basic invalid",
+        "",
+      ] as const) {
         const request = {
           cookies: { [devExchange.cookieName ?? "missing"]: devExchange.sessionToken },
           headers: { authorization },
@@ -584,20 +590,26 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web" }))),
   );
 
-  it.effect("keeps bearer socket upgrades independent of the page origin", () =>
-    Effect.gen(function* () {
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const bearer = yield* serverAuth.issueSession();
-      const verified = yield* serverAuth.authenticateWebSocketUpgrade({
-        url: "/ws",
-        cookies: {},
-        headers: {
-          host: "192.168.1.50:3773",
-          origin: "http://192.168.1.50:8080",
-          authorization: `Bearer ${bearer.token}`,
-        },
-      } as never);
-      expect(verified.sessionId).toBe(bearer.sessionId);
-    }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+  it.effect.each(["Bearer", "bearer", "bEaReR"])(
+    "accepts %s for HTTP and socket upgrades regardless of page origin",
+    (scheme) =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const bearer = yield* serverAuth.issueSession();
+        const request = {
+          url: "/ws",
+          cookies: {},
+          headers: {
+            host: "192.168.1.50:3773",
+            origin: "http://192.168.1.50:8080",
+            authorization: `${scheme} ${bearer.token}`,
+          },
+        } as never;
+        const verified = yield* serverAuth.authenticateWebSocketUpgrade(request);
+        expect(verified.sessionId).toBe(bearer.sessionId);
+        expect((yield* serverAuth.authenticateHttpRequest(request)).sessionId).toBe(
+          bearer.sessionId,
+        );
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
   );
 });
