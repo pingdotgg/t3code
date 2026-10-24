@@ -413,22 +413,23 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        <ToggleGroup
-          aria-label="Usage period"
-          variant="segmented"
-          value={[String(windowDays)]}
-          disabled={showingLimits}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value) selectWindow(Number(value));
-          }}
-        >
-          {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
-              {option.label}
-            </Toggle>
-          ))}
-        </ToggleGroup>
+        {showingLimits ? null : (
+          <ToggleGroup
+            aria-label="Usage period"
+            variant="segmented"
+            value={[String(windowDays)]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value) selectWindow(Number(value));
+            }}
+          >
+            {WINDOW_OPTIONS.map((option) => (
+              <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
+                {option.label}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        )}
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
@@ -465,33 +466,31 @@ export function UsagePage() {
             ))}
           </SelectPopup>
         </Select>
-        <Select
-          value={String(windowDays)}
-          disabled={showingLimits}
-          onValueChange={(value) => selectWindow(Number(value))}
-        >
-          <SelectTrigger
-            aria-label="Usage period"
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
-          >
-            <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {WINDOW_OPTIONS.map((option) => (
-              <SelectItem
-                key={option.days}
-                value={String(option.days)}
-                title={shortcutTitle(option)}
-              >
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+        {showingLimits ? null : (
+          <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+            <SelectTrigger
+              aria-label="Usage period"
+              size="compact"
+              variant="ghost"
+              className="w-auto min-w-0"
+            >
+              <SelectValue>
+                {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {WINDOW_OPTIONS.map((option) => (
+                <SelectItem
+                  key={option.days}
+                  value={String(option.days)}
+                  title={shortcutTitle(option)}
+                >
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        )}
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
@@ -522,22 +521,27 @@ export function UsagePage() {
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
-              <UsageLimitsSection
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                hiddenProviders={hiddenProviders}
-                now={limitsNow}
-                cursorPrompt={
-                  cursorAccessEnvironments.length > 0 ? (
-                    <CursorEnableLimits
-                      environments={cursorAccessEnvironments}
-                      onEnabled={() => {
-                        void refresh();
-                        void refreshLimits(false, true);
-                      }}
-                    />
-                  ) : null
-                }
-              />
+              <>
+                <p className="mb-4 text-xs text-muted-foreground">
+                  Limits show live usage, so the history period applies only to Cost and Tokens.
+                </p>
+                <UsageLimitsSection
+                  selectedEnvironmentIds={selectedEnvironmentIds}
+                  hiddenProviders={hiddenProviders}
+                  now={limitsNow}
+                  cursorPrompt={
+                    cursorAccessEnvironments.length > 0 ? (
+                      <CursorEnableLimits
+                        environments={cursorAccessEnvironments}
+                        onEnabled={() => {
+                          void refresh();
+                          void refreshLimits(false, true);
+                        }}
+                      />
+                    ) : null
+                  }
+                />
+              </>
             ) : shown === null ? (
               <UsageSkeleton />
             ) : !canReadDiagnostics ? (
