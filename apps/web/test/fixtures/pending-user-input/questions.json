@@ -1,0 +1,78 @@
+{
+  "multi": [
+    {
+      "id": "selection-test",
+      "header": "Selection test",
+      "question": "Which command should handle ticket T3-16821? Inspect `git status --short` before proceeding.",
+      "multiSelect": true,
+      "options": [
+        {
+          "label": "Inspect a long command and its harmless temporary working directory",
+          "description": "Run git status --short in /tmp/repro\nKeep ticket T3-16821 pending until review is complete."
+        },
+        {
+          "label": "Wait",
+          "description": "Leave ticket T3-16821 pending"
+        },
+        {
+          "label": "No description",
+          "description": ""
+        },
+        {
+          "label": "Same description",
+          "description": "Same description"
+        }
+      ]
+    }
+  ],
+  "single": [
+    {
+      "id": "single-first",
+      "header": "First question",
+      "question": "Which command should handle ticket T3-16821? Inspect `git status --short` before proceeding.",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Inspect a long command and its harmless temporary working directory",
+          "description": "Run git status --short in /tmp/repro\nKeep ticket T3-16821 pending until review is complete."
+        },
+        {
+          "label": "Wait",
+          "description": "Leave ticket T3-16821 pending"
+        },
+        {
+          "label": "No description",
+          "description": ""
+        },
+        {
+          "label": "Same description",
+          "description": "Same description"
+        }
+      ]
+    },
+    {
+      "id": "single-final",
+      "header": "Final question",
+      "question": "Which harmless choice should finish ticket T3-16821?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Inspect a long command and its harmless temporary working directory",
+          "description": "Run git status --short in /tmp/repro\nKeep ticket T3-16821 pending until review is complete."
+        },
+        {
+          "label": "Wait",
+          "description": "Leave ticket T3-16821 pending"
+        },
+        {
+          "label": "No description",
+          "description": ""
+        },
+        {
+          "label": "Same description",
+          "description": "Same description"
+        }
+      ]
+    }
+  ]
+}

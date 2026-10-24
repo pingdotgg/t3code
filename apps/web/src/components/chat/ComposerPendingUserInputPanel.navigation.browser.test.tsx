@@ -16,6 +16,7 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -180,4 +181,58 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+it("answers an option with Space on keyup, once per press, and not after focus leaves", async () => {
+  const onToggleOption = vi.fn();
+  await using screen = await render(
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[
+        { ...prompt, questions: [{ ...prompt.questions[0]!, multiSelect: true }] },
+      ]}
+      cwd={undefined}
+      threadRef={threadRef}
+      respondingRequestIds={[]}
+      answers={{}}
+      questionIndex={0}
+      onToggleOption={onToggleOption}
+      onAdvance={() => {}}
+      onDismiss={() => {}}
+    />,
+  );
+  const option = screen.getByRole("button", { name: /Incremental/ }).element() as HTMLElement;
+  const key = (type: "keydown" | "keyup", key: string, repeat = false) =>
+    act(() => {
+      option.dispatchEvent(new KeyboardEvent(type, { key, repeat, bubbles: true }));
+    });
+
+  option.focus();
+  await key("keydown", " ");
+  await key("keydown", " ", true);
+  await key("keydown", " ", true);
+  expect(onToggleOption).not.toHaveBeenCalled();
+  await key("keyup", " ");
+  expect(onToggleOption).toHaveBeenCalledTimes(1);
+
+  await key("keydown", " ");
+  await act(() => option.blur());
+  option.focus();
+  await key("keyup", " ");
+  expect(onToggleOption).toHaveBeenCalledTimes(1);
+
+  await key("keydown", "Enter");
+  expect(onToggleOption).toHaveBeenCalledTimes(2);
+
+  const modifiedEnter = new KeyboardEvent("keydown", {
+    key: "Enter",
+    metaKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(() => {
+    option.dispatchEvent(modifiedEnter);
+  });
+  expect(modifiedEnter.defaultPrevented).toBe(false);
+  expect(onToggleOption).toHaveBeenCalledTimes(2);
 });
