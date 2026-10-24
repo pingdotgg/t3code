@@ -5541,6 +5541,84 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       assert.instanceOf(invalidVisit, Orchestrator.OrchestratorDispatchError);
     }),
   );
+
+  it.effect("marks unread from the latest run when a newer queued message is held", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const projectId = ProjectId.make("runtime-layer-held-unread-project");
+      const threadId = ThreadId.make("runtime-layer-held-unread-thread");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-held-unread-project-create"),
+        projectId,
+        title: "Held queue unread",
+        workspaceRoot: "/tmp/runtime-layer-held-unread-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-held-unread-thread-create"),
+        threadId,
+        projectId,
+        title: "Held queue thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      for (const [index, type] of (["defer_start", "queue_after_active"] as const).entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-held-unread-message-${index}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-held-unread-message-${index}`),
+          text: index === 0 ? "Finished work" : "Held follow-up",
+          attachments: [],
+          dispatchMode: { type },
+        });
+      }
+      const [finished, held] = (yield* orchestrator.getThreadProjection(threadId)).runs as [
+        OrchestrationV2Run,
+        OrchestrationV2Run,
+      ];
+      const completedAt = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-held-unread-hold"),
+            type: "run.updated",
+            threadId,
+            occurredAt: completedAt,
+            payload: { ...held, queueHeld: true },
+          },
+          {
+            id: EventId.make("runtime-layer-held-unread-complete"),
+            type: "run.updated",
+            threadId,
+            occurredAt: completedAt,
+            payload: { ...finished, status: "completed", completedAt },
+          },
+        ],
+      });
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (candidate) => candidate.id === threadId,
+      );
+      assert.equal(shell?.latestRunId, finished.id);
+
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("runtime-layer-held-unread-mark-unread"),
+        threadId,
+      });
+      const { thread } = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(thread.lastVisitedAt, DateTime.subtract(completedAt, { milliseconds: 1 }));
+    }),
+  );
 });
 
 it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("compact PR events", (it) => {
