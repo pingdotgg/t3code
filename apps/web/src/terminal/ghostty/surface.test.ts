@@ -511,6 +511,57 @@ const cell = (text: string): GhosttyCell => ({
 });
 
 describe("terminalLinkAtPositionWithRange", () => {
+  it.each(["https://example.com/日本", "src/日本/main.ts:3:1", "https://example.com/🙂"])(
+    "keeps both cells of wide characters in %s clickable",
+    (text) => {
+      const cells = Array.from(text).flatMap((character) =>
+        /[日本🙂]/u.test(character)
+          ? [
+              { ...cell(character), wide: 1 },
+              { ...cell(""), wide: 2 },
+            ]
+          : [cell(character)],
+      );
+      const row: GhosttyRow = { cells, text, isWrapContinuation: false, wrapsToNext: false };
+      for (let column = 0; column < cells.length; column += 1) {
+        expect(terminalLinkAtPositionWithRange([row], 0, column)).toEqual({
+          text,
+          range: { start: { x: 0, y: 0 }, end: { x: cells.length - 1, y: 0 } },
+        });
+      }
+    },
+  );
+
+  it("skips a wide-character wrap placeholder but preserves an actual blank", () => {
+    const prefix = "https://example.com/";
+    const rows: GhosttyRow[] = [
+      {
+        cells: [...Array.from(prefix, cell), { ...cell(""), wide: 3 }],
+        text: prefix,
+        isWrapContinuation: false,
+        wrapsToNext: true,
+      },
+      {
+        cells: [
+          { ...cell("日"), wide: 1 },
+          { ...cell(""), wide: 2 },
+          cell(""),
+          ...Array.from("next", cell),
+        ],
+        text: "日 next",
+        isWrapContinuation: true,
+        wrapsToNext: false,
+      },
+    ];
+    for (const column of [0, 1]) {
+      expect(terminalLinkAtPositionWithRange(rows, 1, column)).toEqual({
+        text: `${prefix}日`,
+        range: { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } },
+      });
+    }
+    expect(terminalLinkAtPositionWithRange(rows, 1, 2)).toBeNull();
+  });
+
   it("activates a wrapped quoted Windows path from its spaces and position suffix", () => {
     const row = (text: string, isWrapContinuation: boolean): GhosttyRow => ({
       cells: Array.from(text, (character) => cell(character)),
