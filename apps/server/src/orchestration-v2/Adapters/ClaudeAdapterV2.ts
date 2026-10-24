@@ -2449,6 +2449,17 @@ function isClaudeRootTurnFrame(message: SDKMessage): boolean {
   );
 }
 
+// One stable id per native thread: a new ScheduleWakeup replaces the pending one.
+const CLAUDE_SCHEDULED_WAKEUP_TASK: OrchestrationV2PendingBackgroundTask = {
+  taskId: "claude-scheduled-wakeup",
+  kind: "background_task",
+  description: "Scheduled wakeup",
+};
+
+// Claude Code jitters one-shot wakeups early but never before the requested time, which is at
+// most 60 s before the minute-rounded scheduledFor it reports; the rest is slack.
+const CLAUDE_SCHEDULED_WAKEUP_EARLY_FIRE_MARGIN_MS = 120_000;
+
 function claudePendingBackgroundTasksFromRoster(
   roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
 ): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
@@ -4267,6 +4278,60 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return { ...current, calls };
           });
         };
+        // ScheduleWakeup reports no background task: its tool result is the only sign that Claude
+        // will start a turn by itself, and Claude keeps one pending wakeup per session. It stays
+        // out of pendingBackgroundTasksByNativeThread because a wakeup must not refuse a model or
+        // mode change; replacing the process cancels it, and that clears this record too.
+        const scheduleWakeupCalls = new Set<string>();
+        const scheduledWakeupsByNativeThread = new Map<string, number>();
+        const trackClaudeScheduledWakeup = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+          message: SDKMessage,
+        ) {
+          if (isClaudeTurnStartMessage(message)) {
+            const scheduledFor = scheduledWakeupsByNativeThread.get(nativeThreadId);
+            if (scheduledFor === undefined) return;
+            // A turn Claude starts by itself near scheduledFor is the wake; a task notification
+            // also starts one, so an idle turn well before scheduledFor leaves the wakeup pending.
+            const earliestWake =
+              (yield* Ref.get(activeTurn)) === null
+                ? scheduledFor - CLAUDE_SCHEDULED_WAKEUP_EARLY_FIRE_MARGIN_MS
+                : scheduledFor;
+            if (DateTime.toEpochMillis(yield* DateTime.now) >= earliestWake) {
+              scheduledWakeupsByNativeThread.delete(nativeThreadId);
+            }
+            return;
+          }
+          for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
+            if (toolUse.name === "ScheduleWakeup") scheduleWakeupCalls.add(toolUse.id);
+          }
+          if (message.type !== "user") return;
+          const returned = claudeToolResultBlocksFromUserMessage(message).filter((toolResult) =>
+            scheduleWakeupCalls.delete(toolResult.tool_use_id),
+          );
+          if (returned.length === 0) return;
+          const result = message.tool_use_result;
+          const scheduledFor =
+            returned.length === 1 && typeof result === "object" && result !== null
+              ? Reflect.get(result, "scheduledFor")
+              : undefined;
+          // stop:true reports scheduledFor 0. A failed call also clears: losing the hold early
+          // is recoverable, a hold that outlives its wakeup is not.
+          if (typeof scheduledFor === "number" && scheduledFor > 0) {
+            scheduledWakeupsByNativeThread.set(nativeThreadId, scheduledFor);
+          } else {
+            scheduledWakeupsByNativeThread.delete(nativeThreadId);
+          }
+        });
+        const publishedPendingBackgroundTasks = (
+          nativeThreadId: string | null,
+          roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
+        ): ReadonlyArray<OrchestrationV2PendingBackgroundTask> => {
+          const tasks = claudePendingBackgroundTasksFromRoster(roster);
+          return nativeThreadId !== null && scheduledWakeupsByNativeThread.has(nativeThreadId)
+            ? [...tasks, CLAUDE_SCHEDULED_WAKEUP_TASK]
+            : tasks;
+        };
         const isClaudeMonitorTask = (input: {
           readonly nativeThreadId: string;
           readonly taskId: string;
@@ -4573,7 +4638,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...input.providerThread,
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
-            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
+            pendingBackgroundTasks: publishedPendingBackgroundTasks(input.nativeThreadId, roster),
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
               : {}),
@@ -4756,6 +4821,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const preservedOpaqueTombstones = [...priorOpaqueTombstones].filter((taskId) =>
             bufferedTaskNotificationIds.has(taskId),
           );
+          scheduledWakeupsByNativeThread.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
           yield* clearNativeThreadTaskIdSet(
             wakeEligibleBackgroundTasksByNativeThread,
@@ -6836,6 +6902,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
                 if (nativeThreadId !== null) {
                   if (input.status !== "completed") {
+                    // Stop cancels Claude's wakeup and an exited process loses it; a failed
+                    // turn on a live process leaves it pending. Process exits null the query first.
+                    if (input.status !== "failed" || (yield* Ref.get(queryContext)) === null) {
+                      scheduledWakeupsByNativeThread.delete(nativeThreadId);
+                    }
                     yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
                     yield* clearNativeThreadTaskIdSet(
                       wakeEligibleBackgroundTasksByNativeThread,
@@ -6891,7 +6962,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context.input.providerThread.firstRunOrdinal ??
                     input.context.input.runOrdinal,
                   lastRunOrdinal: input.context.input.runOrdinal,
-                  pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
+                  pendingBackgroundTasks: publishedPendingBackgroundTasks(nativeThreadId, roster),
                   status: input.status === "completed" ? "active" : "idle",
                   updatedAt: input.completedAt,
                 };
@@ -7450,6 +7521,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
           yield* trackClaudeMonitorCalls(message);
+          yield* trackClaudeScheduledWakeup(liveQuery.nativeThreadId, message);
           // Before routing too: the wake gate reads it while the root is idle.
           if (
             message.type === "system" &&
@@ -10068,6 +10140,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
+            // A wakeup can be up to an hour out, past the idle timeout, and dies with the process.
+            if (scheduledWakeupsByNativeThread.size > 0) {
+              return true;
+            }
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
               if (roster.size > 0) {
                 return true;
