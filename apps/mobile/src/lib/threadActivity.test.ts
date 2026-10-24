@@ -76,6 +76,33 @@ it("keeps historical plan detail accessible from its paged turn item", () => {
   expect(presented[2]).toMatchObject({ activities: [{ projectedItem: { item } }] });
 });
 
+it("shows a page an execute script returned only when it was published for the row's thread", () => {
+  const executeCall = (id: string, thread: string) =>
+    ({
+      ...base(id, "2026-06-20T00:00:02.000Z", 1),
+      type: "dynamic_tool",
+      toolName: "execute",
+      input: { code: "return await tools.render()" },
+      output: JSON.stringify({
+        htmlRender: {
+          attachmentId: `${thread}-00000000-0000-4000-8000-000000000001-html`,
+          title: "Chart",
+          height: 420,
+        },
+      }),
+    }) as OrchestrationV2TurnItem;
+  const pages = (rows: OrchestrationV2ProjectedTurnItem[]) =>
+    buildThreadFeed(rows).flatMap((entry) => (entry.type === "html-render" ? [entry.id] : []));
+
+  expect(pages([projected(executeCall("own", threadId), 0)])).toHaveLength(1);
+  expect(pages([projected(executeCall("foreign", "thread-2"), 0)])).toEqual([]);
+  // An inherited row is checked against the thread it came from, not the one showing it.
+  expect(pages([projected(executeCall("inherited", sourceThreadId), 0, "inherited")])).toHaveLength(
+    1,
+  );
+  expect(pages([projected(executeCall("inherited-local", threadId), 0, "inherited")])).toEqual([]);
+});
+
 function base(id: string, updatedAt: string, ordinal: number) {
   const timestamp = DateTime.makeUnsafe(updatedAt);
   return {

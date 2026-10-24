@@ -10,6 +10,7 @@ import {
   type HtmlRenderReference,
 } from "./htmlRender.ts";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference, type McpAppReference } from "./mcpApp.ts";
+import { attachmentIdBelongsToThread } from "./attachmentIds.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
@@ -75,12 +76,9 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     let data: ResultEnvelope["data"];
     let failed = false;
     for (const block of value) {
-      const text = Predicate.isObject(block) ? block.text : undefined;
-      const result = readResult(
-        Predicate.isObject(text) ? (text.text ?? text) : text,
-        budget,
-        depth + 1,
-      );
+      const content = Predicate.isObject(block) ? (block.text ?? block.content) : block;
+      const text = Predicate.isObject(content) ? (content.text ?? content) : content;
+      const result = readResult(text, budget, depth + 1);
       data ??= result.data;
       failed ||= result.failed;
       if (budget.exceeded) break;
@@ -98,6 +96,28 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     const nested = readResult(content, budget, depth + 1);
     return { ...nested, failed: failed || nested.failed };
   }
+  // Bare MCP text blocks (`{ type: "text", text: "<json>" }`) carry the
+  // result as a string with no envelope keys. Some ACP agents (CodeBuddy)
+  // persist the block itself, so parse its text but keep the object when
+  // the text holds no result data. The `type` gate keeps ordinary objects
+  // that happen to have a text note (e.g. `{ threadId, text: "{...}" }`)
+  // on the existing path so outer metadata is preserved. The text parses
+  // on an isolated budget so an oversized text field cannot invalidate
+  // outer metadata through the shared exceeded flag.
+  if (value.type === "text" && typeof value.text === "string") {
+    const textBudget: ResultReadBudget = {
+      remainingBytes: MAX_PARSED_BYTES,
+      remainingNodes: MAX_ENVELOPE_NODES,
+      exceeded: false,
+    };
+    const nested = readResult(value.text, textBudget, depth + 1);
+    // An empty parse (e.g. text "{}") carries no result: fall through so
+    // outer metadata such as threadId is preserved.
+    const nestedHasData = nested.data !== undefined && Object.keys(nested.data).length > 0;
+    if (!textBudget.exceeded && (nestedHasData || nested.failed)) {
+      return { ...nested, failed: failed || nested.failed };
+    }
+  }
   return { data: value, failed };
 }
 
@@ -106,6 +126,17 @@ function boundedId(value: unknown): string | undefined {
     return undefined;
   }
   return Array.from(value).join("");
+}
+
+/**
+ * A Code Mode script can return `html_render`'s reference on its own
+ * (`return out.htmlRender`). Only ids `html_render` mints end in `-html`, so
+ * an unrelated object with the same fields is not taken for a page.
+ */
+function readBareHtmlRenderReference(data: Record<PropertyKey, unknown>) {
+  return typeof data.attachmentId === "string" && data.attachmentId.endsWith("-html")
+    ? readHtmlRenderReference(data)
+    : undefined;
 }
 
 export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
@@ -123,7 +154,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
-    const htmlRender = readHtmlRenderReference(data.htmlRender);
+    const htmlRender =
+      readHtmlRenderReference(data.htmlRender) ?? readBareHtmlRenderReference(data);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
     if (mcpApp !== undefined) output[MCP_APP_OUTPUT_KEY] = mcpApp;
@@ -177,13 +209,27 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
-export function htmlRenderFromToolItem(item: {
-  readonly toolName: string | null | undefined;
-  readonly output?: unknown;
-}): HtmlRenderReference | undefined {
-  if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+/**
+ * `threadId` is the thread the item belongs to. OpenCode 2 Code Mode runs T3
+ * tools inside `execute`, whose output is whatever the agent's script
+ * returned, so a reference read from it only counts when its page was
+ * published for that thread.
+ */
+export function htmlRenderFromToolItem(
+  item: {
+    readonly toolName: string | null | undefined;
+    readonly output?: unknown;
+  },
+  threadId?: string,
+): HtmlRenderReference | undefined {
+  const fromScript = item.toolName === "execute";
+  if (!fromScript && resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
-  return output?.isError ? undefined : output?.htmlRender;
+  const render = output?.isError ? undefined : output?.htmlRender;
+  if (render === undefined || !fromScript) return render;
+  return threadId !== undefined && attachmentIdBelongsToThread(render.attachmentId, threadId)
+    ? render
+    : undefined;
 }
 
 /**

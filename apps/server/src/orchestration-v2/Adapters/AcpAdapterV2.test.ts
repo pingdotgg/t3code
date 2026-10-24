@@ -77,6 +77,7 @@ import {
   acpScopedNativeId,
   acpPostSettleContinuationOfferEvidence,
   acpPostSettleWakeEvidence,
+  acpMcpToolCallOutput,
   acpToolCallDiffPatch,
   makeAcpAdapterV2,
   type AcpAdapterV2ExtensionContext,
@@ -107,6 +108,35 @@ const layerTest = Layer.mergeAll(
 const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
+describe("acpMcpToolCallOutput", () => {
+  it("unwraps codex-acp result/content envelopes", () => {
+    const content = [{ type: "text", text: '{"ok":true}' }];
+    assert.deepStrictEqual(acpMcpToolCallOutput({ result: { content } }), content);
+    assert.deepStrictEqual(acpMcpToolCallOutput({ result: { structuredContent: { ok: true } } }), {
+      ok: true,
+    });
+  });
+
+  it("unwraps Grok's OkayOutput result string", () => {
+    const inner = JSON.stringify({
+      htmlRender: { attachmentId: "t-html", title: "T", height: 100 },
+    });
+    assert.strictEqual(
+      acpMcpToolCallOutput({
+        type: "MCP",
+        tool_name: "html_render",
+        server_name: "t3-code",
+        output: { OkayOutput: inner },
+      }),
+      inner,
+    );
+    // Non-string or missing OkayOutput passes through untouched.
+    const other = { type: "MCP", output: { OkayOutput: { nested: true } } };
+    assert.strictEqual(acpMcpToolCallOutput(other), other);
+    const plain = { htmlRender: { attachmentId: "t-html" } };
+    assert.strictEqual(acpMcpToolCallOutput(plain), plain);
+  });
+});
 describe("acpToolCallDiffPatch", () => {
   it("builds a patch per file from ACP v1 oldText/newText, with /dev/null for a new file", () => {
     assert.equal(
