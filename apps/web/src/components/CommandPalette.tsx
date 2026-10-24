@@ -1540,7 +1540,22 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:pull-requests",
-      searchTerms: ["pull requests", "prs", "pr", "github", "review", "merge", "branch"],
+      searchTerms: [
+        ...new Set(
+          sourceControlClients.definitions.flatMap((definition) => {
+            const shortLabel = definition.changeRequest.shortLabel.toLowerCase();
+            return [
+              `${definition.changeRequest.singular}s`,
+              `${shortLabel}s`,
+              shortLabel,
+              ...definition.label.toLowerCase().split(/[^a-z0-9]+/u),
+            ].filter(Boolean);
+          }),
+        ),
+        "review",
+        "merge",
+        "branch",
+      ],
       title: "Open pull requests",
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {

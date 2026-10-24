@@ -11,6 +11,7 @@ export {
   type ChangeRequestLink,
   type ChangeRequestTerminology,
   type ParsedChangeRequestUrl,
+  type ReferenceAutolink,
   type SourceControlClientDefinition,
 } from "@t3tools/source-control-core/client/definition";
 import * as Forgejo from "@t3tools/source-control-forgejo/client/definition";

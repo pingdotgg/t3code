@@ -1015,10 +1015,11 @@ export function pullRequestHostActions(
         : [[provider.host.toLowerCase(), new Set(provider.actions)] as const],
     ),
   );
-  const legacy = new Set<PullRequestAction>(["close", "merge", "ready", "reopen"]);
   const none = new Set<PullRequestAction>();
   return (entry) =>
-    byHost.get(entry.host.toLowerCase()) ?? (entry.provider === "github" ? legacy : none);
+    byHost.get(entry.host.toLowerCase()) ??
+    sourceControlClients.find(entry.provider)?.changeRequestActionsWhenUnreported ??
+    none;
 }
 
 export function pullRequestQuickActions(
@@ -1042,7 +1043,9 @@ export function largestPullRequestReadCount(
   const counts = new Map<string, number>();
   for (const entry of entries) {
     const read = `${entry.environmentId} ${entry.host.toLowerCase()} ${
-      entry.provider === "github" ? "" : entry.repository.toLowerCase()
+      sourceControlClients.find(entry.provider)?.changeRequestListScope === "host"
+        ? ""
+        : entry.repository.toLowerCase()
     }`;
     counts.set(read, (counts.get(read) ?? 0) + 1);
   }

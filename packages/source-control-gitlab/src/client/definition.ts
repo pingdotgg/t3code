@@ -48,7 +48,6 @@ export const definition = defineSourceControlClient({
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
   changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|close)\b/u,
   authorProfileUrl: () => null,
-  referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),

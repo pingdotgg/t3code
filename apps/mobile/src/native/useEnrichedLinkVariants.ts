@@ -13,7 +13,7 @@ import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
-import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
+import { resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
 import type {
   MarkdownLinkCustomization,
   SelectableMarkdownTextProps,
@@ -83,11 +83,11 @@ function presentation(
       icon: markdownFileIconSource(link.icon),
       chip: { accent: contextChipPresentation("mention").accent, tintsIcon: false },
     };
-  const icon = link.kind === "external" ? resolveMarkdownLinkIcon(link.host) : null;
+  const icon = link.kind === "external" ? markdownLinkIconSource(link.host) : null;
   return icon
     ? {
         color: props.textStyle.linkColor,
-        icon: markdownLinkIconSource(icon),
+        icon,
         iconTintColor: props.textStyle.linkColor,
       }
     : undefined;

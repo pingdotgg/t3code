@@ -118,6 +118,25 @@ describe("toChangeRequest", () => {
     assert.strictEqual(row.author?.login, "remote-user");
     assert.deepStrictEqual(row.reviewRequestLogins, ["alice", "upstream", "linked-local"]);
   });
+
+  it("marks a mirrored GitHub bot account as a bot", () => {
+    const row = (accountType: string) =>
+      GitCafePullRequestJson.toChangeRequest(
+        decodePull({
+          ...pull,
+          author: {
+            kind: "github",
+            actorId: "act_bot",
+            login: "coderabbitai[bot]",
+            accountType,
+            avatarUrl: null,
+          },
+        }),
+        { repository: "owner/repo", host: "git.cafe" },
+      );
+    assert.isTrue(row("bot").author?.isBot);
+    assert.isUndefined(row("user").author?.isBot);
+  });
 });
 
 describe("toViewerPermissions", () => {

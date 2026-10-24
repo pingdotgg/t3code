@@ -1,6 +1,9 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ReferenceAutolink,
+} from "@t3tools/client-runtime/source-control-clients";
 import {
   SOURCE_CONTROL_MEDIA_ASSET,
   type AssetResource,
@@ -19,7 +22,7 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
-  repositoryUrl: string | null;
+  autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -66,10 +69,10 @@ export function PullRequestMarkdown({
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
-  const repositoryUrl = context?.repositoryUrl;
+  const autolinks = context?.autolinks;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = repositoryUrl
-    ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
+  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = autolinks
+    ? [[remarkPullRequestAutolinks, { autolinks }]]
     : [];
   return (
     <div

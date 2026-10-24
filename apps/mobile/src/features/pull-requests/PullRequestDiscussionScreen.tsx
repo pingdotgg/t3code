@@ -124,10 +124,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const canReply = permissions.canReply && Boolean(thread);
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
-    <PullRequestMarkdownRepository
-      params={params}
-      value={detail.data?.provider === "github" ? detail.data.url : null}
-    >
+    <PullRequestMarkdownRepository params={params} changeRequest={detail.data}>
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
         <NativeStackScreenOptions
           options={{ title: "Discussion", unstable_headerSubtitle: `#${params.number}` }}

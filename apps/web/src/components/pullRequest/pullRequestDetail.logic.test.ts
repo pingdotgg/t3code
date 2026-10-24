@@ -54,6 +54,7 @@ import {
   resolveBaseFreshness,
   buildPullRequestTimeline,
   writePullRequestDetailSnapshot,
+  readableFailure,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -1497,4 +1498,19 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
+});
+
+describe("readableFailure", () => {
+  it("replaces a host tool's bare failure with the hint, for every host", () => {
+    for (const message of [
+      "GitHub CLI failed.",
+      "Azure DevOps API failed",
+      "Forgejo command failed",
+    ]) {
+      expect(readableFailure(new Error(message), "Try again.")).toBe("Try again.");
+    }
+    expect(readableFailure(new Error("Branch is protected."), "Try again.")).toBe(
+      "Branch is protected.",
+    );
+  });
 });

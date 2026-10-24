@@ -84,6 +84,16 @@ export interface SourceControlMediaUrl {
   readonly kind?: "image" | "video";
 }
 
+export interface ReferenceAutolink {
+  /** Where `text` starts in the string that was searched. */
+  readonly index: number;
+  readonly text: string;
+  /** What to show for the link, which can be shorter than `text`, as for a commit SHA. */
+  readonly label: string;
+  readonly url: string;
+  readonly kind: "reference" | "commit" | "mention";
+}
+
 export interface SourceControlClientDefinition {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
@@ -117,7 +127,28 @@ export interface SourceControlClientDefinition {
    */
   readonly changeRequestCloseCommand?: RegExp;
   readonly authorProfileUrl: (login: string, repositoryUrl: string) => string | null;
-  readonly referenceAutolinkRepositoryUrl: (repositoryUrl: string) => string | null;
+  /**
+   * The references this host's own renderer links in plain text, such as `#12` or a commit SHA,
+   * resolved against `repositoryUrl`, in the order they appear. Absent for a host whose grammar
+   * T3 does not apply.
+   */
+  readonly referenceAutolinks?: (
+    text: string,
+    repositoryUrl: string,
+  ) => ReadonlyArray<ReferenceAutolink>;
+  /** Where the host lists a change request's checks. Absent means the change request's own page. */
+  readonly changeRequestChecksUrl?: (changeRequestUrl: string) => string;
+  /**
+   * The actions a server too old to report `capabilities.actions` could still take on this host's
+   * change requests. Absent means none.
+   */
+  readonly changeRequestActionsWhenUnreported?: ReadonlySet<PullRequestAction>;
+  /**
+   * `host` when the server lists change requests in many repositories on this host with one read,
+   * so a page's size bounds the rows of every repository together. Absent means one read per
+   * repository.
+   */
+  readonly changeRequestListScope?: "host" | "repository";
   readonly reviewSummaryRequired: (verdict: PullRequestReviewVerdict) => boolean;
   readonly checkoutCommandArgument: (input: string) => string | null;
   readonly isChangeRequestReference: (url: string) => boolean;
@@ -346,7 +377,6 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   changeRequestActions: new Set(),
   checkoutCommand: () => null,
   authorProfileUrl: () => null,
-  referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
@@ -376,6 +406,11 @@ export interface SourceControlClientRegistry {
   readonly get: (kind: string | null | undefined) => SourceControlClientDefinition;
   readonly find: (kind: string) => SourceControlClientDefinition | undefined;
   readonly findByPublicHost: (hostname: string) => SourceControlClientDefinition | undefined;
+  /**
+   * The host whose `publicHost` is `hostname` or a parent domain of it, such as GitHub for
+   * `gist.github.com`: which host a link is on, not one T3 can read from.
+   */
+  readonly findByPublicDomain: (hostname: string) => SourceControlClientDefinition | undefined;
   /** The first host, in registry order, that reads `url` as one of its change requests. */
   readonly parseChangeRequestUrl: (url: string) => ParsedChangeRequest | null;
   readonly findByChangeRequestUrl: (url: string) => SourceControlClientDefinition | undefined;
@@ -470,6 +505,14 @@ export function makeSourceControlClientRegistry(
     findByPublicHost: (hostname) => {
       const host = hostname.toLowerCase();
       return definitions.find((definition) => definition.publicHost === host);
+    },
+    findByPublicDomain: (hostname) => {
+      const host = hostname.toLowerCase();
+      return definitions.find(
+        (definition) =>
+          definition.publicHost !== null &&
+          (host === definition.publicHost || host.endsWith(`.${definition.publicHost}`)),
+      );
     },
     parseChangeRequestUrl,
     findByChangeRequestUrl: (url) => parseChangeRequestUrl(url)?.definition,

@@ -1102,8 +1102,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
       const pullRequestCopy =
         pullRequestAutolink === "commit"
-          ? /\/commit\/([0-9a-f]{40})$/iu.exec(href ?? "")?.[1]
-          : pullRequestAutolink === "reference"
+          ? /\/commit\/([0-9a-f]{7,40})$/iu.exec(href ?? "")?.[1]
+          : pullRequestAutolink === "reference" || pullRequestAutolink === "mention"
             ? plainHastText(node)
             : undefined;
       const isPullRequestAutolink = pullRequestCopy !== undefined;

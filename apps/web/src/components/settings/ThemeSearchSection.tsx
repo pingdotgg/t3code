@@ -1,6 +1,7 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   importOpenVsxThemeExtension,
   searchOpenVsxThemes,
@@ -14,7 +15,7 @@ import {
   replaceCustomThemeCollection,
   type ThemeDefinition,
 } from "../../themePalette";
-import { GitHubIcon, GitLabIcon } from "../Icons";
+import { sourceControlIcon } from "../../sourceControlPresentation";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -51,13 +52,11 @@ function sourceHost(url: string): string | null {
   }
 }
 
-function SourceLinkIcon({ url }: { url: string }) {
+function sourceLinkIcon(url: string): ReactNode {
   const host = sourceHost(url);
-  if (host === "github.com" || host?.endsWith(".github.com"))
-    return <GitHubIcon className="size-3.5" />;
-  if (host === "gitlab.com" || host?.endsWith(".gitlab.com"))
-    return <GitLabIcon className="size-3.5" monochrome />;
-  return <ExternalLinkIcon className="size-3.5" />;
+  const definition = host === null ? undefined : sourceControlClients.findByPublicDomain(host);
+  const Icon = definition ? sourceControlIcon(definition) : ExternalLinkIcon;
+  return <Icon className="size-3.5" />;
 }
 
 function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
@@ -415,7 +414,7 @@ export function ThemeSearchSection({
                           size="icon-micro"
                           variant="ghost-muted"
                         >
-                          <SourceLinkIcon url={extension.sourceUrl} />
+                          {sourceLinkIcon(extension.sourceUrl)}
                         </Button>
                       ) : null}
                     </div>

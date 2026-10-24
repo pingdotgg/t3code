@@ -202,12 +202,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   const statsKey = JSON.stringify(
     targets.flatMap(({ environmentId }) => {
       const refs = visibleRows
-        .filter(
-          (row) =>
-            row.environmentId === environmentId &&
-            row.provider === "github" &&
-            row.additions + row.deletions === 0,
-        )
+        .filter((row) => row.environmentId === environmentId && row.additions + row.deletions === 0)
         .map(({ projectId, host, repository, number }) => ({
           projectId,
           host,

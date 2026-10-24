@@ -37,6 +37,7 @@ const Actor = Schema.Union([
     actorId: Schema.String,
     login: TrimmedNonEmptyString,
     avatarUrl: Schema.NullOr(Schema.String),
+    accountType: Schema.optional(Schema.NullOr(Schema.String)),
     linkedProfile: Schema.optional(
       Schema.NullOr(
         Schema.Struct({ handle: TrimmedNonEmptyString, actorId: Schema.optional(Schema.String) }),
@@ -300,7 +301,11 @@ function toActor(actor: Actor, host: string): PullRequestActor | null {
   return {
     login: actor.kind === "local" ? actor.handle : actor.login,
     name: actor.kind === "local" ? actor.displayName : null,
-    ...(actor.kind === "local" && actor.bot === true ? { isBot: true } : {}),
+    // A mirrored GitHub account says it is a bot by its account type, not its login.
+    ...((actor.kind === "local" && actor.bot === true) ||
+    (actor.kind === "github" && actor.accountType === "bot")
+      ? { isBot: true }
+      : {}),
     // GitCafe serves its own avatars by path, so a relative one is read against the host.
     avatarUrl: actor.avatarUrl === null ? null : new URL(actor.avatarUrl, `https://${host}`).href,
   };

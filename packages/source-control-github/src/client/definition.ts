@@ -19,6 +19,7 @@ import {
 } from "@t3tools/source-control-core/client/definition";
 
 import { gitHubMediaUrl } from "./gitHubMedia.ts";
+import { gitHubReferenceAutolinks } from "./referenceAutolinks.ts";
 
 const CHECKOUT_COMMAND = /^gh\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
@@ -117,7 +118,12 @@ export const definition = defineSourceControlClient({
     login.endsWith("[bot]")
       ? null
       : new URL(`/${encodeURIComponent(login)}`, repositoryUrl).toString(),
-  referenceAutolinkRepositoryUrl: (repositoryUrl) => repositoryUrl,
+  referenceAutolinks: gitHubReferenceAutolinks,
+  changeRequestChecksUrl: (changeRequestUrl) => `${changeRequestUrl.replace(/\/+$/u, "")}/checks`,
+  // Before servers reported their actions, GitHub was the only host they acted on from a list.
+  changeRequestActionsWhenUnreported: new Set(["close", "merge", "ready", "reopen"] as const),
+  // One search reads every repository on the host.
+  changeRequestListScope: "host",
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),

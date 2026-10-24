@@ -1,11 +1,13 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { ImageSourcePropType } from "react-native";
 
-import type { MarkdownLinkIcon } from "./markdownLinks";
-
-const MARKDOWN_LINK_ICON_SOURCES = {
+// The native renderer draws a link's icon from an image, so a host's mark is a bundled image keyed
+// by its definition's `icon`. A host without one keeps a plain link.
+const SOURCE_CONTROL_LINK_ICON_SOURCES: Partial<Record<string, ImageSourcePropType>> = {
   github: require("../../assets/link-icons/github.png"),
-} as const satisfies Readonly<Record<MarkdownLinkIcon, ImageSourcePropType>>;
+};
 
-export function markdownLinkIconSource(icon: MarkdownLinkIcon): ImageSourcePropType {
-  return MARKDOWN_LINK_ICON_SOURCES[icon];
+export function markdownLinkIconSource(host: string): ImageSourcePropType | null {
+  const icon = sourceControlClients.findByPublicDomain(host)?.icon;
+  return (icon === undefined ? undefined : SOURCE_CONTROL_LINK_ICON_SOURCES[icon]) ?? null;
 }

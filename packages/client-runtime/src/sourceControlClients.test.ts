@@ -350,3 +350,18 @@ describe("sourceControlClients project hosts", () => {
     expect(sourceControlClients.repositorySelector({ owner: "o", name: "r" })).toBe("o/r");
   });
 });
+
+describe("sourceControlClients.findByPublicDomain", () => {
+  it("names the host a link is on, subdomains included", () => {
+    const kindOf = (hostname: string) => sourceControlClients.findByPublicDomain(hostname)?.kind;
+    expect(kindOf("gist.github.com")).toBe("github");
+    expect(kindOf("GitLab.com")).toBe("gitlab");
+    expect(kindOf("codeberg.org")).toBe("forgejo");
+    expect(kindOf("notgithub.com")).toBeUndefined();
+    expect(kindOf("github.com.example")).toBeUndefined();
+  });
+
+  it("leaves findByPublicHost to the public host alone", () => {
+    expect(sourceControlClients.findByPublicHost("gist.github.com")).toBeUndefined();
+  });
+});

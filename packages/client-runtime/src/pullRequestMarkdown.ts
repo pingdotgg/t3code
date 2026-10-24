@@ -1,4 +1,4 @@
-import { sourceControlClients } from "./sourceControlClients.ts";
+import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
@@ -130,4 +130,20 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
 
   flushMarkdown();
   return segments;
+}
+
+/**
+ * Finds the references the change request's host links in plain text, resolved against the change
+ * request's repository. Null when the host links none.
+ */
+export function changeRequestReferenceAutolinker(
+  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
+): ((text: string) => ReadonlyArray<ReferenceAutolink>) | null {
+  if (!changeRequest) return null;
+  const find = sourceControlClients.get(changeRequest.provider).referenceAutolinks;
+  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
+    .repositoryUrl;
+  return find === undefined || repositoryUrl === undefined
+    ? null
+    : (text) => find(text, repositoryUrl);
 }

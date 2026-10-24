@@ -15,7 +15,7 @@ export const DEFAULT_ACTIVITY_FILTER: ActivityFilter = {
 };
 
 function isBot(actor: PullRequestActor | null) {
-  return actor?.isBot === true || actor?.login.endsWith("[bot]") === true;
+  return actor?.isBot === true;
 }
 
 function eventCount(activity: PullRequestActivity) {

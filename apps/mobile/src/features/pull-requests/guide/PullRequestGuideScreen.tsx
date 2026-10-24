@@ -161,10 +161,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
-      <PullRequestMarkdownRepository
-        params={route.params}
-        value={`https://${route.params.host ?? "github.com"}/${route.params.repository}`}
-      >
+      <PullRequestMarkdownRepository params={route.params} changeRequest={detail.data}>
         <ScreenScrollView
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 20 }}

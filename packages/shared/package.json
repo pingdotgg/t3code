@@ -7,10 +7,6 @@
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
     },
-    "./githubMarkdownLinks": {
-      "types": "./src/githubMarkdownLinks.ts",
-      "import": "./src/githubMarkdownLinks.ts"
-    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"

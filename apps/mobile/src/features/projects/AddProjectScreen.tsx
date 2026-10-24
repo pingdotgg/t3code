@@ -21,6 +21,7 @@ import {
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
   getNewProjectRepository,
+  defaultHostCloneUrl,
   normalizePastedCloneUrl,
   parseAddProjectRemoteSource,
   resolveAddProjectPath,
@@ -821,7 +822,7 @@ export function AddProjectRepositoryScreen(props: {
             autoCorrect={false}
             placeholder={
               source === "url"
-                ? "https://github.com/org/repo.git"
+                ? (defaultHostCloneUrl("org/repo") ?? "https://example.com/org/repo.git")
                 : addProjectRemoteSourcePathHint(source)
             }
             returnKeyType="next"

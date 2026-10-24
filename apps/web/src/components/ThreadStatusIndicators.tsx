@@ -114,7 +114,11 @@ export function useLinkedThreadPullRequest(
     ? null
     : {
         pr: pullRequestDetailToVcsStatus(detail),
-        sourceControlProvider: { kind: detail.provider, name: detail.provider, baseUrl: "" },
+        sourceControlProvider: {
+          kind: detail.provider,
+          name: sourceControlClients.get(detail.provider).label,
+          baseUrl: "",
+        },
       };
 }
 

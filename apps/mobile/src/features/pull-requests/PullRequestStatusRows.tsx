@@ -2,6 +2,7 @@ import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { PullRequestAction, PullRequestDetail } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT, PR_DISCLOSURE_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
 import { useState } from "react";
@@ -162,7 +163,9 @@ export function PullRequestChecksRow(props: RowProps) {
             icon="arrow.up.right"
             onPress={() =>
               void Linking.openURL(
-                props.pr.provider === "github" ? `${props.pr.url}/checks` : props.pr.url,
+                sourceControlClients
+                  .get(props.pr.provider)
+                  .changeRequestChecksUrl?.(props.pr.url) ?? props.pr.url,
               )
             }
           />

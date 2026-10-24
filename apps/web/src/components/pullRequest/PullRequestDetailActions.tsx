@@ -131,7 +131,7 @@ export function PullRequestCheckoutMenu({
           <span className="flex min-w-0 flex-col">
             <span>In this repository</span>
             <span className="text-xs text-muted-foreground">
-              Switches the branch you are working in, like `gh pr checkout`.
+              Switches the branch you are working in.
             </span>
           </span>
         </MenuItem>

@@ -102,7 +102,6 @@ export const definition = defineSourceControlClient({
   changeRequestCloseCommand:
     /\baz\s+repos\s+pr\s+update\b[^;&|]*--status[\s=]+["']?(?:completed|abandoned)\b/u,
   authorProfileUrl: () => null,
-  referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => {
     const args = CHECKOUT_COMMAND.exec(input)?.[1];

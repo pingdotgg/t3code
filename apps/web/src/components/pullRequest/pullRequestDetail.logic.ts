@@ -646,8 +646,7 @@ export function filterPullRequestConversationItems(
     // Matching any member keeps the finding beside a human reply to a bot.
     pullRequestConversationItemComments(item).some(
       (comment) =>
-        (filter.bots ||
-          !(comment.author?.isBot === true || comment.author?.login.endsWith("[bot]"))) &&
+        (filter.bots || comment.author?.isBot !== true) &&
         (filter.resolved ||
           !isPullRequestCommentFinished(comment, item.kind === "thread" ? item.thread : undefined)),
     ),
@@ -1216,8 +1215,12 @@ export function isPullRequestNotFound(failure: unknown): boolean {
 
 const OPERATION_PREFIX = /^Pull request operation \w+ failed:\s*/iu;
 
+const HOST_LABELS = sourceControlClients.definitions
+  .map((definition) => definition.label.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+  .join("|");
+
 const TOOL_NOISE = [
-  /^(github|gitlab|bitbucket|azure devops)?\s*(cli|api)?\s*(command\s*)?failed\.?$/iu,
+  new RegExp(`^(${HOST_LABELS})?\\s*(cli|api)?\\s*(command\\s*)?failed\\.?$`, "iu"),
   /^exited? with (code|status) \d+\.?$/iu,
   /^unknown error\.?$/iu,
 ];

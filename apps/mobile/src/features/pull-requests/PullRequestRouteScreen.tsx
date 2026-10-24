@@ -387,10 +387,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     }
   };
   return (
-    <PullRequestMarkdownRepository
-      params={params}
-      value={pr?.provider === "github" ? pr.url : null}
-    >
+    <PullRequestMarkdownRepository params={params} changeRequest={pr}>
       <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
         <NativeStackScreenOptions
           options={{

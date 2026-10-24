@@ -4,7 +4,7 @@ import { DEFAULT_ACTIVITY_FILTER, filterPullRequestActivity } from "./pullReques
 
 const date = IsoDateTime.make("2026-10-11T00:00:00.000Z");
 const human: PullRequestActor = { login: "reader", name: null, avatarUrl: null };
-const bot: PullRequestActor = { ...human, login: "reviewer[bot]" };
+const bot: PullRequestActor = { ...human, login: "reviewer[bot]", isBot: true };
 const comment = (id: string, author = human, reviewState: string | null = null) => ({
   id,
   author,

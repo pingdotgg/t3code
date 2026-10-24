@@ -93,7 +93,6 @@ export const definition = defineSourceControlClient({
       ? `git clone --single-branch --branch ${headBranch} https://bitbucket.org/${headRepositoryNameWithOwner}.git t3code-pr-${number}`
       : null,
   authorProfileUrl: () => null,
-  referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
