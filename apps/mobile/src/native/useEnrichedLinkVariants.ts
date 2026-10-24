@@ -1,10 +1,6 @@
 import { useMemo } from "react";
 import { Image } from "react-native";
-import type {
-  LinkPillContent,
-  MarkdownDocumentAsset,
-  MarkdownStyle,
-} from "react-native-enriched-markdown";
+import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
@@ -94,20 +90,20 @@ function presentation(
 }
 
 export function useEnrichedLinkVariants(
-  assets: ReadonlyArray<MarkdownDocumentAsset>,
+  urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
 ) {
   const { linkCustomization, skills, textStyle } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
-    for (const asset of assets) {
-      if (asset.kind !== "link" || byUrl.has(asset.url)) continue;
-      const value = presentation(asset.url, { linkCustomization, skills, textStyle });
-      if (value) byUrl.set(asset.url, value);
+    for (const url of urls) {
+      if (byUrl.has(url)) continue;
+      const value = presentation(url, { linkCustomization, skills, textStyle });
+      if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [assets, linkCustomization, skills, textStyle]);
+  }, [urls, linkCustomization, skills, textStyle]);
   const chipForegrounds = useMemo(
     () =>
       new Map(
