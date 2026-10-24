@@ -206,11 +206,23 @@ export function splitOutputLines(
   partialLine: string,
   text: string,
 ): { readonly lines: ReadonlyArray<string>; readonly partialLine: string } {
-  const parts = (partialLine + text).split(/\r\n|\r|\n/);
+  const normalizedOutput = (partialLine + text)
+    .replaceAll("\u001b[1G", "\r")
+    .replaceAll("\u001b[0G", "\r")
+    .replaceAll("\u001b[G", "\r");
+  const parts = normalizedOutput.split(/\r\n|\r|\n/);
   return { partialLine: (parts.pop() ?? "").slice(-UPDATE_PARTIAL_LINE_MAX_LENGTH), lines: parts };
 }
 
 export function toProgressLine(line: string): string | null {
+  if (
+    line.endsWith("\u001b") ||
+    line.endsWith("\u001b[") ||
+    line.endsWith("\u001b[0") ||
+    line.endsWith("\u001b[1")
+  ) {
+    return null;
+  }
   const text = NodeUtil.stripVTControlCharacters(line).replace(/\s+/g, " ").trim();
   if (text.length === 0) {
     return null;
