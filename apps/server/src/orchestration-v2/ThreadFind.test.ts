@@ -520,6 +520,68 @@ describe("V2 thread find", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  const findsLateAnswer = <E, R>(
+    apply: (events: readonly OrchestrationV2DomainEvent[]) => Effect.Effect<void, E, R>,
+  ) =>
+    Effect.gen(function* () {
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
+      const queuedRun = RunId.make("run:queued");
+      const answerRun = RunId.make("run:answer");
+      yield* apply([
+        thread(threadId, projectId),
+        run(),
+        run(threadId, queuedRun, 2),
+        run(threadId, answerRun, 3),
+      ]);
+      const requestId = RuntimeRequestId.make("late");
+      const question: OrchestrationV2TurnItem = {
+        ...item("question", 1, ""),
+        type: "user_input_request",
+        requestId,
+        questions: [],
+        questionAnswer: { requestId, answers: {}, attachmentsByQuestionId: {} },
+      };
+      const items = [
+        question,
+        { ...item("queued", 2, "queued follow-up", "user_message"), runId: queuedRun },
+        { ...item(`async-answer:${requestId}`, 3, "needle", "user_message"), runId: answerRun },
+      ];
+      yield* apply(
+        items.map((payload) => ({
+          id: EventId.make(`${payload.id}:initial`),
+          threadId,
+          occurredAt: at(1),
+          type: "turn-item.updated" as const,
+          payload,
+        })),
+      );
+      const result = yield* projection.searchThread({ threadId, query: "needle" });
+      assert.equal(result.totalMatches, 1);
+      assert.deepEqual(result.match, {
+        entryId: `async-answer:${requestId}`,
+        runId: answerRun,
+        occurrence: 0,
+      });
+    });
+
+  it.effect.each([
+    [
+      "SQL",
+      () =>
+        createProject(projectId).pipe(
+          Effect.andThen(findsLateAnswer(commit)),
+          Effect.provide(layerTest),
+        ),
+    ],
+    [
+      "memory",
+      () =>
+        Effect.flatMap(ProjectionStore.ProjectionStoreV2, (projection) =>
+          findsLateAnswer((events) => Effect.forEach(events, projection.apply, { discard: true })),
+        ).pipe(Effect.provide(ProjectionStore.layerMemory)),
+    ],
+  ] as const)("%s search finds an async answer that started a later run", ([, test]) => test());
+
   it.effect(
     "searches inherited fork history through the fork boundary, using source item identities",
     () =>
