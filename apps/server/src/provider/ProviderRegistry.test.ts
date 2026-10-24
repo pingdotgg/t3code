@@ -424,6 +424,58 @@ it.layer(
         assert.strictEqual(status.auth.status, "unknown");
       }),
     );
+
+    it.effect("reports usage unsupported when an account-less Codex cannot read usage", () =>
+      Effect.gen(function* () {
+        const rateLimits = { failure: "Codex could not read usage (JSON-RPC -32600)." };
+        const subscribed = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(makeCodexProbeSnapshot({ rateLimits })),
+        );
+        assert.strictEqual(subscribed.usageLimits?.unavailable?.reason, "probeFailed");
+
+        // A custom model_provider (e.g. a proxy) has no OpenAI account, so the
+        // usage RPC fails with "authentication required" by design.
+        const customProvider = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(
+            makeCodexProbeSnapshot({
+              account: { account: null, requiresOpenaiAuth: false },
+              rateLimits: { ...rateLimits, authRequired: true },
+            }),
+          ),
+        );
+        assert.strictEqual(customProvider.status, "ready");
+        assert.strictEqual(customProvider.models[0]?.slug, "gpt-live-codex");
+        assert.deepStrictEqual(customProvider.usageLimits?.unavailable, { reason: "unsupported" });
+
+        // Any other failure in that account shape stays transient.
+        const transient = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(
+            makeCodexProbeSnapshot({
+              account: { account: null, requiresOpenaiAuth: false },
+              rateLimits,
+            }),
+          ),
+        );
+        assert.strictEqual(transient.usageLimits?.unavailable?.reason, "probeFailed");
+
+        // The same account shape with native auth can still answer with limits.
+        const nativeAuth = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(
+            makeCodexProbeSnapshot({
+              account: { account: null, requiresOpenaiAuth: false },
+              rateLimits: {
+                snapshot: {
+                  primary: { usedPercent: 12, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+                },
+                resetCredits: null,
+              },
+            }),
+          ),
+        );
+        assert.strictEqual(nativeAuth.usageLimits?.unavailable, undefined);
+        assert.strictEqual(nativeAuth.usageLimits?.windows?.[0]?.usedPercent, 12);
+      }),
+    );
   });
 
   describe("ProviderRegistry.layer", () => {

@@ -1,0 +1,30 @@
+{
+  "clock": "2026-10-22T12:00:00.000Z",
+  "accounts": [
+    {
+      "id": "demo-a.json",
+      "auth_index": "a",
+      "provider": "codex",
+      "email": "alex@example.test",
+      "id_token": { "chatgpt_account_id": "demo-a" }
+    },
+    {
+      "id": "demo-b.json",
+      "auth_index": "b",
+      "provider": "codex",
+      "email": "sam@example.test",
+      "id_token": { "chatgpt_account_id": "demo-b" }
+    }
+  ],
+  "model": {
+    "id": "gpt-5.4",
+    "model": "gpt-5.4",
+    "displayName": "GPT-5.4",
+    "description": "Evidence protocol fixture",
+    "hidden": false,
+    "isDefault": true,
+    "defaultReasoningEffort": "medium",
+    "supportedReasoningEfforts": [{ "reasoningEffort": "medium", "description": "Medium" }],
+    "additionalSpeedTiers": []
+  }
+}

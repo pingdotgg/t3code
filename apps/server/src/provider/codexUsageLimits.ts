@@ -145,6 +145,17 @@ export function codexRateLimitsToUpdate(
   return windows.length > 0 ? { windows } : undefined;
 }
 
+const CODEX_USAGE_AUTH_REQUIRED_MESSAGE =
+  "codex account authentication required to read rate limits";
+
+export function isCodexUsageAuthRequiredError(error: CodexErrors.CodexAppServerError): boolean {
+  return (
+    error._tag === "CodexAppServerRequestError" &&
+    error.code === -32600 &&
+    error.errorMessage === CODEX_USAGE_AUTH_REQUIRED_MESSAGE
+  );
+}
+
 export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerError): string {
   switch (error._tag) {
     case "CodexAppServerRequestError":

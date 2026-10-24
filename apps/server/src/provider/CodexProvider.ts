@@ -46,6 +46,7 @@ import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageL
 import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
+  isCodexUsageAuthRequiredError,
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
@@ -64,7 +65,7 @@ type CodexRateLimitsProbe =
       readonly resetCredits: CodexResetCreditsSummary | null | undefined;
       readonly accountId?: string | null | undefined;
     }
-  | { readonly failure: string };
+  | { readonly failure: string; readonly authRequired?: true };
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
@@ -584,7 +585,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
             ),
             Effect.catch((error) =>
               Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
-                Effect.as<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
+                Effect.as<CodexRateLimitsProbe>({
+                  failure: codexRateLimitsFailureMessage(error),
+                  ...(isCodexUsageAuthRequiredError(error) ? { authRequired: true as const } : {}),
+                }),
               ),
             ),
           ),
@@ -789,8 +793,17 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
+  // Without an OpenAI account (e.g. a custom model_provider) Codex refuses the
+  // usage read. The same account shape can still read usage with native auth,
+  // so only that refusal means unsupported; any other failure stays transient.
+  const accountlessUsageRefused =
+    !snapshot.account.account &&
+    !snapshot.account.requiresOpenaiAuth &&
+    snapshot.rateLimits !== undefined &&
+    "failure" in snapshot.rateLimits &&
+    snapshot.rateLimits.authRequired === true;
   const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+    snapshot.account.account?.type === "apiKey" || accountlessUsageRefused
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({
