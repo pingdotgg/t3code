@@ -2365,3 +2365,95 @@ it.effect.each([false, true])(
       Effect.scoped,
     ),
 );
+
+const runOpenCodePermissionOperation = Effect.fn("runOpenCodePermissionOperation")(function* (
+  operation: "fork" | "resume" | "ensure",
+  explicitPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
+  update: (input: {
+    sessionID: string;
+    permission: ReturnType<typeof openCodePermissionRules>;
+  }) => Promise<unknown>,
+) {
+  const nativeSession = (id: string) => ({ id, time: { created: 1, updated: 2 } });
+  const harness = yield* makeOpenCodeRuntimeHarness(`permissions-${operation}`, "source", {
+    event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+    session: {
+      create: async () => ({ data: nativeSession("source") }),
+      get: async ({ sessionID }: { sessionID: string }) => ({ data: nativeSession(sessionID) }),
+      fork: async () => ({ data: nativeSession("target") }),
+      update,
+    },
+  });
+  const restored = {
+    ...harness.providerThread,
+    nativeThreadRef: { ...harness.providerThread.nativeThreadRef!, nativeId: "target" },
+  };
+  const policy = explicitPolicy === undefined ? {} : { runtimePolicy: explicitPolicy };
+  if (operation === "fork")
+    return yield* harness.runtime.forkThread({
+      sourceProviderThread: harness.providerThread,
+      targetThreadId: ThreadId.make("permission-target"),
+      ...policy,
+    });
+  if (operation === "resume")
+    return yield* harness.runtime.resumeThread({ providerThread: restored, ...policy });
+  return yield* harness.runtime.ensureThread({
+    threadId: harness.threadId,
+    modelSelection: {
+      instanceId: harness.runtime.instanceId,
+      model: "anthropic/claude-sonnet",
+      options: [],
+    },
+    existingProviderThread: restored,
+    runtimePolicy: explicitPolicy ?? harness.policy,
+  });
+});
+
+it.effect.each([
+  { operation: "fork", explicit: true },
+  { operation: "resume", explicit: true },
+  { operation: "ensure", explicit: true },
+  { operation: "fork", explicit: false },
+  { operation: "resume", explicit: false },
+] as const)(
+  "OpenCode $operation installs the selected permission policy, explicit=$explicit",
+  ({ operation, explicit }) =>
+    Effect.gen(function* () {
+      // The harness session runs full-access, so a supervised override is distinguishable.
+      const expected = explicit
+        ? runtimePolicy("approval-required")
+        : runtimePolicy("full-access", { cwd: "/workspace" });
+      const installed = new Map<string, ReturnType<typeof openCodePermissionRules>>();
+      const result = yield* runOpenCodePermissionOperation(
+        operation,
+        explicit ? expected : undefined,
+        async ({ sessionID, permission }) => {
+          installed.set(sessionID, permission);
+          return { data: {} };
+        },
+      );
+      assert.equal(result.nativeThreadRef?.nativeId, "target");
+      assert.deepEqual(installed.get("target"), openCodePermissionRules(expected));
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+);
+
+it.effect.each(["fork", "resume"] as const)(
+  "OpenCode %s fails when the native permission update is rejected",
+  (operation) =>
+    Effect.gen(function* () {
+      const error = yield* runOpenCodePermissionOperation(operation, undefined, async () => {
+        throw new Error("Permission update rejected");
+      }).pipe(Effect.flip);
+      const expectedTag = {
+        fork: "ProviderAdapterForkThreadError",
+        resume: "ProviderAdapterResumeThreadError",
+      }[operation];
+      assert.equal(error._tag, expectedTag);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+);
