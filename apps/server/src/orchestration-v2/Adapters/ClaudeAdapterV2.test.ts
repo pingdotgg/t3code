@@ -565,6 +565,12 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(systemPrompt.type, "preset");
     assert.equal(systemPrompt.preset, "claude_code");
     assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
+    // Claude exposes these tools natively as `mcp__t3-code__*`; ACP and Codex
+    // workarounds only mislead it.
+    assert.notInclude(systemPrompt.append ?? "", "acp-mcp-call");
+    assert.notInclude(systemPrompt.append ?? "", "T3_ACP_MCP_NODE");
+    assert.notInclude(systemPrompt.append ?? "", "Codex code mode");
+    assert.notInclude(systemPrompt.append ?? "", "mcp__t3_code__");
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");

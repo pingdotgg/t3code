@@ -1,11 +1,16 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
+const t3ToolNamingSection = (naming: string, lazyAttachExample: string) =>
+  `${naming} Some harnesses attach optional MCP servers lazily: if an initial tool-catalog scan does not show T3 tools, do not conclude that cross-provider delegation is unavailable. Make one bounded direct attempt using the known T3 tool name on the next tool step.${lazyAttachExample} Keep polling/wait loops bounded, do not duplicate active work, and use stable \`clientRequestId\` values when retrying tools that accept them.`;
+
+const T3_CODE_ACP_FALLBACK_INSTRUCTIONS = `ACP fallback: some ACP agents accept the injected MCP server but fail to expose its tools. When the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call the same tools through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset when T3 runs as a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. This is the supported T3 transport fallback, not an ordinary shell-based substitute for delegation.`;
+
 /**
  * Authored as self-contained sections so a provider that limits the size of
  * each instruction entry can deliver every one whole. Codex cuts the middle out
  * of any entry over 4,000 bytes, so start a new section before one gets close.
  */
-export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
+const orchestrationSections = (toolAccess: string): ReadonlyArray<string> => [
   `## T3 Code orchestration
 
 The \`t3-code\` MCP server provides app-owned orchestration. Treat these concepts distinctly:
@@ -29,9 +34,7 @@ For stacked work, set \`baseRef\` to the intended parent branch and \`startFromO
 \`t3_thread_launch\` is the single-thread launch tool. Use \`create_threads\` only for a batch of threads intentionally sharing the caller's checkout: it always inherits the caller's project, branch, and worktree and has no workspace override. Asking an agent to run \`git worktree add\` or \`cd\` in its prompt does not update T3's thread binding. Select the workspace in the launch call instead. \`t3_worktree_handoff\` moves the calling thread, not another thread, and cannot move a thread already attached to a worktree.
 
 \`t3_thread_launch\` has no idempotency key. Retain its returned threadId and inspect it with \`t3_thread_read\` / \`t3_thread_wait\`; preparation can still be running after acceptance. If a launch fails or its response is lost, inspect \`t3_thread_list\` before retrying, since a thread may already exist.`,
-  `Tool names may include a harness-normalized MCP prefix, such as \`mcp__t3_code__delegate_task\`; the semantics are the same. Some harnesses attach optional MCP servers lazily: if an initial tool-catalog scan does not show T3 tools, do not conclude that cross-provider delegation is unavailable. Make one bounded direct attempt using the known T3 tool name on the next tool step. In Codex code mode, for example, call \`tools.mcp__t3_code__orchestrator_capabilities({})\` before reporting that the capability is absent. Keep polling/wait loops bounded, do not duplicate active work, and use stable \`clientRequestId\` values when retrying tools that accept them.
-
-ACP fallback: some ACP agents accept the injected MCP server but fail to expose its tools. When the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call the same tools through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset when T3 runs as a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. This is the supported T3 transport fallback, not an ordinary shell-based substitute for delegation.
+  `${toolAccess}
 
 ### Showing visuals
 
@@ -39,9 +42,32 @@ When a chart, table, diagram, image collage, or mockup would say more than prose
   `- When model options are requested or the child keeps the parent's provider instance and model with nonempty \`inheritedOptions\` from \`orchestrator_capabilities\`, use \`delegate_task\` even for native-supported models. Native subagents cannot reliably apply T3 model options. Read the selected model's descriptors from \`orchestrator_capabilities\` and put settings in \`target.options\`, not only in the prompt. Claude commonly uses {"effort":"max","fastMode":true}; Codex uses {"reasoningEffort":"max","serviceTier":"priority"}. Do not translate max to high or ignore unsupported settings: report a capability mismatch. Options inherit only for the same provider instance and model; explicit entries override individual values, and [] or {} clears them. Check the returned providerInstanceId, model, and options against the requested selection.`,
 ];
 
+export const T3_CODE_ORCHESTRATION_SECTIONS = orchestrationSections(
+  `${t3ToolNamingSection(
+    "Tool names may include a harness-normalized MCP prefix, such as `mcp__t3_code__delegate_task`; the semantics are the same.",
+    " In Codex code mode, for example, call `tools.mcp__t3_code__orchestrator_capabilities({})` before reporting that the capability is absent.",
+  )}
+
+${T3_CODE_ACP_FALLBACK_INSTRUCTIONS}`,
+);
+
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
+`;
+
+/**
+ * Claude Code exposes the injected server's tools natively, so it needs neither
+ * the ACP terminal fallback nor another harness's normalized tool names.
+ */
+export const T3_CODE_CLAUDE_ORCHESTRATION_INSTRUCTIONS = `
+
+${orchestrationSections(
+  t3ToolNamingSection(
+    "In Claude Code these tools are named `mcp__t3-code__<tool>`, such as `mcp__t3-code__delegate_task`.",
+    " For example, call `mcp__t3-code__orchestrator_capabilities` before reporting that the capability is absent.",
+  ),
+).join("\n\n")}
 `;
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
