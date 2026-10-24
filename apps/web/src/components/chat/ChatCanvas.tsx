@@ -4,6 +4,35 @@ import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLay
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
 import { observeResize } from "../../lib/observeResize";
 
+// Panel toggles animate the canvas width. Seeking the running width transitions to
+// both ends finds the narrowest width this animation passes through, so layout that
+// switches modes at a width threshold decides once instead of flipping mid-animation.
+function measureTransitionWidths(element: HTMLElement) {
+  if (typeof CSSTransition === "undefined") return null;
+  const transitions = element.ownerDocument
+    .getAnimations()
+    .filter(
+      (animation): animation is CSSTransition =>
+        animation instanceof CSSTransition &&
+        animation.transitionProperty === "width" &&
+        animation.playState === "running",
+    );
+  if (transitions.length === 0) return null;
+  const times = transitions.map((animation) => animation.currentTime);
+  const widthAt = (edge: "start" | "end") => {
+    for (const animation of transitions) {
+      animation.currentTime =
+        edge === "start" ? 0 : Number(animation.effect?.getComputedTiming().endTime ?? 0);
+    }
+    return element.clientWidth;
+  };
+  const narrowestWidth = Math.min(widthAt("start"), widthAt("end"));
+  transitions.forEach((animation, index) => {
+    animation.currentTime = times[index] ?? null;
+  });
+  return { transitions, narrowestWidth };
+}
+
 export function ChatCanvas({
   composerOverlayElement,
   detailsCardTopInset = 0,
@@ -29,6 +58,7 @@ export function ChatCanvas({
   };
   const [measurements, setMeasurements] = useState({
     width: 0,
+    narrowestWidth: 0,
     height: 0,
     padding: 48,
     maxChatWidth: 768,
@@ -60,7 +90,30 @@ export function ChatCanvas({
     if (!element || !probe) return;
     const findBar =
       detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
+    let disposed = false;
+    // Seeking forces layout, so it runs once when a transition starts, not every frame.
+    let transitionWidths: ReturnType<typeof measureTransitionWidths> = null;
+    let measuredWidth: number | null = null;
     const measure = () => {
+      const width = element.clientWidth;
+      if (
+        width !== measuredWidth &&
+        !transitionWidths?.transitions.every((animation) => animation.playState === "running")
+      ) {
+        const settling = measureTransitionWidths(element);
+        transitionWidths = settling;
+        // The last resize can arrive while the transitions still count as running.
+        if (settling) {
+          void Promise.allSettled(settling.transitions.map((animation) => animation.finished)).then(
+            () => {
+              if (disposed || transitionWidths !== settling) return;
+              transitionWidths = null;
+              measure();
+            },
+          );
+        }
+      }
+      measuredWidth = width;
       const canvasBounds = element.getBoundingClientRect();
       const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
@@ -68,7 +121,8 @@ export function ChatCanvas({
         findBarLeft: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
         findBarRight: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
         findBarBottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
-        width: element.clientWidth,
+        width,
+        narrowestWidth: transitionWidths?.narrowestWidth ?? width,
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
         maxChatWidth: Number.parseFloat(styles.width),
@@ -91,7 +145,11 @@ export function ChatCanvas({
     if (findBar) observed.push(findBar);
     if (composerOverlayElement) observed.push(composerOverlayElement);
     if (timelineElement) observed.push(timelineElement);
-    return observeResize(observed, measure);
+    const stopObserving = observeResize(observed, measure);
+    return () => {
+      disposed = true;
+      stopObserving();
+    };
   }, [composerOverlayElement, timelineElement, detailsCardTopInset]);
   const container = { width: measurements.width, height: measurements.height };
   const findBar =
@@ -104,6 +162,7 @@ export function ChatCanvas({
       : null;
   const context = {
     container,
+    narrowestWidth: measurements.narrowestWidth,
     lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
     layout: resolveChatCanvasLayout({
       ...measurements,

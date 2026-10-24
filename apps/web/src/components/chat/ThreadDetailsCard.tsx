@@ -30,6 +30,7 @@ export function ThreadDetailsCard({
   const preferredPlacement = canvas
     ? resolveThreadDetailsCardLayout({
         container: canvas.container,
+        narrowestWidth: canvas.narrowestWidth,
         lane: canvas.lane,
         frame: null,
         topInset: canvas.detailsCardTopInset,
@@ -38,6 +39,7 @@ export function ThreadDetailsCard({
   const placement = canvas
     ? resolveThreadDetailsCardLayout({
         container: canvas.container,
+        narrowestWidth: canvas.narrowestWidth,
         lane: canvas.lane,
         frame: canvas.layout.frame,
         overlapsDetailsCard: canvas.layout.overlapsDetailsCard,
