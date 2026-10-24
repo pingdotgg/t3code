@@ -249,9 +249,33 @@ export function buildEnvironmentCaptureCommand(
     .join("; ");
 }
 
-function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+// Fills gaps in this probe's own block from the persisted stores, so a value an
+// installer wrote after the launching shell started is visible here.
+//
+// Both stores are read before anything is written, because reading one expands
+// its whole scope against the block as it stands: writing Machine first would
+// let a User value referencing a Machine variable resolve against the Machine
+// copy, and the later User copy of that variable could no longer repair it. The
+// merge takes User over Machine, the names the probe inherited are snapshotted
+// and never replaced, and only then are the values written, so precedence runs
+// Process > User > Machine.
+//
+// A value referencing a variable that was absent while its scope was read keeps
+// its literal "%NAME%" text, so the written values are expanded afterwards,
+// repeatedly while that keeps resolving, which also walks a chain. A reference
+// no store defines expands to itself, changes nothing, and ends the loop.
+// shortcut: the loop stops after three rounds, so a chain longer than three
+// persisted variables keeps its remaining literal text. Lift the bound if a
+// provider ever ships one.
+//
+// PATH is skipped throughout: it is the value under measurement.
+const WINDOWS_PERSISTED_ENVIRONMENT_HYDRATION =
+  "$inherited = @{}; foreach ($name in ([Environment]::GetEnvironmentVariables('Process')).Keys) { $inherited[$name] = $true }; $persisted = @{}; foreach ($target in @('Machine', 'User')) { try { foreach ($entry in ([Environment]::GetEnvironmentVariables($target)).GetEnumerator()) { if ($entry.Key -ne 'PATH' -and -not $inherited.ContainsKey($entry.Key)) { $persisted[$entry.Key] = $entry.Value } } } catch { } }; foreach ($entry in @($persisted.GetEnumerator())) { try { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') } catch { } }; for ($round = 0; $round -lt 3; $round++) { $changed = $false; foreach ($name in @($persisted.Keys)) { try { $value = [Environment]::GetEnvironmentVariable($name, 'Process'); if ($value -and $value.Contains('%')) { $expanded = [Environment]::ExpandEnvironmentVariables($value); if ($expanded -ne $value) { [Environment]::SetEnvironmentVariable($name, $expanded, 'Process'); $changed = $true } } } catch { } }; if (-not $changed) { break } }";
+
+export function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
+    WINDOWS_PERSISTED_ENVIRONMENT_HYDRATION,
     ...names.flatMap((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -259,7 +283,11 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        `$candidates = @('Process', 'User', 'Machine') | ForEach-Object { try { [Environment]::GetEnvironmentVariable('${name}', $_) } catch { $null } } | Where-Object { $_ }`,
+        // Append persisted PATH entries after the process snapshot; callers dedupe.
+        name === "PATH"
+          ? `$value = $candidates -join '${WINDOWS_PATH_DELIMITER}'`
+          : "$value = @($candidates)[0]",
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
@@ -918,7 +946,7 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
   return (yield* resolveCommandPath(command, options)) !== null;
 });
 
-function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
   const appData = env.APPDATA?.trim();
   const localAppData = env.LOCALAPPDATA?.trim();
   const userProfile = env.USERPROFILE?.trim();
@@ -926,7 +954,7 @@ function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<strin
   return [
     ...(appData ? [`${appData}\\npm`] : []),
     ...(localAppData ? [`${localAppData}\\Programs\\nodejs`, `${localAppData}\\Volta\\bin`] : []),
-    ...(localAppData ? [`${localAppData}\\pnpm`] : []),
+    ...(localAppData ? [`${localAppData}\\pnpm`, `${localAppData}\\Microsoft\\WinGet\\Links`] : []),
     ...(userProfile
       ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
       : []),

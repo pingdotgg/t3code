@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  buildWindowsEnvironmentCaptureCommand,
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
@@ -394,6 +395,31 @@ describe("readEnvironmentFromWindowsShell", () => {
       });
     }),
   );
+});
+
+describe("buildWindowsEnvironmentCaptureCommand", () => {
+  const MERGE = "$persisted[$entry.Key] = $entry.Value";
+  const WRITE = "[Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')";
+  const EXPAND = "[Environment]::ExpandEnvironmentVariables($value)";
+
+  it("merges the persisted stores before writing, then expands what it wrote", () => {
+    const command = buildWindowsEnvironmentCaptureCommand(["PATH"]);
+
+    // Reading a store expands its whole scope against the block as it stands, so
+    // both stores are read before anything is written. User is merged last, and
+    // the inherited snapshot keeps Process ahead of both.
+    expect(command).toContain("@('Machine', 'User')");
+    expect(command).toContain("$inherited.ContainsKey($entry.Key)");
+    expect(command).toContain(MERGE);
+    expect(command).toContain(WRITE);
+    expect(command).toContain(EXPAND);
+    expect(command).toContain("for ($round = 0; $round -lt 3; $round++)");
+
+    // Order carries the correctness here: merge, then write, then expand.
+    expect(command.indexOf(MERGE)).toBeGreaterThan(command.indexOf("$inherited = @{}"));
+    expect(command.indexOf(WRITE)).toBeGreaterThan(command.indexOf(MERGE));
+    expect(command.indexOf(EXPAND)).toBeGreaterThan(command.indexOf(WRITE));
+  });
 });
 
 describe("mergePathValues", () => {
@@ -927,6 +953,7 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links",
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
@@ -998,6 +1025,7 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links",
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
