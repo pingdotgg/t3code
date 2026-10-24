@@ -1,8 +1,15 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId } from "@t3tools/contracts";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as TestConsole from "effect/testing/TestConsole";
+import { Command } from "effect/cli";
 
-import { type ThreadTools, waitForRun } from "./thread.ts";
+import { cli } from "../binCli.ts";
+import { type ThreadTools, launchModelSelection, waitForRun } from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -71,5 +78,61 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       runId,
       status: "completed",
     });
+  }),
+);
+
+const runCli = (args: ReadonlyArray<string>) =>
+  Command.runWith(cli, { version: "0.0.0" })(args).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
+  );
+
+it.effect("start sends each --option as a typed model option", () =>
+  Effect.gen(function* () {
+    const selection = yield* launchModelSelection({
+      provider: Option.some("codex"),
+      model: Option.some("gpt-6.1-sol"),
+      option: ["reasoningEffort=high", " fastMode = false ", "note=a=b"],
+    });
+
+    assert.deepStrictEqual(selection, {
+      instanceId: "codex",
+      model: "gpt-6.1-sol",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: false },
+        { id: "note", value: "a=b" },
+      ],
+    });
+  }),
+);
+
+it.effect("start rejects a repeated --option before reaching the server", () =>
+  Effect.gen(function* () {
+    const error = yield* runCli([
+      "thread",
+      "start",
+      ".",
+      "hi",
+      "--provider",
+      "codex",
+      "--model",
+      "gpt-6.1-sol",
+      "--option",
+      "reasoningEffort=high",
+      "--option",
+      "reasoningEffort=low",
+    ]).pipe(Effect.flip);
+
+    assert.strictEqual(error.message, "--option reasoningEffort is given more than once.");
+  }),
+);
+
+it.effect("start rejects --option without an explicit model", () =>
+  Effect.gen(function* () {
+    const error = yield* runCli(["thread", "start", ".", "hi", "--option", "effort=high"]).pipe(
+      Effect.flip,
+    );
+
+    assert.strictEqual(error.message, "--option needs --provider and --model.");
   }),
 );
