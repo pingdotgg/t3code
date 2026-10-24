@@ -520,9 +520,9 @@ blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 
-After the GitHub Release is published, the workflow runs `node scripts/build-npm-launcher.ts`, then
-`node apps/server/scripts/cli.ts publish --packages-dir npm-packages`, which runs `npm publish` on
-`t3.tgz`. That is the only package published per release.
+`prepare_publish` builds `t3.tgz` with `node scripts/build-npm-launcher.ts` alongside the desktop
+builds. After the GitHub Release is published, `publish_cli` runs `npm publish` on it. That is the
+only package published per release.
 
 Checklist:
 

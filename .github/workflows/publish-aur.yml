@@ -49,6 +49,8 @@ jobs:
 
       - name: Checkout packaging sources
         uses: actions/checkout@v6
+        with:
+          sparse-checkout: packaging
 
       - name: Create unprivileged build user
         run: |

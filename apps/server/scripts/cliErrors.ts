@@ -36,17 +36,6 @@ export class ServerCliDevelopmentIconTargetMissingError extends Schema.TaggedErr
   }
 }
 
-export class ServerCliBuildAssetMissingError extends Schema.TaggedError<ServerCliBuildAssetMissingError>()(
-  "ServerCliBuildAssetMissingError",
-  {
-    assetPath: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Missing build asset: ${this.assetPath}. Run the build subcommand first.`;
-  }
-}
-
 export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCliExecutableImportError>()(
   "ServerCliExecutableImportError",
   {
