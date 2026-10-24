@@ -219,6 +219,141 @@ it.effect("parses pull request responses from the Bitbucket REST API", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect.each([
+  { reference: "https://bitbucket.org/another/app/pull-requests/42", repository: "another/app" },
+  { reference: "#42", repository: "pingdotgg/t3code" },
+])("looks up $reference in $repository", ({ reference, repository }) => {
+  const { layer } = makeLayer({
+    response: (request) => {
+      const requestedRepository = /\/repositories\/(.+)\/pullrequests\/42$/.exec(request.url)?.[1];
+      return Response.json({ ...bitbucketPullRequest, title: `PR in ${requestedRepository}` });
+    },
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const result = yield* bitbucket.getPullRequest({
+      cwd: "/repo",
+      reference,
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("bitbucket"),
+          name: "Bitbucket",
+          baseUrl: "https://bitbucket.org",
+        },
+        remoteName: "origin",
+        remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+      },
+    });
+    assert.strictEqual(result.title, `PR in ${repository}`);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([false, true])(
+  "checks out a PR URL from its repository, context=%s",
+  (withContext) => {
+    const ensureRemote = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["ensureRemote"]>(() =>
+      Effect.succeed("another"),
+    );
+    const { git, layer } = makeLayer({
+      git: { ensureRemote },
+      response: (request) => {
+        if (request.url.endsWith("/repositories/another/app")) {
+          return Response.json({
+            ...repositoryJson,
+            full_name: "another/app",
+            links: { clone: [{ name: "ssh", href: "git@bitbucket.org:another/app.git" }] },
+          });
+        }
+        assert.strictEqual(
+          request.url,
+          "https://api.test.local/2.0/repositories/another/app/pullrequests/42",
+        );
+        return Response.json({
+          ...bitbucketPullRequest,
+          source: {
+            branch: { name: "feature/source-control" },
+            repository: { full_name: "another/app" },
+          },
+          destination: { branch: { name: "main" }, repository: { full_name: "another/app" } },
+        });
+      },
+    });
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      yield* bitbucket.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://bitbucket.org/another/app/pull-requests/42",
+        ...(withContext
+          ? {
+              context: {
+                provider: {
+                  kind: SourceControlProviderKind.make("bitbucket"),
+                  name: "Bitbucket",
+                  baseUrl: "https://bitbucket.org",
+                },
+                remoteName: "origin",
+                remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+              },
+            }
+          : {}),
+      });
+      assert.deepStrictEqual(ensureRemote.mock.calls[0]?.[0], {
+        cwd: "/repo",
+        preferredName: "another",
+        url: "git@bitbucket.org:another/app.git",
+      });
+      assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+        cwd: "/repo",
+        remoteName: "another",
+        remoteBranch: "feature/source-control",
+        localBranch: "feature/source-control",
+      });
+      assert.deepStrictEqual(git.setBranchUpstream.mock.calls[0]?.[0], {
+        cwd: "/repo",
+        branch: "feature/source-control",
+        remoteName: "another",
+        remoteBranch: "feature/source-control",
+      });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("keeps number-only checkout on the matching context remote", () => {
+  const { git, layer } = makeLayer({
+    response: () =>
+      Response.json({
+        ...bitbucketPullRequest,
+        source: {
+          branch: { name: "feature/source-control" },
+          repository: { full_name: "pingdotgg/t3code" },
+        },
+      }),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.checkoutPullRequest({
+      cwd: "/repo",
+      reference: "#42",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("bitbucket"),
+          name: "Bitbucket",
+          baseUrl: "https://bitbucket.org",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+      },
+    });
+    assert.strictEqual(git.ensureRemote.mock.calls.length, 0);
+    assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      remoteName: "upstream",
+      remoteBranch: "feature/source-control",
+      localBranch: "feature/source-control",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("lists pull requests with Bitbucket state and source branch query params", () => {
   const { execute, layer } = makeLayer({
     response: () =>

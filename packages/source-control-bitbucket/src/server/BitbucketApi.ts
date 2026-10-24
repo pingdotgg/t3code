@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   detectSourceControlProviderFromRemoteUrl,
   isSshRemoteUrl,
@@ -760,9 +761,17 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly repository?: string;
+    readonly reference?: string;
   }) {
     if (input.repository !== undefined) {
       return yield* requireRepositoryLocator(input.repository);
+    }
+
+    if (input.reference !== undefined) {
+      const link = parseChangeRequestUrl(input.reference);
+      if (link && detectSourceControlProviderFromRemoteUrl(input.reference)?.kind === "bitbucket") {
+        return yield* requireRepositoryLocator(link.repository);
+      }
     }
 
     const fromContext =
@@ -862,19 +871,24 @@ export const make = Effect.gen(function* () {
     readonly sourceRepositoryName: string;
     readonly isCrossRepository: boolean;
   }) {
-    if (
-      input.context?.provider.kind === "bitbucket" &&
-      !input.isCrossRepository &&
-      parseBitbucketRemoteUrl(input.context.remoteUrl) !== null
-    ) {
-      return input.context.remoteName;
-    }
-
     if (!input.isCrossRepository) {
-      const remoteName = yield* git
-        .resolvePrimaryRemoteName(input.cwd)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (remoteName) return remoteName;
+      const context = input.context?.provider.kind === "bitbucket" ? input.context : undefined;
+      const remoteName =
+        context?.remoteName ??
+        (yield* git.resolvePrimaryRemoteName(input.cwd).pipe(Effect.orElseSucceed(() => null)));
+      if (remoteName) {
+        const remoteUrl =
+          context?.remoteUrl ??
+          (yield* readConfigValueNullable(input.cwd, `remote.${remoteName}.url`));
+        const repository = remoteUrl ? parseBitbucketRemoteUrl(remoteUrl) : null;
+        if (
+          repository &&
+          `${repository.workspace}/${repository.repoSlug}`.toLowerCase() ===
+            input.sourceRepositoryName.toLowerCase()
+        ) {
+          return remoteName;
+        }
+      }
     }
 
     const cloneUrls = yield* getRepository({
