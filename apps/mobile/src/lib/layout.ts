@@ -20,6 +20,23 @@ export const ANDROID_READING_MAX_WIDTH = 640;
 // min-h-8 uses the 14px rem configured in metro.config.js.
 export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
 
+export function deriveThreadArrangementSizing(input: {
+  readonly baseFontSize: number;
+  readonly fontScale: number;
+}) {
+  const bodyLineHeight = scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.body, input.baseFontSize);
+  const headerLineHeight = scaledTypographyLineHeight(
+    MOBILE_TYPOGRAPHY.footnote,
+    input.baseFontSize,
+  );
+  // Two body lines and one footnote line plus the padding the original fixed rows had:
+  // at the default text size these are exactly the old 56pt rows and 48pt headers.
+  return {
+    rowHeight: Math.max(56, Math.ceil(2 * bodyLineHeight * input.fontScale) + 10),
+    headerHeight: Math.max(48, Math.ceil(headerLineHeight * input.fontScale) + 24),
+  };
+}
+
 export function deriveThreadWorkLogSizing(input: {
   readonly baseFontSize: number;
   readonly fontScale: number;
