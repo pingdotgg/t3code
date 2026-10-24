@@ -12,10 +12,10 @@ const {
   registerSchemesMock,
   setDesktopNameMock,
   mkdirSyncMock,
+  readFileSyncMock,
   writeFileSyncMock,
   copyFileSyncMock,
   execFileSyncMock,
-  readFileSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -23,10 +23,10 @@ const {
   registerSchemesMock: vi.fn(),
   setDesktopNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   copyFileSyncMock: vi.fn(),
   execFileSyncMock: vi.fn(),
-  readFileSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -59,6 +59,11 @@ vi.mock("node:child_process", () => ({
 
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
+const iconSource = "/tmp/.mount_T3/resources/app.asar/apps/desktop/prod-resources/icon.png";
+const iconPath = "/xdg/icons/com.t3tools.T3Code.desktop.png";
+const desktopEntryPath = "/xdg/applications/com.t3tools.T3Code.desktop";
+const iconBytes = Buffer.from([0x89, 0x50, 0x00, 0xff, 0x80, 0x0a]);
+
 describe("DesktopPreReadyPlatform", () => {
   beforeEach(() => {
     appendSwitchMock.mockReset();
@@ -67,10 +72,15 @@ describe("DesktopPreReadyPlatform", () => {
     registerSchemesMock.mockReset();
     setDesktopNameMock.mockReset();
     mkdirSyncMock.mockReset();
+    readFileSyncMock.mockReset();
     writeFileSyncMock.mockReset();
     copyFileSyncMock.mockReset();
     execFileSyncMock.mockReset();
-    readFileSyncMock.mockReset().mockReturnValue("{}");
+    readFileSyncMock.mockReset().mockImplementation((path: string) => {
+      if (path.endsWith("/desktop-settings.json")) return "{}";
+      if (path === iconSource) return Buffer.from(iconBytes);
+      throw new Error(`missing file: ${path}`);
+    });
   });
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
@@ -130,14 +140,13 @@ describe("DesktopPreReadyPlatform", () => {
     let desktopName = "t3code.desktop";
     let desktopEntry = previousEntry;
     let iconInstalled = false;
-    copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-      iconInstalled = destination === "/xdg/icons/com.t3tools.T3Code.desktop.png";
-    });
     setDesktopNameMock.mockImplementation((name: string) => {
       desktopName = name;
     });
-    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-      if (path === "/xdg/applications/com.t3tools.T3Code.desktop") desktopEntry = contents;
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      if (path === iconPath)
+        iconInstalled = Buffer.isBuffer(contents) && contents.equals(iconBytes);
+      if (path === desktopEntryPath && typeof contents === "string") desktopEntry = contents;
     });
 
     return Effect.scoped(
@@ -164,6 +173,60 @@ describe("DesktopPreReadyPlatform", () => {
         assert.isTrue(identity.iconInstalled);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
+  it.effect("refreshes a stale icon once across repeated launches", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    getSwitchValueMock.mockReturnValue("");
+    let installedIcon = Buffer.from([0x89, 0x50, 0x00, 0xfe, 0x80, 0x0a]);
+    let iconWrites = 0;
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === iconSource) return Buffer.from(iconBytes);
+      if (path === iconPath) return Buffer.from(installedIcon);
+      return "{}";
+    });
+    writeFileSyncMock.mockImplementation((path: string, contents: Buffer) => {
+      if (path !== iconPath) return;
+      installedIcon = Buffer.from(contents);
+      iconWrites += 1;
+    });
+
+    return Effect.gen(function* () {
+      yield* DesktopPreReadyPlatform.make;
+      assert.deepEqual(installedIcon, iconBytes);
+      yield* DesktopPreReadyPlatform.make;
+      assert.deepEqual(installedIcon, iconBytes);
+      assert.equal(iconWrites, 1);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
+
+  it.effect("still prepares the portal entry when the bundled icon cannot be read", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    getSwitchValueMock.mockReturnValue("");
+    const written = new Map<string, Array<string | Buffer>>();
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === iconSource) throw new Error("unreadable bundled icon");
+      return "{}";
+    });
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      written.set(path, [...(written.get(path) ?? []), contents]);
+    });
+
+    return Effect.gen(function* () {
+      yield* DesktopPreReadyPlatform.make;
+      const entries = written.get(desktopEntryPath) ?? [];
+      assert.equal(entries.length, 1);
+      assert.include(String(entries[0]), `Icon=${iconPath}`);
+      assert.isFalse(written.has(iconPath));
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
   });
 
   it.effect(
