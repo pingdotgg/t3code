@@ -1433,6 +1433,66 @@ it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shu
   }),
 );
 
+it.effect.each([false, true])(
+  "ProviderSessionManagerV2 preserves queued chunks before failure: %s",
+  (fail) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:queued-event-chunks");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const queued = yield* runtime.subscribeEvents!;
+        const observer = yield* runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        yield* Queue.offerAll(
+          queue,
+          Array.from({ length: 3 }, () => ({
+            type: "provider_session.updated" as const,
+            driver: CODEX_DRIVER,
+            providerSession: runtime.providerSession,
+          })),
+        );
+        yield* observer.events.pipe(Stream.take(3), Stream.runDrain);
+        if (fail) {
+          const terminal = yield* runtime.subscribeEvents!;
+          yield* Queue.end(queue);
+          const ended = yield* terminal.events.pipe(Stream.runDrain, Effect.exit);
+          assert.isTrue(Exit.isFailure(ended));
+          const chunks: Array<number> = [];
+          const result = yield* queued.events.pipe(
+            Stream.runForEachArray((events) =>
+              Effect.sync(() => {
+                chunks.push(events.length);
+              }),
+            ),
+            Effect.exit,
+          );
+          assert.isTrue(Exit.isFailure(result));
+          assert.deepEqual(chunks, [3]);
+        } else {
+          const chunk = yield* queued.events.pipe(Stream.chunks, Stream.runHead);
+          assert.equal(Option.getOrThrow(chunk).length, 3);
+        }
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

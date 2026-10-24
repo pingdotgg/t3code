@@ -472,11 +472,13 @@ const makeEventStore = Effect.gen(function* () {
                 ) THEN json_set(${payloadJson}, '$.prompt', '', '$.promptSequence', CAST(${hint} AS INTEGER))
                 ELSE ${payloadJson} END`
               : sql`${payloadJson}`;
+          // Each INSERT writes one row; EventSink owns rollback of the batch.
+          // FAIL avoids SQLite spilling a redundant per-statement rollback journal.
           const rows = yield* sql<{
             readonly sequence: number;
             readonly stores_full_prompt?: number;
           }>`
-            INSERT INTO orchestration_events (
+            INSERT OR FAIL INTO orchestration_events (
               event_id,
               aggregate_kind,
               stream_id,

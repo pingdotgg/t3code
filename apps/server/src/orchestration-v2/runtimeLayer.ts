@@ -157,6 +157,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       IdAllocator.layer,
       layerProviderEventIngestorProvided,
       TurnItemPositionStore.layer,
+      ThreadCommandExecutor.layer,
     ),
   ),
 );

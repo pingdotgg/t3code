@@ -5486,12 +5486,20 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       assert.equal(DateTime.formatIso(visited.thread.lastVisitedAt!), visitedAt);
       assert.deepEqual(visited.thread.updatedAt, createdUpdatedAt);
 
-      yield* orchestrator.dispatch({
+      const staleVisit = yield* orchestrator.dispatch({
         type: "thread.visit",
         commandId: CommandId.make("runtime-layer-visited-thread-visit-stale"),
         threadId,
         visitedAt: "2026-07-24T00:30:00.000Z",
       });
+      assert.deepEqual(staleVisit.storedEvents, []);
+      const repeatedVisit = yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-visited-thread-visit-equal"),
+        threadId,
+        visitedAt,
+      });
+      assert.deepEqual(repeatedVisit.storedEvents, []);
       const afterStaleVisit = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(DateTime.formatIso(afterStaleVisit.thread.lastVisitedAt!), visitedAt);
 

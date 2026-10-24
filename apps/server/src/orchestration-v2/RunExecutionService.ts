@@ -9,6 +9,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
+  OrchestrationV2DomainEventJson,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
@@ -52,6 +53,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -600,6 +602,7 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | McpAppModelContext.McpAppModelContext
   | TurnItemPositionStore.TurnItemPositionStoreV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
@@ -611,6 +614,7 @@ export const layer: Layer.Layer<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
@@ -1274,177 +1278,284 @@ export const layer: Layer.Layer<
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
-        const providerEventFiber = yield* eventSubscription.events.pipe(
-          Stream.mapEffect((event) =>
-            Effect.gen(function* () {
-              const previous = yield* Ref.get(eventRouting);
-              const [accepted, routing] = routeProviderEvent(event, routeIdentity, previous);
-              yield* Ref.set(eventRouting, routing);
-              if (
-                event.type === "subagent.updated" &&
-                event.subagent.childThreadId !== null &&
-                previous.ownedThreadIds.has(event.subagent.childThreadId) &&
-                !routing.ownedThreadIds.has(event.subagent.childThreadId)
-              ) {
-                const moved = event.subagent;
-                const detached = yield* Ref.modify(openRunOwnedSubagents, (current) => {
-                  const subagentIds = new Set([moved.id]);
-                  for (const subagent of current.subagents.values()) {
-                    if (subagent.threadId === moved.childThreadId) subagentIds.add(subagent.id);
-                  }
-                  const childTurnItems = new Map(
-                    [...current.childTurnItems].filter(
-                      ([, item]) => item.threadId !== moved.childThreadId,
-                    ),
-                  );
-                  const turnItems = new Map(current.turnItems);
-                  turnItems.delete(moved.id);
-                  const detachedItems = new Set(
-                    [...current.childTurnItems.values(), ...current.turnItems.values()]
-                      .filter(
-                        (item) => item.threadId === moved.childThreadId || item.nodeId === moved.id,
-                      )
-                      .map((item) => item.id),
-                  );
-                  return [
-                    { itemIds: detachedItems, subagentIds },
-                    {
-                      subagents: new Map(
-                        [...current.subagents].filter(([id]) => !subagentIds.has(id)),
-                      ),
-                      turnItems,
-                      childTurnItems,
-                      nodes: new Map(
-                        [...current.nodes].filter(
-                          ([id, node]) => id !== moved.id && node.threadId !== moved.childThreadId,
-                        ),
-                      ),
-                      linkedChildThreadIds: new Set(
-                        [...current.linkedChildThreadIds].filter(
-                          (id) => id !== moved.childThreadId,
-                        ),
-                      ),
-                    },
-                  ];
-                });
-                yield* Ref.update(
-                  activeChildSubagents,
-                  (current) =>
-                    new Map(
-                      [...current].filter(
-                        ([id, threadId]) =>
-                          !detached.subagentIds.has(id) && threadId !== moved.childThreadId,
-                      ),
-                    ),
+        let pendingSnapshots: Array<OrchestrationV2DomainEvent> = [];
+        let pendingSnapshotBytes = 0;
+        // Flush already-queued snapshots together; never wait for another provider event.
+        const flushSnapshots = Effect.suspend(() => {
+          const events = pendingSnapshots;
+          pendingSnapshots = [];
+          pendingSnapshotBytes = 0;
+          return events.length === 0
+            ? Effect.void
+            : eventSink
+                .write({
+                  guardPendingUserInputCancellations: true,
+                  events,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderEventIngestor.ProviderEventPublishError({
+                        providerSessionId: input.providerSessionId,
+                        eventCount: events.length,
+                        cause,
+                      }),
+                  ),
+                  Effect.asVoid,
                 );
-                yield* Ref.update(
-                  activeChildProviderTurns,
-                  (current) =>
-                    new Set([...current].filter((id) => routing.ownedProviderTurns.has(id))),
-                );
-                yield* Ref.update(
-                  activeBackgroundTurnItems,
-                  (current) => new Set([...current].filter((id) => !detached.itemIds.has(id))),
-                );
+        }).pipe(Effect.uninterruptible);
+        const encodeSnapshot = Schema.encodeEffect(
+          Schema.fromJsonString(OrchestrationV2DomainEventJson),
+        );
+        // These per-event helpers share the enclosing ingestion span.
+        const bufferSnapshot = Effect.fnUntraced(function* (
+          snapshot: ProviderEventIngestor.ProviderEventIngestInput,
+          singleSnapshot: boolean,
+        ) {
+          const events = yield* providerEventIngestor.normalize(snapshot);
+          // Node deduplication reads projections. Unchanged repeats need not split a batch,
+          // but changed nodes must commit before the next comparison.
+          if (snapshot.event.type === "node.updated") {
+            if (events.length === 0) return [];
+            yield* flushSnapshots;
+            pendingSnapshots = [...events];
+            yield* flushSnapshots;
+            return [];
+          }
+          // A lone event flushes at group exit; persistence performs its encode.
+          if (singleSnapshot && events.length === 1) {
+            pendingSnapshots.push(events[0]!);
+            return [];
+          }
+          for (const event of events) {
+            const bytes = Buffer.byteLength(yield* encodeSnapshot(event));
+            if (pendingSnapshots.length > 0 && pendingSnapshotBytes + bytes > 1024 * 1024)
+              yield* flushSnapshots;
+            pendingSnapshots.push(event);
+            pendingSnapshotBytes += bytes;
+            if (pendingSnapshots.length >= 32 || pendingSnapshotBytes >= 1024 * 1024)
+              yield* flushSnapshots;
+          }
+          return [];
+        });
+        let ingestionStopped = false;
+        const routeEvent = Effect.fnUntraced(function* (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
+          const previous = yield* Ref.get(eventRouting);
+          const [accepted, routing] = routeProviderEvent(event, routeIdentity, previous);
+          yield* Ref.set(eventRouting, routing);
+          if (
+            event.type === "subagent.updated" &&
+            event.subagent.childThreadId !== null &&
+            previous.ownedThreadIds.has(event.subagent.childThreadId) &&
+            !routing.ownedThreadIds.has(event.subagent.childThreadId)
+          ) {
+            const moved = event.subagent;
+            const detached = yield* Ref.modify(openRunOwnedSubagents, (current) => {
+              const subagentIds = new Set([moved.id]);
+              for (const subagent of current.subagents.values()) {
+                if (subagent.threadId === moved.childThreadId) subagentIds.add(subagent.id);
               }
-              return { event, accepted };
-            }),
-          ),
-          Stream.tap(({ event, accepted }) =>
-            Effect.gen(function* () {
-              if (!accepted) return;
-              if (
-                event.type === "provider_turn.updated" &&
-                event.providerTurn.runAttemptId === input.attempt.id &&
-                event.providerTurn.providerThreadId === input.providerThread.id
-              ) {
-                yield* Ref.set(latestRootProviderTurn, event.providerTurn);
-              }
-              let storedEventCount = 0;
-              const deliveredEvent = filterAssistantEvent(
-                event,
-                DateTime.toEpochMillis(yield* DateTime.now),
+              const childTurnItems = new Map(
+                [...current.childTurnItems].filter(
+                  ([, item]) => item.threadId !== moved.childThreadId,
+                ),
               );
-              if (deliveredEvent) {
-                const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
-                const isRootProviderThreadUpdate =
-                  event.type === "provider_thread.updated" &&
-                  event.providerThread.id === input.providerThread.id;
-                const storedEvents = yield* providerEventIngestor.ingestNormalized({
-                  analyticsContext: {
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimePolicy.runtimeMode,
-                    interactionMode: input.runtimePolicy.interactionMode,
-                  },
-                  providerSessionId: input.providerSessionId,
-                  providerInstanceId: input.run.providerInstanceId,
-                  threadId: input.run.threadId,
-                  runId: input.run.id,
-                  nodeId: input.rootNode.id,
-                  event: deliveredEvent,
-                  ...(isRootProviderThreadUpdate
-                    ? rootTerminalAlreadySeen
-                      ? {
-                          writeIfProviderThreadOwner: {
-                            providerThreadId: input.providerThread.id,
-                            runId: input.run.id,
-                            activeAttemptId: input.attempt.id,
-                            expectedLastRunOrdinal: input.run.ordinal,
-                          },
-                        }
-                      : {
-                          writeIfRunCurrent: {
-                            runId: input.run.id,
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running" as const,
-                          },
-                        }
-                    : {}),
-                });
-                storedEventCount = storedEvents.length;
-                if (
-                  isRootProviderThreadUpdate &&
-                  rootTerminalAlreadySeen &&
-                  storedEventCount === 0
-                ) {
-                  yield* Ref.set(providerThreadOwnerLost, true);
+              const turnItems = new Map(current.turnItems);
+              turnItems.delete(moved.id);
+              const detachedItems = new Set(
+                [...current.childTurnItems.values(), ...current.turnItems.values()]
+                  .filter(
+                    (item) => item.threadId === moved.childThreadId || item.nodeId === moved.id,
+                  )
+                  .map((item) => item.id),
+              );
+              return [
+                { itemIds: detachedItems, subagentIds },
+                {
+                  subagents: new Map([...current.subagents].filter(([id]) => !subagentIds.has(id))),
+                  turnItems,
+                  childTurnItems,
+                  nodes: new Map(
+                    [...current.nodes].filter(
+                      ([id, node]) => id !== moved.id && node.threadId !== moved.childThreadId,
+                    ),
+                  ),
+                  linkedChildThreadIds: new Set(
+                    [...current.linkedChildThreadIds].filter((id) => id !== moved.childThreadId),
+                  ),
+                },
+              ];
+            });
+            yield* Ref.update(
+              activeChildSubagents,
+              (current) =>
+                new Map(
+                  [...current].filter(
+                    ([id, threadId]) =>
+                      !detached.subagentIds.has(id) && threadId !== moved.childThreadId,
+                  ),
+                ),
+            );
+            yield* Ref.update(
+              activeChildProviderTurns,
+              (current) => new Set([...current].filter((id) => routing.ownedProviderTurns.has(id))),
+            );
+            yield* Ref.update(
+              activeBackgroundTurnItems,
+              (current) => new Set([...current].filter((id) => !detached.itemIds.has(id))),
+            );
+          }
+          return { event, accepted };
+        });
+        const ingestEvent = Effect.fnUntraced(function* ({
+          event,
+          accepted,
+          buffered,
+          singleSnapshot,
+        }: {
+          event: ProviderAdapter.ProviderAdapterV2Event;
+          accepted: boolean;
+          buffered: boolean;
+          singleSnapshot: boolean;
+        }) {
+          if (!accepted) return;
+          if (
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.runAttemptId === input.attempt.id &&
+            event.providerTurn.providerThreadId === input.providerThread.id
+          ) {
+            yield* Ref.set(latestRootProviderTurn, event.providerTurn);
+          }
+          let storedEventCount = 0;
+          const deliveredEvent = filterAssistantEvent(
+            event,
+            DateTime.toEpochMillis(yield* DateTime.now),
+          );
+          if (deliveredEvent) {
+            const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
+            const isRootProviderThreadUpdate =
+              event.type === "provider_thread.updated" &&
+              event.providerThread.id === input.providerThread.id;
+            const ingestInput = {
+              analyticsContext: {
+                modelSelection: input.modelSelection,
+                runtimeMode: input.runtimePolicy.runtimeMode,
+                interactionMode: input.runtimePolicy.interactionMode,
+              },
+              providerSessionId: input.providerSessionId,
+              providerInstanceId: input.run.providerInstanceId,
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              nodeId: input.rootNode.id,
+              event: deliveredEvent,
+              ...(isRootProviderThreadUpdate
+                ? rootTerminalAlreadySeen
+                  ? {
+                      writeIfProviderThreadOwner: {
+                        providerThreadId: input.providerThread.id,
+                        runId: input.run.id,
+                        activeAttemptId: input.attempt.id,
+                        expectedLastRunOrdinal: input.run.ordinal,
+                      },
+                    }
+                  : {
+                      writeIfRunCurrent: {
+                        runId: input.run.id,
+                        activeAttemptId: input.attempt.id,
+                        expectedStatus: "running" as const,
+                      },
+                    }
+                : {}),
+            };
+            if (!buffered) yield* flushSnapshots;
+            const storedEvents = buffered
+              ? yield* bufferSnapshot(ingestInput, singleSnapshot)
+              : yield* providerEventIngestor.ingestNormalized(ingestInput);
+            storedEventCount = storedEvents.length;
+            if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEventCount === 0) {
+              yield* Ref.set(providerThreadOwnerLost, true);
+            }
+          } else if (
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning") &&
+            event.turnItem.streaming &&
+            !reservedHeldTurnItemIds.has(event.turnItem.id)
+          ) {
+            yield* flushSnapshots;
+            yield* turnItemPositions.allocate({
+              threadId: event.turnItem.threadId,
+              turnItemId: event.turnItem.id,
+              runId: event.turnItem.runId,
+            });
+            reservedHeldTurnItemIds.add(event.turnItem.id);
+          }
+          if (event.type === "provider_thread.updated") {
+            if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
+              yield* Ref.set(latestProviderThread, event.providerThread);
+            }
+          }
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.providerTurnId === (yield* Ref.get(eventRouting)).rootProviderTurnId
+          ) {
+            yield* Ref.update(latestTurnItemOrdinal, (current) =>
+              Math.max(current, event.turnItem.ordinal),
+            );
+          }
+          if (event.type === "turn.terminal") {
+            yield* Ref.set(terminalEvent, event);
+            yield* Ref.set(rootTerminalSeen, true);
+            yield* finalizeRootRun(event);
+          }
+          yield* trackChildLifecycle(event, deliveredEvent !== null);
+        });
+        const isRootSnapshot = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          (event.type === "node.updated" && event.node.threadId === input.run.threadId) ||
+          (event.type === "message.updated" && event.message.threadId === input.run.threadId) ||
+          (event.type === "turn_item.updated" && event.turnItem.threadId === input.run.threadId);
+        const providerEventFiber = yield* eventSubscription.events.pipe(
+          Stream.chunks,
+          Stream.mapEffect((events) =>
+            Effect.gen(function* () {
+              let index = 0;
+              while (index < events.length) {
+                if (ingestionStopped) return;
+                const start = index;
+                const buffered =
+                  !(yield* Ref.get(rootTerminalSeen)) && isRootSnapshot(events[index]!);
+                index++;
+                if (buffered) {
+                  while (
+                    index < events.length &&
+                    index - start < 32 &&
+                    isRootSnapshot(events[index]!)
+                  )
+                    index++;
                 }
-              } else if (
-                event.type === "turn_item.updated" &&
-                (event.turnItem.type === "assistant_message" ||
-                  event.turnItem.type === "reasoning") &&
-                event.turnItem.streaming &&
-                !reservedHeldTurnItemIds.has(event.turnItem.id)
-              ) {
-                yield* turnItemPositions.allocate({
-                  threadId: event.turnItem.threadId,
-                  turnItemId: event.turnItem.id,
-                  runId: event.turnItem.runId,
-                });
-                reservedHeldTurnItemIds.add(event.turnItem.id);
-              }
-              if (event.type === "provider_thread.updated") {
-                if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
-                  yield* Ref.set(latestProviderThread, event.providerThread);
-                }
-              }
-              if (
-                event.type === "turn_item.updated" &&
-                event.turnItem.providerTurnId === (yield* Ref.get(eventRouting)).rootProviderTurnId
-              ) {
-                yield* Ref.update(latestTurnItemOrdinal, (current) =>
-                  Math.max(current, event.turnItem.ordinal),
+                const singleSnapshot = index - start === 1;
+                const process = Stream.fromArray(events.slice(start, index)).pipe(
+                  Stream.mapEffect(routeEvent),
+                  Stream.tap((event) => ingestEvent({ ...event, buffered, singleSnapshot })),
+                  Stream.takeUntilEffect(() =>
+                    shouldStopProviderEventIngestion.pipe(
+                      Effect.tap((stop) =>
+                        Effect.sync(() => {
+                          ingestionStopped = stop;
+                        }),
+                      ),
+                    ),
+                  ),
+                  Stream.runDrain,
+                  Effect.onExit(() => flushSnapshots),
                 );
+                // Stop must observe these snapshots before it can settle their work.
+                yield* buffered ? threadCommands.withLock(input.run.threadId, process) : process;
               }
-              if (event.type === "turn.terminal") {
-                yield* Ref.set(terminalEvent, event);
-                yield* Ref.set(rootTerminalSeen, true);
-                yield* finalizeRootRun(event);
-              }
-              yield* trackChildLifecycle(event, deliveredEvent !== null);
             }),
           ),
-          Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
+          Stream.takeUntil(() => ingestionStopped),
           Stream.runDrain,
           Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
           Effect.flatMap(() =>

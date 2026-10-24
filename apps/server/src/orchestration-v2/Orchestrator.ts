@@ -2566,6 +2566,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const movesForward =
       thread.lastVisitedAt === null ||
       DateTime.toEpochMillis(visitedAt.value) > DateTime.toEpochMillis(thread.lastVisitedAt);
+    if (!movesForward) return;
     // Viewing a thread changes read state only. Loading its transcript (or
     // bumping updatedAt) makes a routine read receipt scale with its history.
     yield* emit(
@@ -2576,7 +2577,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: command.threadId,
       providerInstanceId: thread.providerInstanceId,
       occurredAt: yield* DateTime.now,
-      payload: movesForward ? { ...thread, lastVisitedAt: visitedAt.value } : thread,
+      payload: { ...thread, lastVisitedAt: visitedAt.value },
     });
   });
 
@@ -11781,6 +11782,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         planned.events.length > 0 ||
+        command.type === "thread.visit" ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
         command.type === "subagent.stop"

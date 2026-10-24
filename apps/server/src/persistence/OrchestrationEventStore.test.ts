@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
@@ -24,7 +25,7 @@ import {
   LIVE_STREAM_MAX_ITEMS,
   LiveStreamBufferError,
 } from "../orchestration-v2/LiveStreamBudget.ts";
-import { PersistenceDecodeError } from "./Errors.ts";
+import { PersistenceDecodeError, PersistenceSqlError } from "./Errors.ts";
 import { toShellApplicationEvent } from "../orchestration-v2/ShellStream.ts";
 import * as OrchestrationEventStore from "./OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
@@ -37,6 +38,40 @@ const layerTest = OrchestrationEventStore.layer.pipe(
 const layer = it.layer(layerTest);
 
 layer("OrchestrationEventStore", (it) => {
+  it.effect("rejects duplicate appends without replacing events or consuming a sequence", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const now = yield* DateTime.now;
+      const event: OrchestrationV2DomainEvent = {
+        id: EventId.make("event:duplicate-append"),
+        threadId: ThreadId.make("thread:duplicate-append"),
+        type: "provider-session.detached",
+        occurredAt: now,
+        payload: {
+          providerSessionId: ProviderSessionId.make("session:duplicate"),
+          detachedAt: now,
+        },
+      };
+      const [first] = yield* store.appendAgentEvents({ events: [event] });
+      const rejected = yield* store
+        .appendAgentEvents({
+          events: [{ ...event, payload: { ...event.payload, reason: "must not replace" } }],
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(rejected, PersistenceSqlError);
+      const next = { ...event, id: EventId.make("event:after-duplicate") };
+      const [second] = yield* store.appendAgentEvents({ events: [next] });
+      assert.equal(second!.sequence, first!.sequence + 1);
+      const stored = yield* store
+        .readAgentEvents({ threadId: event.threadId })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        stored.map((row) => row.event),
+        [event, next],
+      );
+    }),
+  );
+
   it.effect("retains only shell metadata from oversized replay and live application events", () =>
     Effect.scoped(
       Effect.gen(function* () {

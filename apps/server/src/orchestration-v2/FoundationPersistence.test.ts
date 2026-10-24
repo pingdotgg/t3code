@@ -1039,9 +1039,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect(
-    "rolls back events, projections, receipts, and effects after a projection failure",
-    () =>
+  it.effect.each(["projection", "event insert"] as const)(
+    "rolls back events, projections, receipts, and effects after a %s failure",
+    (failure) =>
       Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const eventStore = yield* EventStore.EventStoreV2;
@@ -1069,7 +1069,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         const events = [1, 2].map(
           (index) =>
             ({
-              id: EventId.make(`event:foundation-atomic-failure:${index}`),
+              id: EventId.make(
+                `event:foundation-atomic-failure:${failure === "event insert" ? 1 : index}`,
+              ),
               type: "checkpoint.captured",
               threadId,
               occurredAt: now,

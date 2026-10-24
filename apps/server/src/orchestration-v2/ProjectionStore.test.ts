@@ -1,4 +1,6 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   EnvironmentId,
   EventId,
@@ -8,6 +10,7 @@ import {
   CheckpointScopeId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadShellSnapshot,
@@ -28,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
@@ -35,6 +39,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { runMigrations } from "../persistence/Migrations.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
@@ -55,6 +60,238 @@ const modelSelection = {
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const streamingProjectionCases = ["node", "message", "turn-item"] as const;
+const streamingProjectionEvent = (
+  kind: (typeof streamingProjectionCases)[number],
+  id: string,
+  at: DateTime.Utc,
+) => {
+  const threadId = ThreadId.make("thread:streaming-write");
+  const base = {
+    threadId,
+    runId: RunId.make("run:streaming-write"),
+    nodeId: NodeId.make(id),
+    providerThreadId: ProviderThreadId.make("provider-thread:streaming-write"),
+    providerTurnId: ProviderTurnId.make("provider-turn:streaming-write"),
+  };
+  const event = { id: EventId.make(id), threadId, occurredAt: at };
+  switch (kind) {
+    case "node":
+      return {
+        ...event,
+        type: "node.updated",
+        payload: {
+          ...base,
+          id: NodeId.make(id),
+          parentNodeId: null,
+          rootNodeId: NodeId.make("node:root"),
+          kind: "assistant_message",
+          status: "running",
+          countsForRun: false,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: at,
+          completedAt: null,
+        },
+      } as const satisfies OrchestrationV2DomainEvent;
+    case "message":
+      return {
+        ...event,
+        type: "message.updated",
+        payload: {
+          ...base,
+          id: MessageId.make(id),
+          createdBy: "agent",
+          creationSource: "provider",
+          role: "assistant",
+          text: "a".repeat(512),
+          attachments: [],
+          streaming: true,
+          createdAt: at,
+          updatedAt: at,
+        },
+      } as const satisfies OrchestrationV2DomainEvent;
+    case "turn-item":
+      return {
+        ...event,
+        type: "turn-item.updated",
+        payload: {
+          ...base,
+          id: TurnItemId.make(id),
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          type: "reasoning",
+          status: "running",
+          title: null,
+          startedAt: at,
+          completedAt: null,
+          updatedAt: at,
+          text: "a".repeat(512),
+          streaming: true,
+        },
+      } as const satisfies OrchestrationV2DomainEvent;
+  }
+};
+
+it.effect.each(streamingProjectionCases)(
+  "%s streaming updates do not rewrite unchanged index pages",
+  (kind) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-projection-writes-" });
+      const filename = `${directory}/state.sqlite`;
+      const database = NodeSqliteClient.layer({ filename });
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        yield* sql`PRAGMA journal_mode = WAL`;
+        yield* sql`PRAGMA wal_autocheckpoint = 0`;
+        yield* runMigrations();
+        const at = DateTime.makeUnsafe("2026-10-23T00:00:00.000Z");
+        yield* sql.withTransaction(
+          Effect.forEach(
+            Array.from({ length: 256 }, (_, index) => index),
+            (index) => store.apply(streamingProjectionEvent(kind, `record:${index}`, at)),
+            { discard: true },
+          ),
+        );
+        yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+        const event = streamingProjectionEvent(kind, "record:128", at);
+        const later = DateTime.add(at, { seconds: 1 });
+        switch (event.type) {
+          case "node.updated":
+            yield* sql.withTransaction(
+              store.apply({ ...event, payload: { ...event.payload, countsForRun: true } }),
+            );
+            break;
+          case "message.updated":
+            yield* sql.withTransaction(
+              store.apply({
+                ...event,
+                payload: { ...event.payload, updatedAt: later, text: "b".repeat(512) },
+              }),
+            );
+            break;
+          case "turn-item.updated":
+            yield* sql.withTransaction(
+              store.apply({
+                ...event,
+                payload: { ...event.payload, updatedAt: later, text: "b".repeat(512) },
+              }),
+            );
+            break;
+        }
+        const wal = yield* fs.readFile(`${filename}-wal`);
+        const header = new DataView(wal.buffer, wal.byteOffset, wal.byteLength);
+        const pageSize = header.getUint32(8);
+        const frames = (wal.byteLength - 32) / (pageSize + 24);
+        // The fixed-size or shrinking payload fits its existing leaf; no index page needs writing.
+        assert.equal(frames, 1);
+      }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(database))));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(streamingProjectionCases)(
+  "%s snapshot updates match fresh inserts across key and lifecycle changes",
+  (kind) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const at = DateTime.makeUnsafe("2026-10-23T00:00:00.000Z");
+      const later = DateTime.add(at, { seconds: 1 });
+      const event = streamingProjectionEvent(kind, "record:equivalence", at);
+      const variants: Array<OrchestrationV2DomainEvent> = [event];
+      switch (event.type) {
+        case "node.updated": {
+          const node = event.payload;
+          for (const payload of [
+            { ...node, threadId: ThreadId.make("other-thread") },
+            { ...node, runId: null },
+            { ...node, parentNodeId: NodeId.make("parent") },
+            { ...node, providerTurnId: null },
+            { ...node, status: "completed" as const },
+            {
+              ...node,
+              countsForRun: true,
+              rootNodeId: NodeId.make("other-root"),
+              kind: "tool_call" as const,
+              providerThreadId: null,
+              runtimeRequestId: RuntimeRequestId.make("request"),
+              checkpointScopeId: CheckpointScopeId.make("scope"),
+              startedAt: null,
+              completedAt: later,
+            },
+          ])
+            variants.push({ ...event, payload }, event);
+          break;
+        }
+        case "message.updated": {
+          const message = event.payload;
+          for (const payload of [
+            { ...message, threadId: ThreadId.make("other-thread") },
+            { ...message, runId: null },
+            { ...message, nodeId: null },
+            { ...message, createdAt: later },
+            {
+              ...message,
+              text: "next chunk",
+              updatedAt: later,
+              streaming: false,
+              role: "user" as const,
+            },
+          ])
+            variants.push({ ...event, payload }, event);
+          break;
+        }
+        case "turn-item.updated": {
+          const item = event.payload;
+          for (const payload of [
+            { ...item, threadId: ThreadId.make("other-thread") },
+            { ...item, runId: null },
+            { ...item, nodeId: null },
+            { ...item, providerTurnId: null },
+            { ...item, ordinal: 9_000_000_000 },
+            { ...item, status: "completed" as const },
+            { ...item, type: "compaction" as const, driver },
+            {
+              ...item,
+              parentItemId: TurnItemId.make("parent"),
+              providerThreadId: null,
+              updatedAt: later,
+              title: "next chunk",
+              text: "next chunk",
+              streaming: false,
+            },
+          ])
+            variants.push({ ...event, payload }, event);
+          const failed = {
+            ...item,
+            type: "error" as const,
+            status: "failed" as const,
+            failure: { class: "unknown" as const, message: "Failed", code: null, retryable: null },
+          };
+          variants.push(
+            { ...event, payload: failed },
+            { ...event, payload: { ...failed, updatedAt: later } },
+            event,
+          );
+          break;
+        }
+      }
+      const table = `orchestration_v2_projection_${kind === "turn-item" ? "turn_items" : `${kind}s`}`;
+      const read = sql.unsafe(`SELECT * FROM ${table}`);
+      for (const variant of variants) {
+        yield* store.apply(variant);
+        const updated = yield* read;
+        yield* sql.unsafe(`DELETE FROM ${table}`);
+        yield* store.apply(variant);
+        assert.deepEqual(yield* read, updated);
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
 
 const traceSqlStatements = () => {
   const statements: Array<string> = [];

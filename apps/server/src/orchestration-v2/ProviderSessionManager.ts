@@ -1701,11 +1701,17 @@ export const layerWithOptions = (
             ),
           );
           const events = Stream.fromQueue(queue).pipe(
-            Stream.mapEffect((signal) =>
-              signal.type === "event"
-                ? Effect.succeed(signal.event)
-                : Effect.failCause(signal.cause),
-            ),
+            Stream.chunks,
+            Stream.flatMap((signals) => {
+              const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+              for (const signal of signals) {
+                if (signal.type !== "event") {
+                  return Stream.concat(Stream.fromArray(events), Stream.failCause(signal.cause));
+                }
+                events.push(signal.event);
+              }
+              return Stream.fromArray(events);
+            }),
             Stream.ensuring(close),
           );
           return { events, close } satisfies ProviderAdapter.ProviderAdapterV2EventSubscription;
