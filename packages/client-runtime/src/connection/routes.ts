@@ -186,9 +186,13 @@ export function connectionRouteAddress(route: ConnectionRoute): string | null {
   return routeHttpBaseUrl(route);
 }
 
+/** The first address paired on this device. Learned routes have no credential of their own. */
+export const savedBearerRoute = (entry: ConnectionCatalogEntry) =>
+  connectionRoutes(entry).find((r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget");
+
 /** Learned routes alone must not make relay environments manually retryable. */
 export const hasSavedBearerRoute = (entry: ConnectionCatalogEntry) =>
-  connectionRoutes(entry).some((r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget");
+  savedBearerRoute(entry) !== undefined;
 
 export function hasRelayRoute(
   entry: Pick<ConnectionCatalogEntry, "target" | "alternateRoutes">,

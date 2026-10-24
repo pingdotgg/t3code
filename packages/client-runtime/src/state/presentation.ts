@@ -18,7 +18,7 @@ import {
   type EnvironmentServerConfig,
 } from "../connection/presentation.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
-import { hasRelayRoute } from "../connection/routes.ts";
+import { hasRelayRoute, routeHttpBaseUrl, savedBearerRoute } from "../connection/routes.ts";
 
 function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
   if (left.size !== right.size) {
@@ -191,7 +191,9 @@ export interface EnvironmentConnectionSummary {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly displayUrl: string;
+  /** Saved only through T3 Connect: a paired address keeps an environment out of this group. */
   readonly isRelayManaged: boolean;
+  readonly hasRelayRoute: boolean;
   readonly isEnabled: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
@@ -202,11 +204,17 @@ export function projectEnvironmentConnectionSummary(
   environmentId: EnvironmentId,
   environment: EnvironmentPresentation,
 ): EnvironmentConnectionSummary {
+  // The row edits the paired address, which may sit behind T3 Connect or a learned route.
+  const saved = savedBearerRoute(environment.entry);
   return {
     environmentId,
     environmentLabel: environment.entry.target.label,
-    displayUrl: connectionCatalogDisplayUrl(environment.entry) ?? "",
-    isRelayManaged: hasRelayRoute(environment.entry),
+    displayUrl:
+      (saved === undefined ? null : routeHttpBaseUrl(saved)) ??
+      connectionCatalogDisplayUrl(environment.entry) ??
+      "",
+    isRelayManaged: hasRelayRoute(environment.entry) && saved === undefined,
+    hasRelayRoute: hasRelayRoute(environment.entry),
     isEnabled: environment.entry.enabled,
     connectionState: environment.connection.phase,
     connectionError: environment.connection.error,
@@ -259,6 +267,7 @@ export function createEnvironmentSummaryAtoms(input: {
         previous.environmentLabel === next.environmentLabel &&
         previous.displayUrl === next.displayUrl &&
         previous.isRelayManaged === next.isRelayManaged &&
+        previous.hasRelayRoute === next.hasRelayRoute &&
         previous.isEnabled === next.isEnabled &&
         previous.connectionState === next.connectionState &&
         previous.connectionError === next.connectionError &&

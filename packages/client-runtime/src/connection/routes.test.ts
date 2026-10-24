@@ -19,6 +19,7 @@ import {
   mergeLearnedRoutes,
   removedWithRelay,
   routesAfterRemoving,
+  savedBearerRoute,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -90,6 +91,17 @@ describe("connection routes", () => {
 });
 
 describe("learned routes", () => {
+  it("edits the paired address, not T3 Connect or a learned route ahead of it", () => {
+    const learnedLan = learned("learned-lan", "http://192.168.1.20:3773/");
+    const entry = entryWithRoutes({ target: RELAY.target, profile: RELAY.profile, enabled: true }, [
+      RELAY,
+      learnedLan,
+      TAILNET,
+    ]);
+    expect(savedBearerRoute(entry)).toBe(TAILNET);
+    expect(savedBearerRoute(entryWithRoutes(entry, [RELAY, learnedLan]))).toBeUndefined();
+  });
+
   const relayOnly: ConnectionCatalogEntry = {
     target: RELAY.target,
     profile: RELAY.profile,

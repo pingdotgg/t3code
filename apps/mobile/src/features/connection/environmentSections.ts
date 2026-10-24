@@ -13,21 +13,21 @@ export interface EnvironmentSections {
   readonly availableCloudEnvironments: ReadonlyArray<RelayClientEnvironmentRecord>;
 }
 
-export function relayManagedEnvironmentIds(
+export function savedRelayEnvironmentIds(
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
-    readonly isRelayManaged: boolean;
+    readonly hasRelayRoute: boolean;
   }>,
 ): ReadonlySet<EnvironmentId> {
   return new Set(
     environments
-      .filter((environment) => environment.isRelayManaged)
+      .filter((environment) => environment.hasRelayRoute)
       .map((environment) => environment.environmentId),
   );
 }
 
 export function splitEnvironmentSections(input: EnvironmentSectionsInput): EnvironmentSections {
-  const savedEnvironmentIds = relayManagedEnvironmentIds(input.connectedEnvironments);
+  const savedEnvironmentIds = savedRelayEnvironmentIds(input.connectedEnvironments);
 
   return {
     localEnvironments: input.connectedEnvironments.filter(
