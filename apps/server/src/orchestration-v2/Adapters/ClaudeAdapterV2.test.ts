@@ -30,6 +30,7 @@ import {
   ChatImageAttachment,
   CheckpointId,
   ClaudeSettings,
+  type ComposerContextId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -68,6 +69,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
@@ -13176,6 +13178,68 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
           { objective: condition, status: "complete", checks: 1 },
         ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("shows a /goal with attached context as the user wrote it", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "Report to [Coaching Hub](t3-context://v1/thread/thread_abc).";
+        const projected = projectComposerContextForProvider({
+          text: condition,
+          records: [
+            {
+              version: 1,
+              kind: "thread",
+              contextId: "thread_abc" as ComposerContextId,
+              label: "Coaching Hub",
+              environmentId: EnvironmentId.make("env-1"),
+              threadId: ThreadId.make("abc"),
+              title: "Coaching Hub",
+            },
+          ],
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-context-attempt"),
+            text: `/goal ${projected}`,
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          syntheticFrame("goal-context-set", `Goal set: ${projected}`),
+          stopHookFeedback("goal-context-check", projected, "Not reported yet."),
+          makeResultFrame({
+            uuid: "goal-context-result",
+            result: "",
+            terminalReason: "hook_stopped",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === `Goal set: ${condition}`,
+          ),
+        );
+        assert.deepEqual(goalStatuses(harness.events).at(-1), {
+          objective: condition,
+          status: "active",
+          checks: 1,
+          lastCheck: "Not reported yet.",
+        });
       }).pipe(
         Effect.scoped,
         Effect.provide(

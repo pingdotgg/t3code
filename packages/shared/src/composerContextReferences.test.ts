@@ -12,6 +12,7 @@ import {
   isImageReferencesOnly,
   parseComposerContextHref,
   projectComposerContextForProvider,
+  restoreComposerContextReferences,
   threadContextsOutsideEnvironment,
   toComposerContextId,
   toKindScopedComposerContextId,
@@ -263,6 +264,17 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+
+  it("restores echoed projections to reference links without their envelope", () => {
+    const text =
+      "Watch ![shot.png](t3-context://v1/image/ctx_i), [T1](t3-context://v1/terminal/ctx_t) and [Checkout](t3-context://v1/preview-annotation/ctx_p).";
+    const projected = projectComposerContextForProvider({ text, records: [terminal, image] });
+    expect(restoreComposerContextReferences(projected)).toBe(text);
+    expect(restoreComposerContextReferences(`Stop hook feedback:\n[${projected}]: Not yet.`)).toBe(
+      `Stop hook feedback:\n[${text}]: Not yet.`,
+    );
+    expect(restoreComposerContextReferences("Plain [Note: x] text")).toBe("Plain [Note: x] text");
   });
 });
 

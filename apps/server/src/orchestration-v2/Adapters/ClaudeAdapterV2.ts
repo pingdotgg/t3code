@@ -57,6 +57,7 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import { restoreComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
@@ -1553,6 +1554,13 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
+// `<synthetic>` command output such as "Goal set: …" echoes the prompt Claude was
+// sent, so it is shown the way the user wrote it rather than as the projection.
+function assistantTextFromClaudeMessage(message: SDKAssistantMessage["message"]): string {
+  const text = textFromClaudeContent(message.content);
+  return message.model === "<synthetic>" ? restoreComposerContextReferences(text) : text;
+}
+
 // Claude 5.1 and later return the text written ahead of a tool call as a
 // thinking block, at most one per call, instead of a text block. Summarized
 // display makes it look like reasoning, so only the second of two thinking
@@ -1578,7 +1586,7 @@ function nextClaudeGoal(
     if (message.parent_tool_use_id !== null || message.message.model !== "<synthetic>") {
       return undefined;
     }
-    const text = textFromClaudeContent(message.message.content).trim();
+    const text = assistantTextFromClaudeMessage(message.message).trim();
     if (text.startsWith(CLAUDE_GOAL_SET_PREFIX)) {
       const objective = text.slice(CLAUDE_GOAL_SET_PREFIX.length).trim();
       return objective.length === 0 ? undefined : { objective, status: "active", checks: 0 };
@@ -1603,10 +1611,11 @@ function nextClaudeGoal(
   }
   const prefix = `Stop hook feedback:\n[${current.objective}]: `;
   const content = message.message.content;
-  const text =
+  const text = restoreComposerContextReferences(
     typeof content === "string"
       ? content
-      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+  );
   if (!text.startsWith(prefix)) return undefined;
   return {
     ...current,
@@ -1630,7 +1639,7 @@ function assistantTextFromSdkMessage(
   }
   return {
     nativeItemId: message.uuid,
-    text: textFromClaudeContent(message.message.content),
+    text: assistantTextFromClaudeMessage(message.message),
   };
 }
 
