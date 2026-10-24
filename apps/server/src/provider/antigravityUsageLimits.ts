@@ -15,6 +15,8 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 
+import { ANTIGRAVITY_RELEASE_VERSION } from "./antigravityRelease.ts";
+
 const ENDPOINTS = [
   "https://daily-cloudcode-pa.googleapis.com",
   "https://cloudcode-pa.googleapis.com",
@@ -104,11 +106,13 @@ function summaryWindows(summary: typeof Summary.Type) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
-        ? "Gemini"
-        : bucket.bucketId.startsWith("3p-")
-          ? "Claude & GPT (shared)"
-          : group.displayName?.trim() || bucket.bucketId;
+      const family = bucket.bucketId.startsWith("gemini-argon-")
+        ? "Gemini 4 Argon"
+        : bucket.bucketId.startsWith("gemini-")
+          ? "Gemini"
+          : bucket.bucketId.startsWith("3p-")
+            ? "Claude & GPT (shared)"
+            : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
       const window = quotaWindow(
@@ -128,8 +132,9 @@ function summaryWindows(summary: typeof Summary.Type) {
 function modelWindows(models: typeof Models.Type) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   for (const [modelId, model] of Object.entries(models.models)) {
-    const family =
-      model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
+    const family = modelId.startsWith("gemini-4-argon")
+      ? "Gemini 4 Argon"
+      : model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
         ? "Gemini"
         : model.modelProvider === "MODEL_PROVIDER_ANTHROPIC" || modelId.startsWith("claude-")
           ? "Claude"
@@ -143,7 +148,7 @@ function modelWindows(models: typeof Models.Type) {
     ] as const) {
       if (!quota) continue;
       const window = quotaWindow(
-        `${family.toLowerCase()}-${suffix}`,
+        `${family.toLowerCase().replaceAll(" ", "-")}-${suffix}`,
         `${family} · ${suffix === "weekly" ? "Weekly" : "Reported quota"}`,
         quota,
         suffix === "weekly" ? "weekly" : "other",
@@ -260,7 +265,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
             HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
               HttpClientRequest.setHeaders({
                 Authorization: `Bearer ${accessToken}`,
-                "User-Agent": `antigravity/hub/1.0.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                // The legacy hub identity omits Gemini and Argon quota groups for some accounts.
+                "User-Agent": `antigravity/acp/${ANTIGRAVITY_RELEASE_VERSION} (aidev_client; os_type=${platform}; arch=${architecture === "x64" ? "amd64" : architecture}; host_path=t3-code/0.1.0; proxy_client=antigravity/sdk)`,
               }),
               HttpClientRequest.bodyJsonUnsafe(
                 token.project_id ? { project: token.project_id } : {},

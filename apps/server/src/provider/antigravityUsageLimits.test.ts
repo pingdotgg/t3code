@@ -50,6 +50,8 @@ const summary = {
 const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   options: {
     summary?: unknown;
+    /** The daily service can omit Gemini buckets for the legacy hub client identity. */
+    requireAcpUserAgent?: boolean;
     /** Per-host quota summaries; hosts not listed fall back to `summary`. */
     summaryByHost?: Record<string, unknown>;
     models?: unknown;
@@ -110,9 +112,15 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
       return HttpClientResponse.fromWeb(
         request,
         request.url.endsWith(":retrieveUserQuotaSummary")
-          ? Response.json(options.summaryByHost?.[url.host] ?? options.summary ?? summary, {
-              status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
-            })
+          ? Response.json(
+              options.requireAcpUserAgent &&
+                !request.headers["user-agent"]?.startsWith("antigravity/acp/")
+                ? { groups: [summary.groups[1]] }
+                : (options.summaryByHost?.[url.host] ?? options.summary ?? summary),
+              {
+                status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
+              },
+            )
           : Response.json(options.models ?? { models: {} }),
       );
     }),
@@ -150,6 +158,86 @@ describe("Antigravity subscription limits", () => {
       expect(
         requests.filter((request) => request.url.endsWith(":retrieveUserQuotaSummary")),
       ).toHaveLength(4);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "requests Argon weekly quota with the ACP client identity and labels it separately",
+    () =>
+      Effect.gen(function* () {
+        const { probe } = yield* fixture({
+          requireAcpUserAgent: true,
+          summary: {
+            groups: [
+              ...summary.groups,
+              {
+                displayName: "Gemini 4 Argon",
+                buckets: [
+                  {
+                    bucketId: "gemini-argon-wtu-weekly",
+                    window: "weekly",
+                    remainingFraction: 0.6,
+                    resetTime: "2026-10-25T00:25:01Z",
+                  },
+                ],
+              },
+            ],
+          },
+        });
+        const limits = yield* probe;
+        expect(limits.windows).toHaveLength(5);
+        const byId = new Map(limits.windows.map((window) => [window.id, window]));
+        expect(byId.get("gemini-argon-wtu-weekly")).toEqual({
+          id: "gemini-argon-wtu-weekly",
+          label: "Gemini 4 Argon · Weekly",
+          kind: "weekly",
+          usedPercent: 40,
+          windowDurationMins: 10080,
+          resetsAt: "2026-10-25T00:25:01.000Z",
+        });
+        expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
+        expect(byId.get("gemini-weekly")?.usedPercent).toBeCloseTo(4);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps Argon model quotas independent from other Gemini models in the fallback", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        summaryStatus: 404,
+        models: {
+          models: {
+            "gemini-4-argon-medium": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 0.6 },
+              weeklyQuotaInfo: { remainingFraction: 0.6 },
+            },
+            "gemini-4-argon-high": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 0.5 },
+              weeklyQuotaInfo: { remainingFraction: 0.5 },
+            },
+            "gemini-3.8-flash": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 0.9 },
+              weeklyQuotaInfo: { remainingFraction: 0.9 },
+            },
+          },
+        },
+      });
+      const limits = yield* probe;
+      expect(limits.windows).toHaveLength(4);
+      const argon = limits.windows.filter((window) => window.label.startsWith("Gemini 4 Argon"));
+      expect(argon).toHaveLength(2);
+      expect(argon.every((window) => window.usedPercent === 50)).toBe(true);
+      expect(argon.find((window) => window.kind === "weekly")).toMatchObject({
+        id: "gemini-4-argon-weekly",
+        label: "Gemini 4 Argon · Weekly",
+        windowDurationMins: 10080,
+      });
+      expect(argon.find((window) => window.kind === "other")?.windowDurationMins).toBeUndefined();
+      expect(
+        limits.windows.find((window) => window.id === "gemini-weekly")?.usedPercent,
+      ).toBeCloseTo(10);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
