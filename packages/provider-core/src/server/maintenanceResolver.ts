@@ -88,6 +88,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
     /** The updater cannot detect installs outside `isCommandPath`, so leave those manual-only. */
     readonly requiresCommandPath?: boolean;
     readonly env?: NodeJS.ProcessEnv;
+    /** An installer-specific channel must not fall back to npm when unavailable. */
+    readonly lookupLatestVersion?: Effect.Effect<string | null>;
   } | null;
 }
 
@@ -463,6 +465,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateLockKey: `${definition.provider}-native`,
         platform: context.platform,
         ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+        ...(nativeUpdate.lookupLatestVersion
+          ? { latestVersion: null, lookupLatestVersion: nativeUpdate.lookupLatestVersion }
+          : {}),
       })
     : manual;
   // A native-looking launcher can still delegate to a mise-owned install.

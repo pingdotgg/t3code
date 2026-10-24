@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -64,13 +65,70 @@ function isCodexStandaloneCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/packages/standalone/");
 }
 
+const CodexNativeReleaseMetadata = Schema.Struct({
+  tag_name: Schema.String,
+  assets: Schema.Array(
+    Schema.Struct({ name: Schema.String, digest: Schema.optional(Schema.NullOr(Schema.String)) }),
+  ),
+});
+
+/** The standalone installer consumes this channel, whose rollout can lag npm. */
+const lookupCodexNativeVersion = Effect.gen(function* () {
+  const env = yield* HostProcess.Environment;
+  // Explicit installer overrides are not the default stable channel. An unknown
+  // advisory is safer than promising an npm release this updater will not install.
+  if (
+    (env.CODEX_RELEASE && env.CODEX_RELEASE !== "latest") ||
+    (env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM &&
+      !/^(1|true|yes)$/i.test(env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM))
+  )
+    return null;
+  const http = yield* HttpClient.HttpClient;
+  const response = yield* http.get("https://releases.openai.com/codex/channels/latest");
+  if (response.status < 200 || response.status >= 300) return null;
+  const metadata = yield* response.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(CodexNativeReleaseMetadata)),
+  );
+  const version = /^rust-v(\d+\.\d+\.\d+)$/.exec(metadata.tag_name)?.[1];
+  if (!version) return null;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  const targetArchitecture =
+    architecture === "arm64" ? "aarch64" : architecture === "x64" ? "x86_64" : null;
+  const targetPlatform =
+    platform === "darwin"
+      ? "apple-darwin"
+      : platform === "linux"
+        ? "unknown-linux-musl"
+        : platform === "win32"
+          ? "pc-windows-msvc"
+          : null;
+  if (!targetArchitecture || !targetPlatform) return null;
+  // The native installer accepts a package plus checksums, or a legacy platform
+  // npm archive. Both layouts require asset SHA-256 metadata, not just a tag.
+  const assets = new Set(
+    metadata.assets
+      .filter((asset) => /^sha256:[0-9a-fA-F]{64}$/.test(asset.digest ?? ""))
+      .map((asset) => asset.name),
+  );
+  const hasPackage =
+    assets.has(`codex-package-${targetArchitecture}-${targetPlatform}.tar.gz`) &&
+    assets.has("codex-package_SHA256SUMS");
+  const hasLegacyPackage = assets.has(`codex-npm-${platform}-${architecture}-${version}.tgz`);
+  return hasPackage || hasLegacyPackage ? version : null;
+}).pipe(
+  Effect.timeoutOption("4 seconds"),
+  Effect.map(Option.getOrNull),
+  Effect.orElseSucceed(() => null),
+);
+
 /**
  * `codex update` replaces the standalone tree under `CODEX_HOME`. That tree
  * lives in the shared home even when an auth-overlay shadow home is in use
  * (the overlay only carries auth and a few local entries), so the updater
  * runs against `sharedHomePath` rather than the instance's effective home.
  */
-function makeCodexMaintenanceResolver(sharedHomePath: string) {
+function makeCodexMaintenanceResolver(sharedHomePath: string, http: HttpClient.HttpClient) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
@@ -79,6 +137,9 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
       isCommandPath: isCodexStandaloneCommandPath,
       requiresCommandPath: true,
       env: { CODEX_HOME: sharedHomePath },
+      lookupLatestVersion: lookupCodexNativeVersion.pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      ),
     },
   });
 }
@@ -168,7 +229,7 @@ export const CodexDriver: ProviderDriver<
     } satisfies CodexSettings;
     const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(
-        makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
+        makeCodexMaintenanceResolver(homeLayout.sharedHomePath, httpClient),
         {
           binaryPath: effectiveConfig.binaryPath,
           env: processEnv,
