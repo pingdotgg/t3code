@@ -62,6 +62,9 @@ const derive = (passphrase: string, iterations: number) =>
  * Deliberately untimed: macOS answers this with a modal, and a timeout racing
  * the user means the prompt can be approved while nothing is left listening,
  * which reads as "approving did nothing".
+ *
+ * The read waits on that modal, so it runs off the main thread; the synchronous
+ * `Entry` would freeze every window until the user answers.
  */
 const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function* (
   service: string,
@@ -73,8 +76,8 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
     try: () => import("@napi-rs/keyring"),
     catch: (cause) => new ChromiumKeyError({ reason: "keychainUnavailable", cause }),
   });
-  const secret = yield* Effect.try({
-    try: () => new Keyring.Entry(service, account).getPassword(),
+  const secret = yield* Effect.tryPromise({
+    try: () => new Keyring.AsyncEntry(service, account).getPassword(),
     catch: (cause) => {
       const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
       const missing = /no (matching )?entry|not found/i.test(message);
@@ -84,7 +87,7 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
       });
     },
   });
-  if (secret === null || secret === "") {
+  if (!secret) {
     return yield* new ChromiumKeyError({ reason: "keychainItemMissing" });
   }
   return secret;
