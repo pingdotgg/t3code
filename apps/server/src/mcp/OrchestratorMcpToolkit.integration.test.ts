@@ -8,6 +8,7 @@ import {
   type ModelSelection,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadSendResult,
   ProjectId,
   ProviderDriverKind,
@@ -70,6 +71,7 @@ const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDeleg
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
+const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadListResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 
 const codexSelection = {
@@ -576,6 +578,62 @@ describe("orchestrator MCP toolkit", () => {
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
               ?.completionDelivery?.state,
           ).toBe("acknowledged");
+
+          // The list reports the checkout each thread works in, like the read tool does.
+          const branchThreadId = ThreadId.make("thread:mcp-branch");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:mcp-branch:create"),
+            threadId: branchThreadId,
+            projectId,
+            title: "Thread on a branch",
+            modelSelection: codexSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature/mcp-branch",
+            worktreePath: cwd,
+          });
+          // A thread in the project root has neither a branch nor a worktree of its own.
+          const rootThreadId = ThreadId.make("thread:mcp-project-root");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:mcp-project-root:create"),
+            threadId: rootThreadId,
+            projectId,
+            title: "Thread in the project root",
+            modelSelection: codexSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          const listCall = yield* invoke("t3_thread_list", {
+            includeSubagents: false,
+            limit: 100,
+          });
+          const listed = yield* decodeThreadListResult(listCall.structuredContent).pipe(
+            Effect.orDie,
+          );
+          expect(listed.threads.map((thread) => thread.threadId)).toEqual(
+            expect.arrayContaining([parentThreadId, branchThreadId, rootThreadId]),
+          );
+          expect(listed.threads.find((thread) => thread.threadId === branchThreadId)).toMatchObject(
+            {
+              branch: "feature/mcp-branch",
+              worktreePath: cwd,
+            },
+          );
+          expect(listed.threads.find((thread) => thread.threadId === rootThreadId)).toMatchObject({
+            branch: null,
+            worktreePath: null,
+          });
+          expect(listed.threads.find((thread) => thread.threadId === parentThreadId)).toMatchObject(
+            { branch: null, worktreePath: cwd },
+          );
         }).pipe(Effect.provide(layerTest));
       }),
     ),

@@ -2121,6 +2121,20 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
+    it.effect("reports the provider instance and model a task's runs use", () =>
+      Effect.gen(function* () {
+        const upserted = yield* Ref.make(0);
+        const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap((mcp) => mcp.listScheduledTasks(supervisedClient, { projectId })),
+          Effect.provide(service([task({})], null, upserted)),
+        );
+        assert.deepEqual(listed.tasks[0]?.modelSelection, {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+        });
+      }),
+    );
+
     it.effect("hides a webhook URL from a thread whose turn has ended", () =>
       Effect.gen(function* () {
         const callerId = ThreadId.make("thread:scheduled-ended");
