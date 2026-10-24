@@ -2173,6 +2173,12 @@ code {
   .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
     overflow-wrap: break-word;
   }
+
+  /* External link text has a <wbr> after every character, so a squeezed
+     column would split a short link such as #363 mid-number. */
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] :is(th, td) wbr {
+    display: none;
+  }
 }
 
 /* Formula cells keep their natural width and scroll with the table. */
