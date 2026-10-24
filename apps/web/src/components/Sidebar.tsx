@@ -1713,6 +1713,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     );
   };
   const sortableIds = sidebarListItems.map(sidebarListItemId);
+  const sectionDividersEnabled = useClientSettings((s) => s.sidebarSectionDividersEnabled);
   // Outside a drag the orders are constants, so the strategy, and with it
   // every sortable row, keeps its identity while thread shells stream in.
   const { settledOrder: draggedSettledOrder, activeOrder: draggedActiveOrder } =
@@ -3016,7 +3017,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="pinned-header"
                                 marker="pinned-header"
                                 label="Pinned"
-                                visible={from !== null}
+                                visible={sectionDividersEnabled || from !== null}
+                                persistent={sectionDividersEnabled}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
                             );
@@ -3027,7 +3029,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="pinned-divider"
                                 marker="pinned-divider"
                                 label="Active"
-                                visible={from !== null}
+                                visible={sectionDividersEnabled || from !== null}
+                                persistent={sectionDividersEnabled}
                                 isDropTarget={dragTargetSection === "active"}
                               />,
                             );

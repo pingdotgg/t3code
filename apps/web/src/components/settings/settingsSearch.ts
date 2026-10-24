@@ -323,6 +323,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "sidebar-section-dividers",
+    title: "Always show thread section dividers",
+    to: "/settings/general",
+    searchTerms: ["sidebar pinned active labels lines separators dragging"],
+  },
+  {
     id: "working-shelf",
     title: "Working section (beta)",
     to: "/settings/general",
