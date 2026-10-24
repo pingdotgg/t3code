@@ -3764,6 +3764,20 @@ function claudeTaskString(value: unknown, key: string): string | undefined {
   return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
 }
 
+// A Claude Code mod can hold a tool call until the user acts in its terminal
+// pane. T3 cannot provide the requested pane interaction (#17531).
+// Passive panes never request focus and keep working.
+function claudeFocusRequestedPanePlugin(message: SDKMessage): string | null {
+  if (message.type !== "system" || claudeTaskField(message, "subtype") !== "ui_panes") return null;
+  const paneId = claudeTaskString(message, "focus_requested_id");
+  if (paneId === undefined) return null;
+  const panes = claudeTaskField(message, "panes");
+  const pane = Array.isArray(panes)
+    ? panes.find((entry) => claudeTaskField(entry, "id") === paneId)
+    : undefined;
+  return claudeTaskString(pane, "plugin") ?? paneId;
+}
+
 function claudeTaskStatus(value: unknown): OrchestrationV2PlanStep["status"] | undefined {
   switch (value) {
     case "pending":
@@ -7603,6 +7617,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          const focusedPlugin = claudeFocusRequestedPanePlugin(message);
+          if (focusedPlugin !== null && context === (yield* Ref.get(activeTurn))) {
+            yield* Effect.logWarning("orchestration-v2.claude-mod-pane-focus-unsupported", {
+              providerTurnId: context.providerTurnId,
+              plugin: focusedPlugin,
+            });
+            liveQuery.stopping = true;
+            yield* finalizeActiveTurn({
+              context,
+              status: "failed",
+              completedAt: yield* DateTime.now,
+              failure: makeProviderFailure({
+                class: "provider_error",
+                code: "claude_mod_ui_unsupported",
+                message: `The Claude Code mod "${focusedPlugin}" is waiting for input in its terminal pane, which T3 Code cannot show. Disable the mod for sessions run from T3 Code, or run the task in the Claude Code terminal.`,
+              }),
+            });
+            // Closing ends the CLI process and abandons the held tool call
+            // without answering it. Not interrupt: the held CLI may never ack it.
+            yield* liveQuery.query.close.pipe(Effect.ignore);
+            return;
+          }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
@@ -9206,6 +9242,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
             return existing;
@@ -9237,6 +9274,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
+            !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
             // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
