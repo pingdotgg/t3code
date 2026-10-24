@@ -106,6 +106,13 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
+  // A failed read from a newly selected account must not retain the previous account's quota.
+  if (
+    probed?.credentialFingerprint !== undefined &&
+    probed.credentialFingerprint !== published?.credentialFingerprint
+  ) {
+    return probed;
+  }
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
   }

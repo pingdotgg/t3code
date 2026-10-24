@@ -116,6 +116,11 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
+When no Go subscription is reported, local OpenCode 2 ChatGPT connections can show their
+allowance and reset countdowns in **Usage → Limits**. This requires a ChatGPT login that permits
+reading account usage; some token-sharing logins may not support it. If the login expires, use
+OpenCode to refresh it, then refresh Limits. Banked-reset redemption through OpenCode is not supported.
+
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode Console connected

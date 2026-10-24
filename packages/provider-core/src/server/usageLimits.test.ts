@@ -85,6 +85,28 @@ describe("applyUsageLimitsUpdate", () => {
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
+  it("does not retain another account's windows on failures or out-of-order probes", () => {
+    const previous = {
+      ...published,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      credentialFingerprint: "account-a",
+    };
+    const failed = {
+      checkedAt,
+      windows: [],
+      credentialFingerprint: "account-b",
+      unavailable: { reason: "probeFailed" as const },
+    };
+    expect(resolveUsageLimitsAfterProbe({ published: previous, probed: failed })).toBe(failed);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: previous,
+        probed: { ...failed, credentialFingerprint: "account-a" },
+      }),
+    ).toBe(previous);
+    const switched = { ...published, credentialFingerprint: "account-b" };
+    expect(resolveUsageLimitsAfterProbe({ published: previous, probed: switched })).toBe(switched);
+  });
   it("uses read order for windows while taking metadata from the successful probe", () => {
     const live = {
       checkedAt: "2026-09-03T12:00:05.000Z",

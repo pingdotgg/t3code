@@ -22,6 +22,7 @@ import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textG
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { readOpenCodeChatGptUsageLimits } from "./chatGptUsageLimits.ts";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -358,7 +359,26 @@ export const OpenCodeDriver: ProviderDriver<
           enabled: effectiveConfig.enabled,
           serverUrl: effectiveConfig.serverUrl,
           environment: processEnv,
-        }),
+        }).pipe(
+          Effect.flatMap((limits) =>
+            limits.unavailable?.reason !== "unsupported" ||
+            !effectiveConfig.enabled ||
+            effectiveConfig.serverUrl.trim()
+              ? Effect.succeed(limits)
+              : runtimeProbe.get.pipe(
+                  Effect.flatMap((runtime) =>
+                    runtime.generation === "v2"
+                      ? readOpenCodeChatGptUsageLimits({
+                          enabled: effectiveConfig.enabled,
+                          serverUrl: effectiveConfig.serverUrl,
+                          environment: processEnv,
+                        })
+                      : Effect.succeed(limits),
+                  ),
+                  Effect.orElseSucceed(() => limits),
+                ),
+          ),
+        ),
       },
       { concurrency: "unbounded" },
     ).pipe(
