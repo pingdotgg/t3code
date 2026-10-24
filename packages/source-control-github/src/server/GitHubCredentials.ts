@@ -19,6 +19,12 @@ import type { ServerSettings } from "@t3tools/contracts";
 
 import * as GitHubClient from "../client/definition.ts";
 
+/**
+ * Every gh run on the server shares this. A burst of them (a status poll across many checkouts)
+ * otherwise starts enough at once to trip GitHub's secondary rate limit.
+ */
+export const GH_PROCESS_CONCURRENCY = { key: "gh", limit: 4 } as const;
+
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TTL = Duration.seconds(10);
 
@@ -146,6 +152,7 @@ export const make = Effect.gen(function* () {
         // Never let gh print the token into a debug log.
         env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
         timeoutMs: 10_000,
+        concurrency: GH_PROCESS_CONCURRENCY,
       })
       .pipe(
         Effect.mapError((error) =>

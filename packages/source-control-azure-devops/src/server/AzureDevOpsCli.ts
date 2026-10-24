@@ -9,6 +9,7 @@ import {
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
   type VcsError,
+  type VcsProcessExitFailureKind,
 } from "@t3tools/contracts";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -350,6 +351,17 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
   );
 }
 
+const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => {
+  const normalized = stderr.toLowerCase();
+  if (normalized.includes("az devops login") || /please run '?az login'?/.test(normalized)) {
+    return "authentication";
+  }
+  return normalized.includes("pull request") &&
+    (normalized.includes("not found") || normalized.includes("does not exist"))
+    ? "not-found"
+    : null;
+};
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -361,6 +373,8 @@ export const make = Effect.gen(function* () {
         command: "az",
         args: input.args,
         cwd: input.cwd,
+        classifyFailure: classifyAzFailure,
+        notFoundDetail: "Pull request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       })

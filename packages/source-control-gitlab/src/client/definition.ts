@@ -52,6 +52,7 @@ export const definition = defineSourceControlClient({
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   checkoutChangeRequestHost: () => null,
+  changeRequestHeadRef: (number) => `refs/merge-requests/${number}/head`,
   recognizeRemote: ({ host, hostname }) =>
     hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
       ? {

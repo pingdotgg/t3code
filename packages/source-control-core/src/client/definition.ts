@@ -125,6 +125,11 @@ export interface SourceControlClientDefinition {
     link: ChangeRequestLink,
   ) => boolean;
   readonly checkoutChangeRequestHost: (identity: ChangeRequestProjectIdentity) => string | null;
+  /**
+   * The ref the target repository publishes change request `number`'s head under, which names the
+   * head even when it lives in a fork. Absent for a host that publishes none.
+   */
+  readonly changeRequestHeadRef?: (number: number) => string;
   /** Null when this host does not claim the remote. Asked in the registry's recognition order. */
   readonly recognizeRemote: (remote: GitRemoteHost) => SourceControlProviderInfo | null;
   /** The host change requests in the project are listed and keyed under. */

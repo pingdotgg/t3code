@@ -251,6 +251,7 @@ const make = Effect.gen(function* () {
         ),
       );
       const fetchAndResolve = (ref: string) => fetch([ref]).pipe(Effect.andThen(resolveHead));
+      const headRef = sourceControlClients.get(detail.provider).changeRequestHeadRef?.(number);
       const branchRef = `refs/heads/${branch}`;
       const checkBranch = git.execute({
         operation: "PullRequestReviewGuideService.checkHeadBranch",
@@ -266,11 +267,7 @@ const make = Effect.gen(function* () {
           source: `branch ${branch}`,
           head: checkBranch.pipe(Effect.andThen(fetchAndResolve(branchRef))),
         },
-        { source: `refs/pull/${number}/head`, head: fetchAndResolve(`refs/pull/${number}/head`) },
-        {
-          source: `refs/merge-requests/${number}/head`,
-          head: fetchAndResolve(`refs/merge-requests/${number}/head`),
-        },
+        ...(headRef === undefined ? [] : [{ source: headRef, head: fetchAndResolve(headRef) }]),
       ];
       const failures: Array<string> = [];
       for (const { source, head } of sources) {

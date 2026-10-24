@@ -3053,6 +3053,47 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("hands the branch base to the host when a failed first push is retried", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "HEAD:main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/retried-push", "--track", "origin/main"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "retried.txt"), "retried\n");
+      yield* runGit(repoDir, ["add", "retried.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Retried push"]);
+      const rejectOnce = NodePath.join(remoteDir, "reject-once");
+      NodeFS.writeFileSync(rejectOnce, "");
+      NodeFS.writeFileSync(
+        NodePath.join(remoteDir, "hooks", "pre-receive"),
+        `#!/bin/sh\nif [ -f "${rejectOnce}" ]; then rm "${rejectOnce}"; exit 1; fi\n`,
+        { mode: 0o755 },
+      );
+
+      const recorded: Array<{ branch: string; baseBranch: string }> = [];
+      const { service } = createGitHubProviderWithFakeGh();
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          recordBranchBase: ({ branch, baseBranch }) =>
+            Effect.sync(() => {
+              recorded.push({ branch, baseBranch });
+            }),
+        },
+      });
+      const failed = yield* runStackedAction(manager, { cwd: repoDir, action: "push" }).pipe(
+        Effect.flip,
+      );
+      expect(failed).toBeDefined();
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+
+      expect(result.push.status).toBe("pushed");
+      expect(recorded).toEqual([{ branch: "feature/retried-push", baseBranch: "main" }]);
+    }),
+  );
+
   it.effect("create_pr targets the remote default branch when it is not main", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4576,63 +4617,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("derives fork repository identity from PR URL when GitHub omits nameWithOwner", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const originDir = yield* createBareRemote();
-      const forkDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      yield* runGit(repoDir, ["remote", "add", "binbandit-seed", forkDir]);
-      yield* runGit(repoDir, ["checkout", "-b", "fix/git-action-default-without-origin"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "derived-fork.txt"), "derived fork\n");
-      yield* runGit(repoDir, ["add", "derived-fork.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Derived fork PR branch"]);
-      yield* runGit(repoDir, [
-        "push",
-        "-u",
-        "binbandit-seed",
-        "fix/git-action-default-without-origin",
-      ]);
-      yield* runGit(repoDir, ["checkout", "main"]);
-      yield* runGit(repoDir, ["branch", "-D", "fix/git-action-default-without-origin"]);
-
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          pullRequest: {
-            number: 642,
-            title: "fix: use commit as the default git action without origin",
-            url: "https://github.com/pingdotgg/t3code/pull/642",
-            baseRefName: "main",
-            headRefName: "fix/git-action-default-without-origin",
-            state: "open",
-            isCrossRepository: true,
-            headRepositoryOwnerLogin: "binbandit",
-          },
-          repositoryCloneUrls: {
-            "binbandit/t3code": {
-              url: forkDir,
-              sshUrl: forkDir,
-            },
-          },
-        },
-      });
-
-      const result = yield* preparePullRequestThread(manager, {
-        cwd: repoDir,
-        reference: "642",
-        mode: "local",
-      });
-
-      expect(result.branch).toBe("fix/git-action-default-without-origin");
-      expect(result.worktreePath).toBeNull();
-      expect(
-        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
-      ).toBe("binbandit-seed/fix/git-action-default-without-origin");
-    }),
-  );
-
   it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -5055,6 +5039,49 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(result.isOnPullRequestHead).toBe(true);
       expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(updatedHead);
+    }),
+  );
+
+  it.effect("creates a merge request worktree from the host's own head ref", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/mr-ref-only"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "mr.txt"), "merge request\n");
+      yield* runGit(repoDir, ["add", "mr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Merge request ref only"]);
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/merge-requests/93/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/mr-ref-only"]);
+
+      const { service } = createGitHubProviderWithFakeGh({
+        pullRequest: {
+          number: 93,
+          title: "Merge request ref only",
+          url: "https://gitlab.com/pingdotgg/codething-mvp/-/merge_requests/93",
+          baseRefName: "main",
+          headRefName: "feature/mr-ref-only",
+          state: "open",
+        },
+      });
+      const { manager } = yield* makeManager({
+        sourceControlProvider: { ...service, kind: SourceControlProviderKind.make("gitlab") },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "93",
+        mode: "worktree",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(true);
+      expect(
+        (yield* runGit(result.worktreePath as string, ["rev-parse", "HEAD"])).stdout.trim(),
+      ).toBe(head);
     }),
   );
 

@@ -70,7 +70,20 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(result.headSha, "a".repeat(40));
       assert.strictEqual(result.state, "open");
       assert.deepStrictEqual(result.updatedAt._tag, Option.some(1)._tag);
-      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0], {
+      const { classifyFailure, ...call } = mockRun.mock.calls.at(-1)?.[0] ?? {};
+      assert.strictEqual(
+        classifyFailure?.("Please run az login to setup account."),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.("Please run 'az login' to setup account."),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.("TF401180: The requested pull request was not found."),
+        "not-found",
+      );
+      assert.deepStrictEqual(call, {
         operation: "AzureDevOpsCli.execute",
         command: "az",
         args: [
@@ -86,6 +99,7 @@ describe("AzureDevOpsCli.layer", () => {
           "json",
         ],
         cwd: "/repo",
+        notFoundDetail: "Pull request not found.",
         timeoutMs: 30_000,
       });
       assert.strictEqual(result.isCrossRepository, false);

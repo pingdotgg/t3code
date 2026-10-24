@@ -142,6 +142,25 @@ export class SourceControlProvider extends Context.Service<
       }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
     }) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
     readonly resolveLink?: ResolveSourceControlLink;
+    /**
+     * Whether `createChangeRequest` from `cwd` targets `repository`, the `owner/name` of the
+     * context's remote, for a host whose tools let configuration outside the remotes name another
+     * repository. Absent means it does.
+     */
+    readonly createsChangeRequestsIn?: (input: {
+      readonly cwd: string;
+      readonly context: SourceControlProviderContext;
+      readonly repository: string | null;
+    }) => Effect.Effect<boolean>;
+    /**
+     * Told when T3 records `baseBranch`, a branch name on the host, as the base `branch` was cut
+     * from, for a host whose own tools keep that in git config of their own.
+     */
+    readonly recordBranchBase?: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly baseBranch: string;
+    }) => Effect.Effect<void>;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

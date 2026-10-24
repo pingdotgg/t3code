@@ -21,6 +21,8 @@ const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u;
 
 const KIND = SourceControlProviderKind.make("forgejo");
 
+const changeRequestHeadRef = (number: number) => `refs/pull/${number}/head`;
+
 /**
  * The repository's browser URL the server resolved from the signed-in account, which is the
  * only place a Forgejo mounted below a path says so.
@@ -77,7 +79,7 @@ export const definition = defineSourceControlClient({
   // Neither `fj` nor `tea` checks out by number, so fetch the pull ref from the repository itself.
   checkoutCommand: ({ number, repositoryUrl }) =>
     repositoryUrl
-      ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' refs/pull/${number}/head && git checkout -B pulls/${number} FETCH_HEAD`
+      ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' ${changeRequestHeadRef(number)} && git checkout -B pulls/${number} FETCH_HEAD`
       : null,
   authorProfileUrl: () => null,
   // Forgejo refuses a change request review without a summary, even with inline comments.
@@ -86,6 +88,7 @@ export const definition = defineSourceControlClient({
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   checkoutChangeRequestHost: () => null,
+  changeRequestHeadRef,
   recognizeRemote: ({ remoteUrl, host, hostname }) =>
     hostname === "codeberg.org" ||
     hostname.split(".").includes("forgejo") ||

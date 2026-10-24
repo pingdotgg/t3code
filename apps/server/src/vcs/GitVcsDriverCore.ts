@@ -53,6 +53,13 @@ import * as ServerConfig from "../config.ts";
 import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+/** T3's record of the branch, named as on the host, that a branch was cut from. */
+const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`;
+/**
+ * Where T3 kept that record before it had a key of its own, for every host alike: the GitHub
+ * CLI's key, which branches cut before then still carry instead.
+ */
+const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
@@ -1818,8 +1825,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    const configuredBaseBranch =
-      (yield* readConfigValue(cwd, `branch.${refName}.gh-merge-base`)) ?? "";
+    const configuredBaseBranch = (yield* readBranchBase(cwd, refName)) ?? "";
     const configuredBase = yield* resolveComparisonBaseRef(cwd, configuredBaseBranch);
     if (
       configuredBase !== null &&
@@ -2638,16 +2644,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const remoteName = publishRemoteName ?? currentUpstream.remoteName;
         const publishBranch = yield* resolvePublishBranchName(cwd, branch);
         // Publishing retargets the upstream, so preserve its comparison base first.
-        const configuredMergeBase = yield* runGitStdout(
-          "GitVcsDriver.pushCurrentBranch.readMergeBase",
-          cwd,
-          ["config", "--get", `branch.${branch}.gh-merge-base`],
-          true,
-        ).pipe(Effect.map((stdout) => stdout.trim()));
-        if (configuredMergeBase.length === 0) {
+        if ((yield* readBranchBase(cwd, branch)) === null) {
           yield* runGit("GitVcsDriver.pushCurrentBranch.recordMergeBase", cwd, [
             "config",
-            `branch.${branch}.gh-merge-base`,
+            branchBaseConfigKey(branch),
             currentUpstream.branchName,
           ]);
           if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
@@ -3369,6 +3369,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
+  const readBranchBase: GitVcsDriver.GitVcsDriver["Service"]["readBranchBase"] = Effect.fn(
+    "GitVcsDriver.readBranchBase",
+  )(function* (cwd, branch) {
+    const base = yield* readConfigValue(cwd, branchBaseConfigKey(branch));
+    return base ?? (yield* readConfigValue(cwd, legacyBranchBaseConfigKey(branch)));
+  });
+
   const resolveBranchBase = Effect.fn("GitVcsDriver.resolveBranchBase")(function* (
     cwd: string,
     refName: string,
@@ -3842,17 +3849,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    if (input.newRefName && input.baseRefName) {
+    const newRefName = input.newRefName;
+    if (newRefName && input.baseRefName) {
       const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
       if (base) {
         yield* Effect.gen(function* () {
           yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
             "config",
-            `branch.${input.newRefName}.gh-merge-base`,
+            branchBaseConfigKey(newRefName),
             base.branchName,
           ]);
           if (base.baseRef.startsWith("refs/remotes/")) {
-            // gh consumes its key as a provider branch; T3 also needs the selected remote.
+            // The base key names a branch on the host; this one keeps the remote it came from.
             yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
               "config",
               `branch.${input.newRefName}.t3-merge-base-ref`,
@@ -3878,25 +3886,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
-  const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
-    Effect.fn("fetchPullRequestBranch")(function* (input) {
-      const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
-      yield* executeGit(
-        "GitVcsDriver.fetchPullRequestBranch",
-        input.cwd,
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          "--",
-          remoteName,
-          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
-        ],
-        {
-          fallbackErrorDetail: "git fetch pull request branch failed",
-        },
-      );
-    });
+  const fetchRefIntoBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRefIntoBranch"] = Effect.fn(
+    "GitVcsDriver.fetchRefIntoBranch",
+  )(function* (input) {
+    const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+    yield* executeGit(
+      "GitVcsDriver.fetchRefIntoBranch",
+      input.cwd,
+      [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--",
+        remoteName,
+        `+${input.ref}:refs/heads/${input.branch}`,
+      ],
+      {
+        fallbackErrorDetail: "git fetch ref into branch failed",
+      },
+    );
+  });
 
   const resolveCommit: GitVcsDriver.GitVcsDriver["Service"]["resolveCommit"] = Effect.fn(
     "resolveCommit",
@@ -3910,22 +3919,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { commitSha };
   });
 
-  const fetchPullRequestHeadCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestHeadCommit"] =
-    Effect.fn("fetchPullRequestHeadCommit")(function* (input) {
-      const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
-      // No refspec destination: the pull head lands in FETCH_HEAD (per worktree) instead of a
-      // branch, which is the only way to read it while that branch is checked out somewhere.
-      yield* executeGit(
-        "GitVcsDriver.fetchPullRequestHeadCommit",
-        input.cwd,
-        ["fetch", "--quiet", "--no-tags", "--", remoteName, `refs/pull/${input.prNumber}/head`],
-        {
-          fallbackErrorDetail: "git fetch pull request head failed",
-        },
-      );
+  const fetchRefCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchRefCommit"] = Effect.fn(
+    "GitVcsDriver.fetchRefCommit",
+  )(function* (input) {
+    const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+    // No refspec destination: the ref lands in FETCH_HEAD (per worktree) instead of a branch,
+    // which is the only way to read it while that branch is checked out somewhere.
+    yield* executeGit(
+      "GitVcsDriver.fetchRefCommit",
+      input.cwd,
+      ["fetch", "--quiet", "--no-tags", "--", remoteName, input.ref],
+      {
+        fallbackErrorDetail: "git fetch ref failed",
+      },
+    );
 
-      return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
-    });
+    return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
+  });
 
   const refreshCheckedOutBranch: GitVcsDriver.GitVcsDriver["Service"]["refreshCheckedOutBranch"] =
     Effect.fn("refreshCheckedOutBranch")(function* (input) {
@@ -4507,13 +4517,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     getReviewDiffPreview,
     getReviewDiffFileContents,
     readConfigValue,
+    readBranchBase,
     resolveBranchName,
     listRefs,
     createWorktree: (input, options) =>
       withListRefsInvalidation(input.cwd, createWorktree(input, options)),
-    fetchPullRequestBranch: (input) =>
-      withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
-    fetchPullRequestHeadCommit,
+    fetchRefIntoBranch: (input) => withListRefsInvalidation(input.cwd, fetchRefIntoBranch(input)),
+    fetchRefCommit,
     resolveCommit,
     refreshCheckedOutBranch: (input) =>
       withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),

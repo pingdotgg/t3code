@@ -258,7 +258,7 @@ describe("VcsProcess.run", () => {
       }),
   );
 
-  it.effect("bounds a synthetic burst of GitHub API processes", () =>
+  it.effect("bounds a burst of processes that share a concurrency key", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
       const starts = yield* Queue.unbounded<number>();
@@ -294,10 +294,11 @@ describe("VcsProcess.run", () => {
       const burst = yield* Effect.all(
         Array.from({ length: 32 }, (_, index) =>
           service.run({
-            operation: `synthetic.github.${index}`,
-            command: "gh",
+            operation: `synthetic.cli.${index}`,
+            command: "host-cli",
             args: ["api", "user"],
             cwd: "/workspace",
+            concurrency: { key: "host-cli", limit: 4 },
           }),
         ),
         { concurrency: "unbounded" },
@@ -388,6 +389,30 @@ describe("VcsProcess.run", () => {
       });
       expect(error.message).not.toContain(providerStderr);
       expect(error.message).not.toContain("secret-value");
+    }).pipe(provideLive),
+  );
+
+  it.effect("reads a failure with the command's own classifier and names it in its terms", () =>
+    Effect.gen(function* () {
+      const fail = (input: Partial<VcsProcess.VcsProcessInput>) =>
+        run({
+          operation: "test.classify",
+          command: "node",
+          args: ["-e", "process.stderr.write('HTTP 404: 404 Not Found'); process.exit(1)"],
+          cwd: process.cwd(),
+          ...input,
+        }).pipe(Effect.flip);
+
+      expect(yield* fail({})).toMatchObject({
+        failureKind: "command-failed",
+        detail: "Process exited with a non-zero status.",
+      });
+      expect(
+        yield* fail({
+          classifyFailure: (stderr) => (stderr.includes("404") ? "not-found" : null),
+          notFoundDetail: "Merge request not found.",
+        }),
+      ).toMatchObject({ failureKind: "not-found", detail: "Merge request not found." });
     }).pipe(provideLive),
   );
 

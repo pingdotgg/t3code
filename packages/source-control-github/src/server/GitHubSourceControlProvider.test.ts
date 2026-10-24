@@ -1051,3 +1051,31 @@ it.effect.each([
     );
   },
 );
+
+it.effect("says a GH_REPO naming an unparseable host targets no remote rather than failing", () => {
+  const { layer } = harness({
+    remotes: remotesOutput(["upstream", "git@github.com:acme/web.git"]),
+    resolved: "",
+    api: {},
+  });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const targets = yield* provider.createsChangeRequestsIn!({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("github"),
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@github.com:acme/web.git",
+      },
+      repository: "acme/web",
+    });
+    assert.isFalse(targets);
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(HostProcess.Environment, { GH_REPO: "bad host/acme/web" }),
+  );
+});
