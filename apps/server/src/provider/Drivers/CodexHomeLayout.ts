@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
+import * as NodeFSP from "node:fs/promises";
+
 import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,6 +30,7 @@ const KNOWN_SHARED_DIRECTORIES = [
   "logs",
   "mcp-oauth-locks",
 ] as const;
+const KNOWN_SHARED_DIRECTORY_NAMES: ReadonlySet<string> = new Set(KNOWN_SHARED_DIRECTORIES);
 
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 // Finder maintains metadata separately for each directory, including shadow homes.
@@ -241,6 +245,23 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
           cause,
         }),
     }),
+    // Windows refuses symlinks without Developer Mode, but a junction needs no privilege.
+    // Junctions only link directories on local volumes, so they are only a fallback.
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        const isDirectory =
+          (yield* HostProcess.isWindows) &&
+          (yield* input.fileSystem.stat(target).pipe(
+            Effect.map((info) => info.type === "Directory"),
+            Effect.orElseSucceed(() => false),
+          ));
+        if (!isDirectory) return yield* error;
+        return yield* Effect.tryPromise({
+          try: () => NodeFSP.symlink(target, link, "junction"),
+          catch: () => error,
+        });
+      }),
+    ),
   );
 
   if (state._tag === "NotSymlink") {
@@ -392,18 +413,31 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     { discard: true },
   );
 
+  const isWindows = yield* HostProcess.isWindows;
   yield* Effect.forEach(
     entries,
     (entryName) => {
       if (PRIVATE_ENTRY_NAMES.has(entryName)) {
         return Effect.void;
       }
-      return ensureSymlink({
+      const linked = ensureSymlink({
         fileSystem,
         sharedHomePath: layout.sharedHomePath,
         effectiveHomePath,
         entryName,
       });
+      // Without Developer Mode, Windows refuses to symlink a file, and Codex then creates its own
+      // copy in the shadow home. Either way the entry stays local instead of disabling the provider.
+      return isWindows && !KNOWN_SHARED_DIRECTORY_NAMES.has(entryName)
+        ? linked.pipe(
+            Effect.catch((error) =>
+              Effect.logDebug("Codex shadow home entry is not shared.", {
+                entryName,
+                detail: error.message,
+              }),
+            ),
+          )
+        : linked;
     },
     { discard: true },
   );
