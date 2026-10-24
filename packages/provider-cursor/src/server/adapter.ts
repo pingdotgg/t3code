@@ -1401,7 +1401,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             runId: input.context.input.runId,
             nodeId,
             kind: "proposed_plan",
-            status: input.completed ? "active" : "draft",
+            status: input.failed ? "superseded" : input.completed ? "active" : "draft",
             markdown: input.markdown,
           };
           yield* emitProviderEvent({
