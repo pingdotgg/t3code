@@ -106,9 +106,16 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, {}),
         );
-        expect(descriptor.capabilities.serverInstallation).toEqual(
-          mode === "web" ? { kind: "npm-global", prefix } : undefined,
-        );
+        // The real /proc/self/cgroup decides systemdUnit, so CI runners may add one.
+        if (mode === "web") {
+          expect(descriptor.capabilities.serverInstallation).toMatchObject({
+            kind: "npm-global",
+            prefix,
+          });
+          expect(descriptor.capabilities.serverInstallation).not.toHaveProperty("subcommand");
+        } else {
+          expect(descriptor.capabilities.serverInstallation).toBeUndefined();
+        }
         expect(descriptor.capabilities.serverSelfUpdate).toBe(
           mode === "web" ? undefined : "desktop-managed",
         );

@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import type { ServerInstallation } from "@t3tools/contracts";
+import type { ServerInstallation, ServerSystemdUnit } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 
@@ -98,6 +98,31 @@ export const resolveServerInstallation = Effect.gen(function* () {
   const globalBin = yield* fs.realPath(path.join(prefix, "bin/t3"));
   if (globalBin !== bin || bin !== entry) return null;
   return { kind: "npm-global", prefix } satisfies ServerInstallation;
+}).pipe(Effect.orElseSucceed(() => null));
+
+/**
+ * The service unit whose cgroup holds this process. Terminals, SSH and tmux
+ * place what they start in `.scope` units, so only a supervisor that restarts
+ * the server on exit leaves it directly under a `.service`.
+ */
+export function parseSystemdUnit(cgroup: string): ServerSystemdUnit | null {
+  const path = cgroup
+    .split("\n")
+    .map((line) => /^(?:0::|\d+:name=systemd:)(\/.*)$/.exec(line.trim())?.[1])
+    .find((match) => match !== undefined);
+  // The owning unit, not the last segment: a `Delegate=yes` service may run us
+  // in a child cgroup of its own naming.
+  const name = path
+    ?.split("/")
+    .find((segment) => segment.endsWith(".service") && !/^user@\d+\.service$/.test(segment));
+  if (path === undefined || name === undefined) return null;
+  return { name, scope: /\/user@\d+\.service\//.test(path) ? "user" : "system" };
+}
+
+export const resolveSystemdUnit = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "linux") return null;
+  const fs = yield* FileSystem.FileSystem;
+  return parseSystemdUnit(yield* fs.readFileString("/proc/self/cgroup"));
 }).pipe(Effect.orElseSucceed(() => null));
 
 /**
