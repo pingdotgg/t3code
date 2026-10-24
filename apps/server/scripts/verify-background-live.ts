@@ -18,6 +18,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_HEADER,
   CommandId,
+  knownThreadProjection,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -374,10 +375,11 @@ try {
             NodePath.join(evidence, "events.ndjson"),
             JSON.stringify(item) + "\n",
           );
-          const projection =
+          const projection = knownThreadProjection(
             item.kind === "snapshot"
               ? item.projection
-              : yield* client["orchestration.getThreadProjection"]({ threadId });
+              : yield* client["orchestration.getThreadProjection"]({ threadId }),
+          );
           const childThreadId = projection.subagents[0]?.childThreadId;
           if (values.scenario === "nested" && childThreadId && !watchingChild) {
             watchingChild = true;

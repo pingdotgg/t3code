@@ -15,7 +15,9 @@ import {
   ProviderInstanceId,
   ThreadId,
   WsRpcGroup,
+  knownThreadProjection,
   type OrchestrationV2ThreadProjection,
+  type ReceivedOrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
@@ -228,10 +230,14 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
     yield* evaluate(
       `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://threads/${environmentId}/${threadId}`)})`,
     );
-  const projectionOf = (item: { kind: string; projection?: OrchestrationV2ThreadProjection }) =>
-    item.kind === "snapshot" && item.projection
+  const projectionOf = (item: {
+    kind: string;
+    projection?: ReceivedOrchestrationV2ThreadProjection;
+  }) =>
+    (item.kind === "snapshot" && item.projection
       ? Effect.succeed(item.projection)
-      : client["orchestration.getThreadProjection"]({ threadId });
+      : client["orchestration.getThreadProjection"]({ threadId })
+    ).pipe(Effect.map(knownThreadProjection));
   const streaming = yield* client["orchestration.subscribeThread"]({ threadId }).pipe(
     Stream.mapEffect(projectionOf),
     Stream.filter((projection) => streamingItem(projection) !== undefined),
@@ -249,7 +255,9 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
     return yield* new MeasureError({
       message: `Run ${run}: no React commits in the window. Check the device for a red box.`,
     });
-  const after = yield* client["orchestration.getThreadProjection"]({ threadId });
+  const after = knownThreadProjection(
+    yield* client["orchestration.getThreadProjection"]({ threadId }),
+  );
   return { report, stillStreaming: streamingItem(after) !== undefined };
 }, Effect.scoped);
 

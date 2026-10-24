@@ -1,4 +1,8 @@
-import type { OrchestrationV2ThreadDetailSnapshot, ThreadId } from "@t3tools/contracts";
+import {
+  knownThreadDetailSnapshot,
+  type OrchestrationV2ThreadDetailSnapshot,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -55,7 +59,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
         params: { threadId: input.threadId },
         headers: withOrchestrationProtocolHeader(headers),
       }),
-  });
+  }).pipe(Effect.map(knownThreadDetailSnapshot));
 });
 
 export type FetchEnvironmentThreadSnapshotError = RemoteEnvironmentRequestError;

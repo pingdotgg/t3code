@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
-import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   CheckpointId,
@@ -20,6 +19,7 @@ import {
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
   isUnknownUnionMember,
+  knownUnionMembers,
   NonNegativeInt,
   PlanId,
   PositiveInt,
@@ -1576,23 +1576,6 @@ const turnItemArray = <Members extends ReadonlyArray<Schema.Top & { readonly fie
   union: Schema.Union<Members>,
 ) => ForwardCompatibleUnionArray(union.members, "type");
 
-const projectedTurnItemArray = <Row extends Schema.Top, Item extends Schema.Top>(
-  row: Row,
-  rowWithUnknownItem: Item,
-) =>
-  Schema.Array(rowWithUnknownItem).pipe(
-    Schema.decodeTo(
-      Schema.Array(Schema.toType(row)),
-      SchemaTransformation.transform<ReadonlyArray<Row["Type"]>, ReadonlyArray<Item["Type"]>>({
-        decode: (rows) =>
-          rows.filter(
-            (projected) => !isUnknownUnionMember((projected as { readonly item: unknown }).item),
-          ) as ReadonlyArray<Row["Type"]>,
-        encode: (rows) => rows,
-      }),
-    ),
-  );
-
 export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
   position: NonNegativeInt,
   visibility: Schema.Literals(["local", "inherited", "synthetic"]),
@@ -1601,6 +1584,21 @@ export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
   item: OrchestrationV2TurnItem,
 });
 export type OrchestrationV2ProjectedTurnItem = typeof OrchestrationV2ProjectedTurnItem.Type;
+
+/** A row whose item a newer server added keeps it as `UnknownUnionMember`. */
+const ReceivedProjectedTurnItem = OrchestrationV2ProjectedTurnItem.mapFields((fields) => ({
+  ...fields,
+  item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
+}));
+export type ReceivedOrchestrationV2ProjectedTurnItem = typeof ReceivedProjectedTurnItem.Type;
+
+/** Returns `rows` itself when every row's item is known. */
+const knownProjectedTurnItems = (
+  rows: ReadonlyArray<ReceivedOrchestrationV2ProjectedTurnItem>,
+): ReadonlyArray<OrchestrationV2ProjectedTurnItem> =>
+  (rows.some((row) => isUnknownUnionMember(row.item))
+    ? rows.filter((row) => !isUnknownUnionMember(row.item))
+    : rows) as ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
 
 export const OrchestrationV2RawProviderEvent = Schema.Struct({
   id: RawEventId,
@@ -1790,16 +1788,32 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
   contextHandoffs: Schema.Array(OrchestrationV2ContextHandoff),
   contextTransfers: Schema.Array(OrchestrationV2ContextTransfer),
-  visibleTurnItems: projectedTurnItemArray(
-    OrchestrationV2ProjectedTurnItem,
-    OrchestrationV2ProjectedTurnItem.mapFields((fields) => ({
-      ...fields,
-      item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
-    })),
-  ),
+  visibleTurnItems: Schema.Array(ReceivedProjectedTurnItem),
   updatedAt: Schema.DateTimeUtc,
 });
-export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
+/**
+ * As decoded: turn items a newer server added stay as `UnknownUnionMember`, so each known
+ * item is validated once. Readers drop them with {@link knownThreadProjection}.
+ */
+export type ReceivedOrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
+export interface OrchestrationV2ThreadProjection extends Omit<
+  ReceivedOrchestrationV2ThreadProjection,
+  "turnItems" | "visibleTurnItems"
+> {
+  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+}
+
+/** Returns `projection` itself when every turn item is known. */
+export const knownThreadProjection = (
+  projection: ReceivedOrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection => {
+  const turnItems = knownUnionMembers(projection.turnItems);
+  const visibleTurnItems = knownProjectedTurnItems(projection.visibleTurnItems);
+  return turnItems === projection.turnItems && visibleTurnItems === projection.visibleTurnItems
+    ? (projection as OrchestrationV2ThreadProjection)
+    : { ...projection, turnItems, visibleTurnItems };
+};
 
 export const OrchestrationV2ThreadTranscript = Schema.Struct({
   threadId: ThreadId,
@@ -2361,8 +2375,7 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     checkpoints: Schema.Array(OrchestrationV2CheckpointJson),
     contextHandoffs: Schema.Array(OrchestrationV2ContextHandoffJson),
     contextTransfers: Schema.Array(OrchestrationV2ContextTransferJson),
-    visibleTurnItems: projectedTurnItemArray(
-      OrchestrationV2ProjectedTurnItemJson,
+    visibleTurnItems: Schema.Array(
       OrchestrationV2ProjectedTurnItemJson.mapFields((fields) => ({
         ...fields,
         item: ForwardCompatibleUnion(OrchestrationV2TurnItemJson.members, "type"),
@@ -3270,7 +3283,24 @@ export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
   hasMoreHistory: Schema.optionalKey(Schema.Boolean),
   latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
 });
-export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDetailSnapshot.Type;
+/** As decoded; readers drop turn items a newer server added with {@link knownThreadDetailSnapshot}. */
+export type ReceivedOrchestrationV2ThreadDetailSnapshot =
+  typeof OrchestrationV2ThreadDetailSnapshot.Type;
+export interface OrchestrationV2ThreadDetailSnapshot extends Omit<
+  ReceivedOrchestrationV2ThreadDetailSnapshot,
+  "projection"
+> {
+  readonly projection: OrchestrationV2ThreadProjection;
+}
+
+export const knownThreadDetailSnapshot = (
+  snapshot: ReceivedOrchestrationV2ThreadDetailSnapshot,
+): OrchestrationV2ThreadDetailSnapshot => {
+  const projection = knownThreadProjection(snapshot.projection);
+  return projection === snapshot.projection
+    ? (snapshot as OrchestrationV2ThreadDetailSnapshot)
+    : { ...snapshot, projection };
+};
 
 /**
  * `historyCursor` is opaque; clients must not parse it. Resume live events with `afterSequence =
@@ -3294,17 +3324,25 @@ export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadB
 
 export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
   snapshotSequence: NonNegativeInt,
-  items: projectedTurnItemArray(
-    OrchestrationV2ProjectedTurnItem,
-    OrchestrationV2ProjectedTurnItem.mapFields((fields) => ({
-      ...fields,
-      item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
-    })),
-  ),
+  items: Schema.Array(ReceivedProjectedTurnItem),
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   hasMoreHistory: Schema.Boolean,
 });
-export type OrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
+/** As decoded; readers drop rows a newer server added with {@link knownThreadHistoryPage}. */
+export type ReceivedOrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
+export interface OrchestrationV2ThreadHistoryPage extends Omit<
+  ReceivedOrchestrationV2ThreadHistoryPage,
+  "items"
+> {
+  readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+}
+
+export const knownThreadHistoryPage = (
+  page: ReceivedOrchestrationV2ThreadHistoryPage,
+): OrchestrationV2ThreadHistoryPage => {
+  const items = knownProjectedTurnItems(page.items);
+  return items === page.items ? (page as OrchestrationV2ThreadHistoryPage) : { ...page, items };
+};
 
 const knownDomainEventTypes: ReadonlySet<string> = new Set(
   OrchestrationV2DomainEvent.members.flatMap((member) => {

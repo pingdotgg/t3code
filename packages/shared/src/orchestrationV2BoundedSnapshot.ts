@@ -1,6 +1,8 @@
-import type {
-  OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ThreadProjection,
+import {
+  knownThreadProjection,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadProjection,
+  type ReceivedOrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 
 function isLocalTimelineRow(
@@ -39,11 +41,13 @@ export function restoreLocalVisibleTurnItems(
   return { ...projection, turnItems: [...local, ...projection.turnItems] };
 }
 
+/** Also drops the turn items a newer server added, which this build does not know. */
 export function boundedSnapshotProjection(snapshot: {
-  readonly projection: OrchestrationV2ThreadProjection;
+  readonly projection: ReceivedOrchestrationV2ThreadProjection;
   readonly turnItemsOmitLocalVisible?: true | undefined;
 }): OrchestrationV2ThreadProjection {
+  const projection = knownThreadProjection(snapshot.projection);
   return snapshot.turnItemsOmitLocalVisible === true
-    ? restoreLocalVisibleTurnItems(snapshot.projection)
-    : snapshot.projection;
+    ? restoreLocalVisibleTurnItems(projection)
+    : projection;
 }

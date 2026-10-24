@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, EventId, TurnItemId } from "@t3tools/contracts";
+import { EnvironmentId, EventId, TurnItemId, knownThreadProjection } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -69,7 +69,9 @@ describe("orchestration cache envelopes", () => {
       threadId: v2ThreadId,
       snapshot: { snapshotSequence: 5, projection },
     });
-    const decoded = decodeStoredThreadSnapshotJson(encoded).snapshot.projection;
+    const decoded = knownThreadProjection(
+      decodeStoredThreadSnapshotJson(encoded).snapshot.projection,
+    );
     expect(decoded.turnItems.find((entry) => entry.id === item.id)).toEqual(item);
     expect(decoded.visibleTurnItems.find((entry) => entry.item.id === item.id)?.item).toEqual(item);
   });

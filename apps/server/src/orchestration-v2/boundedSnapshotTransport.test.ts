@@ -19,6 +19,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  knownThreadProjection,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -320,7 +321,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
                 "local",
               ]);
             } else {
-              const ids = itemIds(legacy.projection);
+              const ids = itemIds(knownThreadProjection(legacy.projection));
               assert.isTrue(legacy.hasMoreHistory);
               assert.strictEqual(ids.at(-1), `turn-item:${LONG}:request`);
               assert.isFalse(
