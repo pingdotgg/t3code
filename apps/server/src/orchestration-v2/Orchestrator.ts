@@ -63,6 +63,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -953,6 +954,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  // Taken before any thread lock, so a message whose lineage read yields keeps
+  // its place ahead of later messages to the same thread.
+  const messageIntake = yield* KeyedLock.make<ThreadId>();
 
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
@@ -11930,20 +11934,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
-    if (
-      command.type !== "message.dispatch" ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
-    )
-      return yield* dispatch;
-    const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-      ),
+    if (command.type !== "message.dispatch") return yield* dispatch;
+    return yield* messageIntake.withLock(
+      command.threadId,
+      Effect.gen(function* () {
+        if (command.createdBy !== "user" && command.creationSource !== "mcp")
+          return yield* dispatch;
+        const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+        // Follow-up intake and Stop serialize on the parent before taking the child lock.
+        return yield* parentThreadId === undefined
+          ? dispatch
+          : threadDispatch.withLock(parentThreadId, dispatch);
+      }),
     );
-    // Follow-up intake and Stop serialize on the parent before taking the child lock.
-    return yield* parentThreadId === undefined
-      ? dispatch
-      : threadDispatch.withLock(parentThreadId, dispatch);
   });
 
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(

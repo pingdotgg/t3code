@@ -270,6 +270,10 @@ export function layerWithRegistry<Error>(
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Lets a test hold a projection read open to order concurrent dispatches. */
+    readonly wrapProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -303,9 +307,19 @@ export function layerWithRegistry<Error>(
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
   }).pipe(Layer.orDie);
+  const wrapProjectionStore = options.wrapProjectionStore;
+  const layerProjectionStore =
+    wrapProjectionStore === undefined
+      ? ProjectionStore.layer
+      : Layer.effect(
+          ProjectionStore.ProjectionStoreV2,
+          Effect.gen(function* () {
+            return wrapProjectionStore(yield* ProjectionStore.ProjectionStoreV2);
+          }),
+        ).pipe(Layer.provide(ProjectionStore.layer));
   const layerStores = Layer.mergeAll(
     EventStore.layer,
-    ProjectionStore.layer,
+    layerProjectionStore,
     ProjectStore.layer,
     CommandReceiptStore.layer,
     EffectOutbox.layer,
