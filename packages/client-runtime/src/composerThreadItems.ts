@@ -28,7 +28,8 @@ export function matchComposerThreadItems(input: {
   excludeThreadId: ThreadId | null;
   query: string;
 }): ComposerThreadItem[] {
-  const query = input.query.trim().toLowerCase();
+  const pastedId = input.query.trim();
+  const query = pastedId.toLowerCase();
   if (query.length === 0) return [];
   return input.shells
     .filter(
@@ -36,7 +37,8 @@ export function matchComposerThreadItems(input: {
         shell.environmentId === input.environmentId &&
         shell.id !== input.excludeThreadId &&
         shell.archivedAt === null &&
-        shell.title.toLowerCase().includes(query),
+        // Thread IDs share long prefixes and are case-sensitive, so only the exact ID matches.
+        (shell.title.toLowerCase().includes(query) || shell.id === pastedId),
     )
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, COMPOSER_THREAD_RESULT_LIMIT)
