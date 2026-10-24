@@ -183,8 +183,15 @@ export function isSnoozed(
 ): boolean {
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
-  if (thread.pendingRuntimeRequest !== null) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
+  if (
+    thread.pendingRuntimeRequest !== null &&
+    (thread.pendingRuntimeRequest.kind !== "user_input" ||
+      snoozedAtMs === null ||
+      DateTime.toEpochMillis(thread.pendingRuntimeRequest.createdAt) > snoozedAtMs)
+  ) {
+    return false;
+  }
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
     thread.status === "failed" &&
