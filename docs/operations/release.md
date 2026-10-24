@@ -7,7 +7,9 @@ This document covers the unified release workflow for stable and nightly desktop
 Beta is the product label, not a release channel or version suffix. Release channels
 remain stable and nightly. To ship 0.1.0 Beta, use `channel=stable` and
 `version=0.1.0`. Removing the Beta label later is a branding change independent of
-the version.
+the version. The macOS `.app` filename is pinned separately (`MAC_BUNDLE_FILENAME` in
+`scripts/build-desktop-artifact.ts`) so label and channel changes never rename the
+installed bundle; Squirrel.Mac fails to relaunch after a rename.
 
 ## What the workflow does
 
