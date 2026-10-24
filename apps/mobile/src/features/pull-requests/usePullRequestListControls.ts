@@ -39,9 +39,9 @@ export function usePullRequestListControls() {
       }),
     });
   const applyView = (view: PullRequestSavedView) =>
-      applyPreferences({
-        transform: (current) => pullRequestSavedViewPreferences(current, view),
-      });
+    applyPreferences({
+      transform: (current) => pullRequestSavedViewPreferences(current, view),
+    });
   return { environmentId, controlsFor, setEnvironmentId, setControls, applyView } as const;
 }
 

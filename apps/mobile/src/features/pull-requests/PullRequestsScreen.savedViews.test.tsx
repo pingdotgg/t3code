@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, useEffect, type ReactNode, type Ref } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -78,6 +77,7 @@ vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: string) => value }));
 vi.mock("./PullRequestListRow", () => ({ PullRequestListRow: "PullRequestListRow" }));
+vi.mock("./PullRequestControls", () => ({ PullRequestCardRow: "PullRequestCardRow" }));
 vi.mock("./PullRequestListFilters", () => ({
   PullRequestListFilters: ({ savedViewsMenu }: { savedViewsMenu: ReactNode }) => savedViewsMenu,
 }));
@@ -107,6 +107,11 @@ vi.mock("../workspace/ListFilterMenu", () => ({
 }));
 vi.mock("./usePullRequestList", () => ({ usePullRequestList: () => fixture.list }));
 vi.mock("./usePullRequestListActions", () => ({ usePullRequestListActions: () => ({}) }));
+// Navigation tab preferences come from native storage; the default order is enough here.
+vi.mock("../workspace/navigation-tabs", async () => {
+  const { NAVIGATION_TAB_ORDER } = await import("../workspace/navigation-tab-order");
+  return { useNavigationTabOrder: () => NAVIGATION_TAB_ORDER, useHiddenNavigationTabs: () => [] };
+});
 vi.mock("../workspace/useAndroidWorkspaceSelection", () => ({
   useAndroidWorkspaceSelection: () => vi.fn(),
 }));

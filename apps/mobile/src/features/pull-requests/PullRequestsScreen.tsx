@@ -354,7 +354,11 @@ export function PullRequestsScreen(
                         ? { type: "search", tab: "pullRequests" }
                         : { type: "cancel", tab: "pullRequests", scrollToTop: true },
                     );
-                    workspace.dispatch({ type: "query", tab: "pullRequests", query: view.query.trim() });
+                    workspace.dispatch({
+                      type: "query",
+                      tab: "pullRequests",
+                      query: view.query.trim(),
+                    });
                     void listRef.current?.scrollToOffset({
                       offset: Platform.OS === "ios" ? -insets.top : 0,
                       animated: false,
