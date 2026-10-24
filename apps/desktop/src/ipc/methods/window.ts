@@ -299,6 +299,30 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const downloadUrl = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.DOWNLOAD_URL_CHANNEL,
+  payload: Schema.Struct({ url: Schema.String, fileName: Schema.String }),
+  result: Schema.Void,
+  handler: ({ url, fileName }, event) =>
+    Effect.sync(() => {
+      const contents = event && Electron.webContents.fromId(event.sender.id);
+      if (!contents || !/^(https?|data):/i.test(url) || !URL.canParse(url)) return;
+      const href = new URL(url).href;
+      // downloadURL cannot suggest a name, and asset URLs end in an opaque id.
+      // The name can come from chat alt text, so keep only its last segment.
+      const name = fileName.split(/[\\/]/).at(-1) ?? "";
+      if (/\.\w+$/.test(name)) {
+        const suggestName = (_event: Electron.Event, item: Electron.DownloadItem) => {
+          if (item.getURLChain()[0] !== href) return;
+          contents.session.off("will-download", suggestName);
+          item.setSaveDialogOptions({ defaultPath: name });
+        };
+        contents.session.on("will-download", suggestName);
+      }
+      contents.downloadURL(href);
+    }),
+});
+
 export const openSystemSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL,
   payload: SystemSettingsPaneSchema,
