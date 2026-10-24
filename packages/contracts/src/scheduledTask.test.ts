@@ -58,3 +58,17 @@ describe("webhook filters", () => {
     expect(accepts([{ path: "body.action", op: "matches", value: "^opened$" }])).toBe(false);
   });
 });
+
+it("distinguishes writable expressions from normalized persisted recurrence", () => {
+  const writable = { type: "custom", expression: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO" };
+  expect(decodeUpsertSchedule(writable)).toEqual(writable);
+  expect(() => decodeSchedule(writable)).toThrow();
+  const persisted = {
+    ...writable,
+    format: "rrule",
+    startAt: "2026-10-26T08:00:00.000Z",
+    timeZone: "Europe/Berlin",
+  };
+  expect(decodeSchedule(JSON.parse(JSON.stringify(persisted)))).toEqual(persisted);
+  expect(() => decodeSchedule({ ...persisted, format: "unknown" })).toThrow();
+});

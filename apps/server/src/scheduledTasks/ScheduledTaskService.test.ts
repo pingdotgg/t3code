@@ -262,6 +262,96 @@ it.effect(
 );
 
 it.effect(
+  "an unevaluable custom schedule pauses with a visible error without defecting startup or the poll",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-09-09T12:00:00.000Z";
+      // Validated on save, but a library or time zone data update can make a
+      // stored rule unevaluable later; impossible cron dates model that here.
+      const unevaluable = JSON.stringify({
+        type: "custom",
+        format: "cron",
+        expression: "0 0 31 2 *",
+        timeZone: "UTC",
+        startAt: "2026-01-01T00:00:00.000Z",
+      });
+      for (const row of [
+        { id: "stuck-custom", next: now, status: "running", scheduleJson: unevaluable },
+        {
+          id: "missed-custom",
+          next: "2026-09-09T11:00:00.000Z",
+          status: "never",
+          scheduleJson: unevaluable,
+        },
+        {
+          id: "missed-rrule",
+          next: "2026-09-09T11:00:00.000Z",
+          status: "never",
+          scheduleJson: JSON.stringify({
+            type: "custom",
+            format: "rrule",
+            expression: "RRULE:FREQ=INVALID",
+            timeZone: "UTC",
+            startAt: "2026-01-01T00:00:00.000Z",
+          }),
+        },
+        { id: "due-healthy", next: now, status: "never" },
+      ]) {
+        yield* insertRow(sql, { ...row, enabled: 1 }, now);
+      }
+      yield* TestClock.setTime(Date.parse(now) + 1_000);
+      const launched = yield* Deferred.make<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            Layer.provideMerge(
+              ScheduledTaskService.layer,
+              Layer.mergeAll(
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                  launch: () =>
+                    Deferred.succeed(launched, undefined).pipe(
+                      Effect.andThen(Effect.die(new Error("test launch failure"))),
+                    ),
+                }),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  namedProjectsRoot: "/projects",
+                  isScratchProject: () => Effect.succeed(false),
+                }),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                NodeCrypto.layer,
+                Scheduler.layer,
+              ),
+            ),
+          );
+          yield* TestClock.adjust("6 seconds");
+          // The missed custom row sorts first; reaching the healthy row proves
+          // its reschedule did not abort the poll.
+          yield* Deferred.await(launched);
+        }),
+      );
+      const rows = yield* sql<{
+        task_id: string;
+        last_run_status: string;
+        next_run_at: string | null;
+        enabled: number;
+        last_run_error: string | null;
+      }>`SELECT task_id, last_run_status, next_run_at, enabled, last_run_error FROM scheduled_tasks ORDER BY task_id`;
+      const byId = new Map(rows.map((row) => [row.task_id, row]));
+      assert.equal(byId.get("stuck-custom")?.last_run_status, "failed");
+      assert.isNull(byId.get("stuck-custom")?.next_run_at);
+      assert.equal(byId.get("missed-custom")?.last_run_status, "failed");
+      assert.isNull(byId.get("missed-custom")?.next_run_at);
+      for (const id of ["stuck-custom", "missed-custom", "missed-rrule"]) {
+        assert.equal(byId.get(id)?.enabled, 0);
+        assert.include(byId.get(id)?.last_run_error ?? "", "Could not evaluate schedule");
+        assert.isNull(byId.get(id)?.next_run_at);
+      }
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
   "treats a next_run_at corrupted before the dispatch re-read as not due instead of defecting the poll",
   () =>
     Effect.gen(function* () {

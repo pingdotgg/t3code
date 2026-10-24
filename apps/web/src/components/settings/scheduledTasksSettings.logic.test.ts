@@ -325,3 +325,21 @@ it("rejects dedupe templates without a request placeholder", () => {
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
 });
+
+it("keeps a custom recurrence start and time zone when editing the task", () => {
+  const schedule = {
+    type: "custom",
+    format: "rrule",
+    expression: "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO",
+    startAt: "2026-10-26T08:00:00.000Z",
+    timeZone: "Europe/Berlin",
+  } as const;
+  const draft = taskToDraft({ ...legacyTask, schedule });
+  expect(draft.scheduleMode).toBe("custom");
+  expect(scheduleFromDraft({ ...draft, title: "Edited" })).toEqual({
+    type: "custom",
+    expression: schedule.expression,
+    startAt: schedule.startAt,
+    timeZone: schedule.timeZone,
+  });
+});

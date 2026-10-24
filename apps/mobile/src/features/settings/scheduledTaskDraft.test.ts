@@ -196,3 +196,21 @@ it("rejects dedupe keys without valid request placeholders", () => {
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
 });
+
+it("keeps custom anchors and time zones when reopening the mobile editor", () => {
+  const schedule = {
+    type: "custom",
+    format: "rrule",
+    expression: "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO",
+    startAt: "2026-10-26T08:00:00.000Z",
+    timeZone: "Europe/Berlin",
+  } as const;
+  const draft = scheduleDraftForTask({ schedule });
+  expect(draft.mode).toBe("custom");
+  expect(scheduleFromDraft({ ...draft, weekdays: [2], timeOfDay: "10:00" })).toEqual({
+    type: "custom",
+    expression: schedule.expression,
+    startAt: schedule.startAt,
+    timeZone: schedule.timeZone,
+  });
+});

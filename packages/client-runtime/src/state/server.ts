@@ -1311,6 +1311,10 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    previewScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:preview",
+      tag: WS_METHODS.scheduledTasksPreview,
+    }),
     setScheduledTaskEnabled: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:set-enabled",
       tag: WS_METHODS.scheduledTasksSetEnabled,

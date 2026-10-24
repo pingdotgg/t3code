@@ -18,6 +18,12 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
+  type CustomScheduleDraft,
+  customScheduleDraft,
+  customScheduleFromDraft,
+  EMPTY_CUSTOM_SCHEDULE_DRAFT,
+} from "@t3tools/client-runtime/scheduled-task-custom";
+import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@t3tools/shared/projectSettings";
@@ -51,7 +57,8 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "interval" | "webhook";
+  readonly mode: "fixed_time" | "interval" | "custom" | "webhook";
+  readonly custom: CustomScheduleDraft;
   readonly timeOfDay: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
@@ -67,6 +74,7 @@ export type ScheduleDraft = {
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
   mode: "fixed_time",
+  custom: EMPTY_CUSTOM_SCHEDULE_DRAFT,
   timeOfDay: "09:00",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
@@ -88,6 +96,12 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         weekdays: task.schedule.weekdays?.length
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
+      };
+    case "custom":
+      return {
+        ...DEFAULT_SCHEDULE,
+        mode: "custom",
+        custom: customScheduleDraft(task.schedule),
       };
     case "interval":
       return {
@@ -117,6 +131,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  if (draft.mode === "custom") return customScheduleFromDraft(draft.custom);
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;
@@ -213,6 +228,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.timeOfDay,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
+    draft.schedule.custom,
     draft.schedule.maxDeliveryAgeMinutes,
     draft.schedule.replayKey,
     draft.schedule.coalesceKey,

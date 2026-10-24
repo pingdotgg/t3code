@@ -33,7 +33,9 @@ import {
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { EMPTY_CUSTOM_SCHEDULE_DRAFT } from "@t3tools/client-runtime/scheduled-task-custom";
 import {
+  isScheduledTaskCompleted,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
@@ -45,6 +47,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { CustomScheduleFields } from "./CustomScheduleFields";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -136,6 +139,7 @@ const EMPTY_DRAFT: DraftState = {
   prompt: "",
   enabled: true,
   scheduleMode: "fixed",
+  custom: EMPTY_CUSTOM_SCHEDULE_DRAFT,
   intervalMinutes: "15",
   timeOfDay: "09:00",
   weekdays: new Set([1, 2, 3, 4, 5]),
@@ -288,6 +292,7 @@ function splitModelKey(value: string): ModelSelection | null {
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "custom") return `${schedule.expression} (${schedule.timeZone})`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -725,6 +730,8 @@ function ScheduledTaskRow({
               <>
                 Next run <ScheduledRelativeLabel value={task.nextRunAt} />
               </>
+            ) : isScheduledTaskCompleted(task) ? (
+              "Completed"
             ) : (
               "Not scheduled"
             )}
@@ -1273,7 +1280,8 @@ function ScheduledTaskEditorForm({
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
-          Run a prompt automatically on an interval, at a fixed time, or when a webhook is called.
+          Run a prompt automatically on an interval, at a fixed time, with a custom recurrence, or
+          when a webhook is called.
         </DialogDescription>
       </DialogHeader>
 
@@ -1493,10 +1501,16 @@ function ScheduledTaskEditorForm({
               <Label>Schedule</Label>
               <ToggleGroup
                 aria-label="Schedule type"
+                wrap
                 value={[draft.scheduleMode]}
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
-                  if (mode === "fixed" || mode === "interval" || mode === "webhook")
+                  if (
+                    mode === "fixed" ||
+                    mode === "interval" ||
+                    mode === "custom" ||
+                    mode === "webhook"
+                  )
                     setDraft((current) => ({
                       ...current,
                       scheduleMode: mode,
@@ -1509,11 +1523,21 @@ function ScheduledTaskEditorForm({
               >
                 <Toggle value="fixed">At a time</Toggle>
                 <Toggle value="interval">Every interval</Toggle>
+                <Toggle value="custom">Custom</Toggle>
                 <Toggle value="webhook">On webhook</Toggle>
               </ToggleGroup>
             </div>
 
-            {draft.scheduleMode === "webhook" ? (
+            {draft.scheduleMode === "custom" ? (
+              <CustomScheduleFields
+                key={`${environmentId}:${task?.id ?? "new"}`}
+                environmentId={environmentId}
+                taskId={task?.id}
+                value={draft.custom}
+                disabled={saving || !connected}
+                onChange={(custom) => setDraft((current) => ({ ...current, custom }))}
+              />
+            ) : draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
                 <WebhookEndpointField environmentId={environmentId} task={liveTask} />
                 <p className="text-xs text-muted-foreground">

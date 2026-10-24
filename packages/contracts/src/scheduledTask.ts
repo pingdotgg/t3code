@@ -56,6 +56,39 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
   description: "Run at a fixed local wall-clock time on selected weekdays.",
 });
 
+const CustomExpression = TrimmedNonEmptyString.check(Schema.isMaxLength(4096)).annotate({
+  description:
+    "Five-field cron such as '0 9 1 * *', or one RFC 5545 RRULE, prefixed with RRULE: or a bare body containing FREQ, such as 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;BYHOUR=9;BYMINUTE=0;BYSECOND=0', detected automatically. An RRULE may follow one DTSTART line (local 'DTSTART:20261026T090000', UTC 'DTSTART:20261026T090000Z', or 'DTSTART;TZID=Europe/Berlin:20261026T090000'); embedded DTSTART/TZID overrides startAt/timeZone. RDATE, EXDATE and SECONDLY are unsupported.",
+});
+
+const CustomTimeZone = TrimmedNonEmptyString.annotate({
+  description:
+    "IANA time zone such as Europe/Berlin. Defaults to the environment's zone; omit on edit to keep the saved one.",
+});
+const CustomStartAt = IsoDateTime.annotate({
+  description:
+    "Recurrence anchor as an ISO 8601 instant with offset, such as 2026-10-26T09:00:00+01:00. Defaults once to creation time; omit on edit to keep the saved one.",
+});
+
+const ScheduledTaskCustomSchedule = Schema.Struct({
+  type: Schema.Literal("custom"),
+  format: Schema.Literals(["cron", "rrule"]),
+  expression: CustomExpression,
+  timeZone: CustomTimeZone,
+  startAt: CustomStartAt,
+});
+
+export const ScheduledTaskUpsertCustomSchedule = Schema.Struct({
+  type: Schema.Literal("custom"),
+  expression: CustomExpression,
+  timeZone: Schema.optional(CustomTimeZone),
+  startAt: Schema.optional(CustomStartAt),
+}).annotate({
+  description:
+    "Custom cron or RRULE recurrence. RRULE supports MINUTELY through YEARLY, one BYSECOND value, COUNT/INTERVAL up to 10000 and UTC UNTIL (e.g. 20261231T235959Z); COUNT and UNTIL cannot be combined. COUNT counts occurrences from the saved start, including missed dates. Exhausted rules have no next run. RRULE skips DST gaps; cron shifts them forward, and repeated times run once.",
+});
+export type ScheduledTaskUpsertCustomSchedule = typeof ScheduledTaskUpsertCustomSchedule.Type;
+
 const ScheduledTaskWebhookSignatureFields = {
   header: TrimmedNonEmptyString.annotate({
     description: "Request header carrying the signature, such as x-hub-signature-256.",
@@ -194,10 +227,11 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
 export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskCustomSchedule,
   ScheduledTaskWebhookSchedule,
 ]).annotate({
   description:
-    "Structured trigger. Pass an object with type 'interval', 'fixed_time' or 'webhook'.",
+    "Structured trigger with type 'interval', 'fixed_time', 'custom' or 'webhook'. Custom schedules include their detected format, stable start and time zone.",
 });
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -215,9 +249,11 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
     description: "Run repeatedly after a fixed number of milliseconds.",
   }),
   ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskUpsertCustomSchedule,
   ScheduledTaskUpsertWebhookSchedule,
 ]).annotate({
-  description: "Writable trigger. Pass an object with type 'interval', 'fixed_time' or 'webhook'.",
+  description:
+    "Writable trigger. Pass an object with type 'interval', 'fixed_time', 'custom' or 'webhook'.",
 });
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
@@ -255,6 +291,31 @@ export const ScheduledTask = Schema.Struct({
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
+
+export function isScheduledTaskCompleted(
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "nextRunAt" | "lastRunStatus">,
+): boolean {
+  return (
+    task.enabled &&
+    task.schedule.type === "custom" &&
+    task.schedule.format === "rrule" &&
+    task.nextRunAt === null &&
+    task.lastRunStatus !== "running"
+  );
+}
+
+export const ScheduledTaskPreviewInput = Schema.Struct({
+  id: Schema.optional(ScheduledTaskId),
+  schedule: ScheduledTaskUpsertCustomSchedule,
+});
+export type ScheduledTaskPreviewInput = typeof ScheduledTaskPreviewInput.Type;
+
+export const ScheduledTaskPreviewResult = Schema.Struct({
+  schedule: ScheduledTaskCustomSchedule,
+  occurrences: Schema.Array(IsoDateTime),
+  completed: Schema.Boolean,
+});
+export type ScheduledTaskPreviewResult = typeof ScheduledTaskPreviewResult.Type;
 
 export const ScheduledTaskListInput = Schema.Struct({});
 export type ScheduledTaskListInput = typeof ScheduledTaskListInput.Type;

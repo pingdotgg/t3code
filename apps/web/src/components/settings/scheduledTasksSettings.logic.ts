@@ -18,6 +18,11 @@ import {
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  type CustomScheduleDraft,
+  customScheduleDraft,
+  customScheduleFromDraft,
+} from "@t3tools/client-runtime/scheduled-task-custom";
 
 import {
   resolveProjectSettings,
@@ -52,7 +57,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-export type ScheduleMode = "fixed" | "interval" | "webhook";
+export type ScheduleMode = "fixed" | "interval" | "custom" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -61,6 +66,7 @@ export interface DraftState {
   readonly prompt: string;
   readonly enabled: boolean;
   readonly scheduleMode: ScheduleMode;
+  readonly custom: CustomScheduleDraft;
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
   readonly weekdays: ReadonlySet<number>;
@@ -147,6 +153,7 @@ export function webhookDeliveryLabel(delivery: {
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
+  if (draft.scheduleMode === "custom") return customScheduleFromDraft(draft.custom);
   if (draft.scheduleMode === "webhook") {
     if (webhookDraftErrors(draft).length > 0) return null;
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
@@ -210,7 +217,14 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     prompt: task.prompt,
     enabled: task.enabled,
     scheduleMode:
-      schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
+      schedule.type === "custom"
+        ? "custom"
+        : schedule.type === "interval"
+          ? "interval"
+          : schedule.type === "webhook"
+            ? "webhook"
+            : "fixed",
+    custom: customScheduleDraft(schedule),
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",

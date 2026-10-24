@@ -76,6 +76,35 @@ Webhook tasks only run when their URL is called, so they can't be run
 immediately.
 Leaving an edited form asks before discarding unsaved changes.
 
+### Custom recurrence
+
+Choose **Custom** for a five-field cron expression or an RFC 5545 RRULE; the
+format is detected automatically. **Preview occurrences** shows the next five
+dates in the schedule's time zone.
+
+- `10 * * * *` runs at minute 10 of each hour.
+- `0 9 1 * *` runs at 09:00 on the first day of each month.
+- `FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;BYHOUR=9;BYMINUTE=0;BYSECOND=0` runs every other Monday at 09:00.
+- `FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;BYHOUR=17;BYMINUTE=0;BYSECOND=0` runs on the last weekday of each month at 17:00.
+
+An RRULE accepts an optional `RRULE:` prefix and may start with one DTSTART line, such as
+`DTSTART;TZID=Europe/Berlin:20261026T090000`, which overrides the separate start
+and time zone. `DTSTART:20261026T090000Z` selects a UTC start; a local
+`DTSTART:20261026T090000` uses the selected zone. Without DTSTART, the start is
+set once when the task is created. Edits, pauses and restarts keep that saved
+anchor. Agents can also set an explicit start through MCP. Previews do not
+create or change the anchor. RRULE uses the start's clock components for omitted
+BYHOUR, BYMINUTE and BYSECOND fields.
+
+`COUNT` counts dates from the start, including dates missed while paused or
+offline. Once a `COUNT` or `UNTIL` rule has no dates left, the task shows
+**Completed**; it stays saved and can still be edited or run immediately.
+A rule that can no longer be evaluated is paused with an error.
+
+RRULE skips nonexistent local times during daylight-saving transitions; cron
+moves them forward by the gap. Both run repeated local times once.
+Recurrence sets (RDATE, EXDATE), date-only starts and SECONDLY are unsupported.
+
 ## Webhook automations
 
 In **Settings → Scheduled tasks**, choose **On webhook**

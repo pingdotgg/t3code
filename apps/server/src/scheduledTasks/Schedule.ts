@@ -1,5 +1,6 @@
 import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { customOccurrences } from "./CustomSchedule.ts";
 
 const MINUTE_MS = 60_000;
 
@@ -14,6 +15,10 @@ export function nextScheduledRunAt(
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
   if (schedule.type === "webhook") return null;
+  if (schedule.type === "custom") {
+    const next = customOccurrences(schedule, from, 1)[0];
+    return next === undefined ? null : DateTime.makeUnsafe(next);
+  }
   if (schedule.type === "interval") {
     // Persisted rows created before the one-minute floor remain readable, but
     // they must not retain their old high-frequency execution rate.
@@ -50,6 +55,15 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
   if (a.type === "webhook") return b.type === "webhook";
+  if (a.type === "custom") {
+    return (
+      b.type === "custom" &&
+      a.format === b.format &&
+      a.expression === b.expression &&
+      a.timeZone === b.timeZone &&
+      a.startAt === b.startAt
+    );
+  }
   if (b.type !== "fixed_time") return false;
   // The contract accepts padded and unpadded hours ("9:00" and "09:00"), so
   // compare the parsed time — string equality would treat a format-only edit
@@ -65,19 +79,20 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   );
 }
 
-const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
+const MISSED_WALL_CLOCK_GRACE_MS = 10 * MINUTE_MS;
 
-export function isMissedFixedTimeRun(
+export function isMissedWallClockRun(
   schedule: ScheduledTaskSchedule,
   dueAt: DateTime.DateTime,
   now: DateTime.DateTime,
 ): boolean {
-  if (schedule.type !== "fixed_time") return false;
-  return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
+  if (schedule.type !== "fixed_time" && schedule.type !== "custom") return false;
+  return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_WALL_CLOCK_GRACE_MS;
 }
 
 function describeSchedule(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "custom") return `${schedule.expression} (${schedule.timeZone})`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / MINUTE_MS;
     if (Number.isInteger(minutes)) {

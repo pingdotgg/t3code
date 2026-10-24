@@ -2,6 +2,7 @@ import {
   CommandId,
   type RunId,
   isProviderAvailable,
+  isScheduledTaskCompleted,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -305,6 +306,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     boundThreadId: task.threadId,
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
+    completed: isScheduledTaskCompleted(task),
     lastRunStatus: task.lastRunStatus,
     ...(task.webhook?.url == null || !mayRun ? {} : { webhookUrl: task.webhook.url }),
     ...(task.webhook === undefined

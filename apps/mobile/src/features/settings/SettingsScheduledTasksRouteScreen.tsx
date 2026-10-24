@@ -12,6 +12,7 @@ import type {
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import {
+  isScheduledTaskCompleted,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
@@ -62,6 +63,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { CustomScheduleFields } from "./components/CustomScheduleFields";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
 import {
   AndroidSettingsEnvironmentFilter,
@@ -104,6 +106,8 @@ const DAYS = [
 
 function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "webhook") return "On webhook";
+  if (task.schedule.type === "custom")
+    return `${task.schedule.expression} (${task.schedule.timeZone})`;
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
@@ -947,6 +951,7 @@ function TaskForm({
               options={[
                 { value: "fixed_time", label: "At a time" },
                 { value: "interval", label: "Interval" },
+                { value: "custom", label: "Custom" },
                 { value: "webhook", label: "On webhook" },
               ]}
               selected={draft.schedule.mode}
@@ -1035,6 +1040,15 @@ function TaskForm({
                 }}
               />
             </>
+          ) : draft.schedule.mode === "custom" ? (
+            <CustomScheduleFields
+              key={`${environmentId}:${draft.task?.id ?? "new"}`}
+              environmentId={environmentId}
+              taskId={draft.task?.id}
+              value={draft.schedule.custom}
+              disabled={saving || environmentUnavailable}
+              onChange={(custom) => setDraft({ ...draft, schedule: { ...draft.schedule, custom } })}
+            />
           ) : draft.schedule.mode === "webhook" ? (
             <>
               <WebhookScheduleDetails
@@ -1336,6 +1350,7 @@ function EnvironmentTasks({
                 {task.title}
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                {isScheduledTaskCompleted(task) ? "Completed · " : ""}
                 {describeSchedule(task)}
                 {!task.enabled
                   ? " · Paused"
