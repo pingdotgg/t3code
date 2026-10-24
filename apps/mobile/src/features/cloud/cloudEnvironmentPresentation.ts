@@ -9,6 +9,7 @@ export interface AvailableCloudEnvironmentPresentation {
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
+  readonly serverUpdateRequired: boolean;
   readonly statusText: string;
 }
 
@@ -27,6 +28,7 @@ export function availableCloudEnvironmentPresentation(input: {
       connectionError: compatibilityError.message,
       connectionErrorTraceId: null,
       connectionState: "unsupported",
+      serverUpdateRequired: compatibilityError.serverUpdateRequired === true,
       statusText: compatibilityError.message,
     };
   }
@@ -35,6 +37,7 @@ export function availableCloudEnvironmentPresentation(input: {
       connectionError: null,
       connectionErrorTraceId: null,
       connectionState: "available",
+      serverUpdateRequired: false,
       statusText: "Available · Relay online",
     };
   }
@@ -46,6 +49,7 @@ export function availableCloudEnvironmentPresentation(input: {
       connectionError,
       connectionErrorTraceId: input.status.traceId ?? null,
       connectionState: "error",
+      serverUpdateRequired: false,
       statusText: connectionError,
     };
   }
@@ -55,6 +59,7 @@ export function availableCloudEnvironmentPresentation(input: {
       connectionError: input.statusError,
       connectionErrorTraceId: input.statusErrorTraceId,
       connectionState: "error",
+      serverUpdateRequired: false,
       statusText: input.statusError,
     };
   }
@@ -63,6 +68,7 @@ export function availableCloudEnvironmentPresentation(input: {
     connectionError: null,
     connectionErrorTraceId: null,
     connectionState: "available",
+    serverUpdateRequired: false,
     statusText: input.isStatusPending
       ? "Available · Checking relay status..."
       : "Available · Relay status unknown",
