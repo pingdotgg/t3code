@@ -9383,10 +9383,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           };
           yield* Ref.set(queryContext, context);
+          // The CLI reports its mode on init, which only arrives once the first prompt is in, so
+          // that is the earliest a bypass it declined can be restored. Rejection means settings T3
+          // could not see forbid bypass; Claude then keeps asking, which the callback handles.
+          const restoreRequestedBypass = querySession.setPermissionMode("bypassPermissions").pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                context.permissionMode = "bypassPermissions";
+                context.openedPermissionMode = "bypassPermissions";
+              }),
+            ),
+            Effect.ignore,
+          );
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
                 Effect.suspend(() => {
+                  let restoreBypass = false;
                   if (
                     message.type === "system" &&
                     message.subtype === "init" &&
@@ -9395,6 +9408,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.openedPermissionMode =
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
+                    // Launch arguments can open the query below the policy's bypass on purpose.
+                    restoreBypass =
+                      queryPolicy.permissionMode === "bypassPermissions" &&
+                      queryOptions.permissionMode === "bypassPermissions" &&
+                      context.openedPermissionMode !== "bypassPermissions";
                   }
                   if (
                     message.type === "system" &&
@@ -9403,7 +9421,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  const handled = handleSdkMessage({ query: querySession, message });
+                  // Forked so the control request does not wait behind the message lock.
+                  return restoreBypass
+                    ? restoreRequestedBypass.pipe(
+                        Effect.forkIn(sessionScope),
+                        Effect.andThen(handled),
+                      )
+                    : handled;
                 }),
               ),
             ),

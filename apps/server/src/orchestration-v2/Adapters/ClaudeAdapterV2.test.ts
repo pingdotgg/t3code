@@ -2839,6 +2839,226 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
     );
+
+    // The CLI reports its mode on init, which arrives only after the first prompt is written.
+    const openFullAccessQueryOpenedInDefault = Effect.fn("openFullAccessQueryOpenedInDefault")(
+      function* (options?: Parameters<typeof makeWakeHarnessWithOptions>[0]) {
+        const harness = yield* makeWakeHarnessWithOptions(options);
+        const now = yield* DateTime.now;
+        let ordinal = 0;
+        const start = Effect.suspend(() =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-opened-in-default-${++ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Run git status.",
+              attachments: [],
+            }),
+          ),
+        );
+        const reportDefault = harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            permissionMode: "default",
+            uuid: "opened-in-default-init",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const offerResult = Effect.suspend(() =>
+          Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({ uuid: `opened-in-default-result-${ordinal}`, result: "Done." }),
+          ),
+        );
+        const takeTerminal = Effect.gen(function* () {
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        });
+        return {
+          harness,
+          start,
+          reportDefault,
+          offerResult,
+          takeTerminal,
+          finish: offerResult.pipe(Effect.andThen(takeTerminal)),
+        };
+      },
+    );
+
+    // regression: #22483 a new Full access thread asked before its first command because the CLI
+    // reported default on init and nothing moved it back to the bypass T3 had asked for
+    it.effect(
+      "moves a Full access query to bypass on the first init when the CLI reports default",
+      () =>
+        Effect.gen(function* () {
+          const restored = yield* Deferred.make<string>();
+          const { harness, start, reportDefault, offerResult, takeTerminal, finish } =
+            yield* openFullAccessQueryOpenedInDefault({
+              setPermissionMode: (mode) => Deferred.succeed(restored, mode).pipe(Effect.asVoid),
+            });
+          yield* start;
+          const opened = harness.getOpenedOptions()!;
+          assert.equal(opened.permissionMode, "bypassPermissions");
+          assert.equal(opened.allowDangerouslySkipPermissions, true);
+          assert.deepEqual(harness.permissionModeChanges, []);
+          yield* reportDefault;
+          yield* offerResult;
+          const first = yield* Effect.raceFirst(
+            Deferred.await(restored).pipe(
+              Effect.map((mode) => ({ type: "restore", mode }) as const),
+            ),
+            Queue.take(harness.terminalReceipts).pipe(
+              Effect.map(() => ({ type: "turn" }) as const),
+            ),
+          );
+          assert.deepEqual(
+            first,
+            { type: "restore", mode: "bypassPermissions" },
+            "The first turn's init must restore bypass before that turn ends",
+          );
+          yield* takeTerminal;
+          yield* start;
+          yield* finish;
+          assert.strictEqual(harness.getOpenedOptions(), opened);
+          assert.deepEqual(harness.permissionModeChanges, ["bypassPermissions"]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    // regression: #22483 a bypass the CLI rejects (settings T3 could not see) must not be retried
+    it.effect(
+      "keeps asking and does not retry when Claude rejects the first-init bypass restore",
+      () =>
+        Effect.gen(function* () {
+          const attempted = yield* Deferred.make<string>();
+          const { harness, start, reportDefault, offerResult, takeTerminal, finish } =
+            yield* openFullAccessQueryOpenedInDefault({
+              setPermissionMode: (mode) =>
+                Deferred.succeed(attempted, mode).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                        method: "setPermissionMode",
+                        cause: new Error("Cannot set permission mode to bypassPermissions"),
+                      }),
+                    ),
+                  ),
+                ),
+            });
+          yield* start;
+          yield* reportDefault;
+          yield* offerResult;
+          const first = yield* Effect.raceFirst(
+            Deferred.await(attempted).pipe(
+              Effect.map((mode) => ({ type: "restore", mode }) as const),
+            ),
+            Queue.take(harness.terminalReceipts).pipe(
+              Effect.map(() => ({ type: "turn" }) as const),
+            ),
+          );
+          assert.deepEqual(first, { type: "restore", mode: "bypassPermissions" });
+          yield* takeTerminal;
+          yield* start;
+          yield* finish;
+          yield* start;
+          yield* finish;
+          assert.deepEqual(harness.permissionModeChanges, ["bypassPermissions"]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    // #21806 stays: when settings disable bypass, a lower mode from the CLI is not forced back
+    it.effect("does not force bypass when settings disable it and init reports default", () =>
+      Effect.gen(function* () {
+        vi.mocked(ClaudeSdk.resolveSettings).mockResolvedValue({
+          effective: { permissions: { disableBypassPermissionsMode: "disable" } },
+          provenance: {},
+          sources: [],
+        });
+        const { harness, start, reportDefault, finish } =
+          yield* openFullAccessQueryOpenedInDefault();
+        yield* start;
+        const opened = harness.getOpenedOptions()!;
+        assert.equal(opened.permissionMode, "auto");
+        assert.isUndefined(opened.allowDangerouslySkipPermissions);
+        yield* reportDefault;
+        yield* finish;
+        yield* start;
+        yield* finish;
+        assert.strictEqual(harness.getOpenedOptions(), opened);
+        assert.deepEqual(harness.permissionModeChanges, []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    // regression: #22888 review; an explicit `--permission-mode` is the user's approval choice
+    it.effect("does not force bypass when launch arguments open the query in default", () =>
+      Effect.gen(function* () {
+        const { harness, start, reportDefault, finish } = yield* openFullAccessQueryOpenedInDefault(
+          {
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--permission-mode default" },
+          },
+        );
+        yield* start;
+        const opened = harness.getOpenedOptions()!;
+        assert.equal(opened.permissionMode, "default");
+        assert.equal(opened.allowDangerouslySkipPermissions, true, "Settings policy allows bypass");
+        yield* reportDefault;
+        yield* finish;
+        yield* start;
+        yield* finish;
+        assert.deepEqual(harness.permissionModeChanges, []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    // the launch argument asks for bypass, but settings disable it: still nothing to force
+    it.effect(
+      "does not force bypass when launch arguments ask for it and settings disable it",
+      () =>
+        Effect.gen(function* () {
+          vi.mocked(ClaudeSdk.resolveSettings).mockResolvedValue({
+            effective: { permissions: { disableBypassPermissionsMode: "disable" } },
+            provenance: {},
+            sources: [],
+          });
+          const { harness, start, reportDefault, finish } =
+            yield* openFullAccessQueryOpenedInDefault({
+              settings: {
+                ...DEFAULT_CLAUDE_SETTINGS,
+                launchArgs: "--permission-mode bypassPermissions",
+              },
+            });
+          yield* start;
+          const opened = harness.getOpenedOptions()!;
+          assert.equal(opened.permissionMode, "bypassPermissions");
+          assert.isUndefined(opened.allowDangerouslySkipPermissions);
+          yield* reportDefault;
+          yield* finish;
+          yield* start;
+          yield* finish;
+          assert.deepEqual(harness.permissionModeChanges, []);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
   });
 
   describe("Plan-mode tool approval", () => {
