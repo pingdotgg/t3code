@@ -54,7 +54,7 @@
     "@tiptap/starter-kit": "^3.31.3",
     "class-variance-authority": "^0.7.1",
     "culori": "^4.0.2",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "effect": "catalog:",
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",

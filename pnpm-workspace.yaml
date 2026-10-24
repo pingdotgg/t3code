@@ -333,6 +333,8 @@ overrides:
   "ws@^8": "catalog:"
   vite: "catalog:"
   vite-plus: "catalog:"
+  # @vercel/routing-utils hard-pins 6.1.0, which has a ReDoS advisory (GHSA-9wv6-86v2-598j).
+  "@vercel/routing-utils>path-to-regexp": 6.3.0
   yaml: "catalog:"
 
 packageExtensions:
