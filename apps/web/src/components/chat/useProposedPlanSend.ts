@@ -35,11 +35,11 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { ChatMessage } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
+  type DraftSendState,
   formatOutgoingPrompt,
   type makeThreadErrorSetter,
   waitForStartedServerThread,
 } from "../ChatView.logic";
-import { draftSendState } from "./chatViewSend";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 import type { useTimelineFollow } from "./useTimelineFollow";
 
@@ -47,7 +47,7 @@ type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
 
 interface PlanSendBase {
   readonly environmentId: EnvironmentId;
-  readonly routeThreadKey: string;
+  readonly routeSendState: DraftSendState;
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly activeThreadBranch: string | null;
   readonly activeProposedPlan: LatestProposedPlanState | null;
@@ -81,7 +81,7 @@ interface PlanFollowUpSendInput extends PlanSendBase {
 export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
   const {
     environmentId,
-    routeThreadKey,
+    routeSendState,
     activeThread,
     activeProposedPlan,
     isServerThread,
@@ -103,7 +103,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
-  const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const { sendInFlight: sendInFlightRef } = routeSendState;
 
   return async function submitPlanFollowUp({
     text,
@@ -249,7 +249,7 @@ interface ImplementPlanInNewThreadInput extends PlanSendBase {
 export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput) {
   const {
     environmentId,
-    routeThreadKey,
+    routeSendState,
     activeThread,
     activeThreadBranch,
     activeProposedPlan,
@@ -269,7 +269,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
-  const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const { sendInFlight: sendInFlightRef } = routeSendState;
 
   return async () => {
     if (

@@ -5,7 +5,9 @@ import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
   deriveWorkspaceMutationId,
+  draftSendState,
   presentThreadShellFromProjection,
+  retainDraftSendState,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { useComposerSelection } from "./chat/useComposerSelection";
@@ -355,7 +357,7 @@ import {
 } from "./chat/useSystemComposerBanners";
 import { useDraftHeroLayoutTransition } from "./chat/useDraftHeroLayoutTransition";
 import { useLocalDispatchState } from "./chat/useLocalDispatchState";
-import { draftFanoutSelectionsAtom, draftSendState } from "./chat/chatViewSend";
+import { draftFanoutSelectionsAtom } from "./chat/chatViewSend";
 import {
   isCompactCommandMessage,
   type LocalThreadErrorEntry,
@@ -687,7 +689,12 @@ export default function ChatView(props: ChatViewProps) {
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const [timelineOverflows, setTimelineOverflows] = useState(false);
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
-  const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const routeSendState = draftSendState(routeThreadKey);
+  const { sendInFlight: sendInFlightRef } = routeSendState;
+  useEffect(
+    () => retainDraftSendState(routeThreadKey, routeSendState),
+    [routeSendState, routeThreadKey],
+  );
   const multipleModelSelections = useAtomValue(fanoutSelectionsAtom);
   const setMultipleModelSelections = (
     selections: SetStateAction<ReadonlyArray<ModelSelection> | null>,
@@ -2826,6 +2833,7 @@ export default function ChatView(props: ChatViewProps) {
   const { onResume, isResuming } = useComposerResume({
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     activeThread,
     resumableRunId,
@@ -2846,7 +2854,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const onImplementPlanInNewThread = useImplementPlanInNewThread({
     environmentId,
-    routeThreadKey,
+    routeSendState,
     activeThread,
     activeThreadBranch,
     activeProposedPlan,
@@ -2863,6 +2871,7 @@ export default function ChatView(props: ChatViewProps) {
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     draftId,
     draftThread,
