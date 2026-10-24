@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compactDynamicToolOutput,
+  htmlRenderFromToolItem,
   MAX_TOOL_OUTPUT_IMAGES,
   toolOutputImages,
   toolOutputIndicatesFailure,
@@ -131,6 +132,33 @@ describe("compactDynamicToolOutput", () => {
     expect(compactDynamicToolOutput({ threadId: "known", body: "x".repeat(1_000_000) })).toEqual({
       threadId: "known",
     });
+  });
+
+  it("reads an MCP OkayOutput string, including a suffixed html_render name", () => {
+    const reference = { attachmentId: "render-1", title: "Example", height: 120 };
+    const output = {
+      type: "MCP",
+      tool_name: "html_render",
+      server_name: "t3-code",
+      output: { OkayOutput: JSON.stringify({ htmlRender: reference, message: "Shown" }) },
+    };
+    expect(compactDynamicToolOutput(output)?.htmlRender).toEqual(reference);
+    expect(
+      htmlRenderFromToolItem({
+        toolName: "t3-code__html_render — source file: page.html",
+        output,
+      }),
+    ).toEqual(reference);
+    expect(
+      compactDynamicToolOutput({
+        type: "MCP",
+        isError: true,
+        output: { OkayOutput: JSON.stringify({ threadId: "thread-1" }) },
+      }),
+    ).toEqual({ isError: true, threadId: "thread-1" });
+    expect(
+      compactDynamicToolOutput({ type: "MCP", output: { OkayOutput: "" }, threadId: "thread-1" }),
+    ).toEqual({ threadId: "thread-1" });
   });
 });
 

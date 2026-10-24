@@ -21,6 +21,13 @@ interface ToolResult {
   readonly failed: boolean;
 }
 
+function mcpOkayOutput(record: Record<string, unknown>): string | undefined {
+  if (record.type !== "MCP") return undefined;
+  const output = asRecord(record.output);
+  const okay = output?.OkayOutput;
+  return typeof okay === "string" && okay.length > 0 ? okay : undefined;
+}
+
 function readResult(value: unknown, depth = 0): ToolResult {
   if (depth > 4) return { failed: false };
   if (typeof value === "string") {
@@ -49,6 +56,11 @@ function readResult(value: unknown, depth = 0): ToolResult {
     record.is_error === true ||
     (typeof record._tag === "string" && /(?:Error|Failure)$/.test(record._tag)) ||
     record.error != null;
+  const okay = mcpOkayOutput(record);
+  if (okay !== undefined) {
+    const result = readResult(okay, depth + 1);
+    return { ...(result.data ? { data: result.data } : {}), failed: failed || result.failed };
+  }
   const content = record.structuredContent ?? record.content;
   if (content !== undefined) {
     const result = readResult(content, depth + 1);

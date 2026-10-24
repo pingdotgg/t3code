@@ -45,6 +45,14 @@ interface CompactToolOutput {
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
 }
 
+function mcpOkayOutput(value: object): string | undefined {
+  if (!("type" in value) || value.type !== "MCP" || !("output" in value)) return undefined;
+  const output = value.output;
+  if (!Predicate.isObject(output) || !("OkayOutput" in output)) return undefined;
+  const okay = output.OkayOutput;
+  return typeof okay === "string" && okay.length > 0 ? okay : undefined;
+}
+
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
   if (depth > MAX_ENVELOPE_DEPTH || budget.remainingNodes-- <= 0) {
     budget.exceeded = true;
@@ -93,6 +101,11 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     value.is_error === true ||
     value._tag === "OrchestratorMcpFailure" ||
     value.error != null;
+  const okay = mcpOkayOutput(value);
+  if (okay !== undefined) {
+    const nested = readResult(okay, budget, depth + 1);
+    return { ...nested, failed: failed || nested.failed };
+  }
   const content = value.structuredContent ?? value.content;
   if (content !== undefined) {
     const nested = readResult(content, budget, depth + 1);

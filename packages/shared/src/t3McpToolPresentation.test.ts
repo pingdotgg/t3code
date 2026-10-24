@@ -31,4 +31,25 @@ describe("resolveT3McpToolPresentation", () => {
     ).toBe("Delegate a child task");
     expect(resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
   });
+
+  it("ignores a trailing source annotation after the tool id", () => {
+    expect(resolveT3McpToolPresentation("t3-code__html_render — source file: page.html")).toEqual({
+      displayName: "Render an HTML page",
+      logo: "t3-code",
+    });
+    expect(resolveT3McpToolPresentation("t3-code.html_preview — source file: page.html")).toEqual({
+      displayName: "Preview an HTML page",
+      logo: "t3-code",
+    });
+    expect(
+      resolveT3McpToolPresentation("mcp__t3-code__html_render — source file: page.html"),
+    ).toEqual({
+      displayName: "Render an HTML page",
+      logo: "t3-code",
+    });
+    expect(resolveT3McpToolPresentation("t3-code.html_render-v2")).toBeNull();
+    expect(resolveT3McpToolPresentation("t3-code__html_render-v2")).toBeNull();
+    expect(resolveT3McpToolPresentation("mcp__t3-code__html_render-v2")).toBeNull();
+  });
+
 });
