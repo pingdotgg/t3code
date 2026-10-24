@@ -1,7 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "./ui/AppActivityIndicator";
@@ -9,6 +9,8 @@ import { AppText } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
 import { useMediaActions } from "../state/mediaActions";
+import { fitVideoFrame } from "../lib/videoFrameFit";
+import { loadVideoThumbnail } from "../lib/videoThumbnails";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../lib/videoAudioSession";
 import { MediaActionsMenu } from "./MediaActionsMenu";
@@ -116,6 +118,8 @@ interface MediaVideoPlayerProps {
   readonly thumbnailVisible?: boolean;
   readonly unavailable?: boolean;
   readonly expanded?: boolean;
+  /** Fill the parent and size the frame to the video's shape instead of a fixed 16:9 slot. */
+  readonly fitToVideo?: boolean;
   readonly autoPlay?: boolean;
   readonly paused?: boolean;
   readonly actionsSource?: MediaActionsSource;
@@ -126,12 +130,38 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
   const [playbackUri, setPlaybackUri] = useState<string | null>(props.expanded ? props.uri : null);
   // Keep an opened player mounted while signing or reconnecting temporarily has no usable URL.
   if (playbackUri === null && props.expanded && props.uri !== null) setPlaybackUri(props.uri);
+  const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+  const [bounds, setBounds] = useState<{ width: number; height: number } | null>(null);
+  const sizeSource = props.fitToVideo && videoSize === null ? props.uri : null;
+  // Layout effect so this request queues ahead of the poster's passive one. Otherwise tapping Play
+  // unmounts the poster, aborts the extraction it started, and this load begins again from scratch.
+  useLayoutEffect(() => {
+    if (sizeSource === null) return;
+    // Thumbnails are oriented like the displayed frame, unlike VideoTrack.size.
+    const controller = new AbortController();
+    void loadVideoThumbnail(
+      props.thumbnailKey,
+      async () => ({ uri: sizeSource, dispose: () => undefined }),
+      controller.signal,
+    ).then((thumbnail) => {
+      if (thumbnail && !controller.signal.aborted) {
+        setVideoSize({ width: thumbnail.width, height: thumbnail.height });
+      }
+    });
+    return () => controller.abort();
+  }, [props.thumbnailKey, sizeSource]);
+  const fittedFrame =
+    props.fitToVideo && videoSize && bounds ? fitVideoFrame(videoSize, bounds, 480) : null;
 
-  return (
+  const frame = (
     <View
       collapsable={false}
       className="overflow-hidden rounded-[10px] bg-black"
-      style={props.expanded ? { flex: 1 } : { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 }}
+      style={
+        props.expanded
+          ? { flex: 1 }
+          : (fittedFrame ?? { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 })
+      }
     >
       {playbackUri ? (
         <LoadedMediaVideo
@@ -182,6 +212,18 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
           </Pressable>
         </MediaActionsMenu>
       )}
+    </View>
+  );
+  if (!props.fitToVideo) return frame;
+  return (
+    <View
+      className="flex-1 items-center justify-center self-stretch"
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setBounds({ width, height });
+      }}
+    >
+      {frame}
     </View>
   );
 }
