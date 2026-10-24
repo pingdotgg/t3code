@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,7 +48,9 @@ export class ElectronApp extends Context.Service<
      * The OS locale, read from the operating system rather than from Chromium's
      * resolved application locale — the packaged app ships only the `en-US`
      * locale pak, so `app.getLocale()` and the renderer's `Intl` default are
-     * pinned to `en-US` however the machine is configured.
+     * pinned to `en-US` however the machine is configured. It carries the
+     * macOS region override and 12/24-hour preference, and the Linux LC_TIME
+     * locale.
      */
     readonly systemLocale: Effect.Effect<string>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
@@ -98,6 +101,48 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
+type SystemHourCycle = "h12" | "h23";
+
+/**
+ * Turns an OS locale identifier into a tag `Intl` accepts. macOS reports ICU
+ * identifiers (`en_GB`, `en_US@rg=nlzzzz`) and Linux POSIX ones
+ * (`sr_RS@latin`), and `Intl` rejects both outright, which drops the renderer
+ * back to `en-US`.
+ */
+export function toSystemLocaleTag(identifier: string, hourCycle?: SystemHourCycle): string {
+  const [base = "", keywords = ""] = identifier.split("@");
+  const languageTag = base.replace(/_/g, "-");
+  // macOS writes `rg` when the region is set apart from the language, and the
+  // region picks the date formats. V8 ignores a `-u-rg` extension, so the
+  // override has to become the region subtag.
+  const region = /(?:^|;)rg=([a-z]{2}|\d{3})/i.exec(keywords)?.[1]?.toUpperCase();
+  try {
+    return new Intl.Locale(languageTag, {
+      ...(region ? { region } : {}),
+      ...(hourCycle ? { hourCycle } : {}),
+    }).toString();
+  } catch {
+    return languageTag;
+  }
+}
+
+// The macOS 24-hour toggle lives outside the locale identifier.
+function readMacHourCycle(): SystemHourCycle | undefined {
+  const prefs = Electron.systemPreferences;
+  if (prefs.getUserDefault("AppleICUForce24HourTime", "boolean")) return "h23";
+  if (prefs.getUserDefault("AppleICUForce12HourTime", "boolean")) return "h12";
+  return undefined;
+}
+
+// Chromium reads the Linux locale from the language categories, but desktops
+// set date formats apart from the language through LC_TIME.
+function readLinuxTimeLocale(env: NodeJS.ProcessEnv): string | undefined {
+  // libc's precedence for the time category, where an empty value is unset.
+  const value = env.LC_ALL || env.LC_TIME || env.LANG;
+  const locale = value?.split(".")[0];
+  return locale && locale !== "C" && locale !== "POSIX" ? locale : undefined;
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronApp.of({
   metadata: Effect.gen(function* () {
@@ -127,10 +172,17 @@ export const make = ElectronApp.of({
     };
   }),
   name: Effect.sync(() => Electron.app.name),
-  // macOS derives this from NSLocale, which uses POSIX-style identifiers
-  // (`en_GB`). `Intl` rejects those outright rather than normalizing them, so
-  // the tag is normalized here rather than in the renderer that consumes it.
-  systemLocale: Effect.sync(() => Electron.app.getSystemLocale().replace(/_/g, "-")),
+  systemLocale: Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    if (platform === "linux") {
+      const timeLocale = readLinuxTimeLocale(yield* HostProcess.Environment);
+      if (timeLocale) return toSystemLocaleTag(timeLocale);
+    }
+    return toSystemLocaleTag(
+      Electron.app.getSystemLocale(),
+      platform === "darwin" ? readMacHourCycle() : undefined,
+    );
+  }),
   whenReady: Effect.gen(function* () {
     const isPackaged = Electron.app.isPackaged;
     yield* Effect.tryPromise({
