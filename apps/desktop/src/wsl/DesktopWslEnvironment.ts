@@ -13,6 +13,13 @@ import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import {
+  buildWslCliCommandScript,
+  buildWslCliTargetScript,
+  parseWslCliCommandReport,
+  type WslCliCommandAction,
+  type WslCliCommandReport,
+} from "./wslCliCommand.ts";
 import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
@@ -27,6 +34,9 @@ const RUNTIME_INSTALL_TIMEOUT = Duration.minutes(2);
 const RUNTIME_PRUNE_TIMEOUT = Duration.seconds(30);
 const RUNTIME_INVALIDATE_TIMEOUT = Duration.seconds(15);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
+// Install reads a new terminal's PATH twice, each bounded to 10 seconds in the script.
+const CLI_COMMAND_TIMEOUT = Duration.seconds(30);
+const CLI_TARGET_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
@@ -121,6 +131,16 @@ export class DesktopWslEnvironment extends Context.Service<
       linuxAppRoot: string,
       options?: EnsureWslNodePtyOptions,
     ) => Effect.Effect<EnsureWslNodePtyResult>;
+    /** None when the distro could not be reached. */
+    readonly cliCommand: (
+      distro: string | null,
+      action: WslCliCommandAction,
+    ) => Effect.Effect<Option.Option<WslCliCommandReport>>;
+    /** Points the distro's `t3` command at the command the backend launches. */
+    readonly recordCliTarget: (
+      distro: string | null,
+      command: ReadonlyArray<string>,
+    ) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/wsl/DesktopWslEnvironment") {}
 
@@ -868,6 +888,42 @@ const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function
   });
 });
 
+const cliCommandImpl = Effect.fn("desktop.wsl.cliCommandImpl")(function* (
+  distro: string | null,
+  action: WslCliCommandAction,
+): Effect.fn.Return<
+  Option.Option<WslCliCommandReport>,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
+  const result = yield* runWslShell(distro, buildWslCliCommandScript(action), CLI_COMMAND_TIMEOUT, {
+    resolveNode: false,
+  });
+  if (result.transportFailure === null && result.exitCode === 0) {
+    return Option.some(parseWslCliCommandReport(result.stdout));
+  }
+  yield* Effect.logWarning("Could not run the t3 command script in WSL.", {
+    distro,
+    action,
+    detail: `${result.stdout}${result.stderr}`.trim().slice(-500) || `exit ${result.exitCode}`,
+  });
+  return Option.none();
+});
+
+const recordCliTargetImpl = Effect.fn("desktop.wsl.recordCliTargetImpl")(function* (
+  distro: string | null,
+  command: ReadonlyArray<string>,
+): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const result = yield* runWslShell(distro, buildWslCliTargetScript(command), CLI_TARGET_TIMEOUT, {
+    resolveNode: false,
+  });
+  if (result.transportFailure === null && result.exitCode === 0) return;
+  yield* Effect.logWarning("Could not record the backend for the t3 command in WSL.", {
+    distro,
+    detail: `${result.stdout}${result.stderr}`.trim().slice(-500) || `exit ${result.exitCode}`,
+  });
+});
+
 const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(function* (
   distro: string | null,
   runtimeId: string,
@@ -1087,6 +1143,14 @@ export interface DesktopWslEnvironmentTestStub {
     linuxAppRoot: string,
     options?: EnsureWslNodePtyOptions,
   ) => EnsureWslNodePtyResult;
+  readonly cliCommand?: (
+    distro: string | null,
+    action: WslCliCommandAction,
+  ) => Option.Option<WslCliCommandReport>;
+  readonly recordCliTarget?: (
+    distro: string | null,
+    command: ReadonlyArray<string>,
+  ) => Effect.Effect<void>;
 }
 
 export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
@@ -1125,6 +1189,9 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
             fatal: true,
           },
         ),
+      cliCommand: (distro, action) =>
+        Effect.succeed(stub.cliCommand?.(distro, action) ?? Option.none()),
+      recordCliTarget: (distro, command) => stub.recordCliTarget?.(distro, command) ?? Effect.void,
     }),
   );
 };
@@ -1208,6 +1275,14 @@ export const layer = Layer.effect(
       ensureNodePty: (distro, linuxAppRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(
           Effect.withSpan("desktop.wsl.ensureNodePty"),
+        ),
+      cliCommand: (distro, action) =>
+        provideSpawner(cliCommandImpl(distro, action)).pipe(
+          Effect.withSpan("desktop.wsl.cliCommand"),
+        ),
+      recordCliTarget: (distro, command) =>
+        provideSpawner(recordCliTargetImpl(distro, command)).pipe(
+          Effect.withSpan("desktop.wsl.recordCliTarget"),
         ),
     });
   }),

@@ -522,6 +522,7 @@ describe("DesktopBackendConfiguration", () => {
     const observedProbeRoots: string[] = [];
     const observedNodePtyRoots: string[] = [];
     const invalidatedRuntimeIds: string[] = [];
+    const cliTargets: Array<ReadonlyArray<string>> = [];
     return withPackagedWslHarness(
       {
         archiveHash,
@@ -530,6 +531,10 @@ describe("DesktopBackendConfiguration", () => {
           invalidateRuntime: (_distro, runtimeId) =>
             Effect.sync(() => {
               invalidatedRuntimeIds.push(runtimeId);
+            }),
+          recordCliTarget: (_distro, command) =>
+            Effect.sync(() => {
+              cliTargets.push(command);
             }),
           probeRuntime: (_distro, root) => {
             observedProbeRoots.push(root);
@@ -555,6 +560,10 @@ describe("DesktopBackendConfiguration", () => {
           assert.isUndefined(config.wslRuntimeId);
           assert.isTrue(Option.isNone(config.preflightFailure));
           assert.deepEqual(invalidatedRuntimeIds, [`sha256-${archiveHash}`]);
+          // The t3 command follows the fallback, not the runtime it replaced.
+          assert.deepEqual(cliTargets, [
+            ["/usr/bin/node", `${mountedAppRoot}/apps/server/dist/bin.mjs`],
+          ]);
         }),
     );
   });

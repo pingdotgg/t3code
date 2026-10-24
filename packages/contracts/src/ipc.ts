@@ -321,6 +321,14 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
   installedPath: Schema.NullOr(Schema.String),
   onPath: Schema.Boolean,
   shadowedBy: Schema.optionalKey(Schema.String),
+  // Set in WSL-only mode, where the command is installed in the backend's distro
+  // (null: the default distro, when it could not be named).
+  wsl: Schema.optionalKey(
+    Schema.Struct({
+      distro: Schema.NullOr(Schema.String),
+      windowsInstalled: Schema.Boolean,
+    }),
+  ),
 });
 export type DesktopCliCommandState = typeof DesktopCliCommandStateSchema.Type;
 
