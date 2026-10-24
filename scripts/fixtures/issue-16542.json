@@ -1,0 +1,11 @@
+{
+  "projectId": "proof-16542-project-p",
+  "title": "Public navigation proof",
+  "workspaceRoot": "/tmp/issue-16542-public-project",
+  "threads": [
+    { "id": "proof-16542-a", "title": "Proof A — Alpha" },
+    { "id": "proof-16542-b", "title": "Proof B — Beta" },
+    { "id": "proof-16542-c", "title": "Proof C — Gamma" }
+  ],
+  "modelSelection": { "instanceId": "codex", "model": "gpt-6.1-sol" }
+}
