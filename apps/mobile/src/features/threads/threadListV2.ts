@@ -460,12 +460,12 @@ export function buildThreadListV2ListItems(input: {
         : undefined;
     // The minute clock belongs on the item, not the list's extraData, so the
     // recycler's equality can confine the per-minute re-render to rows whose
-    // snooze menu actually shows preset times.
+    // snooze menu actually shows preset times. Snoozed rows show the same
+    // presets under Reschedule.
     const snoozePresetMinute =
-      !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
-      canSnooze(item.thread, { now: input.snoozeLabelNow })
+      (item.snoozed || canSnooze(item.thread, { now: input.snoozeLabelNow }))
         ? input.snoozeLabelNow
         : undefined;
     const move =
