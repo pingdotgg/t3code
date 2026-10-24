@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 
-import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewCommentSelection";
+import { parseReviewInlineComments } from "./reviewCommentSelection";
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import { markReviewEvent, measureReviewWork } from "./reviewPerf";
 import { getCachedReviewParsedDiff } from "./reviewState";
@@ -15,6 +15,7 @@ import {
 
 import type {
   EnvironmentId,
+  OrchestrationMessageContext,
   ReviewDiffFileStat,
   ReviewDiffPreviewSource,
 } from "@t3tools/contracts";
@@ -128,8 +129,9 @@ export function useReviewDiffData(input: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly revision: string | undefined;
   readonly draftMessage: string;
+  readonly draftContext: OrchestrationMessageContext | undefined;
 }) {
-  const { draftMessage, selectedSection, threadKey } = input;
+  const { draftMessage, draftContext, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
   const source = selectedSection?.source;
   const lazySource = source?.truncated && source.files ? source : null;
@@ -255,8 +257,8 @@ export function useReviewDiffData(input: {
     [parsedDiff, selectedSection?.files],
   );
   const inlineReviewComments = useMemo(
-    () => parseReviewInlineComments(draftMessage),
-    [draftMessage],
+    () => parseReviewInlineComments(draftMessage, draftContext),
+    [draftMessage, draftContext],
   );
   const selectedSectionInlineComments = useMemo(() => {
     if (!selectedSectionId || inlineReviewComments.length === 0) {
@@ -274,10 +276,7 @@ export function useReviewDiffData(input: {
       ),
     [parsedDiff, selectedSectionInlineComments],
   );
-  const pendingReviewCommentCount = useMemo(
-    () => countReviewCommentContexts(draftMessage),
-    [draftMessage],
-  );
+  const pendingReviewCommentCount = inlineReviewComments.length;
 
   useEffect(() => {
     if (parsedDiff.kind !== "files") {
