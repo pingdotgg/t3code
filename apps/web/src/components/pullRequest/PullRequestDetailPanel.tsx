@@ -1,5 +1,8 @@
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  changeRequestLinkResolver,
+  changeRequestReferenceAutolinker,
+} from "@t3tools/client-runtime/pull-request-markdown";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import {
@@ -239,7 +242,11 @@ function pullRequestMarkdownContext(
   detail: Pick<PullRequestDetail, "provider" | "url"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
-  return { autolinks: changeRequestReferenceAutolinker(detail), threadRef };
+  return {
+    autolinks: changeRequestReferenceAutolinker(detail),
+    resolveLinks: changeRequestLinkResolver(detail),
+    threadRef,
+  };
 }
 
 function pullRequestStackReference(

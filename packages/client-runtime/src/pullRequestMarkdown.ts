@@ -147,3 +147,19 @@ export function changeRequestReferenceAutolinker(
     ? null
     : (text) => find(text, repositoryUrl);
 }
+
+/**
+ * Makes the links the change request's host writes relative to its repository absolute, so they
+ * load from the host. Null when the host writes none.
+ */
+export function changeRequestLinkResolver(
+  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
+): ((markdown: string) => string) | null {
+  if (!changeRequest) return null;
+  const resolve = sourceControlClients.get(changeRequest.provider).resolveRelativeLinks;
+  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
+    .repositoryUrl;
+  return resolve === undefined || repositoryUrl === undefined
+    ? null
+    : (markdown) => resolve(markdown, repositoryUrl);
+}

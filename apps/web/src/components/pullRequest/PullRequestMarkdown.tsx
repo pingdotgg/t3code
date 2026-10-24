@@ -23,6 +23,7 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 
 export const PullRequestMarkdownContext = createContext<{
   autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
+  resolveLinks: ((markdown: string) => string) | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -67,8 +68,8 @@ export function PullRequestMarkdown({
   threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
-  const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
+  const segments = splitPullRequestBody(context?.resolveLinks?.(text) ?? text);
   const autolinks = context?.autolinks;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = autolinks
