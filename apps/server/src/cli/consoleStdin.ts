@@ -10,31 +10,32 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
  * `ELECTRON_RUN_AS_NODE`, and Electron's Windows executable is a GUI program:
  * on start it points stdout and stderr at the parent's console but leaves
  * stdin unset, so prompts see no terminal and children such as the agent
- * `t3 triage` starts inherit nothing to read from. Input the user piped or
- * redirected is a valid descriptor and is left alone, as is any run whose
- * output is not a console (the desktop backend, scripts).
+ * `t3 triage` starts inherit nothing to read from. Node replaces missing
+ * descriptors with NUL, an open non-console character device. Piped input
+ * and files are left alone, as is any run whose output is not a console.
+ * Explicit `< NUL` is indistinguishable from missing launcher stdin and
+ * also reattaches when output is a console.
  */
 function needsConsoleStdin(input: {
   readonly platform: NodeJS.Platform;
   readonly env: NodeJS.ProcessEnv;
-  readonly stdinOpen: boolean;
+  readonly stdinMissing: boolean;
   readonly stdoutIsConsole: boolean;
 }): boolean {
   return (
     input.platform === "win32" &&
     // Set only by the launcher (DesktopCliShim), never for the desktop backend.
     input.env.T3CODE_DESKTOP_CLI_LAUNCHER === "1" &&
-    !input.stdinOpen &&
+    input.stdinMissing &&
     input.stdoutIsConsole
   );
 }
 
-const isOpen = (fd: number) => {
+const isMissingInput = (fd: number) => {
   try {
-    NodeFS.fstatSync(fd);
-    return true;
+    return NodeFS.fstatSync(fd).isCharacterDevice() && !NodeTty.isatty(fd);
   } catch {
-    return false;
+    return true;
   }
 };
 
@@ -48,7 +49,7 @@ export function attachConsoleStdin(): number | undefined {
   const needed = needsConsoleStdin({
     platform: HostProcess.Platform.defaultValue(),
     env: process.env,
-    stdinOpen: isOpen(0),
+    stdinMissing: isMissingInput(0),
     stdoutIsConsole: NodeTty.isatty(1),
   });
   // The marker describes this process's own start; a server started here
