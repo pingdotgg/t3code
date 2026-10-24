@@ -11,6 +11,7 @@ import {
 import { WifiOffIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
+import { environmentReconnectActionLabel } from "../../connection/environmentReconnectAction";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../../hooks/useEnvironmentDisconnectDelay";
@@ -207,6 +208,10 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
+    const reconnectActionLabel =
+      unavailableConnection === null
+        ? null
+        : environmentReconnectActionLabel(unavailableConnection.phase);
     const suppressUnavailableBanner =
       environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
     if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
@@ -220,7 +225,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         ) : undefined,
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {reconnectActionLabel !== null ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -230,7 +235,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
                   )
                 }
               >
-                Reconnect
+                {reconnectActionLabel}
               </Button>
             ) : null}
             {disconnectAction}
