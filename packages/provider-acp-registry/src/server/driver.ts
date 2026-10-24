@@ -14,7 +14,9 @@ import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -56,6 +58,7 @@ import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "./auth.ts";
 import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
+import { discoverOpenCodeAcpSkills, OPENCODE_V2_AGENT_ID } from "./opencodeAcp.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -487,6 +490,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     }
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const hostEnvironment = yield* HostProcess.Environment;
     const host = yield* ProviderHost.ProviderHost;
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -803,6 +808,29 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
+      ...(effectiveConfig.source === "registry" && effectiveConfig.agentId === OPENCODE_V2_AGENT_ID
+        ? {
+            snapshotForCwd: (cwd: string) =>
+              Effect.all([
+                snapshot.getSnapshot,
+                discoverOpenCodeAcpSkills(cwd, processEnvironment).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                ),
+              ]).pipe(
+                Effect.map(([machineSnapshot, discovered]) => {
+                  const advertised = new Set(machineSnapshot.skills.map((skill) => skill.name));
+                  return {
+                    ...machineSnapshot,
+                    skills: [
+                      ...machineSnapshot.skills,
+                      ...discovered.filter((skill) => !advertised.has(skill.name)),
+                    ],
+                  };
+                }),
+              ),
+          }
+        : {}),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),
       acpSessionManagement: {

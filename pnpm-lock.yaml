@@ -1488,6 +1488,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.5

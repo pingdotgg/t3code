@@ -1,9 +1,23 @@
-import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  AcpRegistryOperationError,
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as HttpClient from "effect/http/HttpClient";
+
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
@@ -12,6 +26,7 @@ import {
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  AcpRegistryDriver,
 } from "./driver.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -399,5 +414,112 @@ describe("acpRegistrySnapshotReadiness", () => {
         message: "Checking ACP authentication, models, and commands in the background...",
       });
     }),
+  );
+});
+
+const layerDriver = Layer.mergeAll(
+  TestProviderHost.layer({
+    cwd: "/machine",
+    settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },
+    runBackgroundWork: false,
+  }),
+  IdAllocator.layer,
+  McpProviderSessions.layer,
+  Layer.succeed(
+    ProviderEventLoggers.ProviderEventLoggers,
+    ProviderEventLoggers.NoOpProviderEventLoggers,
+  ),
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() => Effect.die("Unexpected HTTP")),
+  ),
+).pipe(Layer.provideMerge(NodeServices.layer));
+
+it.layer(layerDriver)("AcpRegistryDriver workspace discovery", (it) => {
+  // OpenCode over ACP never advertises `$` commands, yet it loads the same
+  // user and project skills the native OpenCode driver lists (issue 24375).
+  it.effect("lists installed user and project skills for the selected workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-home-" }),
+      );
+      const project = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-project-" }),
+      );
+      const writeSkill = (root: string, name: string) =>
+        fileSystem
+          .makeDirectory(path.join(root, ".agents", "skills", name), { recursive: true })
+          .pipe(
+            Effect.andThen(
+              fileSystem.writeFileString(
+                path.join(root, ".agents", "skills", name, "SKILL.md"),
+                `---\nname: ${name}\ndescription: ${name} skill\n---\n\nUse ${name}.\n`,
+              ),
+            ),
+          );
+      yield* writeSkill(home, "global-skill");
+      yield* writeSkill(project, "project-skill");
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        accentColor: undefined,
+        environment: [
+          { name: "HOME", value: home, sensitive: false },
+          { name: "XDG_CONFIG_HOME", value: path.join(home, ".config"), sensitive: false },
+          { name: "OPENCODE_CONFIG_DIR", value: path.join(home, "opencode"), sensitive: false },
+        ],
+        enabled: true,
+        config: decodeSettings({ agentId: "opencode-v2" }),
+      }).pipe(
+        Effect.provideService(
+          AcpRegistrySupport.AcpRegistryCatalog,
+          catalogWithInspection({
+            status: "ready",
+            agentId: "opencode-v2",
+            version: "2.1.4",
+            distribution: "binary",
+          }),
+        ),
+      );
+
+      expect(instance.snapshotForCwd).toBeDefined();
+      const workspace = yield* instance.snapshotForCwd!(project);
+      // Ancestors of the temp directories are real OpenCode roots too.
+      const fixtureSkills = workspace.skills.filter(
+        (skill) => skill.path.startsWith(home) || skill.path.startsWith(project),
+      );
+      expect(fixtureSkills.map((skill) => skill.name).toSorted()).toEqual([
+        "global-skill",
+        "project-skill",
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves other agents to the skills they advertise", () =>
+    Effect.gen(function* () {
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        accentColor: undefined,
+        environment: [],
+        enabled: true,
+        config: decodeSettings({ agentId: "example-agent" }),
+      }).pipe(
+        Effect.provideService(
+          AcpRegistrySupport.AcpRegistryCatalog,
+          catalogWithInspection({
+            status: "ready",
+            agentId: "example-agent",
+            version: "1.0.0",
+            distribution: "binary",
+          }),
+        ),
+      );
+
+      expect(instance.snapshotForCwd).toBeUndefined();
+    }).pipe(Effect.scoped),
   );
 });
