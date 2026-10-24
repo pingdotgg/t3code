@@ -4,12 +4,13 @@ import {
   SourceControlProviderKind,
   type PullRequestDetailView,
   type PullRequestDiffResult,
+  type PullRequestFilesViewedResult,
 } from "@t3tools/contracts";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-const { diffAtom } = await vi.hoisted(async () => {
+const { diffAtom, filesViewedAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const firstPage: PullRequestDiffResult = {
     patch: [
@@ -27,9 +28,26 @@ const { diffAtom } = await vi.hoisted(async () => {
   };
   // An environment query whose refetch returns equal content hands back the previous value
   // itself, so a refresh publishes a new result around the very same page.
-  return { diffAtom: Atom.make(() => AsyncResult.success(firstPage)) };
+  const filesViewed: PullRequestFilesViewedResult = {
+    files: [{ path: "a.ts", state: "viewed" }],
+    truncated: false,
+  };
+  return {
+    diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    filesViewedAtom: Atom.make(() => AsyncResult.success(filesViewed)),
+  };
 });
 
+const settingsOverrides = vi.hoisted((): { diffFilesCollapsed?: boolean } => ({}));
+vi.mock(import("~/hooks/useSettings"), async (original) => {
+  const actual = await original();
+  type Settings = ReturnType<typeof actual.getClientSettings>;
+  function useClientSettings<T = Settings>(select?: (settings: Settings) => T): T {
+    const settings = { ...actual.getClientSettings(), ...settingsOverrides };
+    return select ? select(settings) : (settings as T);
+  }
+  return { ...actual, useClientSettings };
+});
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
@@ -41,6 +59,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       diff: (() => diffAtom) as never,
+      filesViewed: (() => filesViewedAtom) as never,
     },
   };
 });
@@ -100,12 +119,12 @@ const detail: PullRequestDetailView = {
   },
 };
 
-const tab = (refreshToken: number) => (
+const tab = (refreshToken: number, tabDetail: PullRequestDetailView = detail) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
-    reference={detail}
-    detail={detail}
+    reference={tabDetail}
+    detail={tabDetail}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -125,4 +144,21 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+it("opens a file already marked viewed folded when diffs open expanded", async () => {
+  settingsOverrides.diffFilesCollapsed = false;
+  onTestFinished(() => {
+    delete settingsOverrides.diffFilesCollapsed;
+  });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const viewedDetail: PullRequestDetailView = {
+    ...detail,
+    capabilities: { ...detail.capabilities, viewedFiles: "host" },
+  };
+  await using screen = await render(tab(0, viewedDetail), { container });
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+  await expect.element(screen.getByRole("button", { name: "Expand diff" })).toBeVisible();
 });

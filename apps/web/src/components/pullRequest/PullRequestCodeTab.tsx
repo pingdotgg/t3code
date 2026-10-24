@@ -101,8 +101,10 @@ import {
 } from "./PullRequestReviewAnnotation";
 import {
   isFileDiffCollapsed,
+  isFileDiffFoldedByDefault,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  setFileDiffFold,
+  setFileViewedFold,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
@@ -282,11 +284,10 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [foldChoices, setFoldChoices] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const [viewedFolds, setViewedFolds] = useState<ReadonlySet<string>>(() => new Set());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -323,7 +324,8 @@ function PullRequestCodeTab({
     setStateScopeKey(scopeKey);
     setDraft(null);
     setSelectedLines(null);
-    setToggledFiles(new Set());
+    setFoldChoices(new Map());
+    setViewedFolds(new Set());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
@@ -643,9 +645,17 @@ function PullRequestCodeTab({
       </div>
     );
 
+  const isFoldedByDefault = (fileKey: string, path: string) =>
+    isFileDiffFoldedByDefault({
+      foldOverride,
+      filesCollapsedSetting: settings.diffFilesCollapsed,
+      viewed: isFileViewed(path),
+      viewedFold: viewedFolds.has(fileKey),
+    });
+
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+      const collapsed = isFileDiffCollapsed(fileKey, isFoldedByDefault(fileKey, path), foldChoices);
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -677,18 +687,35 @@ function PullRequestCodeTab({
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   };
 
-  const toggleFile = (fileKey: string) =>
-    setToggledFiles((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) next.delete(fileKey);
-      else next.add(fileKey);
-      return next;
-    });
+  const setFileFold = (fileKey: string, collapse: (collapsed: boolean) => boolean) => {
+    const item = items.find((candidate) => candidate.id === fileKey);
+    if (item === undefined) return;
+    const foldedByDefault = isFoldedByDefault(fileKey, resolveFileDiffPath(item.fileDiff));
+    setFoldChoices((current) =>
+      setFileDiffFold(
+        fileKey,
+        collapse(isFileDiffCollapsed(fileKey, foldedByDefault, current)),
+        foldedByDefault,
+        current,
+      ),
+    );
+  };
+  const toggleFile = (fileKey: string) => setFileFold(fileKey, (collapsed) => !collapsed);
 
   const setFileViewed = (fileKey: string, path: string, viewed: boolean) => {
     setViewed(path, viewed);
-    setToggledFiles((current) =>
-      toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
+    const foldedByDefault = isFileDiffFoldedByDefault({
+      foldOverride,
+      filesCollapsedSetting: settings.diffFilesCollapsed,
+      viewed,
+    });
+    // A tick the default would not fold is kept apart from the reader's own folds, so it lapses
+    // once the file stops being viewed rather than holding the file shut.
+    setViewedFolds((current) => setFileViewedFold(fileKey, viewed && !foldedByDefault, current));
+    // Judged against the default the file will have once the press lands, so ticking folds and
+    // unticking unfolds whatever the reader did to the file before.
+    setFoldChoices((current) =>
+      setFileDiffFold(fileKey, viewed, viewed || foldedByDefault, current),
     );
   };
   const fileViewedToggle = {
@@ -701,13 +728,14 @@ function PullRequestCodeTab({
   const revealFile = (path: string) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
-    if (item.collapsed === true) toggleFile(item.id);
+    if (item.collapsed === true) setFileFold(item.id, () => false);
     requestTreeReveal(item.id);
   };
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setToggledFiles(new Set());
+    setFoldChoices(new Map());
+    setViewedFolds(new Set());
   };
 
   const orderedCommits = // By instant, not by the text: GitLab keeps a commit's own UTC offset, so two commits
@@ -1468,11 +1496,7 @@ function PullRequestCodeTab({
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
               // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
-              onRevealSearchMatch={(item) =>
-                setToggledFiles((current) =>
-                  toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-                )
-              }
+              onRevealSearchMatch={(item) => setFileFold(item.id, () => false)}
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
             />
           </FileViewedToggleContext>
