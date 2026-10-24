@@ -5,6 +5,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { isProcessAlive } from "../serverRuntimeState.ts";
+
 export class V2DatabaseImportError extends Schema.TaggedError<V2DatabaseImportError>()(
   "V2DatabaseImportError",
   { sourcePath: Schema.String, destinationPath: Schema.String, cause: Schema.Defect() },
@@ -14,6 +16,25 @@ export class V2DatabaseImportError extends Schema.TaggedError<V2DatabaseImportEr
   }
 }
 
+// A start killed while copying leaves a database-sized directory behind. Its
+// name carries the copying process ID, so a later start never removes a copy
+// that is still running. Directories without an ID come from older builds.
+const removeAbandonedCopies = Effect.fn("removeAbandonedCopies")(function* (directory: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* fs.readDirectory(directory).pipe(
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed([]),
+    ),
+  );
+  for (const entry of entries) {
+    const copy = /^\.v2-import-(?:(\d+)-)?/.exec(entry);
+    if (copy === null || (copy[1] !== undefined && isProcessAlive(Number(copy[1])))) continue;
+    yield* fs.remove(path.join(directory, entry), { recursive: true });
+  }
+});
+
 /** Its copied legacy tables remain the source for lazy transcript import. */
 export const initializeV2Database = Effect.fn("initializeV2Database")(function* (
   destinationPath: string,
@@ -22,12 +43,13 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
   const path = yield* Path.Path;
   const directory = path.dirname(destinationPath);
   const sourcePath = path.join(directory, "state.sqlite");
+  yield* removeAbandonedCopies(directory).pipe(Effect.ignore({ log: true }));
   yield* Effect.gen(function* () {
     if (yield* fs.exists(destinationPath)) return;
     if (!(yield* fs.exists(sourcePath))) return;
     const temporaryDirectory = yield* fs.makeTempDirectoryScoped({
       directory,
-      prefix: ".v2-import-",
+      prefix: `.v2-import-${process.pid}-`,
     });
     const snapshotPath = path.join(temporaryDirectory, "snapshot.sqlite");
     yield* Effect.tryPromise(async () => {

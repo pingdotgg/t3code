@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -179,6 +180,24 @@ it.effect("starts fresh without V1 and never imports over existing V2 state", ()
     Effect.provide(
       ServerConfig.layerTest(directory, directory).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("removes copies left by a killed start, but not one that is still running", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-abandoned-"));
+  // The child has exited, so nothing runs under its process ID.
+  const killed = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
+  const running = `.v2-import-${process.pid}-Kq81Zx`;
+  return Effect.gen(function* () {
+    for (const name of [`.v2-import-${killed}-Wm3nPa`, ".v2-import-Q3xZ9a", running]) {
+      NodeFS.mkdirSync(NodePath.join(directory, name));
+      NodeFS.writeFileSync(NodePath.join(directory, name, "snapshot.sqlite"), "partial copy");
+    }
+    yield* initializeV2Database(NodePath.join(directory, "statev2.sqlite"));
+    assert.deepEqual(NodeFS.readdirSync(directory), [running]);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
   );
 });
