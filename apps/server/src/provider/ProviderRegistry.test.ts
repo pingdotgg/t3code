@@ -40,6 +40,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { type ClaudeOAuthUsage, ClaudeOAuthUsageError } from "./claudeResetCredits.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -2285,6 +2286,96 @@ it.layer(
         );
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("reads usage and resets directly for subscription logins", () =>
+      Effect.gen(function* () {
+        const sdkUsage = {
+          rate_limits_available: true,
+          rate_limits: { five_hour: { utilization: 10, resets_at: null } },
+        };
+        const check = (
+          overrides: Partial<TestClaudeCapabilities>,
+          oauthUsage: Effect.Effect<
+            ClaudeOAuthUsage | undefined,
+            ClaudeOAuthUsageError
+          > = Effect.succeed(undefined),
+          usage: ClaudeOAuthUsage["usage"] = sdkUsage,
+        ) =>
+          checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            () =>
+              Effect.succeed({
+                email: undefined,
+                subscriptionType: undefined,
+                tokenSource: undefined,
+                apiKeySource: undefined,
+                apiProvider: undefined,
+                slashCommands: [],
+                usage,
+                ...overrides,
+              }),
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            () => oauthUsage,
+          );
+        const oauthUsage = {
+          usage: {
+            rate_limits_available: true,
+            rate_limits: { five_hour: { utilization: 42, resets_at: null } },
+          },
+          resetCredits: { availableCount: 2 },
+        };
+        // The CLI answers `get_usage` without windows when nonessential traffic is disabled.
+        const subscription = yield* check({ subscriptionType: "max" }, Effect.succeed(oauthUsage), {
+          rate_limits_available: false,
+          rate_limits: null,
+        });
+        const keychainLogin = yield* check({ subscriptionType: "max" });
+        const sdkFallback = yield* check(
+          { subscriptionType: "max" },
+          Effect.fail(new ClaudeOAuthUsageError({ cause: new Error("request failed") })),
+        );
+        const unavailableKeychainLogin = yield* check(
+          { subscriptionType: "max" },
+          Effect.succeed(undefined),
+          { rate_limits_available: false, rate_limits: null },
+        );
+        const bedrock = yield* check({ apiProvider: "bedrock" }, Effect.succeed(oauthUsage));
+        assert.deepStrictEqual(
+          subscription.usageLimits?.windows.map((window) => window.usedPercent),
+          [42],
+        );
+        assert.deepStrictEqual(subscription.usageLimits?.resetCredits, { availableCount: 2 });
+        assert.deepStrictEqual(
+          keychainLogin.usageLimits?.windows.map((window) => window.usedPercent),
+          [10],
+        );
+        assert.strictEqual(keychainLogin.usageLimits?.resetCredits, undefined);
+        assert.deepStrictEqual(
+          sdkFallback.usageLimits?.windows.map((window) => window.usedPercent),
+          [10],
+        );
+        assert.strictEqual(
+          unavailableKeychainLogin.usageLimits?.unavailable?.reason,
+          "unsupported",
+        );
+        assert.deepStrictEqual(
+          bedrock.usageLimits?.windows.map((window) => window.usedPercent),
+          [10],
+        );
+        assert.strictEqual(bedrock.usageLimits?.resetCredits, undefined);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

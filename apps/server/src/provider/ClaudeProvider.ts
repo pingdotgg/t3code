@@ -3,7 +3,6 @@ import {
   type ModelCapabilities,
   type ServerProvider,
   type ServerProviderSlashCommand,
-  type ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -40,6 +39,7 @@ import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/Clau
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import type { ClaudeOAuthUsage, ClaudeOAuthUsageError } from "./claudeResetCredits.ts";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -483,7 +483,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
-  resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  resolveOAuthUsage?: (
+    version: string,
+  ) => Effect.Effect<ClaudeOAuthUsage | undefined, ClaudeOAuthUsageError>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -656,25 +658,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     }) ??
     apiProviderAuthMetadata(capabilities.apiProvider) ??
     (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined);
-  const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
-    : scopedLimitNames
-      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        })
-      : claudeUsageResponseToLimits({
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        }).limits;
-  const resetCredits =
-    resolveResetCredits &&
-    capabilities.subscriptionType &&
-    !usageLimits.unavailable &&
-    parsedVersion
-      ? yield* resolveResetCredits(parsedVersion)
+  const oauthResult =
+    resolveOAuthUsage && capabilities.subscriptionType && parsedVersion
+      ? yield* resolveOAuthUsage(parsedVersion).pipe(Effect.result)
       : undefined;
+  const oauthUsage = oauthResult && Result.isSuccess(oauthResult) ? oauthResult.success : undefined;
+  const usage = oauthUsage?.usage ?? capabilities.usage;
+  const usageCheckedAt = oauthUsage ? checkedAt : (capabilities.usageCheckedAt ?? checkedAt);
+  const usageFailed = oauthResult && Result.isFailure(oauthResult) && !usage?.rate_limits_available;
+  const usageLimits =
+    !usage || usageFailed
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+      : scopedLimitNames
+        ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+            response: usage,
+            checkedAt: usageCheckedAt,
+          })
+        : claudeUsageResponseToLimits({ response: usage, checkedAt: usageCheckedAt }).limits;
+  const resetCredits = oauthUsage?.resetCredits;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,

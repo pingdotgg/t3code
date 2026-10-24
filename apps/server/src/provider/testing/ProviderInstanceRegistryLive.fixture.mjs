@@ -18,7 +18,10 @@ const lines = NodeReadline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.type !== "control_request") return;
-  if (message.request?.subtype === "get_usage" && signedOut) {
+  if (
+    message.request?.subtype === "get_usage" &&
+    (signedOut || process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC === "1")
+  ) {
     process.stdout.write(
       JSON.stringify({
         type: "control_response",
