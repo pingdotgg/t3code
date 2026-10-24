@@ -127,7 +127,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     const controller = new AbortController();
     requests.current.refresh = controller;
     setLoading({ key: scopeKey, page: false, refresh: true, error: null });
-    const responses = await Promise.allSettled(
+    await Promise.allSettled(
       targets.map(async (target) => {
         await composerPullRequests.invalidate.run(registry, {
           environmentId: target.environmentId,
@@ -149,7 +149,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     );
     if (requests.current.refresh === controller) delete requests.current.refresh;
     if (!controller.signal.aborted && activeScope.current === scopeKey)
-      setLoading({ key: scopeKey, page: false, refresh: false, error: requestErrors(responses) });
+      setLoading({ key: scopeKey, page: false, refresh: false, error: null });
   };
 
   const data = useMemo(
