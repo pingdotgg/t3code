@@ -72,19 +72,27 @@ export class ThreadSearch extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // Carrying message bodies through ranking can spill large histories to temporary files.
   const searchRows = SqlSchema.findAll({
     Request: SearchRequest,
     Result: SearchRow,
     execute: ({ pattern, limit }) => sql`
-      WITH candidate AS (
+      WITH ranked AS (
         SELECT
           threads.thread_id,
           threads.project_id,
-          messages.role,
-          json_extract(messages.payload_json, '$.text') AS match_text,
-          messages.created_at AS message_created_at,
+          messages.role AS source,
           messages.message_id,
-          threads.updated_at AS thread_updated_at
+          messages.created_at AS message_created_at,
+          CASE messages.role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
+          threads.updated_at AS thread_updated_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY threads.thread_id
+            ORDER BY
+              CASE messages.role WHEN 'user' THEN 0 ELSE 1 END ASC,
+              messages.created_at DESC,
+              messages.message_id ASC
+          ) AS thread_match_rank
         FROM orchestration_v2_projection_messages AS messages
         INNER JOIN orchestration_v2_projection_threads AS threads
           ON threads.thread_id = messages.thread_id
@@ -97,34 +105,23 @@ export const make = Effect.gen(function* () {
           AND messages.role IN ('user', 'assistant')
           AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
       ),
-      ranked AS (
-        SELECT
-          thread_id,
-          project_id,
-          role AS source,
-          match_text,
-          message_created_at,
-          CASE role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
-          thread_updated_at,
-          ROW_NUMBER() OVER (
-            PARTITION BY thread_id
-            ORDER BY
-              CASE role WHEN 'user' THEN 0 ELSE 1 END ASC,
-              message_created_at DESC,
-              message_id ASC
-          ) AS thread_match_rank
-        FROM candidate
+      matches AS (
+        SELECT *
+        FROM ranked
+        WHERE thread_match_rank = 1
+        ORDER BY match_rank ASC, thread_updated_at DESC, thread_id ASC
+        LIMIT ${limit}
       )
       SELECT
-        thread_id AS "threadId",
-        project_id AS "projectId",
-        source,
-        match_text AS "matchText",
-        message_created_at AS "messageCreatedAt"
-      FROM ranked
-      WHERE thread_match_rank = 1
-      ORDER BY match_rank ASC, thread_updated_at DESC, thread_id ASC
-      LIMIT ${limit}
+        matches.thread_id AS "threadId",
+        matches.project_id AS "projectId",
+        matches.source,
+        json_extract(messages.payload_json, '$.text') AS "matchText",
+        matches.message_created_at AS "messageCreatedAt"
+      FROM matches
+      INNER JOIN orchestration_v2_projection_messages AS messages
+        ON messages.message_id = matches.message_id
+      ORDER BY matches.match_rank ASC, matches.thread_updated_at DESC, matches.thread_id ASC
     `,
   });
 

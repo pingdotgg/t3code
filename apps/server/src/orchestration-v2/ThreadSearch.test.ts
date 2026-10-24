@@ -178,6 +178,95 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
     }),
   );
+
+  it.effect("keeps the winning message and thread ordering when limiting matches", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-ranking");
+      yield* createProject(project);
+      const older = ThreadId.make("thread:ranking-a");
+      const newerFirst = ThreadId.make("thread:ranking-b");
+      const newerLast = ThreadId.make("thread:ranking-z");
+      const assistant = ThreadId.make("thread:ranking-assistant");
+      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        thread(older, project),
+        message(older, "ranking-older", "user", "ranking-probe older thread"),
+        thread(newerFirst, project),
+        message(newerFirst, "ranking-z-tie", "user", "ranking-probe losing tie", { minute: 2 }),
+        message(newerFirst, "ranking-a-tie", "user", "ranking-probe winning tie", { minute: 2 }),
+        message(newerFirst, "ranking-old-user", "user", "ranking-probe older message"),
+        message(newerFirst, "ranking-nonmatch", "user", "unrelated newer message", { minute: 4 }),
+        message(newerFirst, "ranking-streaming", "user", "ranking-probe unfinished", {
+          minute: 5,
+          streaming: true,
+        }),
+        message(newerFirst, "ranking-long-assistant", "assistant", "ranking-probe ".repeat(1024), {
+          minute: 6,
+        }),
+        thread(newerLast, project),
+        message(newerLast, "ranking-newer-last", "user", "ranking-probe second thread", {
+          minute: 6,
+        }),
+        thread(assistant, project),
+        message(assistant, "ranking-assistant", "assistant", "ranking-probe assistant only", {
+          minute: 8,
+        }),
+      ];
+      yield* Effect.forEach(events, projections.apply, { discard: true });
+
+      const result = yield* search.search({ query: "ranking-probe" });
+      assert.deepEqual(
+        result.matches.map((match) => [match.threadId, match.source, match.snippet]),
+        [
+          [newerFirst, "user", "ranking-probe winning tie"],
+          [newerLast, "user", "ranking-probe second thread"],
+          [older, "user", "ranking-probe older thread"],
+          [assistant, "assistant", "ranking-probe assistant only"],
+        ],
+      );
+      assert.deepEqual(
+        (yield* search.search({ query: "ranking-probe", limit: 2 })).matches,
+        result.matches.slice(0, 2),
+      );
+    }),
+  );
+
+  it.effect("preserves literal wildcard matching and snippets from a long winning message", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-literals");
+      const threadId = ThreadId.make("thread:search-literals");
+      const decoy = ThreadId.make("thread:search-literals-decoy");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(
+            threadId,
+            "literal-user",
+            "user",
+            `${"prefix ".repeat(80)}literal!_% marker${" suffix".repeat(80)}`,
+          ),
+          message(threadId, "literal-assistant", "assistant", "literal!_% losing answer", {
+            minute: 2,
+          }),
+          thread(decoy, project),
+          message(decoy, "literal-decoy", "user", "literal!XY marker"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+
+      const result = yield* search.search({ query: "LITERAL!_%" });
+      assert.lengthOf(result.matches, 1);
+      assert.strictEqual(result.matches[0]?.threadId, threadId);
+      assert.strictEqual(result.matches[0]?.source, "user");
+      assert.include(result.matches[0]?.snippet ?? "", "literal!_% marker");
+      assert.isAtMost(result.matches[0]?.snippet.length ?? 0, 240);
+    }),
+  );
 });
 
 it.effect("searches on the reader worker while the writer is busy", () =>
