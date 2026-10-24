@@ -107,11 +107,12 @@ export function shortcutConflictKey(
 
 function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
   const shortcut = binding.shortcut;
-  // Existing installs persist Mod+Enter. Resolve its alternate chord against
-  // the send preference without rewriting saved or remapped shortcuts.
+  // Existing installs persist Mod+Enter for secondary send actions. Keep the
+  // normal send chord free without rewriting saved or remapped shortcuts.
   if (
     context.composerRequiresModifier &&
-    binding.command === "composer.sendAlternate" &&
+    (binding.command === "composer.sendAlternate" ||
+      binding.command === "composer.sendBackground") &&
     shortcut.key === "enter" &&
     shortcut.modKey &&
     !shortcut.metaKey &&

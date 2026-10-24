@@ -10,16 +10,24 @@ In **Settings → General → Send shortcut**, choose whether Enter sends, requi
 inserts a new line. This applies to the web and desktop composer at desktop widths.
 
 **Follow-up behavior** chooses Queue or Steer while the agent runs. Use
-`mod+Enter` to do the opposite for one message, even when the send shortcut
-requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
-background, and opens a fresh new-thread composer. In a new thread, `mod+Enter`
-does the same. Change these shortcuts in **Settings → Keybindings** under
+`mod+Enter` to do the opposite for one message when Enter sends. If your send
+shortcut requires `mod+Enter`, add Shift for the opposite action.
+
+On a new thread, your configured send shortcut starts it in the foreground.
+When Enter sends, `mod+Enter` starts it in the background and opens a fresh
+new-thread composer. When sending requires `mod+Enter`, use `mod+Shift+Enter`
+for that background action instead. In multiline mode, this depends on whether
+the draft contains a newline. `mod+Alt+Enter` sends in the background and opens
+a fresh composer on both new and existing threads.
+
+Change these shortcuts in **Settings → Keybindings** under
 **Composer: Opposite Queue or Steer Action**, **Composer: Start in Background**,
-or **Composer: Send and Start New Thread**. These bindings take priority over the
-send shortcut. Click the send button to use the configured follow-up behavior.
+or **Composer: Send and Start New Thread**. The default `mod+Enter` bindings
+adapt to your send preference; other remapped shortcuts take priority over it.
 
 When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
-steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
+steer, unless the focused composer uses that chord for its opposite follow-up
+action. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
 
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
 To step a new thread to the next machine instead of opening the menu, bind
