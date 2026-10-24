@@ -4563,6 +4563,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly nativeThreadId: string;
           readonly providerThread: OrchestrationV2ProviderThread;
           readonly status?: OrchestrationV2ProviderThread["status"];
+          readonly owedWakeTasks?: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
         }) {
           const roster = rosterForNativeThread(
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
@@ -4573,7 +4574,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...input.providerThread,
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
-            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
+            pendingBackgroundTasks: [
+              ...claudePendingBackgroundTasksFromRoster(roster),
+              ...(input.owedWakeTasks ?? []).filter((task) => !roster.has(task.taskId)),
+            ],
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
               : {}),
@@ -7357,6 +7361,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (baseThread === undefined) {
             return true;
           }
+          // While idle, a published task Claude still owes a wake run stays published after the
+          // edge or level drops it (their order is unspecified): an empty roster lets a delegated
+          // child finalize on its pre-wake result. Only the published roster keeps it, so it never
+          // blocks query replacement; the wake run's finalize or a process reset publishes it away.
+          const owedWakeTasks: OrchestrationV2PendingBackgroundTask[] = [];
+          if (input.activeContext === null) {
+            for (const task of baseThread.pendingBackgroundTasks ?? []) {
+              if (
+                yield* isKnownOpaqueBackgroundTaskOnNativeThread(input.nativeThreadId, task.taskId)
+              ) {
+                owedWakeTasks.push(task);
+              }
+            }
+          }
 
           const status =
             input.activeContext === null
@@ -7368,6 +7386,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId: input.nativeThreadId,
             providerThread: baseThread,
             status,
+            owedWakeTasks,
           });
           return true;
         });

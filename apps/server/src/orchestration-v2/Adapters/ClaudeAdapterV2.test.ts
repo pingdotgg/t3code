@@ -6255,7 +6255,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
 
   it.effect(
-    "uses task_started as an incremental roster fallback and clears on empty snapshot",
+    "uses task_started as an incremental roster fallback and clears the internal roster on empty snapshot",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -6317,15 +6317,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           );
 
-          yield* Queue.offer(harness.sdkMessages, emptyRoster);
-          yield* harness.until(() =>
-            providerThreadRosterEvents(harness.events).some(
-              (event) =>
-                event.providerThread.status === "idle" &&
-                (event.providerThread.pendingBackgroundTasks?.length ?? 0) === 0,
-            ),
-          );
+          yield* harness.offerAndWait(emptyRoster);
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          // The exited command still owes its wake run, so the published roster keeps it.
+          assert.include(
+            (
+              providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+                .pendingBackgroundTasks ?? []
+            ).map((task) => task.taskId),
+            WAKE_TASK_ID,
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -7648,6 +7649,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  // #24297: an empty roster lets the orchestrator finalize a delegated child on its pre-wake
+  // result, and a finalized task never reopens for the wake run that follows.
+  // The SDK leaves the empty level's order against the notification unspecified.
+  it.effect.each(["none", "before", "after"] as const)(
+    "keeps an exited background command on the roster until its wake run starts (empty level %s notification)",
+    (emptyLevel) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          const wakeAttemptId = RunAttemptId.make("attempt-claude-wake-roster-2");
+          const emptyRoster = claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "00000000-0000-4000-8000-000000000204",
+            session_id: WAKE_NATIVE_SESSION,
+          });
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-roster-1"),
+              text: "Run the build in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
+          if (emptyLevel === "before") yield* harness.offerAndWait(emptyRoster);
+          yield* harness.offerAndWait(wakeNotification);
+          if (emptyLevel === "after") yield* harness.offerAndWait(emptyRoster);
+          // Query replacement reads the internal roster, which the exit already cleared.
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: wakeAttemptId,
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* harness.offerAndWait(wakeAssistant);
+          yield* harness.offerAndWait(wakeResult);
+          yield* harness.awaitTerminal(2);
+
+          const wakeStart = harness.events.findIndex(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.runAttemptId === wakeAttemptId,
+          );
+          assert.isAbove(wakeStart, -1);
+          const rosters = harness.events.flatMap((event, index) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.id === harness.providerThread.id
+              ? [
+                  {
+                    beforeWake: index < wakeStart,
+                    taskIds: (event.providerThread.pendingBackgroundTasks ?? []).map(
+                      (task) => task.taskId,
+                    ),
+                  },
+                ]
+              : [],
+          );
+          assert.deepEqual(
+            rosters.filter((roster) => roster.beforeWake).map((roster) => roster.taskIds),
+            rosters.filter((roster) => roster.beforeWake).map(() => [WAKE_TASK_ID]),
+          );
+          assert.deepEqual(rosters.at(-1)?.taskIds, []);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
   );
 
   it.effect.each([true, false])(
