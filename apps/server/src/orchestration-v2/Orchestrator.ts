@@ -904,6 +904,17 @@ function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
   return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
 }
 
+// A wake from the child's own work, such as a finished background command, has
+// no sender, but its run still owes the parent a result. Monitor wakes report
+// progress and never count as task work.
+function mayStartSubagentFollowup(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+): boolean {
+  return command.notification === undefined
+    ? command.createdBy === "user" || command.creationSource === "mcp"
+    : command.notification.source.kind !== "monitor";
+}
+
 function lastDeliveredRunForProviderThread(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
   providerThreadId: OrchestrationV2ProviderThread["id"],
@@ -7212,9 +7223,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     if (
       command.scheduledTaskId !== undefined ||
-      command.notification !== undefined ||
       command.restartContinuationOfRunId !== undefined ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
+      !mayStartSubagentFollowup(command)
     )
       return;
     const pending = yield* Ref.get(events);
@@ -7240,7 +7250,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       child.lineage.relationshipToParent !== "subagent" ||
       parentThreadId === null ||
-      (command.createdBy !== "user" && command.senderThreadId !== parentThreadId)
+      (command.notification === undefined &&
+        command.createdBy !== "user" &&
+        command.senderThreadId !== parentThreadId)
     )
       return;
     const run =
@@ -11930,10 +11942,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
-    if (
-      command.type !== "message.dispatch" ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
-    )
+    if (command.type !== "message.dispatch" || !mayStartSubagentFollowup(command))
       return yield* dispatch;
     const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
       Effect.mapError(

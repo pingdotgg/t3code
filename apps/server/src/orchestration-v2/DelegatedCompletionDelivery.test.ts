@@ -19,7 +19,9 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -40,6 +42,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -1137,7 +1140,10 @@ const seedRestartCancelledChild = (input: {
     return { taskId, childThreadId, childRunId };
   });
 
-it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
+// Shares the orchestrator's thread locks so a test can hold one.
+const layerFollowupTest = Layer.merge(layerTest, ThreadCommandExecutor.layer);
+
+it.layer(Layer.merge(layerFollowupTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
     it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
@@ -1708,6 +1714,150 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             );
           }
         }),
+    );
+
+    it.effect("wakes the parent when a background command wakes the child after its result", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:provider-wake-parent");
+        const projectId = ProjectId.make("project:provider-wake");
+        const parentRunId = RunId.make("run:provider-wake-parent");
+        const rootNodeId = NodeId.make("node:provider-wake-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:provider-wake-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "provider-wake-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        let firstWake = yield* requests.take;
+        while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("command:provider-wake-ack"),
+          parentThreadId,
+          taskId: child.taskId,
+          observedByRunId: parentRunId,
+        });
+        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+          (run) => run.id === parentRunId,
+        )!;
+        yield* eventSink.write({
+          commandId: reconcileCommandId("provider-wake-parent-finished"),
+          events: [
+            {
+              id: EventId.make("event:provider-wake-parent-finished"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              occurredAt: now,
+              payload: { ...parentRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+
+        // The wake writes the follow-up into the parent, so it must queue on the
+        // parent's lock, here held as a parent Stop would.
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const withLock = executor.withLock;
+        const parentHeld = yield* Deferred.make<void>();
+        const releaseParent = yield* Deferred.make<void>();
+        const wakeQueued = yield* Deferred.make<void>();
+        const holder = yield* withLock(
+          parentThreadId,
+          Deferred.succeed(parentHeld, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseParent)),
+          ),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(parentHeld);
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+          key,
+          effect,
+        ) =>
+          key === parentThreadId
+            ? Deferred.succeed(wakeQueued, undefined).pipe(Effect.andThen(withLock(key, effect)))
+            : withLock(key, effect);
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        const messageId = MessageId.make("message:provider-wake");
+        yield* Effect.gen(function* () {
+          const wakeFiber = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "provider",
+              commandId: CommandId.make("command:provider-wake"),
+              threadId: child.childThreadId,
+              messageId,
+              text: "Background task completed.",
+              attachments: [],
+              notification: {
+                source: { kind: "command" },
+                outcome: "completed",
+                summary: 'Command "build" finished',
+              },
+              dispatchMode: { type: "queue_after_active" },
+            })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.raceFirst(
+            Deferred.await(wakeQueued),
+            Fiber.join(wakeFiber).pipe(
+              Effect.andThen(Effect.die("The wake bypassed the parent lock.")),
+            ),
+          );
+          yield* Deferred.succeed(releaseParent, undefined);
+          yield* Fiber.join(holder);
+          yield* Fiber.join(wakeFiber);
+        }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+        const run = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (row) => row.userMessageId === messageId,
+        )!;
+        assert.isDefined(run.delegatedTaskId);
+        yield* eventSink.write({
+          commandId: reconcileCommandId("provider-wake-finished"),
+          events: [
+            {
+              id: EventId.make("event:provider-wake-finished"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === run.delegatedTaskId,
+        )!;
+        assert.equal(followup.status, "completed");
+        assert.equal(followup.completionDelivery?.state, "claimed");
+        let wake = yield* requests.take;
+        while (
+          wake.threadId !== parentThreadId ||
+          wake.delegatedCompletion?.messageId === firstWake.delegatedCompletion?.messageId
+        ) {
+          wake = yield* requests.take;
+        }
+        assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
+      }),
     );
   },
 );
