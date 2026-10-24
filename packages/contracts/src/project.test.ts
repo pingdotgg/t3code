@@ -6,6 +6,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
 import {
+  isDefaultCopiedFile,
+  ProjectListIgnoredFilesInput,
+  ProjectListIgnoredFilesResult,
   ProjectFaviconPath,
   ReceivedProjectIcon,
   StoredProjectIcon,
@@ -18,6 +21,10 @@ import {
   ProjectWriteFileError,
 } from "./project.ts";
 
+const decodeIgnoredFilesResult = Schema.decodeUnknownSync(ProjectListIgnoredFilesResult);
+const encodeIgnoredFilesResult = Schema.encodeSync(ProjectListIgnoredFilesResult);
+const decodeIgnoredFilesInput = Schema.decodeUnknownSync(ProjectListIgnoredFilesInput);
+const encodeIgnoredFilesInput = Schema.encodeSync(ProjectListIgnoredFilesInput);
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
@@ -177,3 +184,37 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+describe("ignored-file paging", () => {
+  it.each([" notes.txt", "notes.txt ", " "])(
+    "preserves the exact path %j through RPC schemas",
+    (path) => {
+      const result = decodeIgnoredFilesResult(
+        encodeIgnoredFilesResult({
+          files: [{ path, byteLength: 1 }],
+          truncated: true,
+          nextCursor: path,
+        }),
+      );
+      const input = decodeIgnoredFilesInput(
+        encodeIgnoredFilesInput({
+          cwd: "/workspace",
+          after: result.nextCursor,
+        }),
+      );
+      expect(result.files[0]?.path).toBe(path);
+      expect(input.after).toBe(path);
+    },
+  );
+});
+
+describe("isDefaultCopiedFile", () => {
+  it("matches environment config by file name at any depth", () => {
+    for (const path of [".env", "services/api/.env.local", ".envrc", "apps/web/.dev.vars"]) {
+      expect(isDefaultCopiedFile(path)).toBe(true);
+    }
+    for (const path of ["env", "debug.log", ".env/secret.txt", ".envrc.local", ".dev.vars.local"]) {
+      expect(isDefaultCopiedFile(path)).toBe(false);
+    }
+  });
+});

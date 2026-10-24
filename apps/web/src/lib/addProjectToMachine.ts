@@ -4,11 +4,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  ProjectCloneSnapshot,
-  ProjectId,
-  ScopedProjectRef,
+import {
+  PROJECT_IGNORED_FILES_LIMIT,
+  type EnvironmentId,
+  type ProjectCloneSnapshot,
+  type ProjectId,
+  type ProjectIgnoredFile,
+  type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 
@@ -20,12 +22,22 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 
-const DEFAULT_COPIED_FILE_NAME = /^(?:\.env(?:\..+)?|\.envrc|\.dev\.vars)$/;
-
-/** Env files are the ignored files people almost always want on a new machine. */
-export function isDefaultCopiedFile(path: string): boolean {
-  const name = path.split("/").at(-1) ?? path;
-  return DEFAULT_COPIED_FILE_NAME.test(name);
+export function updateIgnoredFileSelection(
+  selected: ReadonlyMap<string, ProjectIgnoredFile>,
+  files: readonly ProjectIgnoredFile[],
+  checked: boolean,
+): ReadonlyMap<string, ProjectIgnoredFile> {
+  const next = new Map(selected);
+  for (const file of files) {
+    if (!checked) next.delete(file.path);
+    else if (
+      file.byteLength <= COPYABLE_FILE_MAX_BYTES &&
+      (next.has(file.path) || next.size < PROJECT_IGNORED_FILES_LIMIT)
+    ) {
+      next.set(file.path, file);
+    }
+  }
+  return next;
 }
 
 export interface AddProjectToMachineInput {

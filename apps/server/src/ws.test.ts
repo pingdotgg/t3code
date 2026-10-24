@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  AuthFilesystemReadScope,
   EnvironmentId,
   ProjectId,
   ThreadId,
   WS_METHODS,
   WsSubscribeServerConfigRpc,
+  WsRpcGroup,
   type OrchestrationV2StoredEvent,
   type OrchestrationProjectShell,
   type ServerConfig,
@@ -19,7 +21,9 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { RpcGroup, RpcMessage, RpcServer, RpcTest } from "effect/rpc";
+
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -370,6 +374,91 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect(
+  "maps ignored-file failures to established project errors and permits the next request",
+  () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"],
+            typeof WS_METHODS.projectsListIgnoredFiles
+          > => tag !== WS_METHODS.projectsListIgnoredFiles,
+        ),
+      );
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerWsRpc(
+              {
+                sessionId: AuthSessionId.make("ignored-file-test"),
+                subject: "ignored-file-test",
+                method: "browser-session-cookie",
+                scopes: [AuthFilesystemReadScope],
+              },
+              {},
+              {},
+              yield* PreviewAutomationBroker.PreviewAutomationBroker,
+              yield* ServerBrowser.ServerBrowser,
+            ).pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  layerUnusedConfigRpcServices,
+                  Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+                  Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+                  Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+                  Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+                  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                    namedProjectsRoot: process.cwd(),
+                  }),
+                  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+                  Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+                  Layer.mock(WorkspaceEntries.WorkspaceEntries)({
+                    listIgnoredFiles: ({ cwd }) =>
+                      cwd === "/broken"
+                        ? Effect.fail(
+                            new WorkspaceEntries.WorkspaceEntriesListIgnoredFilesError({
+                              cwd,
+                              cause: new Error("git exited with status 1"),
+                            }),
+                          )
+                        : Effect.succeed({ files: [], truncated: false }),
+                  }),
+                ),
+              ),
+            ),
+            RpcAuthorization.layer([AuthFilesystemReadScope]),
+          ),
+        ),
+      );
+      const error = yield* client[WS_METHODS.projectsListIgnoredFiles]({ cwd: "/broken" }).pipe(
+        Effect.flip,
+      );
+      assert.equal(error._tag, "ProjectListEntriesError");
+      if (error._tag !== "ProjectListEntriesError") return yield* Effect.die(error);
+      assert.equal(error.failure, "directory_list_failed");
+      assert.equal(error.normalizedCwd, "/broken");
+      assert.equal(error.detail, "Failed to list ignored files.");
+      assert.equal(error.message, "Failed to list workspace entries in '/broken'.");
+      assert.deepEqual(yield* client[WS_METHODS.projectsListIgnoredFiles]({ cwd: "/healthy" }), {
+        files: [],
+        truncated: false,
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.effect(

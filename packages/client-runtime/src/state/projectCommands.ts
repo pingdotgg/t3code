@@ -139,6 +139,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:list-ignored-files",
       tag: WS_METHODS.projectsListIgnoredFiles,
       staleTimeMs: 15_000,
+      idleTtlMs: 0,
     }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",

@@ -113,6 +113,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           mode === "web" ? undefined : "desktop-managed",
         );
         expect(descriptor.capabilities).toMatchObject({
+          ignoredFileListing: true,
+          ignoredFileBrowsing: true,
           settledWorktreeCleanup: true,
           storageCleanupRun: true,
           projectWorktreeCleanup: true,
