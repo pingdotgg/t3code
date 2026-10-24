@@ -5,7 +5,7 @@ import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { discoverGrokSkills } from "./skills.ts";
+import { discoverGrokSkills, rewriteGrokSkillMention } from "./skills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 
@@ -197,5 +197,24 @@ describe("discoverGrokSkills", () => {
       });
       expect(environment.GROK_DISABLE_AUTOUPDATER).toBe("0");
     });
+  });
+});
+
+describe("rewriteGrokSkillMention", () => {
+  it("sends only a leading mention of a known skill as a slash command", () => {
+    // Skills named like dollar amounts prove `$25` is never read as a mention.
+    const skills = new Set(["deploy", "25", "20k"]);
+    expect(rewriteGrokSkillMention("$deploy ship it", skills)).toBe("/deploy ship it");
+    expect(rewriteGrokSkillMention("  $deploy", skills)).toBe("  /deploy");
+    for (const text of [
+      "$other ship it",
+      "$HOME is set",
+      "ship $deploy",
+      "/deploy",
+      "$25 is the price",
+      "$20k budget",
+    ]) {
+      expect(rewriteGrokSkillMention(text, skills)).toBe(text);
+    }
   });
 });
