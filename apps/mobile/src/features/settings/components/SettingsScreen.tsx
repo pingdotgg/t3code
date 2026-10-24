@@ -8,7 +8,6 @@ import { ScreenContent as SettingsScreenContent } from "../../../components/ui/S
 import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
 import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
 import { ScreenScrollViewBottomInset } from "../../../components/ui/ScreenScrollView";
 
@@ -47,15 +46,6 @@ export function SettingsScreen(
         onBack={workspaceRoot ? undefined : () => navigation.goBack()}
         hideBottomBorder={!props.formSheet}
       />
-      {Platform.OS === "ios" && (workspaceRoot || cover) ? (
-        <NativeStackScreenOptions
-          options={{
-            headerTransparent: false,
-            headerStyle: { backgroundColor: surface.backgroundColor },
-            contentStyle: { backgroundColor: surface.backgroundColor },
-          }}
-        />
-      ) : null}
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         {props.formSheet ? (
           props.children

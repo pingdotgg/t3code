@@ -19,7 +19,6 @@ import { Platform, View } from "react-native";
 import { useWorkspaceSurface } from "../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -47,15 +46,6 @@ export function SettingsRouteScreen() {
 
   return (
     <View className={`flex-1 ${surface.className}`}>
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          options={{
-            headerTransparent: false,
-            headerStyle: { backgroundColor: surface.backgroundColor },
-            contentStyle: { backgroundColor: surface.backgroundColor },
-          }}
-        />
-      ) : null}
       <SettingsEnvironmentFilterHeader />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         {Platform.OS === "android" ? (

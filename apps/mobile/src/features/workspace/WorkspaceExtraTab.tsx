@@ -7,9 +7,7 @@ export function WorkspaceExtraTab(_props: {
 }) {
   return (
     <>
-      <NativeStackScreenOptions
-        options={{ headerSearchBarOptions: undefined, unstable_headerRightItems: undefined }}
-      />
+      <NativeStackScreenOptions options={{ headerSearchBarOptions: undefined }} />
       <UsageRouteScreen workspace />
     </>
   );

@@ -93,7 +93,6 @@ function WorkspaceRootContent() {
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
   const { state } = workspace;
-  const solidHeader = deviceType === "duo-folded" || state.selectedTab === "usage";
   const renderHeaderTitle = useCallback(
     () => (
       <WorkspaceRootTitle
@@ -150,16 +149,11 @@ function WorkspaceRootContent() {
             options={{
               title: enabled.length ? TAB_TITLES[state.selectedTab] : "Navigation",
               headerShown: true,
-              headerTransparent: solidHeader ? false : NATIVE_LIQUID_GLASS_SUPPORTED,
-              headerStyle: solidHeader
-                ? { backgroundColor: surface.backgroundColor }
-                : NATIVE_LIQUID_GLASS_SUPPORTED
-                  ? { backgroundColor: "transparent" }
-                  : undefined,
-              contentStyle: solidHeader ? { backgroundColor: surface.backgroundColor } : undefined,
-              ...(state.selectedTab !== "usage" || enabled.length === 0
-                ? { headerRight: undefined }
-                : {}),
+              headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
+              headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
+                ? { backgroundColor: "transparent" }
+                : undefined,
+              contentStyle: undefined,
               ...(enabled.length === 0
                 ? { headerSearchBarOptions: undefined, unstable_headerRightItems: () => [] }
                 : {}),
