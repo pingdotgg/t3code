@@ -422,6 +422,17 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
   },
 );
 
+it("routes same-child follow-ups to t3_thread_send and independent reviews to delegate_task", () => {
+  const description = OrchestratorToolkit.tools.delegate_task.description ?? "";
+  expect(description).toContain(
+    "For independent T3 delegated review rounds, call delegate_task again",
+  );
+  expect(description).toContain(
+    "For a follow-up that needs the same child's conversation, use t3_thread_send on its childThreadId.",
+  );
+  expect(description).not.toContain("not the target for starting another");
+});
+
 it.effect(
   "registers the pull request toolkit and surfaces a missing capability as a tool error",
   () =>
