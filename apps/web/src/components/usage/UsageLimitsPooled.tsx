@@ -5,6 +5,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   cursorUsageWindowDetails,
+  creditBalanceLabel,
   displayLimitWindows,
   formatResetsIn,
   type LimitAccount,
@@ -521,6 +522,27 @@ function PoolBar({
   );
 }
 
+function UsageCard({
+  variant,
+  children,
+}: {
+  readonly variant: "window" | "credits";
+  readonly children: ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-border/60 p-4",
+        variant === "window"
+          ? "grid items-center gap-x-6 gap-y-3 md:grid-cols-[11rem_minmax(0,1fr)]"
+          : "flex flex-wrap items-center justify-between gap-x-6 gap-y-2",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
 function PoolWindowCard({
   pool,
   color,
@@ -536,7 +558,7 @@ function PoolWindowCard({
 }) {
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
+    <UsageCard variant="window">
       <div className="flex flex-col gap-1">
         <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
         <span className="flex items-baseline gap-2">
@@ -558,7 +580,7 @@ function PoolWindowCard({
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
-    </div>
+    </UsageCard>
   );
 }
 
@@ -591,6 +613,28 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           />
         );
       })}
+      {pool.driver === "codex"
+        ? pool.accounts.map((account) =>
+            account.limits.credits ? (
+              <UsageCard key={account.key} variant="credits">
+                <div className="min-w-0 space-y-1">
+                  <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    ChatGPT credits
+                    {pool.accounts.length > 1 ? (
+                      <AccountName account={account} className="text-muted-foreground" />
+                    ) : null}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Separate from your plan allowance and reset credits.
+                  </p>
+                </div>
+                <span className="text-lg font-medium text-foreground tabular-nums">
+                  {creditBalanceLabel(account.limits.credits)}
+                </span>
+              </UsageCard>
+            ) : null,
+          )
+        : null}
     </section>
   );
 }

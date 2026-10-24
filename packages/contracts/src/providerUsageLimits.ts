@@ -31,6 +31,15 @@ export const ServerProviderResetCredits = Schema.Struct({
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
+/** Spendable account credits, separate from subscription windows and earned resets. */
+export const ServerProviderCredits = Schema.Struct({
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+  /** Decimal credit units as reported by the provider, not a currency amount. */
+  balance: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderCredits = typeof ServerProviderCredits.Type;
+
 /**
  * `unavailable` distinguishes an account that can never report windows (API
  * key, Bedrock) from a probe that failed this time, so clients can keep the
@@ -41,6 +50,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  credits: Schema.optional(Schema.NullOr(ServerProviderCredits)),
   externalUsage: Schema.optional(
     Schema.Struct({
       label: TrimmedNonEmptyString,
@@ -63,6 +73,8 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
  */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  /** Omitted means unchanged; null clears a previously reported balance. */
+  credits: Schema.optional(Schema.NullOr(ServerProviderCredits)),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 

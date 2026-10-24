@@ -12,6 +12,42 @@ import {
 const checkedAt = "2026-07-18T10:00:00.000Z";
 
 describe("codexRateLimitsToLimits", () => {
+  it("keeps spendable credits separate from exhausted weekly allowance and earned resets", () => {
+    const credits = { hasCredits: true, unlimited: false, balance: "12345.678900" };
+    const result = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: { limitId: "codex_other", credits: { ...credits, balance: "999" } },
+      rateLimitsByLimitId: {
+        codex: {
+          credits,
+          primary: { usedPercent: 100, windowDurationMins: 10080 },
+        },
+      },
+      resetCredits: { availableCount: 2 },
+    });
+    expect(result.credits).toEqual(credits);
+    expect(result.windows[0]?.usedPercent).toBe(100);
+    expect(result.resetCredits?.availableCount).toBe(2);
+  });
+
+  it("reports credits even when there are no quota windows", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: { credits: { hasCredits: false, unlimited: false, balance: "0" } },
+      }),
+    ).toMatchObject({ windows: [], credits: { balance: "0", hasCredits: false } });
+  });
+
+  it("does not invent a balance for accounts that only report availability", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: { credits: { hasCredits: true, unlimited: false, balance: null } },
+      }).credits,
+    ).toEqual({ hasCredits: true, unlimited: false });
+  });
+
   it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {
     const snapshot = {
       limitId: "codex",
