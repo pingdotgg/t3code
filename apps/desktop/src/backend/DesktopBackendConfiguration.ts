@@ -540,8 +540,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       // Packaged builds only, so a dev instance never shares the cache with the
       // prod app it is often run from. `--require` rather than NODE_COMPILE_CACHE,
       // so the setting does not leak into the provider and terminal processes
-      // the backend starts.
+      // the backend starts. `--use-system-ca` likewise stays off the env:
+      // Electron's bundled CA store rejects chains the OS trusts (#23408).
       args: [
+        "--use-system-ca",
         ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
         environment.backendEntryPath,
         "--bootstrap-fd",

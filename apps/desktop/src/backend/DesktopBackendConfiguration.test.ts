@@ -228,7 +228,8 @@ describe("DesktopBackendConfiguration", () => {
         const second = yield* configuration.resolvePrimary;
 
         assert.equal(first.executablePath, process.execPath);
-        assert.deepEqual(first.args.slice(0, 3), [
+        assert.deepEqual(first.args.slice(0, 4), [
+          "--use-system-ca",
           "--require",
           environment.compileCachePath,
           environment.backendEntryPath,
@@ -264,6 +265,24 @@ describe("DesktopBackendConfiguration", () => {
           yield* configuration.currentBootstrapToken,
           first.bootstrap.desktopBootstrapToken,
         );
+      }),
+    ),
+  );
+
+  it.effect("resolvePrimary trusts system CAs without leaking it into provider env", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const config = yield* configuration.resolvePrimary;
+
+        // Electron's bundled Node only trusts its own CA bundle, which rejects
+        // chains macOS accepts (#23408). A startup flag applies to the backend
+        // alone; NODE_USE_SYSTEM_CA would be inherited by every provider CLI.
+        const entryIndex = config.args.indexOf(environment.backendEntryPath);
+        assert.include(config.args.slice(0, entryIndex), "--use-system-ca");
+        assert.isUndefined(config.env.NODE_USE_SYSTEM_CA);
       }),
     ),
   );
