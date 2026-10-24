@@ -1815,6 +1815,42 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live.each([
+    { linked: "home", outcome: "removed", reason: "Removed 1 rotated logs" },
+    { linked: "logs folder", outcome: "kept", reason: "No expired files" },
+  ] as const)(
+    "rotated logs behind a symlinked $linked are $outcome",
+    ({ linked, outcome, reason }) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const config = yield* ServerConfig.ServerConfig;
+          const disk = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+          yield* fs.makeDirectory(`${disk}/real/logs`, { recursive: true });
+          if (linked === "home") {
+            yield* fs.symlink(`${disk}/real`, `${disk}/home`);
+          } else {
+            yield* fs.makeDirectory(`${disk}/home`);
+            yield* fs.symlink(`${disk}/real/logs`, `${disk}/home/logs`);
+          }
+          yield* fs.writeFileString(`${disk}/real/logs/server.log.1`, "log");
+          yield* fs.utimes(`${disk}/real/logs/server.log.1`, 1, 1);
+          const { service, enableFiles, disable } = yield* cleanupFixture().pipe(
+            Effect.provideService(ServerConfig.ServerConfig, {
+              ...config,
+              logsDir: `${disk}/home/logs`,
+            }),
+          );
+          disable();
+          enableFiles();
+          const report = yield* service.runNow;
+          expect(report.entries.filter((entry) => entry.kind === "logs")).toMatchObject([
+            { outcome, reason },
+          ]);
+          expect(yield* fs.exists(`${disk}/real/logs/server.log.1`)).toBe(outcome === "kept");
+        }),
+      ),
+  );
   it.live("reports git failures without aborting the remaining categories", () =>
     runCleanupTest(
       Effect.gen(function* () {
