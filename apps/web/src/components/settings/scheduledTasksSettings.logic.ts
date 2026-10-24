@@ -74,8 +74,8 @@ export interface DraftState {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   /**
-   * The picker only edits `instanceId:model`; keeping the source object preserves provider
-   * options (reasoning, temperature, …) when the model itself is left unchanged.
+   * The model picker only edits `instanceId:model`; this holds saved or edited provider
+   * options until the model changes.
    */
   readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
@@ -144,6 +144,25 @@ export function webhookDeliveryLabel(delivery: {
     expired: "Too old",
   };
   return labels[delivery.outcome] ?? delivery.outcome.replaceAll("_", " ");
+}
+
+export function formatScheduledTaskTimeInput(timeOfDay: string, hour12: boolean): string {
+  const [hourPart, minute] = timeOfDay.split(":");
+  const hour = Number(hourPart);
+  const displayedHour = hour12 ? hour % 12 || 12 : hour;
+  return `${String(displayedHour).padStart(2, "0")}:${minute}${hour12 ? (hour >= 12 ? " PM" : " AM") : ""}`;
+}
+
+export function parseScheduledTaskTimeInput(input: string, hour12: boolean): string | null {
+  const match = hour12
+    ? /^(\d{1,2}):?(\d{2})\s*([ap])m$/i.exec(input.trim())
+    : /^(\d{1,2}):?(\d{2})$/.exec(input.trim());
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (minute > 59 || hour > (hour12 ? 12 : 23) || (hour12 && hour === 0)) return null;
+  const canonicalHour = hour12 ? (hour % 12) + (match[3]?.toLowerCase() === "p" ? 12 : 0) : hour;
+  return `${String(canonicalHour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
@@ -253,6 +272,17 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     filters,
     savedFilters: filters,
   };
+}
+
+export function resolveScheduledTaskModelSelection(
+  selection: ModelSelection | null,
+  saved: ModelSelection | null,
+): ModelSelection | null {
+  return selection !== null &&
+    saved?.instanceId === selection.instanceId &&
+    saved.model === selection.model
+    ? saved
+    : selection;
 }
 
 export function scheduledTaskDefaultModel(

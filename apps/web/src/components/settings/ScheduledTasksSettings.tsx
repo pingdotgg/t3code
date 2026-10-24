@@ -45,7 +45,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { formatRelativeTime } from "../../timestampFormat";
+import { formatRelativeTime, resolveHour12 } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -83,6 +83,9 @@ import {
   webhookDraftErrors,
   webhookDeliveryLabel,
   matchesScheduledTaskScope,
+  formatScheduledTaskTimeInput,
+  parseScheduledTaskTimeInput,
+  resolveScheduledTaskModelSelection,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
@@ -95,6 +98,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -108,6 +112,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -1127,6 +1132,22 @@ function ScheduledTaskEditorForm({
   const [draft, setDraft] = useState<DraftState>(() =>
     task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
+  const [timeInput, setTimeInput] = useState<{
+    readonly hour12: boolean;
+    readonly value: string;
+    readonly showError: boolean;
+  } | null>(null);
+  const hour12 = resolveHour12(settings.timestampFormat);
+  const displayedTime =
+    timeInput?.hour12 === hour12
+      ? timeInput.value
+      : formatScheduledTaskTimeInput(draft.timeOfDay, hour12);
+  const parsedTime = parseScheduledTaskTimeInput(displayedTime, hour12);
+  const invalidTime = draft.scheduleMode === "fixed" && parsedTime === null;
+  const showTimeError = invalidTime && timeInput?.showError;
+  const timeError = hour12
+    ? "Enter a time with AM or PM, such as 05:30 PM."
+    : "Enter a time from 00:00 to 23:59.";
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
@@ -1147,14 +1168,19 @@ function ScheduledTaskEditorForm({
 
   const firstInstance = instanceEntries[0];
   const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
-  const activeSelection =
+  const pickedSelection =
     draftSelection &&
     instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
       ? draftSelection
       : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+  const activeSelection = resolveScheduledTaskModelSelection(
+    pickedSelection,
+    draft.baseModelSelection,
+  );
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -1197,7 +1223,11 @@ function ScheduledTaskEditorForm({
       reportFailure("Invalid filter", parsedFilters.error);
       return;
     }
-    const schedule = scheduleFromDraft(draft);
+    if (invalidTime) {
+      reportFailure("Invalid time", timeError);
+      return;
+    }
+    const schedule = scheduleFromDraft({ ...draft, timeOfDay: parsedTime ?? draft.timeOfDay });
     if (schedule === null) {
       for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
@@ -1223,12 +1253,6 @@ function ScheduledTaskEditorForm({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
-    const modelSelection =
-      draft.baseModelSelection !== null &&
-      draft.baseModelSelection.instanceId === selection.instanceId &&
-      draft.baseModelSelection.model === selection.model
-        ? draft.baseModelSelection
-        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1248,7 +1272,7 @@ function ScheduledTaskEditorForm({
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
-      modelSelection,
+      modelSelection: selection,
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
@@ -1462,22 +1486,57 @@ function ScheduledTaskEditorForm({
           </Field>
 
           <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
+            {draft.threadId ? (
+              <p className="text-sm text-muted-foreground">
+                Uses the linked thread's current model and reasoning settings.
+              </p>
+            ) : (
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({
+                      ...current,
+                      modelKey: `${instanceId}:${model}`,
+                      baseModelSelection:
+                        activeSelection?.instanceId === instanceId &&
+                        activeSelection.model === model
+                          ? activeSelection
+                          : null,
+                    }))
+                  }
+                />
+                {activeEntry && activeSelection ? (
+                  <TraitsPicker
+                    provider={activeEntry.driverKind}
+                    instanceId={activeSelection.instanceId}
+                    models={activeEntry.models}
+                    model={activeSelection.model}
+                    modelOptions={activeSelection.options ?? []}
+                    disabled={saving || !connected}
+                    allowPromptInjectedEffort={false}
+                    planModeEnabled={settings.planModeEnabled}
+                    isComposerOwned={false}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      setDraft((current) => ({
+                        ...current,
+                        modelKey: `${activeSelection.instanceId}:${activeSelection.model}`,
+                        baseModelSelection: { ...activeSelection, options: options ?? [] },
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+            )}
           </Field>
 
           <div className="space-y-3">
@@ -1687,16 +1746,44 @@ function ScheduledTaskEditorForm({
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Label htmlFor="scheduled-task-time">Run at</Label>
-                  <Input
-                    type="time"
-                    id="scheduled-task-time"
-                    nativeInput
-                    className="w-32"
-                    value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
-                  />
+                  <div className={hour12 ? "w-36" : "w-28"}>
+                    <InputGroup>
+                      <InputGroupInput
+                        id="scheduled-task-time"
+                        nativeInput
+                        font="mono"
+                        inputMode={hour12 ? "text" : "numeric"}
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={hour12 ? "hh:mm AM" : "HH:MM"}
+                        value={displayedTime}
+                        aria-invalid={showTimeError || undefined}
+                        aria-describedby={showTimeError ? "scheduled-task-time-error" : undefined}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setTimeInput({ hour12, value, showError: false });
+                          const timeOfDay = parseScheduledTaskTimeInput(value, hour12);
+                          if (timeOfDay !== null)
+                            setDraft((current) => ({ ...current, timeOfDay }));
+                        }}
+                        onBlur={(event) => {
+                          const timeOfDay = parseScheduledTaskTimeInput(event.target.value, hour12);
+                          if (timeOfDay === null) {
+                            setTimeInput({ hour12, value: event.target.value, showError: true });
+                            return;
+                          }
+                          setDraft((current) => ({ ...current, timeOfDay }));
+                          setTimeInput(null);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <Clock3Icon aria-hidden />
+                      </InputGroupAddon>
+                    </InputGroup>
+                  </div>
                   <span className="text-xs text-muted-foreground">on</span>
                 </div>
                 <ToggleGroup
@@ -1719,6 +1806,15 @@ function ScheduledTaskEditorForm({
                     </Toggle>
                   ))}
                 </ToggleGroup>
+                {showTimeError ? (
+                  <p
+                    id="scheduled-task-time-error"
+                    role="alert"
+                    className="w-full text-xs text-destructive"
+                  >
+                    {timeError}
+                  </p>
+                ) : null}
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -1763,7 +1859,14 @@ function ScheduledTaskEditorForm({
         </DialogClose>
         <Button
           size="sm"
-          disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+          disabled={
+            !canOperate ||
+            saving ||
+            editingTaskMissing ||
+            !connected ||
+            !tasksQuery.data ||
+            invalidTime
+          }
           onClick={() => void submit()}
         >
           {draft.editingId ? "Save task" : "Create task"}

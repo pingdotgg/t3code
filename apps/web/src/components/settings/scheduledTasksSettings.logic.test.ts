@@ -17,6 +17,9 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  formatScheduledTaskTimeInput,
+  parseScheduledTaskTimeInput,
+  resolveScheduledTaskModelSelection,
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
@@ -80,6 +83,53 @@ const tasks = [first, second, third, other, sameIdElsewhere].map((project, index
   environmentId: project.environmentId,
   projectId: project.id,
 }));
+
+describe("scheduled task time entry", () => {
+  it("formats midnight, noon, and afternoon in the selected hour cycle", () => {
+    for (const [time, display] of [
+      ["00:00", "12:00 AM"],
+      ["12:00", "12:00 PM"],
+      ["17:30", "05:30 PM"],
+      ["23:59", "11:59 PM"],
+    ] as const) {
+      expect(formatScheduledTaskTimeInput(time, true)).toBe(display);
+      expect(formatScheduledTaskTimeInput(time, false)).toBe(time);
+    }
+  });
+
+  it("normalizes colon-separated and compact 24-hour input", () => {
+    for (const [input, expected] of [
+      ["00:00", "00:00"],
+      ["23:59", "23:59"],
+      ["9:05", "09:05"],
+      ["930", "09:30"],
+      [" 1730 ", "17:30"],
+    ] as const) {
+      expect(parseScheduledTaskTimeInput(input, false)).toBe(expected);
+    }
+  });
+
+  it("converts 12-hour input to the canonical scheduled time", () => {
+    for (const [input, expected] of [
+      ["12:00 AM", "00:00"],
+      ["12:00 PM", "12:00"],
+      ["5:30 pm", "17:30"],
+      ["1130am", "11:30"],
+      ["11:59 PM", "23:59"],
+    ] as const) {
+      expect(parseScheduledTaskTimeInput(input, true)).toBe(expected);
+    }
+  });
+
+  it("rejects incomplete and out-of-range times", () => {
+    for (const input of ["", "17:", "24:00", "23:60", "-1:30", "17300", "17:30 PM"]) {
+      expect(parseScheduledTaskTimeInput(input, false)).toBeNull();
+    }
+    for (const input of ["", "5:30", "00:30 AM", "13:00 PM", "11:60 AM", "05:30 XX"]) {
+      expect(parseScheduledTaskTimeInput(input, true)).toBeNull();
+    }
+  });
+});
 
 describe("scheduled task settings scope", () => {
   it.each<{ search: SettingsScopeSearch; expected: string[] }>([
@@ -255,6 +305,34 @@ describe("webhook scheduled tasks", () => {
         filters: [{ id: "f1", path: "body.action", op: "in", value: " , " }],
       }),
     ).toBeNull();
+  });
+});
+
+describe("scheduled task model options", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const saved = {
+    instanceId,
+    model: "model-a",
+    options: [
+      { id: "reasoningEffort", value: "xhigh" },
+      { id: "serviceTier", value: "priority" },
+    ],
+  };
+
+  it("uses the same saved reasoning and speed options for display and saving", () => {
+    expect(resolveScheduledTaskModelSelection({ instanceId, model: "model-a" }, saved)).toBe(saved);
+  });
+
+  it("does not carry options into a different model or provider", () => {
+    const differentModel = { instanceId, model: "model-b" };
+    const differentProvider = { instanceId: ProviderInstanceId.make("other"), model: "model-a" };
+    expect(resolveScheduledTaskModelSelection(differentModel, saved)).toBe(differentModel);
+    expect(resolveScheduledTaskModelSelection(differentProvider, saved)).toBe(differentProvider);
+  });
+
+  it("retains project default options and cannot revive an unavailable selection", () => {
+    expect(resolveScheduledTaskModelSelection(saved, null)).toBe(saved);
+    expect(resolveScheduledTaskModelSelection(null, saved)).toBeNull();
   });
 });
 
