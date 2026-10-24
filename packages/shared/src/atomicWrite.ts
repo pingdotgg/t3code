@@ -22,6 +22,23 @@ export const isWindowsRenameLock = (error: PlatformError.PlatformError) => {
 const LOCKED_RENAME_RETRIES = 20;
 const LOCKED_RENAME_RETRY_DELAY = "100 millis";
 
+// A save keeps the permissions of the file it replaces, so a private file stays
+// private, and a new file is readable only by its owner. chmod rather than an open
+// mode, because the umask narrows the latter.
+const replacedMode = (fs: FileSystem.FileSystem, targetPath: string) =>
+  fs.stat(targetPath).pipe(
+    Effect.map((info) => info.mode & 0o777),
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(0o600),
+    ),
+  );
+
+const isUnsupportedSync = (error: PlatformError.PlatformError) => {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EINVAL" || code === "ENOTSUP" || code === "ENOSYS";
+};
+
 /**
  * A symlinked target is resolved first so the link survives and its destination is
  * rewritten, since renaming over the link itself would swap it for a regular file.
@@ -39,6 +56,11 @@ export const writeFileStringAtomically = (input: {
       const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
+      // Opened before anything is written, so a directory that cannot be opened
+      // (one without read permission) fails the save while the target is intact.
+      // Windows cannot open a directory to sync it.
+      const directory =
+        platform === "win32" ? undefined : yield* fs.open(targetDirectory, { flag: "r" });
       // The temp directory is cleanup, not part of the write: failing to remove
       // it (a virus scanner holding it on Windows) must not fail a write that
       // already landed.
@@ -52,7 +74,29 @@ export const writeFileStringAtomically = (input: {
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
       yield* fs.writeFileString(tempPath, input.contents);
-      if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
+      // The handle opens before the chmod, which may drop write access, and closes
+      // before the rename, which Windows refuses while it is open. The sync flushes
+      // the contents and the mode, or a crash soon after the rename can leave the
+      // target empty. Windows modes carry only the read-only bit, which the rename
+      // below handles.
+      yield* fs.open(tempPath, { flag: "r+" }).pipe(
+        Effect.tap(() =>
+          platform === "win32"
+            ? Effect.void
+            : replacedMode(fs, targetPath).pipe(Effect.flatMap((mode) => fs.chmod(tempPath, mode))),
+        ),
+        Effect.flatMap((file) => file.sync),
+        Effect.scoped,
+      );
+      if (directory !== undefined) {
+        yield* fs.rename(tempPath, targetPath);
+        // Persists the rename. Only a filesystem that cannot sync a directory at all
+        // is let through: the rename is visible, but a failed sync means it may not
+        // survive a crash.
+        return yield* directory.sync.pipe(
+          Effect.catchIf(isUnsupportedSync, (error) => Effect.logWarning(error)),
+        );
+      }
 
       // A retry must not replace a save another process landed while this one
       // waited, so it gives up once the target is no longer the file seen here.
