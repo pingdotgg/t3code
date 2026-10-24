@@ -1,3 +1,4 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useMemo } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
@@ -7,9 +8,15 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import {
+  presentThreadLinkedPullRequests,
+  resolveThreadPrBadgeAction,
+} from "../../state/thread-pr-presentation";
+import { useOpenThreadPullRequests } from "./use-open-thread-pull-requests";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+    readonly thread: EnvironmentThreadShell;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -24,6 +31,11 @@ export function ThreadHeader(
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  const openThreadPullRequests = useOpenThreadPullRequests();
+  const linkedPullRequest = useMemo(
+    () => presentThreadLinkedPullRequests(props.thread.pullRequests),
+    [props.thread.pullRequests],
+  );
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
@@ -54,6 +66,13 @@ export function ThreadHeader(
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: props.onOpenGitInspector,
     });
+    if (linkedPullRequest !== null) {
+      actions.push({
+        accessibilityLabel: resolveThreadPrBadgeAction(linkedPullRequest).accessibilityLabel,
+        icon: PullRequestGlyph.pullRequest,
+        onPress: () => openThreadPullRequests(props.thread, linkedPullRequest),
+      });
+    }
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
@@ -63,6 +82,9 @@ export function ThreadHeader(
     }
     return actions;
   }, [
+    linkedPullRequest,
+    openThreadPullRequests,
+    props.thread,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,

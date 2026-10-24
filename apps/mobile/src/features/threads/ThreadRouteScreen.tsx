@@ -69,6 +69,7 @@ import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./T
 import { draftRouteIdentity } from "./thread-route-state";
 import { NewTaskDraftRouteScreen, type NewTaskDraftRouteParams } from "./NewTaskDraftRouteScreen";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
+import { withThreadOpenPullRequest } from "../../state/thread-pr-presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
@@ -282,6 +283,7 @@ function ThreadRouteContent(
     selectedThreadDetailRef,
     selectedThreadProject,
     selectedEnvironmentConnection,
+    selectedEnvironmentRuntime,
   } = useThreadSelection();
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
@@ -723,7 +725,12 @@ function ThreadRouteContent(
         ? () => void handleMergeBack()
         : undefined,
     currentBranch: selectedThread?.branch ?? null,
-    gitStatus: gitStatus.data,
+    gitStatus: withThreadOpenPullRequest(
+      gitStatus.data ?? null,
+      selectedThread?.pullRequests ?? [],
+      selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests ===
+        true,
+    ),
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
@@ -906,6 +913,7 @@ function ThreadRouteContent(
               headerColor={headerColor}
               usesNativeHeaderGlass={usesNativeHeaderGlass}
               gitControls={threadGitControlProps}
+              thread={selectedThread}
               hasThreadCwd={selectedThreadCwd !== null}
               hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
               fileInspectorSupported={fileInspector.supported}

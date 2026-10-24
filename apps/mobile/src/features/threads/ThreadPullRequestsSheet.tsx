@@ -30,7 +30,7 @@ export function ThreadPullRequestsSheet(
   const insets = useSafeAreaInsets();
   const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
     useThreadSelection();
-  const lines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
+  const lines = useLinkedPullRequestLines(selectedThread);
   const openCount = useMemo(
     () =>
       lines.filter((line) => line.link.snapshot === null || line.link.snapshot.state === "open")

@@ -14,7 +14,6 @@ import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
-import type { EnvironmentRuntimeState } from "../../state/remote-runtime-types";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import type { LinkedPullRequestActions } from "./useLinkedPullRequestActions";
@@ -30,18 +29,15 @@ import {
   pullRequestStatus,
 } from "../pull-requests/pullRequestStatus";
 
-export function useLinkedPullRequestLines(
-  thread: EnvironmentThreadShell | null,
-  runtime: EnvironmentRuntimeState | null,
-) {
-  const supported = runtime?.serverConfig?.environment.capabilities.threadPullRequests === true;
+// Lists the links the thread already has; capabilities only gate changing them.
+export function useLinkedPullRequestLines(thread: EnvironmentThreadShell | null) {
   const pullRequests = thread?.pullRequests;
   return useMemo(() => {
-    const chains = resolveThreadPullRequestChains(supported ? (pullRequests ?? []) : []);
+    const chains = resolveThreadPullRequestChains(pullRequests ?? []);
     const open = chains.filter((chain) => chain.layers.some(isOpenLink));
     const done = chains.filter((chain) => !chain.layers.some(isOpenLink));
     return [...pullRequestListLines(open), ...pullRequestListLines(done)];
-  }, [pullRequests, supported]);
+  }, [pullRequests]);
 }
 
 function isOpenLink(link: PullRequestListLine["link"]) {
