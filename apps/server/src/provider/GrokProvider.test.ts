@@ -459,6 +459,52 @@ describe("Grok usage limits", () => {
       ).windows,
     ).toEqual([{ id: "subscription", kind: "monthly", label: "Monthly", usedPercent: 100 }]);
   });
+
+  it("measures the window from the reported period bounds", () => {
+    const window = (type: string, start: string, end: string) =>
+      grokUsageResponseToLimits(
+        { config: { creditUsagePercent: 4, currentPeriod: { type, start, end } } },
+        checkedAt,
+      ).windows[0];
+    expect(
+      window(
+        "USAGE_PERIOD_TYPE_WEEKLY",
+        "2026-10-14T20:51:37.352+00:00",
+        "2026-10-21T20:51:37.352+00:00",
+      ),
+    ).toEqual({
+      id: "subscription",
+      kind: "weekly",
+      label: "Weekly",
+      usedPercent: 4,
+      resetsAt: "2026-10-21T20:51:37.352Z",
+      windowDurationMins: 7 * 24 * 60,
+    });
+    expect(
+      window(
+        "USAGE_PERIOD_TYPE_MONTHLY",
+        "2026-02-01T00:00:00.000+00:00",
+        "2026-03-01T00:00:00.000+00:00",
+      )?.windowDurationMins,
+    ).toBe(28 * 24 * 60);
+  });
+
+  it("leaves the window length unknown when the period start is unusable", () => {
+    const end = "2026-10-21T20:51:37.352+00:00";
+    for (const start of [undefined, null, 42, "invalid", end, "2026-10-28T20:51:37.352+00:00"]) {
+      const [window] = grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 4,
+            currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start, end },
+          },
+        },
+        checkedAt,
+      ).windows;
+      expect(window?.resetsAt).toBe("2026-10-21T20:51:37.352Z");
+      expect(window).not.toHaveProperty("windowDurationMins");
+    }
+  });
 });
 
 it.layer(NodeServices.layer)("readGrokAccount", (it) => {
@@ -491,6 +537,40 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
       );
       expect(limits.windows[0]?.usedPercent).toBe(37);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps the billing period start when decoding the response", () =>
+    readGrokAccount({
+      GROK_AUTH: '{"https://accounts.x.ai/sign-in":{"key":"session-token"}}',
+    }).pipe(
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({ readFileString: () => Effect.succeed("") }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                config: {
+                  creditUsagePercent: 4,
+                  currentPeriod: {
+                    type: "USAGE_PERIOD_TYPE_WEEKLY",
+                    start: "2026-10-14T20:51:37.352+00:00",
+                    end: "2026-10-21T20:51:37.352+00:00",
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+      Effect.tap(({ usageLimits }) =>
+        Effect.sync(() => expect(usageLimits.windows[0]?.windowDurationMins).toBe(7 * 24 * 60)),
+      ),
+    ),
   );
 
   it.effect(

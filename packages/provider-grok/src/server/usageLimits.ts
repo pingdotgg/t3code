@@ -81,12 +81,21 @@ export function grokUsageResponseToLimits(
     return makeUsageLimits({ checkedAt, windows: [] });
   }
   const reset = period?.end ? DateTime.make(period.end) : Option.none();
+  const start = typeof period?.start === "string" ? DateTime.make(period.start) : Option.none();
+  // Pace and the even-spend marker need the period length; months vary, so use the reported bounds.
+  const windowDurationMins =
+    Option.isSome(start) && Option.isSome(reset)
+      ? Math.round(
+          (DateTime.toEpochMillis(reset.value) - DateTime.toEpochMillis(start.value)) / 60_000,
+        )
+      : 0;
   const window: ServerProviderUsageWindow = {
     id: "subscription",
     kind,
     label: kind === "weekly" ? "Weekly" : kind === "monthly" ? "Monthly" : "Subscription",
     usedPercent: clampPercent(usedPercent),
     ...(Option.isSome(reset) ? { resetsAt: DateTime.formatIso(reset.value) } : {}),
+    ...(windowDurationMins > 0 ? { windowDurationMins } : {}),
   };
   return makeUsageLimits({ checkedAt, windows: [window] });
 }
