@@ -221,6 +221,8 @@ export class GhosttyTerminalCore {
   private scratch = 0;
   private graphemes = 0;
   private graphemeCapacity = 0;
+  private selectionBuffer = 0;
+  private selectionCapacity = 0;
   private style = 0;
   private cellQuery = 0;
   private scrollbar = 0;
@@ -749,6 +751,26 @@ export class GhosttyTerminalCore {
     }
   }
 
+  /** Screen coordinates of Ghostty's selection, which follows its rows as output scrolls them. */
+  selectionRange(): GhosttySelectionRange["screen"] | null {
+    this.ensureActive();
+    const layout = this.runtime.layout("GhosttySelection");
+    const selection = this.runtime.alloc(layout.size);
+    try {
+      this.runtime.setField(selection, "GhosttySelection", "size", layout.size);
+      if (
+        this.runtime.call("ghostty_terminal_get", this.terminal, 31, selection) !== GHOSTTY_SUCCESS
+      ) {
+        return null;
+      }
+      const start = this.pointFromGridRef(selection + layout.fields.start!.offset, 2);
+      const end = this.pointFromGridRef(selection + layout.fields.end!.offset, 2);
+      return start && end ? { start, end } : null;
+    } finally {
+      this.runtime.free(selection, layout.size);
+    }
+  }
+
   selectWord(col: number, row: number): GhosttySelectionRange | null {
     return this.selectAt(
       "GhosttyTerminalSelectWordOptions",
@@ -882,32 +904,33 @@ export class GhosttyTerminalCore {
     optionsView.setUint8(9, 1);
     optionsView.setUint32(12, 0, true);
     const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    const sizeResult = this.runtime.call(
-      "ghostty_terminal_selection_format_buf",
-      this.terminal,
-      options,
-      0,
-      0,
-      written,
-    );
-    const outputSize = this.runtime.view(written, 4).getUint32(0, true);
-    let text = "";
-    if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
-      const output = this.runtime.alloc(outputSize);
-      const result = this.runtime.call(
+    // Terminal output reads the selection on every update, so format straight
+    // into a kept buffer; a size query first would format the text twice.
+    const format = () =>
+      this.runtime.call(
         "ghostty_terminal_selection_format_buf",
         this.terminal,
         options,
-        output,
-        outputSize,
+        this.selectionBuffer,
+        this.selectionCapacity,
         written,
       );
-      const outputLength = this.runtime.view(written, 4).getUint32(0, true);
-      if (result === GHOSTTY_SUCCESS) {
-        text = decoder.decode(this.runtime.bytes(output, outputLength));
-      }
-      this.runtime.free(output, outputSize);
+    let result = format();
+    const required = this.runtime.view(written, 4).getUint32(0, true);
+    if (result === GHOSTTY_OUT_OF_SPACE && required > 0) {
+      const capacity = Math.max(required, this.selectionCapacity * 2);
+      // Allocate first: if it throws, the core must not keep a freed pointer.
+      const buffer = this.runtime.alloc(capacity);
+      if (this.selectionBuffer) this.runtime.free(this.selectionBuffer, this.selectionCapacity);
+      this.selectionBuffer = buffer;
+      this.selectionCapacity = capacity;
+      result = format();
     }
+    const length = this.runtime.view(written, 4).getUint32(0, true);
+    const text =
+      result === GHOSTTY_SUCCESS && length > 0
+        ? decoder.decode(this.runtime.bytes(this.selectionBuffer, length))
+        : "";
     this.runtime.call("ghostty_wasm_free_usize", written);
     this.runtime.free(options, SELECTION_FORMAT_OPTIONS_SIZE);
     return text;
@@ -961,6 +984,7 @@ export class GhosttyTerminalCore {
     }
     if (this.scratch) this.runtime.free(this.scratch, 16);
     if (this.graphemes) this.runtime.free(this.graphemes, this.graphemeCapacity);
+    if (this.selectionBuffer) this.runtime.free(this.selectionBuffer, this.selectionCapacity);
     for (const slot of [
       this.mouseEventSlot,
       this.mouseEncoderSlot,
