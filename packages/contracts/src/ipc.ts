@@ -625,6 +625,12 @@ export interface DesktopPreviewOpenLinkEvent {
   background: boolean;
 }
 
+export interface DesktopPreviewFindResultEvent {
+  tabId: string;
+  activeMatchOrdinal: number;
+  matches: number;
+}
+
 export const DesktopPreviewRecordingInputSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("pointer"),
@@ -999,6 +1005,13 @@ export const DesktopPreviewSetZoomFactorInputSchema = Schema.Struct({
   zoomFactor: Schema.Number.check(Schema.isGreaterThan(0)),
 });
 
+export const DesktopPreviewFindInPageInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  text: Schema.NonEmptyString.check(Schema.isMaxLength(1000)),
+  forward: Schema.Boolean,
+  newSession: Schema.Boolean,
+});
+
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   audioMuted: Schema.Boolean,
@@ -1171,6 +1184,12 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
+  findInPage: (
+    tabId: string,
+    text: string,
+    options: { forward: boolean; newSession: boolean },
+  ) => Promise<void>;
+  stopFindInPage: (tabId: string) => Promise<void>;
   openDevTools: (tabId: string) => Promise<void>;
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   clearCache: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
@@ -1218,6 +1237,7 @@ export interface DesktopPreviewBridge {
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
   onOpenLink: (listener: (event: DesktopPreviewOpenLinkEvent) => void) => () => void;
+  onFindResult: (listener: (event: DesktopPreviewFindResultEvent) => void) => () => void;
 }
 
 export type ConfirmDialogVariant = "default" | "destructive";

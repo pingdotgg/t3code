@@ -1,4 +1,4 @@
-import { AuthPreviewOperateScope } from "@t3tools/contracts";
+import { AuthPreviewOperateScope, type KeybindingCommand } from "@t3tools/contracts";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
@@ -14,7 +14,7 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope } from "../state/session";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
-import { dispatchPreviewAction } from "../components/preview/previewActionBus";
+import { dispatchPreviewAction, type PreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -29,6 +29,15 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+
+const PREVIEW_SHORTCUT_ACTIONS: Partial<Record<KeybindingCommand, PreviewAction>> = {
+  "preview.refresh": "refresh",
+  "preview.focusUrl": "focus-url",
+  "preview.zoomIn": "zoom-in",
+  "preview.zoomOut": "zoom-out",
+  "preview.resetZoom": "reset-zoom",
+  "preview.find": "find",
+};
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -145,27 +154,12 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (
-        command === "preview.refresh" ||
-        command === "preview.focusUrl" ||
-        command === "preview.zoomIn" ||
-        command === "preview.zoomOut" ||
-        command === "preview.resetZoom"
-      ) {
+      const previewAction = command ? PREVIEW_SHORTCUT_ACTIONS[command] : undefined;
+      if (previewAction) {
         event.preventDefault();
         event.stopPropagation();
         if (!canOperatePreview) return;
-        const action =
-          command === "preview.refresh"
-            ? "refresh"
-            : command === "preview.focusUrl"
-              ? "focus-url"
-              : command === "preview.zoomIn"
-                ? "zoom-in"
-                : command === "preview.zoomOut"
-                  ? "zoom-out"
-                  : "reset-zoom";
-        dispatchPreviewAction(action);
+        dispatchPreviewAction(previewAction);
       }
     };
 
