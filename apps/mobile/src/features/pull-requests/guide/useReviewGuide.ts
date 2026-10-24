@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { usePullRequestConnected } from "../usePullRequestConnected";
 import { composerPullRequests } from "../../../state/pull-requests";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -34,13 +34,15 @@ export function useReviewGuide(params: PullRequestParams) {
   const pending = useRef(false);
   const running = starting || query.data?.run?._tag === "Running";
   const refresh = query.refresh;
-  useFocusEffect(() => {
-    if (!enabled) return;
-    refresh();
-    if (!running) return;
-    const timer = setInterval(refresh, 5_000);
-    return () => clearInterval(timer);
-  });
+  useFocusEffect(
+    useCallback(() => {
+      if (!enabled) return;
+      refresh();
+      if (!running) return;
+      const timer = setInterval(refresh, 5_000);
+      return () => clearInterval(timer);
+    }, [enabled, refresh, running]),
+  );
   const write = async () => {
     if (!enabled || !canWrite || running || pending.current) return;
     pending.current = true;
