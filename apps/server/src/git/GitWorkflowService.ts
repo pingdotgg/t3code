@@ -59,6 +59,10 @@ export class GitWorkflowService extends Context.Service<
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
+    readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
+    /** The checked-out branch without reading status; null when detached or not a repository. */
+    readonly checkedOutBranch: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
@@ -366,6 +370,31 @@ export const make = Effect.gen(function* () {
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     invalidateStatus: gitManager.invalidateStatus,
+    headPath: (cwd) =>
+      git
+        .execute({
+          operation: "GitWorkflowService.headPath",
+          cwd,
+          args: ["rev-parse", "--path-format=absolute", "--git-path", "HEAD"],
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)),
+          Effect.orElseSucceed(() => null),
+        ),
+    checkedOutBranch: (cwd) =>
+      git
+        .execute({
+          operation: "GitWorkflowService.checkedOutBranch",
+          cwd,
+          // symbolic-ref --short disambiguates against same-named tags (heads/main);
+          // status porcelain reports the bare branch name, which this must match.
+          args: ["branch", "--show-current"],
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)),
+        ),
     pullCurrentBranch: (cwd) =>
       ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),

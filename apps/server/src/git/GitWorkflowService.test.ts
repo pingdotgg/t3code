@@ -12,6 +12,23 @@ import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
+const testLayer = GitWorkflowService.layer.pipe(
+  Layer.provide(
+    Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+      resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+    }),
+  ),
+  Layer.provide(Layer.mock(GitManager.GitManager)({})),
+  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-ref-named-" }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
+  ),
+  Layer.provideMerge(NodeServices.layer),
+);
+
 it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
   it.effect("finds a name among the refs of every namespace", () =>
     Effect.gen(function* () {
@@ -33,26 +50,33 @@ it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
         (refName) => workflow.hasRefNamed({ cwd, refName }),
       );
       assert.deepEqual(found, [true, true, true, true, false, false]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        GitWorkflowService.layer.pipe(
-          Layer.provide(
-            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-              resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
-            }),
-          ),
-          Layer.provide(Layer.mock(GitManager.GitManager)({})),
-          Layer.provideMerge(GitVcsDriver.layer),
-          Layer.provideMerge(VcsProcess.layer),
-          Layer.provideMerge(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-ref-named-" }).pipe(
-              Layer.provide(NodeServices.layer),
-            ),
-          ),
-          Layer.provideMerge(NodeServices.layer),
-        ),
-      ),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("reports the checked-out branch by the name status uses", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checked-out-" });
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const git = (args: ReadonlyArray<string>) =>
+        driver.execute({ operation: "test.setupRepo", cwd, args: [...args] });
+      yield* git(["init", "-b", "main"]);
+      yield* git([
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+      ]);
+      yield* git(["tag", "main"]);
+      const onBranch = yield* workflow.checkedOutBranch(cwd);
+      yield* git(["checkout", "--detach"]);
+      const detached = yield* workflow.checkedOutBranch(cwd);
+      assert.deepEqual([onBranch, detached], ["main", null]);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 });

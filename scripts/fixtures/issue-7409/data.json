@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-01-01T12:00:00Z",
+  "author": "Synthetic Evidence",
+  "email": "fixture@example.invalid",
+  "featureBranch": "repro/7409-long-feature-name-for-responsive-branch-label",
+  "files": {
+    "README.md": "# Synthetic checkout fixture\n\nThis repository contains only invented evidence data.\n",
+    "notes.txt": "A stable file for the dirty-worktree control.\n"
+  },
+  "featureFile": "Feature branch content for changed-file totals.\n",
+  "projects": [
+    {
+      "id": "74090000-0000-4000-8000-000000000001",
+      "title": "Checkout fixture",
+      "directory": "regular"
+    },
+    {
+      "id": "74090000-0000-4000-8000-000000000002",
+      "title": "Linked checkout fixture",
+      "directory": "linked"
+    },
+    {
+      "id": "74090000-0000-4000-8000-000000000003",
+      "title": "Non-repository control",
+      "directory": "nonrepo"
+    }
+  ]
+}
