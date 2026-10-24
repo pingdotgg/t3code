@@ -1,8 +1,10 @@
+import { adjacentModelPickerProvider } from "./modelPickerNavigation";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
+  type ProviderOptionSelection,
   type ResolvedKeybindingsConfig,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
@@ -23,13 +25,17 @@ import {
 } from "react";
 import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
-import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { ModelPickerSidebar, type ModelPickerRailSelection } from "./ModelPickerSidebar";
+import { ParetoListRow, ParetoPanelHeader, useParetoPoints } from "./ModelPickerPareto";
+import type { ParetoPoint } from "./ModelPickerPareto.logic";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerParetoKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
+  parseModelPickerParetoKey,
 } from "./modelPickerKeys";
 import { rankModelPickerSearch } from "./modelPickerSearch";
 import {
@@ -131,34 +137,6 @@ function shouldOfferModelPickerSetup(
   );
 }
 
-function adjacentModelPickerProvider(input: {
-  entries: ReadonlyArray<ProviderInstanceEntry>;
-  selectedInstanceId: ProviderInstanceId | "favorites";
-  direction: 1 | -1;
-  disabledInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
-  selectableUnavailableInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
-}) {
-  const providers: Array<ProviderInstanceId | "favorites"> = [
-    "favorites",
-    ...input.entries
-      .filter(
-        (entry) =>
-          !input.disabledInstanceIds?.has(entry.instanceId) &&
-          (isProviderInstancePickerReady(entry) ||
-            input.selectableUnavailableInstanceIds?.has(entry.instanceId)),
-      )
-      .map((entry) => entry.instanceId),
-  ];
-  const index = providers.indexOf(input.selectedInstanceId);
-  return providers[
-    index < 0
-      ? input.direction === 1
-        ? 0
-        : providers.length - 1
-      : (index + input.direction + providers.length) % providers.length
-  ]!;
-}
-
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const MODEL_LIST_ESTIMATED_ITEM_SIZE = 52;
 
@@ -191,7 +169,9 @@ function ModelPickerProviderNotices({
   updateRequiredNotices,
   onRequestClose,
   onOpenProviderSetup,
+  emptyMessage = "No models found",
 }: {
+  emptyMessage?: string;
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
   updateRequiredNotices: ReadonlyArray<{ instanceId: ProviderInstanceId; notice: string }>;
   onRequestClose: (() => void) | undefined;
@@ -220,7 +200,7 @@ function ModelPickerProviderNotices({
           ))}
         </div>
       ) : (
-        <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
+        <ComboboxEmpty className="empty:h-0">{emptyMessage}</ComboboxEmpty>
       )}
       {updateRequiredNotices.map(({ instanceId, notice }) => (
         <p
@@ -346,7 +326,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
-  onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
+  onToggleModel?: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -357,6 +341,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  /** Selects a model with option overrides. The Pareto line view needs it to set effort. */
+  onInstanceModelSelectionChange?: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
+  /** Closes the picker and opens the Pareto line chart. */
+  onOpenParetoChart?: () => void;
 }) {
   const {
     keybindings: providedKeybindings,
@@ -364,6 +356,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     instanceEntries,
     getModelDisabledReason,
     onInstanceModelChange,
+    onInstanceModelSelectionChange,
     onToggleModel,
     onRequestClose,
     onOpenProviderSetup,
@@ -417,18 +410,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       activeEntry,
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
     );
-  const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
-    () => {
-      if (
-        props.lockedProvider !== null ||
-        activeInstanceHasSelectableUnavailableModel ||
-        activeInstanceNeedsSetup
-      ) {
-        return props.activeInstanceId;
-      }
-      return favorites.length > 0 ? "favorites" : props.activeInstanceId;
-    },
-  );
+  const [selectedInstanceId, setSelectedInstanceId] = useState<ModelPickerRailSelection>(() => {
+    if (
+      props.lockedProvider !== null ||
+      activeInstanceHasSelectableUnavailableModel ||
+      activeInstanceNeedsSetup
+    ) {
+      return props.activeInstanceId;
+    }
+    return favorites.length > 0 ? "favorites" : props.activeInstanceId;
+  });
   const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
@@ -448,7 +439,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     searchInputRef.current?.focus({ preventScroll: true });
   };
 
-  const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
+  const handleSelectInstance = (instanceId: ModelPickerRailSelection) => {
     setSelectedInstanceId(instanceId);
     window.requestAnimationFrame(() => {
       focusSearchInput();
@@ -586,6 +577,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const isLocked = lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
+  const { benchmarks: modelBenchmarks, frontier: paretoFrontierPoints } = useParetoPoints(
+    instanceEntries,
+    getModelDisabledReason,
+    onInstanceModelSelectionChange !== undefined && !isLocked,
+  );
+  const showPareto = modelBenchmarks !== undefined;
+  const isParetoSelected = showPareto && selectedInstanceId === "pareto" && !isSearching;
   const lockedDisabledInstanceIds = (() => {
     if (!isLocked) {
       return undefined;
@@ -633,6 +631,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }));
     }
 
+    if (selectedInstanceId === "pareto") return [];
     if (lockedProvider !== null) {
       result = result.filter((m) => matchesLockedProvider(m));
       if (selectedInstanceId === "favorites") {
@@ -654,7 +653,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   })();
 
   const legacySection = (() => {
-    if (isSearching || selectedInstanceId === "favorites") {
+    if (isSearching || selectedInstanceId === "favorites" || selectedInstanceId === "pareto") {
       return null;
     }
     const currentModels: ModelPickerItem[] = [];
@@ -686,9 +685,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   })();
 
   const selectedEntry =
-    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
+    selectedInstanceId === "favorites" || selectedInstanceId === "pareto"
+      ? undefined
+      : entryByInstanceId.get(selectedInstanceId);
   const providerSetupEntries =
-    !isSearching && canOpenProviderSetup
+    !isSearching && selectedInstanceId !== "pareto" && canOpenProviderSetup
       ? instanceEntries.filter(
           (entry) =>
             matchesLockedProvider(entry) &&
@@ -710,12 +711,30 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return notice ? [{ instanceId: entry.instanceId, notice }] : [];
   });
 
+  const selectParetoKey = (key: string, additive = false): boolean => {
+    const index = parseModelPickerParetoKey(key);
+    if (index === null) return false;
+    const point: ParetoPoint | undefined = paretoFrontierPoints[index];
+    if (!point) return true;
+    const { instanceId, driverKind } = point.entry;
+    const options = modelOptionsByInstance.get(instanceId) ?? [];
+    const model = resolveSelectableModel(driverKind, point.model.slug, options);
+    if (!model) return true;
+    if (additive && onToggleModel) onToggleModel(instanceId, model, point.options);
+    else onInstanceModelSelectionChange?.(instanceId, model, point.options);
+    return true;
+  };
   // The first selectable models get the numbered jump shortcuts, in list order.
-  const modelJumpModelKeys = visibleModels
-    .filter((model) => !getModelDisabledReason?.(model.instanceId, model.slug))
-    .slice(0, MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.length)
-    .map((model) => modelPickerModelKey(model.instanceId, model.slug));
+  const modelJumpModelKeys = isParetoSelected
+    ? paretoFrontierPoints
+        .slice(0, MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.length)
+        .map((_, index) => modelPickerParetoKey(index))
+    : visibleModels
+        .filter((model) => !getModelDisabledReason?.(model.instanceId, model.slug))
+        .slice(0, MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.length)
+        .map((model) => modelPickerModelKey(model.instanceId, model.slug));
   const allItemKeys = ((): string[] => [
+    ...paretoFrontierPoints.map((_, index) => modelPickerParetoKey(index)),
     ...flatModels.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
     ...new Set(
       flatModels
@@ -724,6 +743,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     ),
   ])();
   const filteredItemKeys = ((): string[] => {
+    if (isParetoSelected)
+      return paretoFrontierPoints.map((_, index) => modelPickerParetoKey(index));
     const modelKeys = visibleModels.map((model) =>
       modelPickerModelKey(model.instanceId, model.slug),
     );
@@ -746,6 +767,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     props.terminalOpen,
   );
   const modelListExtraData = {
+    paretoFrontierPoints,
     favoritesSet,
     modelJumpLabelByKey,
     activeModelKey,
@@ -770,6 +792,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         direction: command === "modelPicker.nextProvider" ? 1 : -1,
         disabledInstanceIds: lockedDisabledInstanceIds,
         selectableUnavailableInstanceIds,
+        showPareto,
       });
       setSearchQuery("");
       handleSelectInstance(next);
@@ -783,7 +806,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     event.stopPropagation();
 
     const targetModelKey = modelJumpModelKeys[jumpIndex];
-    if (!targetModelKey) {
+    if (!targetModelKey || selectParetoKey(targetModelKey)) {
       return;
     }
     const model = parseModelPickerModelKey(targetModelKey);
@@ -809,6 +832,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             onFocusSearch={focusSearchInput}
             instanceEntries={sidebarInstanceEntries}
             showFavorites
+            showPareto={showPareto}
             {...(selectableUnavailableInstanceIds ? { selectableUnavailableInstanceIds } : {})}
             {...(lockedDisabledInstanceIds
               ? {
@@ -844,7 +868,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ? (value.find((key) => !selectedModelKeySet.has(key)) ??
                 [...selectedModelKeySet].find((key) => !value.includes(key)))
               : value;
-            if (typeof modelKey !== "string") {
+            const additive = "shiftKey" in details.event && details.event.shiftKey === true;
+            if (typeof modelKey !== "string" || selectParetoKey(modelKey, additive)) {
               return;
             }
             const legacyInstanceId = parseModelPickerLegacySectionKey(modelKey);
@@ -854,11 +879,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             }
             const model = parseModelPickerModelKey(modelKey);
             if (model) {
-              handleModelSelect(
-                model.slug,
-                model.instanceId,
-                "shiftKey" in details.event && details.event.shiftKey === true,
-              );
+              handleModelSelect(model.slug, model.instanceId, additive);
             }
           }}
         >
@@ -909,6 +930,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
                   e.preventDefault();
                   e.stopPropagation();
+                  if (selectParetoKey(highlightedModelKeyRef.current, e.shiftKey)) {
+                    return;
+                  }
                   const legacyInstanceId = parseModelPickerLegacySectionKey(
                     highlightedModelKeyRef.current,
                   );
@@ -927,12 +951,30 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             />
+            {isParetoSelected && modelBenchmarks ? (
+              <ParetoPanelHeader
+                benchmarks={modelBenchmarks}
+                onOpenChart={paretoFrontierPoints.length > 0 ? props.onOpenParetoChart : undefined}
+              />
+            ) : null}
 
             <ModelPickerList
               listRef={modelListRef}
               itemKeys={filteredItemKeys}
               extraData={modelListExtraData}
               renderItem={({ item: modelKey, index }) => {
+                const paretoIndex = parseModelPickerParetoKey(modelKey);
+                if (paretoIndex !== null) {
+                  const point = paretoFrontierPoints[paretoIndex];
+                  return point ? (
+                    <ParetoListRow
+                      index={index}
+                      value={modelKey}
+                      point={point}
+                      jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+                    />
+                  ) : null;
+                }
                 if (legacySection?.key === modelKey) {
                   return (
                     <ComboboxItem
@@ -997,6 +1039,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               }}
             />
             <ModelPickerProviderNotices
+              emptyMessage={
+                isParetoSelected
+                  ? "None of your ready models have benchmark scores yet."
+                  : "No models found"
+              }
               setupEntries={providerSetupEntries}
               updateRequiredNotices={updateRequiredNotices}
               onRequestClose={onRequestClose}
