@@ -84,7 +84,7 @@ describe("Antigravity process environment", () => {
     expect(baseEnv).toEqual(original);
     expect(spawn).toEqual({
       command: "/release/acp",
-      args: ["--uid="],
+      args: ["--uid=", "--loas_pwd_fallback_in_corp"],
       cwd: "/project",
       extendEnv: false,
       env: {

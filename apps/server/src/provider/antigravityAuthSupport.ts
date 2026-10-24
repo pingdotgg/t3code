@@ -445,7 +445,9 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    args: input.profile.platform === "linux" ? ["--uid="] : [],
+    // OS Login users have no /etc/passwd entry, and the runtime's bundled libraries cannot
+    // load libnss_oslogin, so without the fallback flag getpwuid fails and the runtime exits 255.
+    args: input.profile.platform === "linux" ? ["--uid=", "--loas_pwd_fallback_in_corp"] : [],
     cwd: input.cwd,
     env: {
       ...antigravityEnvironment(
