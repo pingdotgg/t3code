@@ -130,6 +130,8 @@ export const ProviderAuthState = Schema.Struct({
   authorizationUrl: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
+  // Callback validation feedback while the sign-in flow keeps waiting.
+  inputError: Schema.optionalKey(Schema.NullOr(Schema.String)),
   // Newer servers may add method types, interactions, or owners; older
   // clients drop what they cannot decode instead of rejecting the state.
   methods: Schema.optionalKey(

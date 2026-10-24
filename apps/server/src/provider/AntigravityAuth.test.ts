@@ -254,6 +254,56 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
+  it.effect("shows Antigravity's sanitized sign-in rejection only to the owner", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage:
+            "Onboarding failed: User is ineligible for free-tier.\n  Reason: Your current account is not eligible for Antigravity. Try signing in with another personal Google account.\u0007 ",
+          method: "authenticate",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(
+        failed.message,
+        "Onboarding failed: User is ineligible for free-tier. Reason: Your current account is not eligible for Antigravity. Try signing in with another personal Google account.",
+      );
+      const other = yield* phase(harness.auth, "failed", otherOwner);
+      assert.equal(other.message, "Sign-in failed in another client.");
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("keeps sensitive authenticate rejection details out of the sign-in status", () =>
+    Effect.gen(function* () {
+      for (const errorMessage of [
+        `Sign-in failed at ${callbackUrl}`,
+        "Redirect to http%3A%2F%2F127.0.0.1 failed",
+        "Rejected key sk-123456789012345678901234567890",
+        "Account person@example.com is not eligible",
+        "Onboarding failed. Visit support.google.com for help.",
+        "Onboarding failed: See https:example.com for help.",
+        "Authentication failed: token sk-live-abcd-efgh",
+      ]) {
+        const harness = yield* makeHarness();
+        yield* harness.auth.controller.start(owner);
+        yield* phase(harness.auth, "waiting");
+        yield* Deferred.fail(
+          harness.authenticated,
+          new AcpErrors.AcpRequestError({ code: -32603, errorMessage, method: "authenticate" }),
+        );
+        const failed = yield* phase(harness.auth, "failed");
+        assert.equal(failed.message, "Google sign-in failed. Start sign-in again.", errorMessage);
+        yield* Deferred.await(harness.closed);
+      }
+    }),
+  );
+
   it.effect("accepts direct local or cached completion without a callback RPC", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
@@ -266,7 +316,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
-  it.effect("rejects mismatched callbacks without sending any HTTP request", () =>
+  it.effect("retains callback errors only for the owner until a valid callback is accepted", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       const state = yield* harness.auth.controller.start(owner);
@@ -281,9 +331,26 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
           .complete(owner, { flowId: state.flowId!, callbackUrl: invalidUrl })
           .pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(result));
+        const waiting = yield* phase(harness.auth, "waiting");
+        assert.equal(
+          waiting.inputError,
+          "This redirect URL does not belong to the current sign-in.",
+        );
+        assert.equal(waiting.flowId, state.flowId);
+        assert.equal(waiting.authorizationUrl, authorizationUrl);
+        const other = yield* phase(harness.auth, "waiting", otherOwner);
+        assert.notExists(other.inputError);
+        assert.equal(other.message, "Sign-in is in progress in another client.");
       }
       assert.equal(harness.forwarded(), 0);
-      assert.equal((yield* phase(harness.auth, "waiting")).authorizationUrl, authorizationUrl);
+      const verifying = yield* harness.auth.controller.complete(owner, {
+        flowId: state.flowId!,
+        callbackUrl,
+      });
+      assert.equal(verifying.phase, "verifying");
+      assert.notExists(verifying.inputError);
+      assert.equal(harness.forwarded(), 1);
+      assert.notExists((yield* phase(harness.auth, "verifying")).inputError);
       yield* harness.auth.controller.cancel(owner, state.flowId!);
     }),
   );
@@ -327,9 +394,19 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         .cancel(otherOwner, state.flowId!)
         .pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(wrongOwner));
+      const rejected = yield* harness.auth.controller
+        .complete(owner, { flowId: state.flowId!, callbackUrl: "not a URL" })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(rejected));
+      assert.equal(
+        (yield* phase(harness.auth, "waiting")).inputError,
+        "Paste the complete redirect URL from the Google sign-in page.",
+      );
       const cancelled = yield* harness.auth.controller.cancel(owner, state.flowId!);
       assert.equal(cancelled.phase, "cancelled");
       assert.isNull(cancelled.authorizationUrl);
+      assert.notExists(cancelled.inputError);
+      assert.notExists((yield* phase(harness.auth, "cancelled")).inputError);
       assert.equal(harness.forwarded(), 0);
       yield* Deferred.await(harness.closed);
       assert.deepEqual(harness.catalog(), ["previous-account-model"]);
