@@ -1071,6 +1071,97 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
     ),
 );
 
+it.live("rejects a workspace binding when a provider switch invalidates its continuation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "workspace-continuation-provider-switch";
+      const sourceCwd = yield* checkpointWorkspace(`${name}-source`);
+      const targetCwd = yield* checkpointWorkspace(`${name}-target`);
+      const threadId = ThreadId.make(name);
+      const targetId = ProviderInstanceId.make(`${name}-target`);
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: false,
+      });
+      const registry = ProviderAdapterRegistry.layerFromAdapters([
+        makeRestartAdapter(state),
+        makeRestartAdapter(state, pooledCapabilities, targetId),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: name,
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: sourceCwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const beforeStart = yield* sink.latestSequence({ threadId });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${name}:start`),
+          threadId,
+          messageId: MessageId.make(`${name}:start`),
+          text: "start",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* sink.stream({ threadId, afterSequence: beforeStart }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* orchestrator.dispatch({
+          type: "provider.switch",
+          commandId: CommandId.make(`${name}:switch`),
+          threadId,
+          modelSelection: { instanceId: targetId, model: initialSelection.model },
+        });
+        const switched = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(switched.thread.providerInstanceId, targetId);
+        assert.equal(switched.runs[0]?.status, "running");
+        // Leave the detach in the outbox: its old run still blocks this handoff.
+        const failed = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`${name}:bind`),
+            threadId,
+            worktreePath: targetCwd,
+            expectedWorktreePath: sourceCwd,
+            worktreeContinuation: {
+              messageId: MessageId.make(`${name}:continue`),
+              text: "handoff continuation",
+            },
+          })
+          .pipe(Effect.flip);
+        assert.include(String(failed.cause), "workspace continuation could be queued");
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(after.thread.worktreePath, sourceCwd);
+        assert.lengthOf(after.runs, switched.runs.length);
+        assert.isFalse(after.messages.some((message) => message.id === `${name}:continue`));
+      }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, registry)));
+    }),
+  ),
+);
+
 it.live.each(["exclusive", "shared"] as const)(
   "keeps a delegated %s workspace handoff pending through its atomic continuation",
   (sessionMode) =>

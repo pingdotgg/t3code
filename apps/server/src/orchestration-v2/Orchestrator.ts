@@ -6491,6 +6491,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) ||
         (yield* stopReachedRun(command, command.threadId, source.id))
       ) {
+        if (worktreeContinuationOfRunId !== undefined) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The active run changed before the workspace continuation could be queued.",
+          });
+        }
         // Preserve the current row so stale automatic deliveries receive an
         // accepted receipt without changing work or repeatedly retrying.
         yield* emit(

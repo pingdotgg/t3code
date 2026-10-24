@@ -622,33 +622,32 @@ export const layerWithOptions = (
           ),
         );
 
-      const failSubscribers = (
+      const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
         entry: LiveSessionEntry,
         error: ProviderAdapter.ProviderAdapterV2Error,
         threadId?: ThreadId,
-      ) =>
-        Effect.gen(function* () {
-          const subscribers = yield* Ref.modify(entry.eventSubscribers, (current) => {
-            const failed: Array<ProviderSessionEventSubscriber> = [];
-            const remaining = new Map(current);
-            for (const [id, subscriber] of current) {
-              if (threadId === undefined || subscriber.threadId === threadId) {
-                failed.push(subscriber);
-                remaining.delete(id);
-              }
+      ) {
+        const subscribers = yield* Ref.modify(entry.eventSubscribers, (current) => {
+          const failed: Array<ProviderSessionEventSubscriber> = [];
+          const remaining = new Map(current);
+          for (const [id, subscriber] of current) {
+            if (threadId === undefined || subscriber.threadId === threadId) {
+              failed.push(subscriber);
+              remaining.delete(id);
             }
-            return [failed, remaining] as const;
-          });
-          yield* Effect.forEach(
-            subscribers,
-            ({ queue }) =>
-              Queue.offer(queue, {
-                type: "failure",
-                cause: Cause.fail(error),
-              }),
-            { discard: true },
-          );
+          }
+          return [failed, remaining] as const;
         });
+        yield* Effect.forEach(
+          subscribers,
+          ({ queue }) =>
+            Queue.offer(queue, {
+              type: "failure",
+              cause: Cause.fail(error),
+            }),
+          { discard: true },
+        );
+      });
 
       // Server shutdown interrupts subscribers rather than ending them: a
       // cleanly ended stream without a terminal fails its run, while an
@@ -2034,9 +2033,7 @@ export const layerWithOptions = (
 
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
-          subscribers: Ref.Ref<
-            ReadonlyMap<number, ProviderSessionEventSubscriber>
-          >,
+          subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventSubscriber>>,
           threadId?: ThreadId,
         ): Effect.fn.Return<ProviderAdapter.ProviderAdapterV2EventSubscription> {
           const queue = yield* Queue.unbounded<ProviderSessionEventSignal, Cause.Done>();
