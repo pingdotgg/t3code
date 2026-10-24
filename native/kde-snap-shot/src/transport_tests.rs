@@ -207,6 +207,13 @@ impl Drop for Fixture {
     }
 }
 
+/// FLEVEL from the IDAT zlib header: 1 for levels 2-5, 2 for the slow default level 6.
+const FAST_ZLIB_LEVEL: u8 = 1;
+fn zlib_level(png: &[u8]) -> u8 {
+    let idat = png.windows(4).position(|tag| tag == b"IDAT").unwrap();
+    png[idat + 5] >> 6
+}
+
 #[test]
 fn permission_probe_never_captures_and_rejects_denial() {
     let f = Fixture::new();
@@ -248,6 +255,8 @@ fn captures_pinned_window_through_real_fd_and_cleans_scripts() {
     let mut pixels = vec![0; decoder.output_buffer_size().unwrap()];
     decoder.next_frame(&mut pixels).unwrap();
     assert_eq!(pixels, [0x11, 0x22, 0x33, 255, 0x44, 0x55, 0x66, 255]);
+    let png = std::fs::read(f.directory.join("capture.png")).unwrap();
+    assert_eq!(zlib_level(&png), FAST_ZLIB_LEVEL);
 }
 
 #[test]

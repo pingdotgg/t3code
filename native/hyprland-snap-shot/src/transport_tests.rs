@@ -350,6 +350,13 @@ impl Dispatch<Frame, ()> for State {
     }
 }
 
+/// FLEVEL from the IDAT zlib header: 1 for levels 2-5, 2 for the slow default level 6.
+const FAST_ZLIB_LEVEL: u8 = 1;
+fn zlib_level(png: &[u8]) -> u8 {
+    let idat = png.windows(4).position(|tag| tag == b"IDAT").unwrap();
+    png[idat + 5] >> 6
+}
+
 #[test]
 fn exports_exact_window_over_real_fd_transport() {
     let (fixture, connection) = Fixture::start(Mode::Success);
@@ -364,6 +371,8 @@ fn exports_exact_window_over_real_fd_transport() {
     let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
     reader.next_frame(&mut pixels).unwrap();
     assert_eq!(pixels, [10, 20, 30, 255, 40, 50, 60, 255]);
+    let png = std::fs::read(directory.path().join("capture.png")).unwrap();
+    assert_eq!(zlib_level(&png), FAST_ZLIB_LEVEL);
 }
 #[test]
 fn failed_export_produces_no_image_and_no_second_capture() {
