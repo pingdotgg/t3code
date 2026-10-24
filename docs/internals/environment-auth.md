@@ -85,6 +85,14 @@ transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
 
+Desktop launches carry a fresh public `desktopLaunchId`, echoed in the environment
+descriptor and checked before readiness, fresh bearer exchanges in desktop main,
+and renderer secondary bootstrap exchanges (including retries). This detects
+accidental port collisions, including delayed WSL localhost relays; it does not
+authenticate ownership. A process that copies the id can pass, and the descriptor
+GET/token POST race remains. Cached bearers continue to be reused without a new
+check.
+
 ### Reusable dev credential
 
 Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across

@@ -24,7 +24,6 @@ import {
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
 } from "@t3tools/contracts";
-import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -67,7 +66,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // when false `env` is passed verbatim. WSL mode opts out so a leaking
   // T3CODE_HOME can't pin the WSL backend to /mnt/c/...\.t3.
   readonly extendEnv: boolean;
-  readonly bootstrap: DesktopBackendBootstrapValue;
+  readonly bootstrap: DesktopBackendBootstrapValue & { readonly desktopLaunchId: string };
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
@@ -85,6 +84,7 @@ export interface PreflightFailure {
 interface BackendProcessExit {
   readonly code: Option.Option<number>;
   readonly reason: string;
+  readonly portTaken: boolean;
 }
 
 const backendProcessContextSchema = {
@@ -243,6 +243,8 @@ export interface BackendInstanceSpec {
   readonly onShutdown?: () => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
+  // Return true after moving to another port to restart; false leaves the instance stopped.
+  readonly onPortTaken?: (port: number) => Effect.Effect<boolean>;
 }
 
 interface ActiveBackendRun {
@@ -312,27 +314,57 @@ const closeRun = (
   );
 };
 
-const waitForHttpReady = (
-  options: BackendProcessContext & { readonly timeout: Duration.Duration },
-): Effect.Effect<void, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
-  const readinessUrl = new URL(BACKEND_READINESS_PATH, options.httpBaseUrl);
-  return waitForHttpReadyShared({
-    baseUrl: options.httpBaseUrl.href,
-    path: BACKEND_READINESS_PATH,
-    timeoutMs: Duration.toMillis(options.timeout),
-    intervalMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_INTERVAL),
-    probeTimeoutMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
-    makeError: ({ cause }) =>
-      new BackendReadinessTimeoutError({
-        executablePath: options.executablePath,
-        entryPath: options.entryPath,
-        cwd: options.cwd,
-        httpBaseUrl: options.httpBaseUrl,
-        readinessUrl,
-        timeoutMs: Duration.toMillis(options.timeout),
-        cause,
-      }),
+const BackendLaunchIdentity = Schema.fromJsonString(
+  Schema.Struct({ desktopLaunchId: Schema.String }),
+);
+const decodeBackendLaunchIdentity = Schema.decodeUnknownOption(BackendLaunchIdentity);
+
+type BackendOwnership = "launched" | "foreign";
+
+// Not an authenticated handshake; see docs/internals/environment-auth.md.
+export const checkBackendOwnership = Effect.fn("desktop.backend.checkOwnership")(function* (input: {
+  readonly httpBaseUrl: URL;
+  readonly desktopLaunchId: string;
+}) {
+  // A 5xx can be temporary during startup; permanent HTTP failures identify a foreign listener.
+  const client = (yield* HttpClient.HttpClient).pipe(
+    HttpClient.filterStatus((status) => status < 500),
+  );
+  const response = yield* client.get(new URL(BACKEND_READINESS_PATH, input.httpBaseUrl));
+  if (response.status < 200 || response.status >= 300) {
+    return "foreign" as const;
+  }
+  const body = yield* response.text;
+  return Option.match(decodeBackendLaunchIdentity(body), {
+    onNone: (): BackendOwnership => "foreign",
+    onSome: (identity): BackendOwnership =>
+      identity.desktopLaunchId === input.desktopLaunchId ? "launched" : "foreign",
   });
+}, Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT));
+
+const waitForHttpReady = (
+  options: BackendProcessContext & {
+    readonly timeout: Duration.Duration;
+    readonly desktopLaunchId: string;
+  },
+): Effect.Effect<BackendOwnership, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
+  const readinessUrl = new URL(BACKEND_READINESS_PATH, options.httpBaseUrl);
+  return checkBackendOwnership(options).pipe(
+    Effect.retry({ schedule: Schedule.spaced(DEFAULT_BACKEND_READINESS_INTERVAL) }),
+    Effect.timeout(options.timeout),
+    Effect.mapError(
+      (cause) =>
+        new BackendReadinessTimeoutError({
+          executablePath: options.executablePath,
+          entryPath: options.entryPath,
+          cwd: options.cwd,
+          httpBaseUrl: options.httpBaseUrl,
+          readinessUrl,
+          timeoutMs: Duration.toMillis(options.timeout),
+          cause,
+        }),
+    ),
+  );
 };
 
 function drainBackendOutput(
@@ -542,30 +574,44 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       ).pipe(Effect.forkScoped),
     );
   }
-  // Probe readiness in a loop while the backend process is still alive instead
-  // of giving up after the first budget. A slow cold boot (the WSL bundle
-  // loading across /mnt/c, or a first launch right after an update) can exceed
-  // the initial readiness budget while the backend is about to come up moments
-  // later; a one-shot probe left the app stuck on "Connecting to WSL…" forever
-  // even though the backend kept running and became healthy.
-  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
-    waitForHttpReady({
-      executablePath: options.executablePath,
-      entryPath: options.entryPath,
-      cwd: options.cwd,
-      httpBaseUrl: options.httpBaseUrl,
+  // Slow cold boots can outlast a readiness budget. Keep probing while the child lives.
+  const ownership = yield* Ref.make<BackendOwnership | undefined>(undefined);
+  const exitObserved = yield* Ref.make(false);
+  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(function* () {
+    const result = yield* waitForHttpReady({
+      ...options,
+      desktopLaunchId: options.bootstrap.desktopLaunchId,
       timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
     }).pipe(
-      Effect.flatMap(() => options.onReady?.() ?? Effect.void),
-      Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
-          (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
+          (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(undefined)),
       }),
-    ),
-  );
+    );
+    if (result === undefined) {
+      return false;
+    }
+    yield* Ref.set(ownership, result);
+    if (yield* Ref.get(exitObserved)) {
+      return true;
+    }
+    if (result === "foreign") {
+      yield* logBackendProcessWarning("another server is answering on the backend port", {
+        httpBaseUrl: options.httpBaseUrl.href,
+      });
+      yield* handle
+        .kill({ killSignal: "SIGTERM", forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE })
+        .pipe(Effect.ignore);
+      return true;
+    }
+    yield* options.onReady?.() ?? Effect.void;
+    return true;
+  });
 
-  yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
+  const readinessFiber = yield* probeReadiness().pipe(
+    Effect.repeat({ while: (done) => !done }),
+    Effect.forkScoped,
+  );
 
   const exit = yield* handle.exitCode.pipe(
     Effect.map((exitCode) => ({
@@ -596,7 +642,17 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     }),
     Effect.exit,
   );
+  yield* Ref.set(exitObserved, true);
   yield* options.onExitObserved?.() ?? Effect.void;
+  const stateDirOwned =
+    Exit.isSuccess(exit) &&
+    Option.exists(exit.value.code, (code) => code === SERVER_EXIT_CODE_STATE_DIR_OWNED);
+  if (!stateDirOwned && (yield* Ref.get(ownership)) === undefined) {
+    // A bind failure can exit before the pending descriptor identifies the foreign listener.
+    yield* Fiber.await(readinessFiber).pipe(
+      Effect.timeoutOption(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
+    );
+  }
   yield* Effect.forEach(outputFibers, Fiber.await, {
     concurrency: "unbounded",
     discard: true,
@@ -604,10 +660,17 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.timeout(options.outputDrainTimeout ?? DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
     Effect.ignore,
   );
+  if (!stateDirOwned && (yield* Ref.get(ownership)) === "foreign") {
+    return {
+      code: Option.none(),
+      reason: `another server is answering on ${options.httpBaseUrl.href}`,
+      portTaken: true,
+    } satisfies BackendProcessExit;
+  }
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
   }
-  return exit.value;
+  return { ...exit.value, portTaken: false } satisfies BackendProcessExit;
 });
 
 export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
@@ -797,6 +860,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const finalizeRun = Effect.fn("desktop.backendInstance.finalizeRun")(function* (
           reason: string,
           exitCode?: number,
+          portTaken = false,
         ) {
           const stateDirOwned = exitCode === SERVER_EXIT_CODE_STATE_DIR_OWNED;
           yield* mutex.withPermits(1)(
@@ -873,6 +937,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   yield* (spec.onStateDirOwned?.() ?? Effect.void).pipe(Effect.ignore);
                   return;
                 }
+                if (portTaken && !stopRequested) {
+                  const moved = yield* (
+                    spec.onPortTaken?.(config.value.bootstrap.port) ?? Effect.succeed(false)
+                  );
+                  if (!moved) {
+                    yield* Ref.update(state, (latest) => ({ ...latest, desiredRunning: false }));
+                    return;
+                  }
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -948,7 +1021,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           Scope.provide(runScope),
           Effect.matchEffect({
             onFailure: (error) => finalizeRun(error.message),
-            onSuccess: (exit) => finalizeRun(exit.reason, Option.getOrUndefined(exit.code)),
+            onSuccess: (exit) =>
+              finalizeRun(exit.reason, Option.getOrUndefined(exit.code), exit.portTaken),
           }),
           Effect.ensuring(Scope.close(runScope, Exit.void).pipe(Effect.ignore)),
         );

@@ -448,7 +448,7 @@ const loadPrimaryConnectionRegistration = Effect.fn(
   });
 });
 
-const loadSecondaryConnectionRegistration = Effect.fn(
+export const loadSecondaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadSecondaryConnectionRegistration",
 )(function* (entry: DesktopEnvironmentBootstrap) {
   if (
@@ -466,6 +466,12 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
     Effect.mapError(mapRemoteEnvironmentError),
   );
+  if (entry.desktopLaunchId !== undefined && descriptor.desktopLaunchId !== entry.desktopLaunchId) {
+    return yield* new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      detail: `Another server is answering at ${httpBaseUrl} in place of desktop-local backend ${entry.id}.`,
+    });
+  }
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,

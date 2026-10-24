@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NetService from "@t3tools/shared/Net";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -31,6 +32,47 @@ const TAILSCALE_STATUS_CACHE_TTL = Duration.seconds(60);
 
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_LAN_BIND_HOST = "0.0.0.0";
+const MAX_TCP_PORT = 65_535;
+const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
+
+export class DesktopBackendPortUnavailableError extends Schema.TaggedError<DesktopBackendPortUnavailableError>()(
+  "DesktopBackendPortUnavailableError",
+  {
+    startPort: Schema.Int,
+    maxPort: Schema.Int,
+    hosts: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `No desktop backend port is available on hosts ${this.hosts.join(", ")} between ${this.startPort} and ${this.maxPort}.`;
+  }
+}
+
+export const findAvailableBackendPort = Effect.fn(
+  "desktop.serverExposure.findAvailableBackendPort",
+)(function* (startPort: number) {
+  const net = yield* NetService.NetService;
+  for (let port = startPort; port <= MAX_TCP_PORT; port += 1) {
+    let availableOnEveryHost = true;
+
+    for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
+      if (!(yield* net.canListenOnHost(port, host))) {
+        availableOnEveryHost = false;
+        break;
+      }
+    }
+
+    if (availableOnEveryHost) {
+      return port;
+    }
+  }
+
+  return yield* new DesktopBackendPortUnavailableError({
+    startPort,
+    maxPort: MAX_TCP_PORT,
+    hosts: DESKTOP_BACKEND_PORT_PROBE_HOSTS,
+  });
+});
 
 interface ResolvedDesktopServerExposure {
   readonly mode: DesktopServerExposureMode;

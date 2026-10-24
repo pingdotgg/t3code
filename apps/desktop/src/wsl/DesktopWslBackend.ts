@@ -114,12 +114,12 @@ export const layer = Layer.effect(
       if (Option.isNone(port)) {
         return;
       }
-      const allocatedPort = port.value;
+      const allocatedPort = yield* Ref.make(port.value);
 
       const targetId = resolveTargetInstanceId(input.distro);
       yield* logWslBackendInfo("registering WSL backend with pool", {
         id: targetId,
-        port: allocatedPort,
+        port: port.value,
         distro: input.distro ?? null,
       });
 
@@ -127,7 +127,30 @@ export const layer = Layer.effect(
         .register({
           id: targetId,
           label: Effect.succeed(buildLabel(input.distro)),
-          configResolve: configuration.resolveWsl({ port: allocatedPort, distro: input.distro }),
+          configResolve: Ref.get(allocatedPort).pipe(
+            Effect.flatMap((current) =>
+              configuration.resolveWsl({ port: current, distro: input.distro }),
+            ),
+          ),
+          onPortTaken: (takenPort) =>
+            scanForWslPort(takenPort + 1).pipe(
+              Effect.provideService(NetService.NetService, net),
+              Effect.tap((nextPort) =>
+                logWslBackendWarning(
+                  "another server is answering on the WSL backend port; moving",
+                  {
+                    id: targetId,
+                    port: takenPort,
+                    nextPort,
+                  },
+                ),
+              ),
+              Effect.flatMap((nextPort) => Ref.set(allocatedPort, nextPort)),
+              Effect.as(true),
+              Effect.catch((error) =>
+                Ref.set(preflightErrorRef, Option.some(error.message)).pipe(Effect.as(false)),
+              ),
+            ),
           onPreflightFailed: (failure) =>
             Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),
           onStateDirOwned: () =>

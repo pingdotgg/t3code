@@ -80,7 +80,8 @@ export function createDesktopSecondaryBootstrapsReader(
             entry.runningDistro !== previous.runningDistro ||
             entry.httpBaseUrl !== previous.httpBaseUrl ||
             entry.wsBaseUrl !== previous.wsBaseUrl ||
-            entry.bootstrapToken !== previous.bootstrapToken
+            entry.bootstrapToken !== previous.bootstrapToken ||
+            entry.desktopLaunchId !== previous.desktopLaunchId
           );
         })
       ) {
