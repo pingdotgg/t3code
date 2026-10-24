@@ -19,6 +19,7 @@ import {
 import {
   dismissSettledUpdateRunMachines,
   postponeUpdateRestart,
+  restartUpdateNow,
   retryFailedUpdateRunServers,
 } from "./updateEverythingRun";
 
@@ -55,6 +56,10 @@ function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, 
   return "restarts after the servers";
 }
 
+const capsuleButtonClassName =
+  "absolute inset-0 cursor-pointer rounded-full outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset";
+const capsuleLabelClassName = "pointer-events-none relative min-w-0 flex-1 truncate pl-3 text-xs";
+
 export function SidebarUpdateCapsule({
   run,
   local,
@@ -72,6 +77,7 @@ export function SidebarUpdateCapsule({
   );
   const now = useNow(run.phase === "countdown" ? 1_000 : hasActiveMachine ? 30_000 : null);
   const view = describeUpdateCapsule(run, machines, local, now);
+  const countingDown = run.phase === "countdown";
   const updateServer = useServerUpdate();
   const failed = machines.some(({ status }) => status === "failed");
   const settled = !hasActiveMachine && run.localVersion === null;
@@ -93,23 +99,52 @@ export function SidebarUpdateCapsule({
           view.tone === "failed" && "ring-1 ring-destructive/40 ring-inset",
         )}
       >
-        <PopoverTrigger
-          render={
+        {/* The countdown replaces the update button just clicked, so a second click skips the wait. */}
+        {countingDown ? (
+          <>
             <button
               type="button"
-              aria-label={
-                view.slow ? `${view.label} ${view.slow.status} ${view.slow.elapsed}` : view.label
-              }
-              className="absolute inset-0 cursor-pointer rounded-full outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset"
+              aria-label={`Restart now. ${view.label}`}
+              className={cn(capsuleButtonClassName, "peer")}
+              onClick={restartUpdateNow}
             />
-          }
-        />
-        <span className="pointer-events-none relative min-w-0 flex-1 truncate pl-3 text-xs">
-          <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
-          {view.slow ? (
-            <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
-          ) : null}
-        </span>
+            <span
+              className={cn(capsuleLabelClassName, "peer-hover:hidden peer-focus-visible:hidden")}
+            >
+              {view.label}
+            </span>
+            <span
+              className={cn(
+                capsuleLabelClassName,
+                "hidden peer-hover:block peer-focus-visible:block",
+              )}
+            >
+              Restart now
+            </span>
+          </>
+        ) : (
+          <>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={
+                    view.slow
+                      ? `${view.label} ${view.slow.status} ${view.slow.elapsed}`
+                      : view.label
+                  }
+                  className={capsuleButtonClassName}
+                />
+              }
+            />
+            <span className={capsuleLabelClassName}>
+              <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
+              {view.slow ? (
+                <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
+              ) : null}
+            </span>
+          </>
+        )}
         {view.action !== null ? (
           <button
             type="button"
