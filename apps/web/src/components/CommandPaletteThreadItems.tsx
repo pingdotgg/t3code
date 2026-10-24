@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
@@ -20,7 +20,11 @@ import {
 import { useThreadSearch } from "../state/queries";
 import { primaryServerProvidersAtom } from "../state/server";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { buildThreadActionItems, ITEM_ICON_CLASS } from "./CommandPalette.logic";
+import {
+  type BuildThreadActionItemsThread,
+  buildThreadActionItems,
+  ITEM_ICON_CLASS,
+} from "./CommandPalette.logic";
 import { useEnvironmentLookups, useProjectLookups } from "./CommandPaletteLookups";
 import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
 import {
@@ -69,22 +73,22 @@ function useThreadSearchWithContentMatches(query: string) {
 
 /** Every thread as a palette item, with message matches for a non-empty `threadSearchQuery`. */
 export function useCommandPaletteThreadItems(input: {
-  readonly activeThreadId: ThreadId | undefined;
+  readonly activeThread: Pick<BuildThreadActionItemsThread, "environmentId" | "id"> | undefined;
   readonly threadSearchQuery: string;
 }) {
-  const { activeThreadId, threadSearchQuery } = input;
+  const { activeThread, threadSearchQuery } = input;
   const navigate = useNavigate();
   const threads = useThreadShells();
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const { threadSearch, contentMatchByKey } = useThreadSearchWithContentMatches(threadSearchQuery);
-  const { projectByKey, projectTitleById } = useProjectLookups();
+  const { projectByKey } = useProjectLookups();
 
   const threadItems = buildThreadActionItems({
     threads,
-    ...(activeThreadId ? { activeThreadId } : {}),
-    projectTitleById,
+    ...(activeThread ? { activeThread } : {}),
+    projectByKey,
     sortOrder: sidebarThreadSortOrder,
     icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
     renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
@@ -113,7 +117,9 @@ export function useCommandPaletteThreadItems(input: {
           }
           branch={thread.branch}
           worktreePath={thread.worktreePath}
-          isCurrent={thread.id === activeThreadId}
+          isCurrent={
+            thread.id === activeThread?.id && thread.environmentId === activeThread.environmentId
+          }
           driverKind={providerEntry?.driverKind ?? null}
           providerDisplayName={
             thread.runtime?.providerName ?? providerEntry?.displayName ?? modelInstanceId

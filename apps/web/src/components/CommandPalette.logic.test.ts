@@ -4,6 +4,8 @@ import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
   buildThreadActionItems,
+  buildCommandPaletteRows,
+  findHighlightedCommandPaletteItem,
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
@@ -112,6 +114,31 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildThreadActionItems", () => {
+  it("selects the intended environment when thread IDs are shared", async () => {
+    const local = makeThread();
+    const remote = makeThread({ environmentId: EnvironmentId.make("remote-copy") });
+    const runThread = vi.fn(async () => {});
+    const items = buildThreadActionItems({
+      threads: [local, remote],
+      activeThread: remote,
+      projectByKey: new Map([
+        [`${local.environmentId}:${local.projectId}`, { title: "Local project" }],
+        [`${remote.environmentId}:${remote.projectId}`, { title: "Remote project" }],
+      ]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread,
+    });
+    const groups = [{ value: "threads", label: "Threads", items }];
+    const selected = findHighlightedCommandPaletteItem(groups, items[1]!.value);
+    if (selected?.kind === "action") await selected.run();
+    expect(runThread).toHaveBeenCalledWith(remote);
+    expect(new Set(buildCommandPaletteRows(groups).itemValues).size).toBe(2);
+    expect(items[0]?.description).toBe("Local project");
+    expect(items[1]?.description).toBe("Remote project · Current thread");
+    expect(items[0]?.searchTerms).not.toContain("Remote project");
+  });
+
   it("ranks thread title matches ahead of contextual project-name matches", () => {
     const threadItems = buildThreadActionItems({
       threads: [
@@ -127,7 +154,7 @@ describe("buildThreadActionItems", () => {
           updatedAt: "2026-03-19T00:00:00.000Z",
         }),
       ],
-      projectTitleById: new Map([[PROJECT_ID, "Project"]]),
+      projectByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, { title: "Project" }]]),
       sortOrder: "updated_at",
       icon: null,
       runThread: async (_thread) => undefined,
@@ -144,8 +171,8 @@ describe("buildThreadActionItems", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.value).toBe("threads-search");
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:thread-title-match",
-      "thread:thread-context-match",
+      "thread:environment-local:thread-title-match",
+      "thread:environment-local:thread-context-match",
     ]);
   });
 
@@ -172,7 +199,7 @@ describe("buildThreadActionItems", () => {
     ];
     const items = buildThreadActionItems({
       threads,
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      projectByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, { title: "T3 Code" }]]),
       sortOrder: "created_at",
       icon: null,
       getContentMatch: (thread) =>
@@ -191,9 +218,9 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:recent-title",
-      "thread:old-prefix",
-      "thread:recent-content",
+      "thread:environment-local:recent-title",
+      "thread:environment-local:old-prefix",
+      "thread:environment-local:recent-content",
     ]);
   });
 
@@ -280,7 +307,7 @@ describe("buildThreadActionItems", () => {
     });
     const items = buildThreadActionItems({
       threads: [idThread, titleThread],
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      projectByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, { title: "T3 Code" }]]),
       sortOrder: "updated_at",
       icon: null,
       runThread: async (_thread) => undefined,
@@ -296,8 +323,8 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(groups.flatMap((group) => group.items)).toEqual([
-      expect.objectContaining({ value: `thread:${titleThread.id}` }),
-      expect.objectContaining({ value: `thread:${idThread.id}` }),
+      expect.objectContaining({ value: `thread:${titleThread.environmentId}:${titleThread.id}` }),
+      expect.objectContaining({ value: `thread:${idThread.environmentId}:${idThread.id}` }),
     ]);
   });
 
@@ -457,7 +484,7 @@ it.each([
       }),
       makeThread({ id: ThreadId.make("unrelated"), title: "Other work" }),
     ],
-    projectTitleById: new Map(),
+    projectByKey: new Map(),
     sortOrder: "updated_at",
     icon: null,
     runThread: async () => undefined,
