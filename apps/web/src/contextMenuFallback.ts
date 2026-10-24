@@ -428,10 +428,6 @@ export function showContextMenuFallback<T extends string>(
               if (!childMenu) {
                 return;
               }
-              const childRect = childMenu.getBoundingClientRect();
-              if (childRect.right > window.innerWidth) {
-                clampMenuPosition(childMenu, rect.left - childRect.width - 4, rect.top);
-              }
               if (focusFirstItem) {
                 [...childMenu.querySelectorAll<HTMLButtonElement>("button")]
                   .find((childButton) => !childButton.disabled)
@@ -469,7 +465,16 @@ export function showContextMenuFallback<T extends string>(
       submenuTriggerStack[level] = parentTrigger;
 
       requestAnimationFrame(() => {
-        clampMenuPosition(menu, preferredLeft, preferredTop);
+        // A submenu that would overflow flips to the trigger's left. Clamping the
+        // right-hand position instead would slide it back over its parent.
+        const { width } = menu.getBoundingClientRect();
+        const flipLeft = parentTrigger?.getBoundingClientRect().left;
+        const overflows = preferredLeft + width > window.innerWidth;
+        clampMenuPosition(
+          menu,
+          overflows && flipLeft !== undefined ? flipLeft - width - 4 : preferredLeft,
+          preferredTop,
+        );
       });
     };
 
