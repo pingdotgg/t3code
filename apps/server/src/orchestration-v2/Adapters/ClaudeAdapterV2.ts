@@ -3467,6 +3467,10 @@ interface ActiveClaudeTurnContext {
   readonly promptUuid: string | null;
   promptEcho: "pending" | "confirmed";
   promptStarted: boolean;
+  // Claude can run a "now" steer ahead of a prompt that is still starting up,
+  // so steers wait here until the prompt's first model frame.
+  promptStreamed: boolean;
+  readonly heldSteers: Array<SDKUserMessage>;
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
@@ -6909,6 +6913,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
+          if (input.context.heldSteers.length > 0) {
+            yield* Effect.logWarning("orchestration-v2.claude-held-steers-dropped", {
+              providerTurnId: input.context.providerTurnId,
+              status: input.status,
+              count: input.context.heldSteers.length,
+            });
+          }
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
           } else {
@@ -8704,6 +8715,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.nativeWakeStarted = true;
           }
           if (
+            context?.promptUuid != null &&
+            !context.promptStreamed &&
+            liveQuery?.query === input.query &&
+            (message.type === "stream_event" ||
+              (message.type === "assistant" && message.message.model !== "<synthetic>")) &&
+            message.parent_tool_use_id === null
+          ) {
+            const echoed = claudeEchoedPromptUuids(message);
+            // Only a CLI known to echo early proves an untagged model frame is another turn's.
+            if (
+              echoed.length > 0
+                ? echoed.includes(context.promptUuid)
+                : liveQuery.promptEchoMode !== "early"
+            ) {
+              // A steer sent while these go out joins the queue behind them.
+              for (
+                let steer = context.heldSteers.shift();
+                steer !== undefined;
+                steer = context.heldSteers.shift()
+              ) {
+                yield* input.query.offer(steer);
+              }
+              context.promptStreamed = true;
+            }
+          }
+          if (
             context === null ||
             context.promptUuid === null ||
             context.promptEcho === "confirmed" ||
@@ -9543,6 +9580,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptUuid,
               promptEcho: isClaudeProviderContinuationTurn(turnInput) ? "confirmed" : "pending",
               promptStarted: false,
+              promptStreamed: false,
+              heldSteers: [],
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
@@ -9955,6 +9994,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            if (currentTurn.promptUuid !== null && !currentTurn.promptStreamed) {
+              currentTurn.heldSteers.push(userMessage);
+              return;
+            }
             yield* existing.query.offer(userMessage);
           },
           (effect, turnInput) =>
