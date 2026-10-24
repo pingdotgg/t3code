@@ -39,6 +39,7 @@ import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/Git
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
 import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
+import * as BuiltInDriversTestkit from "./builtInDrivers.testkit.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
@@ -114,53 +115,59 @@ function makeRegistry(input: {
 
   return SourceControlProviderRegistry.make.pipe(
     Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        layerRegistry,
-        layerProcess,
-        ServerSourceControlHost.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              layerProcess,
-              layerRegistry,
-              ServerSettings.ServerSettingsService.layerTest(),
-              Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      BuiltInDriversTestkit.layerOverHostServices.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            NodeServices.layer,
+            layerRegistry,
+            layerProcess,
+            ServerSourceControlHost.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  layerProcess,
+                  layerRegistry,
+                  ServerSettings.ServerSettingsService.layerTest(),
+                  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                ),
+              ),
             ),
+            Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
+            Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
+            Layer.mock(BitbucketApi.BitbucketApi)({}),
+            Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
+            input.settings
+              ? Layer.mock(ServerSettings.ServerSettingsService)(input.settings)
+              : ServerSettings.ServerSettingsService.layerTest(),
+            Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
+            Layer.mock(GitHubCredentials.GitHubCredentials)({}),
+            // The GitHub provider's GraphQL reads go through these; no test here makes one.
+            Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die(new Error("Unexpected GitHub GraphQL read"))),
+            ),
+            Layer.mock(GitHubRest.GitHubRest)({
+              // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
+              credential: (host) =>
+                Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+              ...input.githubApi,
+            }),
+            Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+            Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
+            Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({}),
+            Layer.mock(ForgejoCli.ForgejoCli)({
+              listLogins: () => Effect.succeed([]),
+              ...input.forgejo,
+            }),
+            Layer.mock(GitCafeApi.GitCafeApi)({}),
+            Layer.mock(GitCafeCredentials.GitCafeCredentials)({
+              cliEnv: () => Effect.succeed({}),
+            }),
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-source-control-registry-test-",
+            }).pipe(Layer.provide(NodeServices.layer)),
           ),
         ),
-        Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
-        Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
-        Layer.mock(BitbucketApi.BitbucketApi)({}),
-        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
-        input.settings
-          ? Layer.mock(ServerSettings.ServerSettingsService)(input.settings)
-          : ServerSettings.ServerSettingsService.layerTest(),
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
-        // The GitHub provider's GraphQL reads go through these; no test here makes one.
-        Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die(new Error("Unexpected GitHub GraphQL read"))),
-        ),
-        Layer.mock(GitHubRest.GitHubRest)({
-          // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
-          credential: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
-          ...input.githubApi,
-        }),
-        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-        Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
-        Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({}),
-        Layer.mock(ForgejoCli.ForgejoCli)({
-          listLogins: () => Effect.succeed([]),
-          ...input.forgejo,
-        }),
-        Layer.mock(GitCafeApi.GitCafeApi)({}),
-        Layer.mock(GitCafeCredentials.GitCafeCredentials)({
-          cliEnv: () => Effect.succeed({}),
-        }),
-        ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3-source-control-registry-test-",
-        }).pipe(Layer.provide(NodeServices.layer)),
       ),
     ),
   );

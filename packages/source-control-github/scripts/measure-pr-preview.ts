@@ -1,30 +1,29 @@
-// Run with: node apps/server/scripts/measure-pr-preview.ts owner/repo 123 456
+// Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456
 // Numbers form a session with shared repository-permission caches. Browser and
 // service caches are excluded. Uses real GitHub reads, without a server or database.
 // Requests are counted at the HTTP client. A GraphQL request's cost is how far it moved GitHub's
 // `x-ratelimit-used` for the `graphql` resource, which is approximate when anything else spends
 // the same token's quota while this runs.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
-import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
-import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
-import * as ServerConfig from "../src/config.ts";
-import * as ServerSettings from "../src/serverSettings.ts";
-import * as ServerSourceControlHost from "../src/sourceControl/ServerSourceControlHost.ts";
-import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../src/vcs/VcsProcess.ts";
-import * as VcsProjectConfig from "../src/vcs/VcsProjectConfig.ts";
+import * as GitHubPullRequestApi from "../src/server/GitHubPullRequestApi.ts";
+import * as GitHubPullRequestProvider from "../src/server/GitHubPullRequestProvider.ts";
+import * as GitHubRest from "../src/server/GitHubRest.ts";
 
 const [repository, ...numbers] = process.argv.slice(2);
 if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.test(number))) {
-  throw new Error("Usage: node apps/server/scripts/measure-pr-preview.ts owner/repo number...");
+  throw new Error(
+    "Usage: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo number...",
+  );
 }
 
 type Read = { graphqlRequests: number; restRequests: number; cost: number };
@@ -73,18 +72,42 @@ const measuredHttp = Layer.effect(
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
-// The server's host port over default settings: gh's own account choice, no saved token.
-const sourceControlHost = ServerSourceControlHost.layer.pipe(
-  Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
-  Layer.provide(GitVcsDriver.layer),
-  Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-measure-pr-preview-" })),
-  Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
-);
+// Default settings, so `gh` picks the account and no saved token applies. Only the credential
+// lookup runs a process, and it needs no more than its output.
+const sourceControlHost = Layer.unwrap(
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return TestSourceControlHost.layer({
+      process: {
+        run: (input) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const handle = yield* spawner.spawn(
+                ChildProcess.make(input.command, [...input.args], {
+                  cwd: input.spawnCwd ?? input.cwd,
+                  env: input.env,
+                  extendEnv: true,
+                }),
+              );
+              const [stdout, stderr, exitCode] = yield* Effect.all(
+                [
+                  Stream.mkString(Stream.decodeText(handle.stdout)),
+                  Stream.mkString(Stream.decodeText(handle.stderr)),
+                  handle.exitCode,
+                ],
+                { concurrency: "unbounded" },
+              );
+              return { exitCode, stdout, stderr, stdoutTruncated: false, stderrTruncated: false };
+            }),
+          ).pipe(Effect.orDie),
+      },
+    });
+  }),
+).pipe(Layer.provideMerge(NodeServices.layer));
 
 const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(GitHubRest.layerWithDependencies),
+  Layer.provideMerge(SourceControlRateLimit.layer),
   Layer.provideMerge(measuredHttp),
   Layer.provideMerge(sourceControlHost),
 );

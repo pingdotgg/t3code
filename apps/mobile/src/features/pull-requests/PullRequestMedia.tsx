@@ -1,8 +1,12 @@
 import { createContext, useContext, useMemo, useState } from "react";
 import { pullRequestMediaSource, pullRequestImageSource } from "./pullRequestMediaSource";
 import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
-import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
@@ -25,9 +29,12 @@ export const PullRequestMediaContext = createContext<{
 
 export function usePullRequestMediaUrl(url: string) {
   const context = useContext(PullRequestMediaContext);
-  const fetchUrl = githubMediaFetchUrl(url);
+  const fetchUrl = sourceControlClients.mediaUrl(url)?.fetchUrl;
   const resource = useMemo<AssetResource | null>(
-    () => (context && fetchUrl ? { _tag: "github-media", cwd: context.cwd, url: fetchUrl } : null),
+    () =>
+      context && fetchUrl
+        ? { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: context.cwd, url: fetchUrl }
+        : null,
     [context, fetchUrl],
   );
   const asset = useAssetUrlState(context?.environmentId ?? null, resource);

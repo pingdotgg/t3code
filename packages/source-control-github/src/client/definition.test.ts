@@ -121,3 +121,41 @@ describe("GitHub remotes", () => {
     expect(recognize("https://notgithub.example.com/owner/repo.git")).toBeNull();
   });
 });
+
+describe("GitHub media URLs", () => {
+  const media = (url: string) => definition.mediaUrl(new URL(url));
+
+  it("fetches every spelling of an upload or committed file from one canonical URL", () => {
+    expect(
+      media("https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c"),
+    ).toEqual({
+      fetchUrl: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
+      fileName: "1a1842fb-6383-492f-873c-57aa0033fa6c",
+      kind: "video",
+    });
+    expect(media("https://github.com/owner/repo/blob/main/docs/shot.png")).toEqual({
+      fetchUrl: "https://raw.githubusercontent.com/owner/repo/main/docs/shot.png",
+      fileName: "shot.png",
+    });
+    expect(media("https://github.com/owner/repo/assets/45952064/1a1842fb")?.fetchUrl).toBe(
+      "https://github.com/owner/repo/assets/45952064/1a1842fb",
+    );
+    expect(media("https://media.githubusercontent.com/media/owner/repo/main/a.mp4")).toEqual({
+      fetchUrl: "https://media.githubusercontent.com/media/owner/repo/main/a.mp4",
+      fileName: "a.mp4",
+    });
+    expect(media("https://raw.githubusercontent.com/o/r/main/100%.png")?.fileName).toBe("100%.png");
+  });
+
+  it("claims nothing a request without a credential loads just as well", () => {
+    for (const url of [
+      "https://example.com/shot.png",
+      "http://github.com/user-attachments/assets/1a1842fb",
+      "https://github.com/owner/repo/pull/1",
+      "https://github.com/owner/repo/blob/main/",
+      "https://objects.githubusercontent.com/github-production-user-asset/shot.png",
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+});

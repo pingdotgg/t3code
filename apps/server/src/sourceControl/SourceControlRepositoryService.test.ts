@@ -101,6 +101,51 @@ function layer(input: {
     : layerService.pipe(Layer.provideMerge(NodeServices.layer));
 }
 
+const lookupFailingWith = (cause: unknown, detail: string) =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    return yield* service
+      .lookupRepository({ provider: SourceControlProviderKind.make("bitbucket"), repository: "x" })
+      .pipe(Effect.flip);
+  }).pipe(
+    Effect.provide(
+      layer({
+        provider: makeProvider({
+          getRepositoryCloneUrls: (input) =>
+            Effect.fail(
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("bitbucket"),
+                operation: "getRepositoryCloneUrls",
+                cwd: input.cwd,
+                detail,
+                cause,
+              }),
+            ),
+        }),
+      }),
+    ),
+  );
+
+it.effect("tells the user a host's fixed explanation of a failed repository lookup", () =>
+  Effect.gen(function* () {
+    const error = yield* lookupFailingWith(
+      { userFacingDetail: "Repositories are named workspace/repository." },
+      "Repositories are named workspace/repository.",
+    );
+    assert.strictEqual(error.detail, "Repositories are named workspace/repository.");
+  }),
+);
+
+it.effect("keeps a host's raw response text out of a failed repository lookup", () =>
+  Effect.gen(function* () {
+    const error = yield* lookupFailingWith(
+      new Error("upstream"),
+      "<html>internal token=abc</html>",
+    );
+    assert.strictEqual(error.detail, "The source control operation could not be completed.");
+  }),
+);
+
 it.effect("clones a looked-up repository after creating missing parent directories", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

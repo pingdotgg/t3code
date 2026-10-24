@@ -1,7 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
-  AssetGitHubMediaUrlValidationError,
+  AssetSourceControlMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -13,6 +13,7 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   ToolActivityNativeAppReference,
   TurnItemId,
@@ -30,7 +31,6 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
-import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import {
   isProjectFaviconPath,
@@ -64,6 +64,7 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import { sourceControlClients } from "../sourceControl/sourceControlClients.ts";
 import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -160,8 +161,8 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
-    kind: Schema.Literal("github-media"),
-    /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
+    kind: Schema.Literal(SOURCE_CONTROL_MEDIA_ASSET),
+    /** A host's `fetchUrl`, narrowed at mint time; the signature is what keeps it there. */
     url: Schema.String,
     cwd: Schema.String,
     expiresAt: Schema.Number,
@@ -189,7 +190,7 @@ export type ResolvedAsset =
       readonly mimeType: string;
     }
   | {
-      readonly kind: "github-media";
+      readonly kind: "source-control-media";
       readonly url: string;
       readonly cwd: string;
       readonly expiresAt: number;
@@ -803,19 +804,19 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
-    case "github-media": {
-      const fetchUrl = githubMediaFetchUrl(input.resource.url);
-      if (fetchUrl === null) {
-        return yield* new AssetGitHubMediaUrlValidationError({});
+    case SOURCE_CONTROL_MEDIA_ASSET: {
+      const media = sourceControlClients.mediaUrl(input.resource.url);
+      if (media === null) {
+        return yield* new AssetSourceControlMediaUrlValidationError({});
       }
       claims = {
         version: 1,
-        kind: "github-media",
-        url: fetchUrl,
+        kind: SOURCE_CONTROL_MEDIA_ASSET,
+        url: media.fetchUrl,
         cwd: input.resource.cwd,
         expiresAt,
       };
-      fileName = githubMediaFileName(fetchUrl);
+      fileName = media.fileName;
       break;
     }
   }
@@ -926,9 +927,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return faviconPath === claims.filePath ? yield* projectFaviconAsset(faviconPath) : null;
   }
 
-  if (claims.kind === "github-media") {
+  if (claims.kind === SOURCE_CONTROL_MEDIA_ASSET) {
     return {
-      kind: "github-media",
+      kind: "source-control-media",
       url: claims.url,
       cwd: claims.cwd,
       expiresAt: claims.expiresAt,

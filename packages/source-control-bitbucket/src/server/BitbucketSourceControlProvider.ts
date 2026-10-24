@@ -1,12 +1,19 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import type { NormalizedBitbucketPullRequestRecord } from "./bitbucketPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import type { SourceControlApiDiscoverySpec } from "@t3tools/source-control-core/server/discovery";
+
+const isRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
+
+/** A repository named some other way than `workspace/repository` is the user's to fix. */
+const repositoryDetail = (error: BitbucketApi.BitbucketApiError, fallback: string) =>
+  isRepositoryLocatorError(error) ? error.detail : fallback;
 
 function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeRequest {
   return {
@@ -122,7 +129,7 @@ export const make = Effect.gen(function* () {
               repository: SourceControlProvider.transportSafeSourceControlErrorValue(
                 input.repository,
               ),
-              detail: "Failed to get repository clone URLs.",
+              detail: repositoryDetail(error, "Failed to get repository clone URLs."),
               cause: error,
             }),
         ),
@@ -138,7 +145,7 @@ export const make = Effect.gen(function* () {
               repository: SourceControlProvider.transportSafeSourceControlErrorValue(
                 input.repository,
               ),
-              detail: "Failed to create repository.",
+              detail: repositoryDetail(error, "Failed to create repository."),
               cause: error,
             }),
         ),

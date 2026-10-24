@@ -38,6 +38,19 @@ export interface SourceControlRefSelector {
 
 const MAX_ERROR_TRANSPORT_VALUE_LENGTH = 256;
 
+/**
+ * The fixed product text a provider failure carries for the user, if it has one. Any other
+ * detail may be upstream response text, so callers show a generic message instead.
+ */
+export function userFacingSourceControlDetail(cause: unknown): string | undefined {
+  return typeof cause === "object" &&
+    cause !== null &&
+    "userFacingDetail" in cause &&
+    typeof cause.userFacingDetail === "string"
+    ? cause.userFacingDetail
+    : undefined;
+}
+
 export function transportSafeSourceControlErrorValue(value: string): string {
   let printable = "";
   for (const character of value) {

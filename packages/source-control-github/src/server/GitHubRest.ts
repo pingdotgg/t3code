@@ -232,12 +232,11 @@ export const layer = Layer.effect(GitHubRest, make).pipe(
 );
 
 /**
- * REST and the request policy, with the credential, quota reserve and rate-limit pause the policy
- * reads through: everything both transports need. An application builds this once so every GitHub
- * reader shares one view of each quota per host.
+ * REST and the request policy, with the credential and quota reserve the policy reads through.
+ * Built once, so every GitHub reader shares one view of each quota per host. The rate-limit pause
+ * comes from the server, which every host's change request reads share.
  */
 export const layerWithDependencies = layer.pipe(
   Layer.provideMerge(GitHubCredentials.layer),
   Layer.provideMerge(GitHubQuota.layer),
-  Layer.provideMerge(SourceControlRateLimit.layer),
 );

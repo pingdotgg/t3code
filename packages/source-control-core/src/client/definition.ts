@@ -74,6 +74,16 @@ export interface ChangeRequestCheckoutInput {
   readonly repositoryUrl?: string | null | undefined;
 }
 
+/** Media a host serves only to a request carrying a credential, as `mediaUrl` reads it. */
+export interface SourceControlMediaUrl {
+  /** The canonical URL to fetch, the same for every spelling of one file. */
+  readonly fetchUrl: string;
+  /** A file name for the media, safe to put in a path or a download. */
+  readonly fileName: string;
+  /** Set when the URL alone says what the media is, as an extensionless upload can. */
+  readonly kind?: "image" | "video";
+}
+
 export interface SourceControlClientDefinition {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
@@ -141,6 +151,11 @@ export interface SourceControlClientDefinition {
    * the provider rather than from the remote.
    */
   readonly sshRemoteHidesWebHost?: boolean;
+  /**
+   * Null when `url` is not media this host keeps behind a credential. A client cannot load such
+   * media itself, so it asks the server, whose driver for this host fetches it.
+   */
+  readonly mediaUrl?: (url: URL) => SourceControlMediaUrl | null;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
@@ -342,6 +357,10 @@ export interface ParsedChangeRequest {
   readonly link: ParsedChangeRequestUrl;
 }
 
+export interface SourceControlMedia extends SourceControlMediaUrl {
+  readonly definition: SourceControlClientDefinition;
+}
+
 export interface SourceControlClientRegistry {
   readonly definitions: ReadonlyArray<SourceControlClientDefinition>;
   readonly get: (kind: string | null | undefined) => SourceControlClientDefinition;
@@ -370,6 +389,8 @@ export interface SourceControlClientRegistry {
     identity: ChangeRequestHostIdentity,
     kind: Kind,
   ) => string | Kind;
+  /** The first host, in registry order, that keeps `url` behind a credential. */
+  readonly mediaUrl: (url: string) => SourceControlMedia | null;
 }
 
 function httpUrl(value: string): URL | null {
@@ -494,6 +515,15 @@ export function makeSourceControlClientRegistry(
     changeRequestHost: (identity, kind) =>
       (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
       projectChangeRequestHost(identity, kind),
+    mediaUrl: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      for (const definition of definitions) {
+        const media = definition.mediaUrl?.(url);
+        if (media != null) return { ...media, definition };
+      }
+      return null;
+    },
   };
 }
 

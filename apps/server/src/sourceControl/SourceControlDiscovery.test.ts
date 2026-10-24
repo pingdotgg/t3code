@@ -23,6 +23,7 @@ import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/serv
 import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
@@ -30,6 +31,7 @@ import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
 import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
+import * as BuiltInDriversTestkit from "./builtInDrivers.testkit.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -39,6 +41,7 @@ const layerSourceControlProviderRegistryTest = (input: {
   readonly process: Partial<VcsProcess.VcsProcess["Service"]>;
 }) =>
   SourceControlProviderRegistry.layer.pipe(
+    Layer.provide(BuiltInDriversTestkit.layerOverHostServices),
     Layer.provide(
       Layer.mergeAll(
         ServerConfig.layerTest(process.cwd(), {
@@ -50,6 +53,7 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
         ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
+        Layer.mock(GitHubCredentials.GitHubCredentials)({}),
         Layer.mock(GitHubRest.GitHubRest)({}),
         // The GitHub provider's GraphQL reads go through these; no test here makes one.
         Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),

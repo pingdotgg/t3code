@@ -77,6 +77,10 @@ export class BitbucketRepositoryLocatorError extends Schema.TaggedError<Bitbucke
     return BitbucketRepositoryLocatorError.detail;
   }
 
+  get userFacingDetail(): string {
+    return BitbucketRepositoryLocatorError.detail;
+  }
+
   override get message(): string {
     return `Bitbucket API failed: ${this.detail}`;
   }

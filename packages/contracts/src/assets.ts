@@ -11,6 +11,12 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
+/**
+ * The wire tag of a source control host's credentialed media. It names GitHub because GitHub had
+ * it first, and servers and clients of different releases must keep understanding each other.
+ */
+export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
@@ -47,10 +53,10 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
-  // An upload a pull request body points at on GitHub. A private repository serves these only
+  // Media a change request body points at on its host. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches
-  // them with the `gh` credential the repository at `cwd` authenticates with.
-  Schema.TaggedStruct("github-media", {
+  // them with the credential the host's driver holds for the repository at `cwd`.
+  Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
@@ -292,12 +298,13 @@ export class AssetSigningKeyLoadError extends Schema.TaggedError<AssetSigningKey
   }
 }
 
-export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<AssetGitHubMediaUrlValidationError>()(
+// The tag predates the rename and stays: clients on either side of an update decode it.
+export class AssetSourceControlMediaUrlValidationError extends Schema.TaggedError<AssetSourceControlMediaUrlValidationError>()(
   "AssetGitHubMediaUrlValidationError",
   {},
 ) {
   override get message(): string {
-    return "Only media hosted by GitHub can be fetched with a GitHub credential.";
+    return "Only media a source control host keeps behind a credential can be fetched with one.";
   }
 }
 
@@ -314,7 +321,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
-  AssetGitHubMediaUrlValidationError,
+  AssetSourceControlMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

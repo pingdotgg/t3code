@@ -1,17 +1,28 @@
-import { defineSourceControlDriver } from "@t3tools/source-control-core/server/driver";
+import {
+  defineSourceControlDriver,
+  withOwnServices,
+} from "@t3tools/source-control-core/server/driver";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { definition } from "../client/definition.ts";
 
+import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
+
+const services = AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer));
+
+/** Over this host's own services, which `driver` builds; tests stand in for them. */
+export const makeInstance = Effect.all({
+  sourceControl: AzureDevOpsSourceControlProvider.make,
+  discovery: Effect.succeed(AzureDevOpsSourceControlProvider.discovery),
+  pullRequests: AzureDevOpsPullRequestProvider.make,
+});
 
 export const driver = defineSourceControlDriver({
   kind: definition.kind,
   definition,
-  make: Effect.all({
-    sourceControl: AzureDevOpsSourceControlProvider.make,
-    discovery: Effect.succeed(AzureDevOpsSourceControlProvider.discovery),
-    pullRequests: AzureDevOpsPullRequestProvider.make,
-  }),
+  make: withOwnServices(makeInstance, services),
 });

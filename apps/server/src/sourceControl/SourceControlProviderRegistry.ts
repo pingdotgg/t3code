@@ -358,16 +358,14 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 );
 
 export const make = Effect.gen(function* () {
-  const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
-    driver.make.pipe(
-      Effect.map((instance): SourceControlProviderRegistration => ({
-        kind: driver.kind,
-        provider: instance.sourceControl,
-        discovery: instance.discovery,
-      })),
-    ),
+  const drivers = yield* BuiltInDrivers.SourceControlDrivers;
+  return yield* makeWithProviders(
+    drivers.map(({ driver, instance }): SourceControlProviderRegistration => ({
+      kind: driver.kind,
+      provider: instance.sourceControl,
+      discovery: instance.discovery,
+    })),
   );
-  return yield* makeWithProviders(drivers);
 });
 
 export const layer = Layer.effect(SourceControlProviderRegistry, make);

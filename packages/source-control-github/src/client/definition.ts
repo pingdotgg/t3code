@@ -18,6 +18,8 @@ import {
   remoteWebOrigin,
 } from "@t3tools/source-control-core/client/definition";
 
+import { gitHubMediaUrl } from "./gitHubMedia.ts";
+
 const CHECKOUT_COMMAND = /^gh\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i;
@@ -134,5 +136,6 @@ export const definition = defineSourceControlClient({
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+  mediaUrl: gitHubMediaUrl,
   settings,
 });
