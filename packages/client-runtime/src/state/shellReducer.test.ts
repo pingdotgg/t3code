@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import {
   applyShellStreamEvent,
+  applyShellStreamEvents,
+  type ShellStreamEvent,
   mergeShellSnapshotProjects,
   reuseUnchangedThreadShells,
 } from "./shellReducer.ts";
@@ -325,5 +327,97 @@ describe("reuseUnchangedThreadShells", () => {
     const next = reuseUnchangedThreadShells({ ...v2ShellSnapshot, threads: [linked] }, incoming);
     expect(next).toBe(incoming);
     expect(next.threads[0]?.pullRequests).toEqual([]);
+  });
+});
+
+describe("applyShellStreamEvents", () => {
+  const row = (id: string) => ({ ...v2ThreadShell, id: ThreadId.make(id) });
+  const a = row("a");
+  const b = row("b");
+  const unchanged = row("unchanged");
+  const archived = row("archived");
+  const oldArchive = row("old-archive");
+  const added = row("new");
+  const update = (
+    sequence: number,
+    thread: typeof v2ThreadShell,
+    location: "active" | "archive" = "active",
+  ): ShellStreamEvent => ({ kind: "thread.updated", sequence, location, thread });
+  const remove = (sequence: number, thread: typeof v2ThreadShell): ShellStreamEvent => ({
+    kind: "thread.removed",
+    sequence,
+    location: "active",
+    threadId: thread.id,
+  });
+
+  it("matches sequential mixed deltas, including remove/reinsert order and stale events", () => {
+    const otherProject = { ...v2Project, id: ProjectId.make("other-project") };
+    const seed = {
+      ...v2ShellSnapshot,
+      snapshotSequence: 4,
+      projects: [{ ...v2Project, repositoryIdentity }, otherProject],
+      threads: [a, b, unchanged],
+      archivedThreads: [archived, oldArchive],
+    };
+    const events: Array<ShellStreamEvent> = [
+      update(5, { ...b, title: "Renamed" }),
+      remove(5, a),
+      remove(6, a),
+      update(7, a),
+      update(8, b, "archive"),
+      update(9, archived),
+      update(10, oldArchive, "archive"),
+      update(11, added),
+      remove(12, { ...a, id: ThreadId.make("missing") }),
+      remove(11, added),
+      remove(13, added),
+      update(14, added),
+      update(15, { ...archived }),
+      { kind: "project.updated", sequence: 16, project: { ...v2Project, title: "Updated" } },
+      { kind: "project.updated", sequence: 17, project: { ...v2Project, workspaceRoot: "/moved" } },
+      { kind: "project.removed", sequence: 18, projectId: v2Project.id },
+      { kind: "project.updated", sequence: 19, project: v2Project },
+    ];
+    const sequential = events.reduce(applyShellStreamEvent, seed);
+    const next = applyShellStreamEvents(seed, events);
+    expect(next).toEqual(sequential);
+    expect(next.threads.map((row) => row.id)).toEqual([unchanged.id, a.id, archived.id, added.id]);
+    expect(next.threads[0]).toBe(unchanged);
+    expect(next.threads[2]).toBe(archived);
+    expect(next.projects[0]).toBe(otherProject);
+    expect(next.archivedThreads).toEqual([]);
+    expect(seed.threads).toEqual([a, b, unchanged]);
+    expect(seed.archivedThreads).toEqual([archived, oldArchive]);
+    // Identity retention must use the latest project in this batch.
+    expect(applyShellStreamEvents(seed, events.slice(0, 14)).projects[0]?.repositoryIdentity).toBe(
+      repositoryIdentity,
+    );
+    expect(
+      applyShellStreamEvents(seed, events.slice(0, 15)).projects[0]?.repositoryIdentity,
+    ).toBeNull();
+  });
+
+  it("keeps collection identities for equal rows and rejects stale deltas without indexing", () => {
+    const seed = { ...v2ShellSnapshot, threads: [a, b], snapshotSequence: 4 };
+    const next = applyShellStreamEvents(seed, [update(5, { ...a }), update(6, { ...b })]);
+    expect(next).toEqual(
+      [update(5, { ...a }), update(6, { ...b })].reduce(applyShellStreamEvent, seed),
+    );
+    expect(next.threads).toBe(seed.threads);
+    expect(next.projects).toBe(seed.projects);
+    expect(next.archivedThreads).toBe(seed.archivedThreads);
+    expect(next.snapshotSequence).toBe(6);
+    expect(applyShellStreamEvents(seed, [remove(3, a), update(4, b)])).toBe(seed);
+    expect(applyShellStreamEvents(seed, [])).toBe(seed);
+  });
+
+  it("does not advance the cursor for an unknown future event", () => {
+    const events = [
+      { kind: "future.event", sequence: 99 } as never,
+      update(1, { ...a, title: "Changed" }),
+    ];
+    expect(applyShellStreamEvents(v2ShellSnapshot, events)).toEqual(
+      events.reduce(applyShellStreamEvent, v2ShellSnapshot),
+    );
   });
 });

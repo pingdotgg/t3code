@@ -191,3 +191,84 @@ export function applyShellStreamEvent(
       return snapshot;
   }
 }
+
+/** Index a collection lazily and materialize it only if a delta changes its rows. */
+function batchRows<T extends { readonly id: unknown }>(rows: ReadonlyArray<T>) {
+  let byId: Map<T["id"], T> | undefined;
+  let changed = false;
+  const index = () => {
+    if (byId === undefined) {
+      byId = new Map();
+      for (const row of rows) byId.set(row.id, row);
+    }
+    return byId;
+  };
+  return {
+    get: (id: T["id"]) => index().get(id),
+    set: (row: T) => {
+      index().set(row.id, row);
+      changed = true;
+    },
+    remove: (id: T["id"]) => {
+      if (index().delete(id)) changed = true;
+    },
+    finish: () => (changed ? Array.from(index().values()) : rows),
+  };
+}
+
+export type ShellStreamEvent = Exclude<
+  OrchestrationV2ShellStreamItem,
+  { readonly kind: "snapshot" } | { readonly kind: "synchronized" }
+>;
+
+/** Apply ordered deltas with one index and at most one new array per collection. */
+export function applyShellStreamEvents(
+  snapshot: OrchestrationV2ShellSnapshot,
+  events: ReadonlyArray<ShellStreamEvent>,
+): OrchestrationV2ShellSnapshot {
+  // Avoid indexing the whole shell for the common single-event delivery.
+  if (events.length === 1) return applyShellStreamEvent(snapshot, events[0]!);
+  const projects = batchRows(snapshot.projects);
+  const threads = batchRows(snapshot.threads);
+  const archivedThreads = batchRows(snapshot.archivedThreads);
+  let sequence = snapshot.snapshotSequence;
+  for (const event of events) {
+    if (event.sequence <= sequence) continue;
+    switch (event.kind) {
+      case "project.updated":
+        projects.set(retainRepositoryIdentity(projects.get(event.project.id), event.project));
+        break;
+      case "project.removed":
+        projects.remove(event.projectId);
+        break;
+      case "thread.updated": {
+        const id = event.thread.id;
+        if (event.location === "active") {
+          const previous = threads.get(id);
+          if (previous !== undefined && sameThreadShell(previous, event.thread)) break;
+          threads.set(event.thread);
+        } else {
+          threads.remove(id);
+        }
+        // Legacy archive deltas remove rows from the shell; the archive is queried separately.
+        archivedThreads.remove(id);
+        break;
+      }
+      case "thread.removed":
+        threads.remove(event.threadId);
+        archivedThreads.remove(event.threadId);
+        break;
+      default:
+        continue;
+    }
+    sequence = event.sequence;
+  }
+  if (sequence === snapshot.snapshotSequence) return snapshot;
+  return {
+    ...snapshot,
+    snapshotSequence: sequence,
+    projects: projects.finish(),
+    threads: threads.finish(),
+    archivedThreads: archivedThreads.finish(),
+  };
+}

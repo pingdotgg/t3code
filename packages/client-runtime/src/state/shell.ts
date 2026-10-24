@@ -31,7 +31,8 @@ import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
-  applyShellStreamEvent,
+  applyShellStreamEvents,
+  type ShellStreamEvent,
   mergeShellSnapshotProjects,
   reuseUnchangedThreadShells,
   sameThreadPullRequests,
@@ -186,7 +187,24 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     let waiting = yield* Ref.get(awaitingCompletion);
     let next = initial;
     let receivedSnapshot = false;
+    let deltas: Array<ShellStreamEvent> = [];
+    const flushDeltas = () => {
+      if (deltas.length > 0 && Option.isSome(next.snapshot)) {
+        next = {
+          snapshot: Option.some(applyShellStreamEvents(next.snapshot.value, deltas)),
+          status: waiting ? "synchronizing" : "live",
+          error: Option.none(),
+        };
+      }
+      deltas = [];
+    };
     for (const item of items) {
+      if (item.kind !== "snapshot" && item.kind !== "synchronized") {
+        deltas.push(item);
+        continue;
+      }
+      // Snapshots can reset the cursor; completion markers change the sync status.
+      flushDeltas();
       if (item.kind === "synchronized") {
         waiting = false;
         if (Option.isSome(next.snapshot)) {
@@ -194,32 +212,21 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         }
         continue;
       }
-      const nextSnapshot =
-        item.kind === "snapshot"
-          ? mergeShellSnapshotProjects(
-              Option.getOrNull(next.snapshot),
-              item.snapshot,
-              item.resolvedRepositoryIdentityRoots === undefined
-                ? undefined
-                : {
-                    resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots,
-                  },
-            )
-          : Option.match(next.snapshot, {
-              onNone: () => null,
-              onSome: (snapshot) =>
-                item.sequence > snapshot.snapshotSequence
-                  ? applyShellStreamEvent(snapshot, item)
-                  : snapshot,
-            });
-      if (nextSnapshot === null) continue;
-      receivedSnapshot ||= item.kind === "snapshot";
+      const nextSnapshot = mergeShellSnapshotProjects(
+        Option.getOrNull(next.snapshot),
+        item.snapshot,
+        item.resolvedRepositoryIdentityRoots === undefined
+          ? undefined
+          : { resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots },
+      );
+      receivedSnapshot = true;
       next = {
         snapshot: Option.some(nextSnapshot),
         status: waiting ? "synchronizing" : "live",
         error: Option.none(),
       };
     }
+    flushDeltas();
     yield* Ref.set(awaitingCompletion, waiting);
     if (next === initial) return;
     if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
