@@ -966,6 +966,43 @@ describe("rejected git refs", () => {
 });
 
 it.layer(layerTest)("GitVcsDriver core integration", (it) => {
+  it.effect("keeps large change sets available for status and commit preparation", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      const files = Array.from(
+        { length: 6_000 },
+        (_, index) => `file-${String(index).padStart(5, "0")}-${"x".repeat(160)}.txt`,
+      );
+      yield* Effect.forEach(files, (file) => fs.writeFileString(path.join(cwd, file), "before\n"), {
+        concurrency: 16,
+        discard: true,
+      });
+      yield* git(cwd, ["add", "."]);
+      const unborn = yield* driver.statusDetailsLocal(cwd);
+      assert.lengthOf(unborn.workingTree.files, files.length);
+      assert.equal(unborn.workingTree.insertions, files.length);
+      yield* git(cwd, ["commit", "-qm", "initial"]);
+      yield* Effect.forEach(files, (file) => fs.writeFileString(path.join(cwd, file), "after\n"), {
+        concurrency: 16,
+        discard: true,
+      });
+      const status = yield* driver.statusDetailsLocal(cwd);
+      assert.isTrue(status.hasWorkingTreeChanges);
+      assert.lengthOf(status.workingTree.files, files.length);
+      assert.equal(status.workingTree.insertions, files.length);
+      assert.equal(status.workingTree.deletions, files.length);
+      const context = yield* driver.prepareCommitContext(cwd, undefined, { includePatch: false });
+      assert.isNotNull(context);
+      assert.isAbove(context!.stagedSummary.length, 1_000_000);
+      assert.lengthOf(context!.stagedSummary.split("\n"), files.length);
+    }),
+  );
   describe("structured errors", () => {
     it.effect("does not retain git arguments or stderr in command failures", () =>
       Effect.gen(function* () {
