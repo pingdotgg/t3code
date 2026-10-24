@@ -29,6 +29,7 @@ import { expect, vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import packageJson from "../../package.json" with { type: "json" };
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1143,6 +1144,32 @@ it.layer(
           ),
         );
         expect.soft(fishFeatures, JSON.stringify({ platform, env, runtimeEnv })).toEqual(expected);
+      }
+    }),
+  );
+
+  it.effect("identifies T3 Code to shells on open and restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          TERM_PROGRAM: "parent-terminal",
+          TERM_PROGRAM_VERSION: "parent-version",
+          TEST_TERMINAL_KEEP: "keep-me",
+          T3CODE_PORT: "3773",
+        },
+      });
+      yield* manager.open(openInput());
+      yield* manager.restart(restartInput());
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      for (const { env } of ptyAdapter.spawnInputs) {
+        expect(env).toMatchObject({
+          TERM_PROGRAM: "t3code",
+          TERM_PROGRAM_VERSION: packageJson.version,
+          COLORTERM: "truecolor",
+          TEST_TERMINAL_KEEP: "keep-me",
+        });
+        expect(env.T3CODE_PORT).toBeUndefined();
       }
     }),
   );
