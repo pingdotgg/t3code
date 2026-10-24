@@ -470,6 +470,27 @@ export const layer = Layer.effect(
       };
     });
 
+    // Runs on source snapshots only. `setProviderMaintenanceActionState` re-applies the stored
+    // snapshot, whose advisory may already read `current`, and must not discard the result the
+    // runner is recording. A probe publishes `unknown` until the latest-version check lands, so
+    // only `current` shows the provider is up to date.
+    const retireStaleUpdateState = Effect.fn("retireStaleUpdateState")(function* (
+      provider: ServerProvider,
+    ) {
+      if (provider.versionAdvisory?.status !== "current") {
+        return;
+      }
+      yield* Ref.update(maintenanceActionStatesRef, (previous) => {
+        const status = previous.get(provider.instanceId)?.update?.status;
+        if (status !== "unchanged" && status !== "failed") {
+          return previous;
+        }
+        const next = new Map(previous);
+        next.delete(provider.instanceId);
+        return next;
+      });
+    });
+
     const upsertProviders = Effect.fn("upsertProviders")(function* (
       nextProviders: ReadonlyArray<ServerProvider>,
       options?: {
@@ -539,6 +560,7 @@ export const layer = Layer.effect(
         readonly publish?: boolean;
       },
     ) {
+      yield* retireStaleUpdateState(provider);
       const providers = yield* upsertProviders([provider], options);
       // Reclassify the current read model after fetching. Never republish the
       // probe captured before the fetch: a newer health result may have landed.
