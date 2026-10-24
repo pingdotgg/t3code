@@ -936,6 +936,184 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect.each([
+    { status: "finished", unfinished: "interrupted" },
+    { status: "cancelled", unfinished: "cancelled" },
+    { status: "error", unfinished: "failed" },
+  ] as const)(
+    "closes tools Cursor never completed as $unfinished when the run ends $status",
+    ({ status, unfinished }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cursor-v2-unfinished-",
+        });
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-unfinished-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        // Cursor starts a read it denied (for example through .cursorignore) and
+        // never sends tool-call-completed for it, while the sibling read completes.
+        const updates: ReadonlyArray<InteractionUpdate> = [
+          {
+            type: "tool-call-started",
+            modelCallId: "native-model-call",
+            callId: "read-secret",
+            toolCall: { type: "read", args: { path: "secret.txt" } },
+          },
+          ...(["tool-call-started", "tool-call-completed"] as const).map((type) => ({
+            type,
+            modelCallId: "native-model-call",
+            callId: "read-open",
+            toolCall: {
+              type: "read" as const,
+              args: { path: "open.txt" },
+              ...(type === "tool-call-completed"
+                ? {
+                    result: {
+                      status: "success" as const,
+                      value: { fileSize: 3, content: "ok\n", totalLines: 1 },
+                    },
+                  }
+                : {}),
+            },
+          })),
+        ];
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          settings: yield* decodeCursorSettings({}),
+          environment: { HOME: workspace },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-unfinished",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: (input) =>
+                  Effect.gen(function* () {
+                    for (const update of updates) {
+                      yield* input.onDelta!(update).pipe(Effect.orDie);
+                    }
+                    return {
+                      agentId: "native-cursor-unfinished",
+                      runId: "native-cursor-run",
+                      wait: Effect.succeed({
+                        id: "native-cursor-run",
+                        requestId: "native-request",
+                        status,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      }),
+                      cancel: Effect.void,
+                    };
+                  }),
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-unfinished-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-unfinished-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-unfinished-attempt"),
+          rootNodeId: NodeId.make("cursor-unfinished-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-unfinished-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor unfinished tools",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-unfinished-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Read secret.txt and open.txt.",
+            attachments: [],
+          },
+        });
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const finalReads = new Map<string, { status: string; output: unknown; done: boolean }>();
+        for (const event of events) {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "Read"
+          ) {
+            finalReads.set(String(event.turnItem.title), {
+              status: event.turnItem.status,
+              output: event.turnItem.output,
+              done: event.turnItem.completedAt !== null,
+            });
+          }
+        }
+        const finalNodes = new Map<string, string>();
+        for (const event of events) {
+          if (event.type === "node.updated" && event.node.kind === "tool_call") {
+            finalNodes.set(String(event.node.nativeItemRef?.nativeId), event.node.status);
+          }
+        }
+        assert.deepEqual(Object.fromEntries(finalReads), {
+          "Read secret.txt": { status: unfinished, output: undefined, done: true },
+          "Read open.txt": {
+            status: "completed",
+            output: { fileSize: 3, content: "ok\n", totalLines: 1 },
+            done: true,
+          },
+        });
+        assert.deepEqual(Object.fromEntries(finalNodes), {
+          "read-secret": unfinished,
+          "read-open": "completed",
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
+
   it.effect("names a custom model Cursor's account catalog rejects", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
