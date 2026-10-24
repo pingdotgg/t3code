@@ -401,6 +401,16 @@ export const layer = Api.make(
                 ),
               ),
             ),
+            // Dedupe only needs the 10-minute signed job window; 14 days is for diagnostics.
+            Effect.andThen(
+              Effect.all([DeliveryAttempts.DeliveryAttempts, DateTime.now]).pipe(
+                Effect.flatMap(([deliveryAttempts, now]) =>
+                  deliveryAttempts.prune({
+                    createdBefore: DateTime.formatIso(DateTime.subtract(now, { days: 14 })),
+                  }),
+                ),
+              ),
+            ),
             Effect.catchCause((cause) =>
               Cause.hasInterrupts(cause)
                 ? Effect.interrupt

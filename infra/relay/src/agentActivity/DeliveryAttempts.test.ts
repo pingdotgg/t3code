@@ -2,8 +2,11 @@ import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
+import { relayDeliveryAttempts } from "../persistence/schema.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 
 describe("DeliveryAttempts", () => {
@@ -159,6 +162,37 @@ describe("DeliveryAttempts", () => {
 
       expect(claimed).toBe("claimed");
       expect(updatedValues[0]?.createdAt).toEqual(expect.any(String));
+    }).pipe(
+      Effect.provide(
+        DeliveryAttempts.layer.pipe(
+          Layer.provide(NodeCryptoLayer.layer),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
+        ),
+      ),
+    );
+  });
+
+  it.effect("prunes delivery attempts last written before the cutoff", () => {
+    const deletes: Array<{ readonly table: unknown; readonly where: SQL }> = [];
+    const fakeDb = {
+      delete: (table: unknown) => ({
+        where: (where: SQL) => {
+          deletes.push({ table, where });
+          return Effect.void;
+        },
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const attempts = yield* DeliveryAttempts.DeliveryAttempts;
+      yield* attempts.prune({ createdBefore: "2026-05-12T00:00:00.000Z" });
+
+      expect(deletes).toHaveLength(1);
+      expect(deletes[0]?.table).toBe(relayDeliveryAttempts);
+      expect(new PgDialect().sqlToQuery(deletes[0]!.where)).toEqual({
+        sql: '"relay_delivery_attempts"."created_at" < $1',
+        params: ["2026-05-12T00:00:00.000Z"],
+      });
     }).pipe(
       Effect.provide(
         DeliveryAttempts.layer.pipe(
