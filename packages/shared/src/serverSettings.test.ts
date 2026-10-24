@@ -26,6 +26,12 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("fallbackTextGenerationModelSelection", () => {
+  it("uses Big Pickle when only OpenCode is enabled", () => {
+    expect(
+      fallbackTextGenerationModelSelection({}, (instanceId) => instanceId === "opencode"),
+    ).toEqual({ instanceId: "opencode", model: "opencode/big-pickle" });
+  });
+
   it("ignores a configured non-default instance at machine scope, matching no fallback", () => {
     const configured = ProviderInstanceId.make("codex_work");
     const providerInstances = {
