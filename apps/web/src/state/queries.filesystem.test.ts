@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   phase: "connected" as "connected" | "offline",
   sessionAtom: {},
   searchAtom: {},
+  searchRequests: vi.fn(),
   contentAtom: {},
   contentRequests: vi.fn(),
   contentError: null as string | null,
@@ -34,7 +35,12 @@ vi.mock("./presentation", () => ({
   }),
 }));
 vi.mock("./projects", () => ({
-  projectEnvironment: { searchEntries: () => state.searchAtom },
+  projectEnvironment: {
+    searchEntries: (target: unknown) => {
+      state.searchRequests(target);
+      return state.searchAtom;
+    },
+  },
   projectContentSearch: (target: unknown) => {
     state.contentRequests(target);
     return state.contentAtom;
@@ -67,7 +73,7 @@ vi.mock("./query", () => ({
   }),
 }));
 
-import { useProjectContentSearch } from "./queries";
+import { useComposerPathSearch, useProjectContentSearch } from "./queries";
 
 const target = {
   environmentId: EnvironmentId.make("test-environment"),
@@ -81,7 +87,17 @@ beforeEach(() => {
   state.sessionWaiting = false;
   state.phase = "connected";
   state.contentRequests.mockClear();
+  state.searchRequests.mockClear();
   state.contentError = null;
+});
+
+it("lists workspace entries for a bare @ before anything is typed", () => {
+  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+  const result = useComposerPathSearch({ ...target, query: "" });
+  expect(state.searchRequests).toHaveBeenCalledWith(
+    expect.objectContaining({ input: expect.objectContaining({ cwd: "/repo", query: "" }) }),
+  );
+  expect(result.entries).toEqual([{ path: "src/index.ts", kind: "file" }]);
 });
 
 const contentTarget = {
