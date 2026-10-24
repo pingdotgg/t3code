@@ -3691,6 +3691,7 @@ export function claudeUserInputQuestions(
               ...(typeof optionRecord.preview === "string"
                 ? { preview: optionRecord.preview }
                 : {}),
+              ...(optionRecord.customAnswer === true ? { customAnswer: true } : {}),
             },
           ];
         })

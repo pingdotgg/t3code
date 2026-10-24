@@ -6,8 +6,14 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { useLayoutEffect, useRef, type ComponentProps } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+
+import {
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+} from "../../pendingUserInput";
+import type { PendingUserInput } from "../../session-logic";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -16,11 +22,12 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
-const prompt = {
+const defaultPrompt: PendingUserInput = {
   requestId: RuntimeRequestId.make("question-navigation"),
   createdAt: "2026-10-09T00:00:00.000Z",
   dismissible: false,
@@ -33,6 +40,157 @@ const prompt = {
     multiSelect: false,
   })),
 };
+
+function Questions({ prompt }: { prompt: PendingUserInput }) {
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>({});
+  return (
+    <>
+      <output>{questionIndex}</output>
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[prompt]}
+        cwd="/repo"
+        threadRef={threadRef}
+        disabled={false}
+        respondingRequestIds={[]}
+        answers={answers}
+        questionIndex={questionIndex}
+        onAdvance={() => setQuestionIndex(questionIndex + 1)}
+        onToggleOption={(questionId, value) => {
+          const question = prompt.questions.find((entry) => entry.id === questionId)!;
+          setAnswers((existing) => ({
+            ...existing,
+            [questionId]: togglePendingUserInputOptionSelection(
+              question,
+              existing[questionId],
+              value,
+            ),
+          }));
+        }}
+        onDismiss={() => {}}
+      />
+    </>
+  );
+}
+
+function optionKeys(container: HTMLElement) {
+  return [...container.querySelectorAll("button[aria-pressed]")].map((button) => {
+    const key = button.querySelector("[data-pending-user-input-option-key]")!;
+    return {
+      pressed: button.getAttribute("aria-pressed"),
+      key: key.querySelector("svg") ? "check" : key.textContent,
+    };
+  });
+}
+
+function pressKey(key: string) {
+  return act(() => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+}
+
+it("swaps the chosen option's number for a check in place and restores it when the choice moves", async () => {
+  const options = [
+    { label: "Rolling", description: "One node at a time" },
+    { label: "Canary", description: "A slice of traffic first" },
+    { label: "Big bang", description: "Everything at once" },
+  ];
+  const choicePrompt = {
+    ...defaultPrompt,
+    questions: [
+      { ...defaultPrompt.questions[0]!, options },
+      { ...defaultPrompt.questions[1]!, options, multiSelect: true },
+    ],
+  };
+  await using screen = await render(<Questions prompt={choicePrompt} />);
+  using _timers = fakeTimers();
+  const keys = () => optionKeys(screen.container);
+  const activeIndex = () => screen.container.querySelector("output")!.textContent;
+  const unpressed = [
+    { pressed: "false", key: "1" },
+    { pressed: "false", key: "2" },
+    { pressed: "false", key: "3" },
+  ];
+  expect(keys()).toEqual(unpressed);
+
+  await pressKey("2");
+  expect(keys()).toEqual([
+    { pressed: "false", key: "1" },
+    { pressed: "true", key: "check" },
+    { pressed: "false", key: "3" },
+  ]);
+
+  await pressKey("1");
+  expect(keys()).toEqual([
+    { pressed: "true", key: "check" },
+    { pressed: "false", key: "2" },
+    { pressed: "false", key: "3" },
+  ]);
+
+  await act(() => vi.advanceTimersByTime(200));
+  expect(activeIndex()).toBe("1");
+  expect(keys()).toEqual(unpressed);
+  await pressKey("1");
+  await pressKey("3");
+  expect(keys()).toEqual([
+    { pressed: "true", key: "check" },
+    { pressed: "false", key: "2" },
+    { pressed: "true", key: "check" },
+  ]);
+  await pressKey("1");
+  expect(keys()).toEqual([
+    { pressed: "false", key: "1" },
+    { pressed: "false", key: "2" },
+    { pressed: "true", key: "check" },
+  ]);
+  await act(() => vi.advanceTimersByTime(200));
+  expect(activeIndex()).toBe("1");
+});
+
+it("does not select or advance from a custom-answer hint", async () => {
+  const prompt: PendingUserInput = {
+    ...defaultPrompt,
+    questions: [
+      {
+        ...defaultPrompt.questions[0]!,
+        options: [
+          { label: "Rolling", description: "One node at a time" },
+          { label: "Canary", description: "A slice of traffic first" },
+          {
+            label: "Write my own answer",
+            description: "Write my own answer",
+            customAnswer: true,
+          },
+        ],
+      },
+    ],
+  };
+  await using screen = await render(<Questions prompt={prompt} />);
+  using _timers = fakeTimers();
+  const keys = () => optionKeys(screen.container);
+  const activeIndex = () => screen.container.querySelector("output")!.textContent;
+  const unpressed = [
+    { pressed: "false", key: "1" },
+    { pressed: "false", key: "2" },
+  ];
+  expect(keys()).toEqual(unpressed);
+
+  const customAnswer = screen.container.querySelector<HTMLElement>(
+    "[data-pending-user-input-custom-answer-option]",
+  )!;
+  expect(customAnswer.tagName).toBe("DIV");
+  await act(() => customAnswer.click());
+  await pressKey("3");
+  await act(() => vi.advanceTimersByTime(200));
+  expect(activeIndex()).toBe("0");
+  expect(keys()).toEqual(unpressed);
+
+  await pressKey("2");
+  expect(keys()).toEqual([
+    { pressed: "false", key: "1" },
+    { pressed: "true", key: "check" },
+  ]);
+});
 
 function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]) {
   const projection = makeThreadProjectionFixture();
@@ -67,7 +225,7 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
       updatedAt: projection.updatedAt,
       type: "user_input_request" as const,
       requestId: RuntimeRequestId.make(id),
-      questions: prompt.questions,
+      questions: defaultPrompt.questions,
     })),
   } satisfies OrchestrationV2ThreadProjection;
 }

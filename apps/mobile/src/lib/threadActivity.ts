@@ -379,13 +379,14 @@ function resolvePendingUserInputOptionValue(
   question: ThreadUserInputQuestion,
   value: string,
 ): string | null {
-  if (question.options.some((option) => option.value === value)) {
+  const selectableOptions = question.options.filter((option) => option.customAnswer !== true);
+  if (selectableOptions.some((option) => option.value === value)) {
     return value;
   }
 
   const label = value.trim();
   return label.length > 0 &&
-    question.options.some((option) => option.value === undefined && option.label.trim() === label)
+    selectableOptions.some((option) => option.value === undefined && option.label.trim() === label)
     ? label
     : null;
 }

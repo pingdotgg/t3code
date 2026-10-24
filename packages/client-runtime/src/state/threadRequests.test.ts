@@ -5,6 +5,7 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
@@ -203,6 +204,8 @@ describe("pending v2 questions", () => {
         responseCapability: "message",
         responseMode: "message",
         dismissible: true,
+        queueQuestionIndex: 0,
+        queueQuestionTotal: 1,
         questions: [
           {
             id: "next",
@@ -233,6 +236,134 @@ describe("pending v2 questions", () => {
       ),
     };
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
+  });
+});
+
+describe("pending question queues", () => {
+  const baseRequest = projection.runtimeRequests[0]!;
+  const baseItem = projection.turnItems[0]!;
+  if (baseItem.type !== "user_input_request") throw new Error("expected a question item");
+  const question = baseItem.questions[0]!;
+  const at = (minute: number) => DateTime.add(v2Now, { minutes: minute });
+
+  const queue = (
+    requests: ReadonlyArray<{
+      readonly id: string;
+      readonly createdAt: number;
+      readonly resolvedAt?: number;
+      readonly questions?: number;
+    }>,
+  ) => {
+    const projected = {
+      ...projection,
+      runtimeRequests: requests.map((request) => ({
+        ...baseRequest,
+        id: RuntimeRequestId.make(request.id),
+        createdAt: at(request.createdAt),
+        ...(request.resolvedAt === undefined
+          ? {}
+          : { status: "resolved" as const, resolvedAt: at(request.resolvedAt) }),
+      })),
+      turnItems: requests.map((request) => ({
+        ...baseItem,
+        id: TurnItemId.make(`${request.id}-item`),
+        requestId: RuntimeRequestId.make(request.id),
+        questions: Array.from({ length: request.questions ?? 1 }, (_, index) => ({
+          ...question,
+          id: `${request.id}-${index}`,
+        })),
+      })),
+    };
+    return derivePendingThreadRequests(projected).userInputs.map((input) => [
+      input.requestId,
+      input.queueQuestionIndex,
+      input.queueQuestionTotal,
+    ]);
+  };
+
+  it("orders pending questions by creation time, not projection order", () => {
+    expect(
+      queue([
+        { id: "newer", createdAt: 2 },
+        { id: "older", createdAt: 1 },
+      ]),
+    ).toEqual([
+      ["older", 0, 2],
+      ["newer", 1, 2],
+    ]);
+  });
+
+  it("counts simultaneous single-question requests as one queue", () => {
+    const ids = ["a", "b", "c", "d", "e"];
+    expect(queue(ids.map((id, index) => ({ id, createdAt: index })))).toEqual(
+      ids.map((id, index) => [id, index, 5]),
+    );
+  });
+
+  it("keeps queue positions after earlier questions are answered", () => {
+    expect(
+      queue([
+        { id: "a", createdAt: 0, resolvedAt: 10 },
+        { id: "b", createdAt: 0, resolvedAt: 11 },
+        { id: "c", createdAt: 0 },
+        { id: "d", createdAt: 0 },
+        { id: "e", createdAt: 0 },
+      ]),
+    ).toEqual([
+      ["c", 2, 5],
+      ["d", 3, 5],
+      ["e", 4, 5],
+    ]);
+  });
+
+  it("starts a new queue for questions asked after the previous one resolved", () => {
+    expect(
+      queue([
+        { id: "a", createdAt: 0, resolvedAt: 1 },
+        { id: "b", createdAt: 2, resolvedAt: 3 },
+        { id: "c", createdAt: 4 },
+      ]),
+    ).toEqual([["c", 0, 1]]);
+  });
+
+  it("flattens multi-question prompts into the queue count", () => {
+    expect(
+      queue([
+        { id: "a", createdAt: 0, questions: 3 },
+        { id: "b", createdAt: 1 },
+      ]),
+    ).toEqual([
+      ["a", 0, 4],
+      ["b", 3, 4],
+    ]);
+  });
+
+  it("joins requests that overlap through a chain", () => {
+    expect(
+      queue([
+        { id: "a", createdAt: 0, resolvedAt: 10 },
+        { id: "b", createdAt: 5, resolvedAt: 20 },
+        { id: "c", createdAt: 15 },
+      ]),
+    ).toEqual([["c", 2, 3]]);
+  });
+
+  it("does not hold a queue open for a settled request without a resolution time", () => {
+    const projected = {
+      ...projection,
+      runtimeRequests: [
+        { ...baseRequest, id: RuntimeRequestId.make("old"), status: "expired" as const },
+        { ...baseRequest, id: requestId, createdAt: at(1) },
+      ],
+      turnItems: [
+        { ...baseItem, id: TurnItemId.make("old-item"), requestId: RuntimeRequestId.make("old") },
+        baseItem,
+      ],
+    };
+    expect(derivePendingThreadRequests(projected).userInputs[0]).toMatchObject({
+      queueQuestionIndex: 0,
+      queueQuestionTotal: 1,
+    });
   });
 });
 

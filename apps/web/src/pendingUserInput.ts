@@ -80,7 +80,10 @@ export function resolvePendingUserInputAnswer(
   }
 
   const selectedOptionValues = normalizeSelectedOptionValues(draft?.selectedOptionValues).filter(
-    (value) => question.options.some((option) => (option.value ?? option.label) === value),
+    (value) =>
+      question.options.some(
+        (option) => option.customAnswer !== true && (option.value ?? option.label) === value,
+      ),
   );
   if (question.multiSelect) {
     return selectedOptionValues.length > 0
@@ -162,6 +165,13 @@ export function togglePendingUserInputOptionSelection(
   draft: PendingUserInputDraftAnswer | undefined,
   optionValue: string,
 ): PendingUserInputDraftAnswer {
+  if (
+    question.options.some(
+      (option) => option.customAnswer === true && (option.value ?? option.label) === optionValue,
+    )
+  ) {
+    return draft ?? {};
+  }
   if (question.multiSelect) {
     const selectedOptionValues = normalizeSelectedOptionValues(draft?.selectedOptionValues);
     const nextSelectedOptionValues = selectedOptionValues.includes(optionValue)

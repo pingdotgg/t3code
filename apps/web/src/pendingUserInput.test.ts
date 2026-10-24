@@ -134,9 +134,51 @@ describe("resolvePendingUserInputAnswer", () => {
       }),
     ).toBeNull();
   });
+
+  it("does not treat a custom-answer option as a selected answer", () => {
+    const question = {
+      ...singleSelectQuestion,
+      options: [
+        ...singleSelectQuestion.options,
+        {
+          label: "Write my own answer",
+          description: "Write my own answer",
+          customAnswer: true,
+        },
+      ],
+    };
+    expect(
+      resolvePendingUserInputAnswer(question, {
+        selectedOptionValues: ["Write my own answer"],
+      }),
+    ).toBeNull();
+    expect(
+      resolvePendingUserInputAnswer(question, {
+        customAnswer: "Start with the user-visible behavior",
+      }),
+    ).toBe("Start with the user-visible behavior");
+  });
 });
 
 describe("togglePendingUserInputOptionSelection", () => {
+  it("ignores custom-answer options", () => {
+    const question = {
+      ...singleSelectQuestion,
+      options: [
+        ...singleSelectQuestion.options,
+        {
+          label: "Write my own answer",
+          description: "Write my own answer",
+          customAnswer: true,
+        },
+      ],
+    };
+    const draft = { selectedOptionValues: ["Orchestration-first"] };
+    expect(togglePendingUserInputOptionSelection(question, draft, "Write my own answer")).toBe(
+      draft,
+    );
+  });
+
   it("selects and removes options with the same label independently", () => {
     const question = { ...nativeChoiceQuestion, multiSelect: true };
     const firstSelected = togglePendingUserInputOptionSelection(question, undefined, " first\t");

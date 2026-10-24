@@ -79,6 +79,14 @@ export interface ThreadPendingUserInput {
   readonly responseCapability: OrchestrationV2RuntimeRequest["responseCapability"]["type"];
   readonly responseMode?: "message";
   readonly dismissible: boolean;
+  /** Questions asked before this prompt among requests whose pending intervals overlap it. */
+  readonly queueQuestionIndex?: number;
+  readonly queueQuestionTotal?: number;
+}
+
+// Adapters fall back to "Question" or "Question N" when the provider sends no title.
+export function isGenericUserInputQuestionHeader(header: string) {
+  return /^question(?:\s+\d+)?$/i.test(header.trim());
 }
 
 export interface PendingThreadRequests {
@@ -111,16 +119,23 @@ export function derivePendingThreadRequests(
 ): PendingThreadRequests {
   const approvals: ThreadPendingApproval[] = [];
   const userInputs: ThreadPendingUserInput[] = [];
+  const hasPendingUserInput = projection.runtimeRequests.some(
+    (request) => request.kind === "user_input" && request.status === "pending",
+  );
+  const userInputItems = hasPendingUserInput
+    ? userInputItemsByRequestId(projection.turnItems)
+    : undefined;
+  const queuePositions = userInputItems
+    ? userInputQueuePositions(projection.runtimeRequests, userInputItems)
+    : undefined;
 
   for (const request of projection.runtimeRequests) {
     if (request.status !== "pending") continue;
     const responseCapability = request.responseCapability.type;
     if (request.kind === "user_input") {
-      const item = projection.turnItems.findLast(
-        (candidate) =>
-          candidate.type === "user_input_request" && candidate.requestId === request.id,
-      );
-      if (item === undefined || item.type !== "user_input_request") continue;
+      const item = userInputItems?.get(request.id);
+      if (item === undefined) continue;
+      const position = queuePositions?.get(request.id);
       userInputs.push({
         requestId: request.id,
         createdAt: DateTime.formatIso(request.createdAt),
@@ -132,6 +147,9 @@ export function derivePendingThreadRequests(
         dismissible: item.responseMode === "message" || responseCapability === "message",
         ...(item.responseMode === "message" || responseCapability === "message"
           ? { responseMode: "message" as const }
+          : {}),
+        ...(position
+          ? { queueQuestionIndex: position.index, queueQuestionTotal: position.total }
           : {}),
       });
       continue;
@@ -161,7 +179,73 @@ export function derivePendingThreadRequests(
     });
   }
 
+  // Consumers activate the first entry; queue positions count in creation order.
+  userInputs.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   return { approvals, userInputs };
+}
+
+type UserInputRequestItem = Extract<
+  ThreadStructure["turnItems"][number],
+  { type: "user_input_request" }
+>;
+
+function userInputItemsByRequestId(turnItems: ThreadStructure["turnItems"]) {
+  const items = new Map<RuntimeRequestId, UserInputRequestItem>();
+  // Later items win, matching the previous findLast lookup.
+  for (const item of turnItems) {
+    if (item.type === "user_input_request") items.set(item.requestId, item);
+  }
+  return items;
+}
+
+// Agents like Pi ask several one-question requests at once. Requests whose pending intervals
+// overlap form one queue, so the composer can count across them; a question asked after the
+// previous one resolved starts a fresh queue.
+function userInputQueuePositions(
+  requests: ThreadStructure["runtimeRequests"],
+  items: ReadonlyMap<RuntimeRequestId, UserInputRequestItem>,
+) {
+  const intervals = requests.flatMap((request, order) => {
+    if (request.kind !== "user_input") return [];
+    const start = DateTime.toEpochMillis(request.createdAt);
+    const end =
+      request.resolvedAt !== null
+        ? DateTime.toEpochMillis(request.resolvedAt)
+        : request.status === "pending"
+          ? Number.POSITIVE_INFINITY
+          : // A settled request without a resolution time must not hold its queue open forever.
+            start;
+    // A request without its question item contributes nothing countable.
+    const questionCount = items.get(request.id)?.questions.length ?? 0;
+    return [
+      { id: request.id, pending: request.status === "pending", start, end, order, questionCount },
+    ];
+  });
+  intervals.sort((left, right) => left.start - right.start || left.order - right.order);
+
+  const positions = new Map<RuntimeRequestId, { index: number; total: number }>();
+  let batchStart = 0;
+  let batchEnd = Number.NEGATIVE_INFINITY;
+  const flush = (batchStop: number) => {
+    const batch = intervals.slice(batchStart, batchStop);
+    if (!batch.some((interval) => interval.pending)) return;
+    const total = batch.reduce((sum, interval) => sum + interval.questionCount, 0);
+    let index = 0;
+    for (const interval of batch) {
+      if (interval.pending) positions.set(interval.id, { index, total });
+      index += interval.questionCount;
+    }
+  };
+  for (const [position, interval] of intervals.entries()) {
+    if (position > batchStart && interval.start > batchEnd) {
+      flush(position);
+      batchStart = position;
+      batchEnd = Number.NEGATIVE_INFINITY;
+    }
+    batchEnd = Math.max(batchEnd, interval.end);
+  }
+  flush(intervals.length);
+  return positions;
 }
 
 export function createQuestionHistoryProjector<

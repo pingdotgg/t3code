@@ -1247,6 +1247,40 @@ describe("provider question values", () => {
     expect(togglePendingUserInputOptionSelection(question, first, "Same label")).toBe(first);
   });
 
+  it("does not toggle or submit custom-answer options", () => {
+    const customQuestion = {
+      ...singleSelectQuestion,
+      options: [
+        ...singleSelectQuestion.options,
+        {
+          label: "Write my own answer",
+          description: "Write my own answer",
+          customAnswer: true,
+        },
+      ],
+    };
+    expect(
+      togglePendingUserInputOptionSelection(customQuestion, undefined, "Write my own answer"),
+    ).toEqual({});
+    expect(
+      isPendingUserInputOptionSelected(
+        customQuestion,
+        { selectedOptionValues: ["Write my own answer"] },
+        "Write my own answer",
+      ),
+    ).toBe(false);
+    expect(
+      buildPendingUserInputAnswers([customQuestion], {
+        runtime: { selectedOptionValues: ["Write my own answer"] },
+      }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([customQuestion], {
+        runtime: { customAnswer: "Bun" },
+      }),
+    ).toEqual({ runtime: "Bun" });
+  });
+
   it("rejects arbitrary text when the provider only accepts offered options", () => {
     expect(setPendingUserInputCustomAnswer(question, undefined, "Other")).toEqual({});
     expect(

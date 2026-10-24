@@ -1143,6 +1143,7 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
       description: TrimmedNonEmptyString,
       value: Schema.optional(Schema.String),
       preview: Schema.optional(Schema.String),
+      customAnswer: Schema.optional(Schema.Boolean),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),

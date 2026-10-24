@@ -2,7 +2,9 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
   RunId,
+  RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -312,4 +314,61 @@ it("matches full structure comparisons across streamed, batched, and reordered u
     [reasoning.id, 0],
     [assistant.id, 1],
   ]);
+});
+
+describe("pendingRequestsAtom", () => {
+  it("keeps queue positions after an earlier question is answered", () => {
+    const nodeId = NodeId.make("question-node");
+    const ids = ["a", "b", "c"].map((id) => RuntimeRequestId.make(id));
+    const projection: OrchestrationV2ThreadProjection = {
+      ...v2Projection,
+      runtimeRequests: ids.map((id, index) => ({
+        id,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        responseCapability: { type: "message" },
+        createdAt: v2Now,
+        ...(index === 0
+          ? { status: "resolved", resolvedAt: later }
+          : { status: "pending", resolvedAt: null }),
+      })),
+      turnItems: ids.map((id) => ({
+        ...assistant,
+        id: TurnItemId.make(`${id}-item`),
+        status: "completed",
+        type: "user_input_request",
+        requestId: id,
+        responseMode: "message",
+        questions: [
+          {
+            id,
+            header: "Next",
+            question: "Next?",
+            options: [],
+            required: true,
+            allowCustomAnswer: true,
+          },
+        ],
+      })),
+    };
+    const state = Atom.make(
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(projection) }),
+    );
+    const pending = createEnvironmentThreadDetailAtoms(() => state).pendingRequestsAtom({
+      environmentId: EnvironmentId.make("env"),
+      threadId: v2ThreadId,
+    });
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(pending);
+
+    expect(registry.get(pending)?.userInputs[0]).toMatchObject({
+      requestId: ids[1],
+      queueQuestionIndex: 1,
+      queueQuestionTotal: 3,
+    });
+    unmount();
+    registry.dispose();
+  });
 });

@@ -137,6 +137,7 @@ const question = Schema.Struct({
       label: Schema.String,
       description: Schema.String,
       value: Schema.optional(Schema.String),
+      customAnswer: Schema.optional(Schema.Boolean),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),

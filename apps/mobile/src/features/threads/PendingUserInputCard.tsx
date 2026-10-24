@@ -1,7 +1,10 @@
 import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { RuntimeRequestId } from "@t3tools/contracts";
-import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  isGenericUserInputQuestionHeader,
+  type ThreadUserInputQuestion,
+} from "@t3tools/client-runtime/state/thread-requests";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -79,7 +82,8 @@ function QuestionText(props: { readonly markdown: string }) {
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
-  const questionCount = props.pendingUserInput.questions.length;
+  const questionCount =
+    props.pendingUserInput.queueQuestionTotal ?? props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
   const responseDisabled = !canRespond || isResponding;
@@ -221,10 +225,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           />
         </View>
       </Pressable>
+      {/* Spans the card's full width so question bands can reach its edges; content keeps the card's 16px inset. */}
       <ScrollView
         bounces={false}
-        className="min-h-0"
-        contentContainerClassName="gap-2.5 pb-1"
+        className="-mx-4 min-h-0"
+        contentContainerClassName="gap-2.5 px-4 pb-1"
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
         showsVerticalScrollIndicator
@@ -236,16 +241,33 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             run to continue.
           </Text>
         ) : null}
-        {props.pendingUserInput.questions.map((question) => {
+        {props.pendingUserInput.questions.map((question, questionIndex) => {
           const draft = props.drafts[question.id];
+          const eyebrow = [
+            isGenericUserInputQuestionHeader(question.header) ? null : question.header,
+            questionCount > 1
+              ? `${(props.pendingUserInput.queueQuestionIndex ?? 0) + questionIndex + 1}/${questionCount}`
+              : null,
+            question.multiSelect ? "Select any" : null,
+          ]
+            .filter((part) => part !== null)
+            .join(" · ");
+          const selectableOptions = question.options.filter(
+            (option) => option.customAnswer !== true,
+          );
+          const customAnswerOptions = question.options.filter(
+            (option) => option.customAnswer === true,
+          );
           return (
             <View key={question.id} className="gap-2 pt-1">
-              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
-                {question.header}
-              </Text>
-              <QuestionText markdown={question.question} />
-              <View className="gap-2">
-                {question.options.map((option) => {
+              <View className="-mx-4 gap-1.5 bg-foreground/3 px-4 py-2">
+                {eyebrow ? (
+                  <Text className="font-t3-medium text-2xs text-foreground-muted">{eyebrow}</Text>
+                ) : null}
+                <QuestionText markdown={question.question} />
+              </View>
+              <View className="gap-0.5">
+                {selectableOptions.map((option) => {
                   const optionValue = option.value ?? option.label.trim();
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
@@ -257,8 +279,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                       accessibilityState={{ checked: selected, disabled: responseDisabled }}
                       disabled={responseDisabled}
                       className={cn(
-                        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
-                        selected ? "border-primary bg-primary/10" : "border-border bg-input",
+                        "min-h-12 w-full justify-center gap-0.5 rounded-xl px-2 py-2",
+                        selected ? "bg-foreground/8" : "active:bg-row-hover",
                       )}
                       onPress={() =>
                         props.onSelectOption(
@@ -268,22 +290,71 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         )
                       }
                     >
-                      <View className="min-w-0 flex-1 gap-0.5">
-                        <Text
-                          className={cn(
-                            "font-t3-bold text-sm",
-                            selected ? "text-foreground" : "text-foreground-secondary",
-                          )}
-                        >
+                      {/* The check shares the label's first line and keeps its box when unselected, so selecting never rewraps the label. */}
+                      <View className="flex-row items-start gap-3">
+                        <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground">
                           {option.label}
                         </Text>
-                        {description ? (
-                          <Text className="font-sans text-sm leading-5 text-foreground-muted">
-                            {description}
-                          </Text>
-                        ) : null}
+                        <View
+                          accessibilityElementsHidden
+                          importantForAccessibility="no-hide-descendants"
+                          className="h-[19px] w-4 items-center justify-center"
+                        >
+                          {selected ? (
+                            <SymbolView
+                              name="checkmark"
+                              size={16}
+                              tintColorClassName="accent-primary-text"
+                              type="monochrome"
+                              weight="bold"
+                            />
+                          ) : null}
+                        </View>
                       </View>
+                      {description ? (
+                        <Text className="pr-7 font-sans text-xs text-foreground-muted">
+                          {description}
+                        </Text>
+                      ) : null}
                     </Pressable>
+                  );
+                })}
+                {customAnswerOptions.map((option) => {
+                  const optionValue = option.value ?? option.label.trim();
+                  const description =
+                    option.description !== option.label ? option.description : undefined;
+                  return (
+                    <View
+                      key={`custom-answer:${optionValue}`}
+                      className={cn(
+                        "min-h-12 w-full justify-center gap-0.5 rounded-xl px-2 py-2",
+                        responseDisabled && "opacity-50",
+                      )}
+                    >
+                      <View className="flex-row items-start gap-3">
+                        <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground">
+                          {option.label}
+                        </Text>
+                        <View
+                          accessibilityElementsHidden
+                          importantForAccessibility="no-hide-descendants"
+                          className="h-[19px] w-4 items-center justify-center"
+                        >
+                          <SymbolView
+                            name="arrow.down"
+                            size={16}
+                            tintColorClassName="accent-foreground-muted"
+                            type="monochrome"
+                            weight="bold"
+                          />
+                        </View>
+                      </View>
+                      {description ? (
+                        <Text className="pr-7 font-sans text-xs text-foreground-muted">
+                          {description}
+                        </Text>
+                      ) : null}
+                    </View>
                   );
                 })}
               </View>
