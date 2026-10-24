@@ -119,7 +119,7 @@ export function gitHubProviderFailure(
 
 const REPOSITORY_ACCESS_HINTS: Record<GitHubCredentialSource, string> = {
   settings:
-    "GitHub did not return it to the token saved in Settings, which overrides GH_TOKEN and the gh login. Give that token access to this repository, or change it in Settings → Source Control.",
+    "GitHub did not return it to the token saved in Settings, which overrides the server's environment token (such as GH_TOKEN) and the gh login. Give that token access to this repository, or change it in Settings → Source Control.",
   env: "GitHub did not return it to the token in the server's environment, which overrides the gh login. Give that token access to this repository, or unset it.",
   gh: "GitHub did not return it to the gh login. Check that its account can see this repository, or save a token that can in Settings → Source Control.",
 };

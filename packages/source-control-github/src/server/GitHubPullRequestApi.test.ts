@@ -184,7 +184,7 @@ const layer = it.layer(
     Layer.provideMerge(
       Layer.succeed(GitHubCredentials.GitHubCredentials, {
         get: (host) =>
-          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+          Effect.map(mockedCredential(host), (held) => ({ source: "gh" as const, ...held, host })),
         invalidate: () => Effect.void,
       }),
     ),
