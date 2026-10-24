@@ -434,10 +434,14 @@ describe("thread outbox drain delivery cleanup", () => {
     await harness.manager.enqueue(message);
     const deliveryRevision = harness.manager.revisionOf(message.messageId);
 
-    await expect(completeQueuedMessageDelivery(message, deliveryRevision)).resolves.toBe("removed");
+    await expect(completeQueuedMessageDelivery(message, deliveryRevision, 40)).resolves.toBe(
+      "removed",
+    );
 
     expect(remainingMessages()).toEqual([]);
-    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([message]);
+    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([
+      { ...message, acknowledgedSequence: 40 },
+    ]);
   });
 
   it("keeps a delivered message when its editor opens during storage removal", async () => {

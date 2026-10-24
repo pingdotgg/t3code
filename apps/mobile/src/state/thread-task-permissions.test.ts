@@ -113,6 +113,7 @@ vi.mock("./threads", async () => {
     environmentThreadDetails: {
       queueWorkflowAtom: () => Atom.make(null),
       checkpointSummariesAtom: () => Atom.make([]),
+      historyAtom: () => Atom.make({ hasMoreHistory: false }),
     },
     threadEnvironment: {
       respondToApproval: state.approve,

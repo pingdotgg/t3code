@@ -5,6 +5,8 @@ import type {
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
 
 export type ThreadHistoryMeta = {
+  /** Server sequence of the snapshot that established this history window. */
+  readonly snapshotSequence?: number;
   readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
@@ -119,12 +121,12 @@ export function applyHistoryPageMeta(
   },
 ): ThreadHistoryMeta {
   return {
+    ...current,
     historyCursor: page.nextCursor,
     hasMoreHistory: page.hasMoreHistory,
     loading: false,
     error: null,
     expanded: true,
-    latestLocalTurnOrdinal: current.latestLocalTurnOrdinal,
   };
 }
 
