@@ -113,7 +113,10 @@ export function parseGitHubRepositorySelector(
   selector: string,
   defaultHost: string,
 ): GitHubRepositoryLocator | null {
-  const trimmed = selector.trim().replace(/\.git$/i, "");
+  const trimmed = selector
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "");
   if (/^https?:\/\//i.test(trimmed)) {
     try {
       const url = new URL(trimmed);

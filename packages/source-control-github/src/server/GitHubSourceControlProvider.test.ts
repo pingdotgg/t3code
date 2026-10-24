@@ -501,6 +501,33 @@ describe("GitHubSourceControlProvider writes", () => {
       assert.strictEqual(requests.length, 2);
     });
   });
+
+  it.effect.each([
+    "https://github.com/acme/web.git/",
+    "https://github.com/acme/web/",
+    "acme/web.git/",
+    "acme/web.git",
+  ])("looks up the repository in %s", (repository) =>
+    Effect.gen(function* () {
+      const requests: Array<string> = [];
+      const gh = yield* makeProvider({
+        rest: (input) =>
+          Effect.sync(() => {
+            requests.push(input.path);
+            return restResponse({
+              full_name: "acme/web",
+              html_url: "https://github.com/acme/web",
+              ssh_url: "git@github.com:acme/web.git",
+            });
+          }),
+      });
+
+      const urls = yield* gh.getRepositoryCloneUrls({ cwd: "/repo", repository });
+
+      assert.strictEqual(urls.nameWithOwner, "acme/web");
+      assert.deepStrictEqual(requests, ["repos/acme/web"]);
+    }),
+  );
 });
 
 describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
