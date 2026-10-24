@@ -61,8 +61,6 @@ import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssis
 import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
-  resolveTimelineMinimapCurrentIndex,
-  isTimelineMinimapRowVisible,
   resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHitStripWidth,
   timelineTurnFoldRunIdsByEntryId,
@@ -84,7 +82,7 @@ import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
-import { TimelineMinimap } from "./TimelineMinimap";
+import { TimelineMinimap, type TimelineMinimapHandle } from "./TimelineMinimap";
 import {
   type TimelineRowSharedState,
   type TimelineRowActivityState,
@@ -408,7 +406,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const expandCitedRun = (runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   };
-  const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  const minimapRef = useRef<TimelineMinimapHandle>(null);
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -617,7 +615,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
-  const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
@@ -690,7 +687,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
           ...(alwaysRenderKeys.length === 0 ? {} : { keys: alwaysRenderKeys }),
         };
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
-  const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
     if (anchorMessageId !== null && info.anchorIndex !== undefined) {
       onAnchorReady(anchorMessageId, info.anchorIndex);
@@ -755,8 +751,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const refreshMinimap = useStableCallback(() => {
     const state = listRef.current?.getState?.();
-    if (restoringThreadPosition || state?.data !== rows) return;
-    if (!state || minimapItems.length === 0) {
+    if (!state || restoringThreadPosition || state.data !== rows) {
+      minimapRef.current?.updateVisibleRange(null, null);
       return;
     }
 
@@ -774,38 +770,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
           firstBufferedRow.getBoundingClientRect().top
         : state.scroll;
     const visibleRange = resolveTimelineMinimapVisibleRange({ ...state, scroll });
-    for (const item of minimapItems) {
-      const strip = minimapStripMap.get(item.id);
-      const inView = isTimelineMinimapRowVisible(
-        item.rowIndex,
-        visibleRange.start,
-        visibleRange.end,
-      );
-      const next = inView ? "true" : "false";
-      // Avoid dirtying style state on every scroll tick for unchanged strips.
-      if (strip && strip.dataset.inView !== next) {
-        strip.dataset.inView = next;
-      }
-    }
-    const nextCurrentIndex = resolveTimelineMinimapCurrentIndex({
-      visibleStart: visibleRange.start,
-      visibleEnd: visibleRange.end,
-      rowIndices: minimapRowIndices,
-    });
-    setMinimapCurrentIndex((current) =>
-      current === nextCurrentIndex ? current : nextCurrentIndex,
-    );
+    minimapRef.current?.updateVisibleRange(visibleRange.start, visibleRange.end);
   });
 
   const minimapRefreshFrameRef = useRef<number | null>(null);
-  const scheduleMinimapRefresh = () => {
+  const scheduleMinimapRefresh = useStableCallback(() => {
     if (minimapRefreshFrameRef.current !== null) return;
     // LegendList recycles row containers before React commits their positions.
     minimapRefreshFrameRef.current = requestAnimationFrame(() => {
       minimapRefreshFrameRef.current = null;
       refreshMinimap();
     });
-  };
+  });
+
+  useLayoutEffect(() => {
+    // Replacements and prepends can change marker indices without a scroll event.
+    refreshMinimap();
+    scheduleMinimapRefresh();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Stable callbacks must recheck replaced rows and completed position restoration.
+  }, [rows, restoringThreadPosition, refreshMinimap, scheduleMinimapRefresh]);
 
   const handleScroll = () => {
     const state = listRef.current?.getState?.();
@@ -894,6 +877,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
       reportContentOverflow();
+      scheduleMinimapRefresh();
     };
 
     const frame = requestAnimationFrame(measure);
@@ -904,8 +888,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
       cancelAnimationFrame(frame);
       stopObserving();
     };
+  }, [
+    timelineViewportElement,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Rows and chat width resize the content without resizing the viewport.
-  }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
+    rows.length,
+    reportContentOverflow,
+    chatWidth,
+    scheduleMinimapRefresh,
+  ]);
 
   const sharedState: TimelineRowSharedState = {
     citationRequest: readyCitationRequest,
@@ -1155,11 +1145,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
               ListFooterComponent={timelineListFooter}
             />
             <TimelineMinimap
+              key={listIdentityKey}
+              ref={minimapRef}
               items={minimapItems}
               hasPersistentGutter={minimapHasPersistentGutter}
               hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              stripMap={minimapStripMap}
               onWheel={forwardMinimapWheel}
               onSelect={(item) => {
                 onManualNavigation();
