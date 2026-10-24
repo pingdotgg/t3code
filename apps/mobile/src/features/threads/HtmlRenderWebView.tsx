@@ -9,6 +9,7 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
+import { resolveThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -19,6 +20,8 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentThreadShells } from "../../state/threads";
 
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
@@ -81,8 +84,10 @@ export function HtmlRenderWebView(props: {
   readonly uri: string;
   readonly title: string;
   readonly nested: boolean;
+  readonly environmentId: EnvironmentId | null;
   readonly onLoadError?: () => void;
 }) {
+  const navigation = useNavigation();
   const theme = useHtmlRenderTheme();
   const [initialTheme] = useState(theme);
   const [generation, setGeneration] = useState(0);
@@ -112,6 +117,20 @@ export function HtmlRenderWebView(props: {
     setGeneration((value) => value + 1);
   };
   const scrollable = !props.nested || overflow.x || overflow.y;
+  const openThreadLink = (url: string) => {
+    if (props.environmentId === null) return false;
+    const target = resolveThreadLinkHref(
+      url,
+      props.environmentId,
+      appAtomRegistry.get(environmentThreadShells.threadRefsAtom),
+    );
+    if (target === null) return false;
+    navigation.navigate("Thread", {
+      environmentId: String(target.environmentId),
+      threadId: String(target.threadId),
+    });
+    return true;
+  };
   return (
     <View
       style={
@@ -147,6 +166,7 @@ export function HtmlRenderWebView(props: {
         }
         onOpenWindow={(event) => {
           const url = event.nativeEvent.targetUrl;
+          if (openThreadLink(url)) return;
           if (/^https?:/i.test(url)) void tryOpenExternalUrl(url, "html-render");
         }}
         onLoadEnd={() => {
@@ -226,6 +246,7 @@ export function ThreadHtmlRender(props: {
           <HtmlRenderWebView
             key={`${uri}:${attempt}`}
             uri={uri}
+            environmentId={props.environmentId}
             title={title}
             nested
             onLoadError={handleLoadError}

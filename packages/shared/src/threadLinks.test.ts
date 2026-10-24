@@ -6,6 +6,7 @@ import {
   parseThreadLinkHref,
   relabelThreadLinks,
   resolveThreadLinkRef,
+  resolveThreadLinkHref,
 } from "./threadLinks.ts";
 
 const ref = (environmentId: string, threadId = "chat-1") => ({
@@ -14,6 +15,24 @@ const ref = (environmentId: string, threadId = "chat-1") => ({
 });
 
 describe("thread link destinations", () => {
+  it("resolves HTML links against their source environment and preserves native ids", () => {
+    const source = ref("local", "mcp:1234");
+    const remote = ref("remote", source.threadId);
+    expect(
+      resolveThreadLinkHref("t3-thread://v1/mcp:1234", source.environmentId, [remote, source]),
+    ).toEqual(source);
+    expect(
+      resolveThreadLinkHref("t3-thread://v1/mcp:1234", source.environmentId, [remote]),
+    ).toEqual(remote);
+    expect(resolveThreadLinkHref("t3-thread://v1/mcp:1234", source.environmentId, [])).toEqual(
+      source,
+    );
+    expect(
+      resolveThreadLinkHref("t3-thread://v1/mcp%3A1234", source.environmentId, [source]),
+    ).toEqual(source);
+    expect(resolveThreadLinkHref("https://example.com", source.environmentId, [])).toBeNull();
+  });
+
   it("prefers the local literal id, then the local decoded id, over remote matches", () => {
     const source = ref("local", "provider%3A1");
     const decoded = ref("local", "provider:1");

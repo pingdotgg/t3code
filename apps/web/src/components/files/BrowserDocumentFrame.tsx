@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   type KeybindingCommand,
   type KeybindingShortcut,
@@ -22,6 +23,7 @@ import {
   matchesKeybindingShortcut,
   normalizeEventKey,
 } from "@t3tools/shared/keybindings";
+import { parseThreadLinkHref, resolveThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
@@ -33,6 +35,8 @@ import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentThreadShells } from "~/state/threads";
 
 /**
  * The page reports the keys, and a page script can report any key it likes,
@@ -187,7 +191,18 @@ export function HtmlRenderDocument(props: {
   );
   const openChangeRequestLink = useOpenChangeRequestLink(props.threadRef);
   const openLink = useOpenLink(props.threadRef);
+  const navigate = useNavigate();
   const open = useEffectEvent((url: string, modifiers: { metaKey: boolean; ctrlKey: boolean }) => {
+    if (parseThreadLinkHref(url) !== null) {
+      if (props.threadRef === undefined) return;
+      const target = resolveThreadLinkHref(
+        url,
+        props.threadRef.environmentId,
+        appAtomRegistry.get(environmentThreadShells.threadRefsAtom),
+      );
+      if (target !== null) void navigate({ to: "/$environmentId/$threadId", params: target });
+      return;
+    }
     if (modifiers.metaKey || modifiers.ctrlKey) {
       void readLocalApi()
         ?.shell.openExternal(url)

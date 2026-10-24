@@ -1,3 +1,4 @@
+import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -9,7 +10,83 @@ import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
 
+function clickHtmlLink(html: string, href: string, framed = true) {
+  const messages: unknown[] = [];
+  const attributes = new Map<string, string>([["href", href]]);
+  const anchor = {
+    matches: (selector: string) => selector === "a[href]",
+    getAttribute: (name: string) => attributes.get(name),
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+  };
+  const event = {
+    isTrusted: true,
+    composedPath: () => [anchor],
+    metaKey: false,
+    ctrlKey: false,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+  const listeners: Array<(click: typeof event) => void> = [];
+  const window = {
+    parent: {} as object,
+    addEventListener: () => undefined,
+    postMessage: (message: unknown) => messages.push(message),
+  };
+  window.parent = framed ? { postMessage: window.postMessage } : window;
+  const context = NodeVM.createContext({
+    URL,
+    window,
+    document: {
+      getElementById: () => ({}),
+      baseURI: "https://example.com/render.html",
+      addEventListener: (type: string, listener: (click: typeof event) => void) => {
+        if (type === "click") listeners.push(listener);
+      },
+    },
+    location: { href: "https://example.com/render.html", hash: "" },
+  });
+  for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    NodeVM.runInContext(script[1]!, context);
+  }
+  for (const listener of listeners) listener(event);
+  return { event, messages, attributes };
+}
+
 describe("injectHtmlRenderBootstrap", () => {
+  it.each([
+    "https://github.com/example/repo/pull/1",
+    "t3-thread://v1/mcp:b597d231-0c1e-4da8-8794-ccd3c3df953c",
+  ])("opens %s through the host without navigating the iframe", (url) => {
+    const { event, messages } = clickHtmlLink(injectHtmlRenderBootstrap("<p>Page</p>"), url);
+    expect(event.defaultPrevented).toBe(true);
+    expect(messages).toEqual([
+      {
+        jsonrpc: "2.0",
+        id: "t3-link-1",
+        method: "ui/open-link",
+        params: { url, metaKey: false, ctrlKey: false },
+      },
+    ]);
+    expect(readHtmlRenderLinkRequest(messages[0])).toMatchObject({ url });
+  });
+
+  it("opens thread links in a new window for the mobile host to handle", () => {
+    const { attributes } = clickHtmlLink(
+      injectHtmlRenderBootstrap("<p>Page</p>"),
+      "t3-thread://v1/mcp:mobile",
+      false,
+    );
+    expect(attributes.get("target")).toBe("_blank");
+  });
+
+  it("keeps same-page anchors inside the document", () => {
+    const { event, messages } = clickHtmlLink(injectHtmlRenderBootstrap("<p>Page</p>"), "#details");
+    expect(event.defaultPrevented).toBe(false);
+    expect(messages).toEqual([]);
+  });
+
   it("puts the theme ahead of the page's own head content", () => {
     const html =
       "<!doctype html><html><head><style>:root{--background:red}</style></head><body>x</body></html>";
@@ -64,7 +141,18 @@ describe("injectHtmlRenderBootstrap", () => {
 });
 
 describe("readHtmlRenderLinkRequest", () => {
-  it("accepts only http(s) URLs in an MCP Apps ui/open-link request", () => {
+  it.each(["t3-thread://v1/mcp:1234"])("accepts the thread link %s", (url) => {
+    expect(
+      readHtmlRenderLinkRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "ui/open-link",
+        params: { url },
+      }),
+    ).toEqual({ id: 1, url, metaKey: false, ctrlKey: false });
+  });
+
+  it("accepts web URLs and rejects unsupported schemes or malformed requests", () => {
     const link = (url: unknown, modifiers = {}) => ({
       jsonrpc: "2.0",
       id: 1,
@@ -82,6 +170,7 @@ describe("readHtmlRenderLinkRequest", () => {
     ).toEqual({ id: 1, url: "https://example.com/a", metaKey: true, ctrlKey: false });
     expect(readHtmlRenderLinkRequest(link("javascript:alert(1)"))).toBeUndefined();
     expect(readHtmlRenderLinkRequest(link("file:///etc/passwd"))).toBeUndefined();
+    expect(readHtmlRenderLinkRequest(link("t3-thread://v1/"))).toBeUndefined();
     expect(
       readHtmlRenderLinkRequest({
         jsonrpc: "2.0",

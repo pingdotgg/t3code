@@ -1,4 +1,4 @@
-import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { ThreadId, type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -47,6 +47,17 @@ export function resolveThreadLinkRef(
     if (match !== null) return match;
   }
   return null;
+}
+
+export function resolveThreadLinkHref(
+  href: string,
+  environmentId: EnvironmentId,
+  refs: ReadonlyArray<ScopedThreadRef>,
+): ScopedThreadRef | null {
+  const threadId = parseThreadLinkHref(href);
+  if (threadId === null) return null;
+  const source = { environmentId, threadId };
+  return resolveThreadLinkRef(source, refs) ?? source;
 }
 
 export function formatThreadLink(threadId: string, label: string): string {
