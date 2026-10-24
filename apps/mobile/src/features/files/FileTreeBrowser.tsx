@@ -31,15 +31,6 @@ function cachedFileTree(entries: ReadonlyArray<ProjectEntry>): ReadonlyArray<Fil
   return tree;
 }
 
-function ancestorPaths(path: string): ReadonlyArray<string> {
-  const parts = path.split("/").filter(Boolean);
-  const ancestors: string[] = [];
-  for (let index = 1; index < parts.length; index += 1) {
-    ancestors.push(parts.slice(0, index).join("/"));
-  }
-  return ancestors;
-}
-
 const FileTreeRow = function FileTreeRow(props: {
   readonly item: VisibleFileTreeNode;
   readonly selected: boolean;
@@ -106,6 +97,11 @@ const FileTreeRow = function FileTreeRow(props: {
 };
 
 export function FileTreeBrowser(props: {
+  readonly revealSelection: (path: string | null) => void;
+  readonly expandedPaths: ReadonlySet<string>;
+  readonly setExpandedPaths: (
+    update: (current: ReadonlySet<string>) => ReadonlySet<string>,
+  ) => void;
   readonly entries: ReadonlyArray<ProjectEntry>;
   readonly error: string | null;
   readonly isPending: boolean;
@@ -120,7 +116,7 @@ export function FileTreeBrowser(props: {
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const { expandedPaths, setExpandedPaths } = props;
   const [pendingSelection, setPendingSelection] = useState<{
     readonly path: string;
     readonly selectedPathAtPress: string | null;
@@ -148,26 +144,21 @@ export function FileTreeBrowser(props: {
     searchResultPaths: props.searchResultPaths,
   });
 
+  const { revealSelection } = props;
   useEffect(() => {
-    if (!controlledSelectedPath) {
-      return;
-    }
-    setExpandedPaths((current) => {
-      const ancestors = ancestorPaths(controlledSelectedPath);
-      if (ancestors.every((ancestor) => current.has(ancestor))) {
-        return current;
-      }
-      const next = new Set(current);
-      for (const ancestor of ancestors) {
-        next.add(ancestor);
-      }
-      return next;
-    });
-  }, [controlledSelectedPath]);
+    revealSelection(controlledSelectedPath);
+  }, [controlledSelectedPath, revealSelection]);
 
   useEffect(() => {
-    for (const path of expandedPaths) onLoadDirectory(path);
-  }, [expandedPaths, onLoadDirectory]);
+    const visit = (nodes: ReadonlyArray<FileTreeNode>) => {
+      for (const node of nodes) {
+        if (node.kind !== "directory" || !expandedPaths.has(node.path)) continue;
+        onLoadDirectory(node.path);
+        visit(node.children);
+      }
+    };
+    visit(tree);
+  }, [tree, expandedPaths, onLoadDirectory]);
 
   useEffect(
     () => () => {
