@@ -253,6 +253,23 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const worktreeBaseResolves = Effect.fn("ThreadLaunchService.worktreeBaseResolves")(function* (
+    cwd: string,
+    strategy: Extract<ThreadLaunchWorkspaceStrategy, { readonly type: "worktree" }>,
+  ) {
+    const { baseRef } = strategy;
+    // `git worktree add` reads `-` as the previous checkout.
+    if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef })) return true;
+    if (
+      strategy.startFromOrigin === true &&
+      (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
+    )
+      return true;
+    // `git worktree add` also starts from a remote-tracking branch of that
+    // name; any ref carrying it is reason enough to let Git decide.
+    return yield* git.hasRefNamed({ cwd, refName: baseRef });
+  });
+
   const checkWorktreeBase: ThreadLaunchService["Service"]["checkWorktreeBase"] = Effect.fn(
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
@@ -264,17 +281,7 @@ const make = Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
       if (project === undefined) return undefined;
       const cwd = project.workspaceRoot;
-      // `git worktree add` reads `-` as the previous checkout.
-      if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
-        return undefined;
-      if (
-        strategy.startFromOrigin === true &&
-        (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
-      )
-        return undefined;
-      // `git worktree add` also starts from a remote-tracking branch of that
-      // name; any ref carrying it is reason enough to let Git decide.
-      if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return undefined;
+      if (yield* worktreeBaseResolves(cwd, strategy)) return undefined;
       return (yield* git.hasCommit({ cwd, refName: "HEAD" })) ? project : undefined;
     }).pipe(Effect.orElseSucceed(() => undefined));
     if (unresolved !== undefined)
@@ -807,13 +814,30 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // Failures leave the worktree request to provisioning, which reports them.
+  const hasNoWorktreeBase = Effect.fn("ThreadLaunchService.hasNoWorktreeBase")(
+    function* (
+      projectId: ProjectId,
+      strategy: Extract<ThreadLaunchWorkspaceStrategy, { readonly type: "worktree" }>,
+    ) {
+      const project = Option.getOrUndefined(yield* projects.getById(projectId));
+      if (project === undefined) return false;
+      const cwd = project.workspaceRoot;
+      if (yield* git.hasCommit({ cwd, refName: "HEAD" })) return false;
+      return !(yield* worktreeBaseResolves(cwd, strategy));
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (request) {
-      // Scratch has no Git repository. Normalize before folder allocation so
-      // durable preparation and retries use the thread's own Scratch folder.
+      // Scratch has no Git repository, and a repository without commits has
+      // nothing to branch from. Normalize before folder allocation so durable
+      // preparation and retries use the root, or the thread's Scratch folder.
       const input: ThreadLaunchInput =
         request.workspaceStrategy.type === "worktree" &&
-        (yield* managedFolders.isScratchProject(request.projectId))
+        ((yield* managedFolders.isScratchProject(request.projectId)) ||
+          (yield* hasNoWorktreeBase(request.projectId, request.workspaceStrategy)))
           ? { ...request, workspaceStrategy: { type: "root" } }
           : request;
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {

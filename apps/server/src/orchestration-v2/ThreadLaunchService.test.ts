@@ -197,7 +197,7 @@ function makeHarness(options: HarnessOptions = {}) {
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
-      hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      hasCommit: options.hasCommit ?? (({ refName }) => Effect.succeed(refName === "HEAD")),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
@@ -1105,6 +1105,58 @@ it.effect.each(["stable", "upstream/release"])(
         ),
       ),
     ),
+);
+
+// Issue 22017: `git worktree add` has no commit to start from in a repository
+// without commits, so a worktree request runs in the root checkout instead.
+it.effect("launches a worktree request at the root of a repository with no commits", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "launch-empty-repo-" });
+    yield* git.execute({ operation: "launch-test", cwd, args: ["init", "-b", "main"] });
+    const at = <T extends { readonly cwd: string }>(input: T) => ({ ...input, cwd });
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        git
+          .execute({
+            operation: "launch-test",
+            cwd,
+            args: ["rev-parse", "--verify", `${refName}^{commit}`],
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+      git: {
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote(at(input)),
+        hasRefNamed: () => Effect.succeed(false),
+      },
+      createWorktree: (input, options) => git.createWorktree(at(input), options),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:empty-repo",
+          thread: "thread:launch:empty-repo",
+          message: "Reply with OK only",
+          workspace: { type: "worktree", baseRef: "main", startFromOrigin: false },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      // Released past preparation; provider execution is disabled here.
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, null);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-empty-git-" })),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
 );
 
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
