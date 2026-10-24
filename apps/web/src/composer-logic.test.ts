@@ -203,6 +203,39 @@ describe("composerSubmissionIntentForKey", () => {
     },
   );
 
+  const ctrlEnter = { ...enter, ctrlKey: true };
+  const ctrlAltEnter = { ...enter, ctrlKey: true, altKey: true };
+  it.each([
+    [true, "enter", "one line", true, enter, "background"],
+    [true, "enter", "one line", true, ctrlEnter, "foreground"],
+    [true, "enter", "one line", true, ctrlAltEnter, "foreground"],
+    [true, "enter", "one line", false, enter, "foreground"],
+    [true, "enter", "one line", false, ctrlAltEnter, "background"],
+    [true, "mod-enter", "one line", true, enter, null],
+    [true, "mod-enter", "one line", true, ctrlEnter, "background"],
+    [true, "mod-enter", "one line", true, ctrlAltEnter, "foreground"],
+    [true, "mod-enter-multiline", "two\nlines", true, ctrlEnter, "background"],
+    [true, "mod-enter-multiline", "two\nlines", true, ctrlAltEnter, "foreground"],
+    [true, "mod-enter-multiline", "one line", true, enter, "background"],
+    [true, "mod-enter-multiline", "one line", true, ctrlEnter, "foreground"],
+    [false, "mod-enter", "one line", true, ctrlEnter, "background"],
+    [false, "mod-enter", "one line", true, ctrlAltEnter, "background"],
+  ] as const)(
+    "resolves new-thread sends (in background %s, %s, %j, draft %s, %j)",
+    (startNewThreadsInBackground, sendShortcut, prompt, isDraftThread, event, expected) => {
+      expect(
+        composerSubmissionIntentForKey({
+          ...input,
+          startNewThreadsInBackground,
+          sendShortcut,
+          prompt,
+          isDraftThread,
+          event,
+        }),
+      ).toBe(expected);
+    },
+  );
+
   it.each(["MacIntel", "Win32", "Linux"])(
     "keeps modifier submission available with the software keyboard open on %s",
     (platform) => {

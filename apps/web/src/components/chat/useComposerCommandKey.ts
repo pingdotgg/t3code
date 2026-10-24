@@ -14,6 +14,7 @@ import {
   type ComposerSubmissionIntent,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
+  composerDefaultSendIntent,
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
@@ -34,6 +35,7 @@ export function useComposerCommandKey(input: {
   readonly phase: ChatComposerProps["phase"];
   readonly isCompacting: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
+  readonly startNewThreadsInBackground: ChatComposerProps["settings"]["startNewThreadsInBackground"];
   readonly isSoftwareKeyboardOpen: boolean;
   readonly planModeUiEnabled: boolean;
   readonly isLiteralPendingAnswer: boolean;
@@ -86,6 +88,7 @@ export function useComposerCommandKey(input: {
     phase,
     isCompacting,
     followUpBehavior,
+    startNewThreadsInBackground,
     isSoftwareKeyboardOpen,
     planModeUiEnabled,
     isLiteralPendingAnswer,
@@ -185,6 +188,7 @@ export function useComposerCommandKey(input: {
       isRunning: phase === "running",
       sendShortcut,
       prompt: promptRef.current,
+      startNewThreadsInBackground,
     });
     if (key === "Tab" && event.shiftKey && submissionIntent === null) {
       if (!planModeUiEnabled) return false;
@@ -200,7 +204,11 @@ export function useComposerCommandKey(input: {
       composerMenuOpenRef.current = false;
       return true;
     }
-    if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
+    const plainSendIntent = composerDefaultSendIntent({
+      isDraftThread: routeKind === "draft",
+      startNewThreadsInBackground,
+    });
+    if (menuIsActive && (submissionIntent === null || submissionIntent === plainSendIntent)) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
       if (key === "ArrowDown" && currentItems.length > 0) {

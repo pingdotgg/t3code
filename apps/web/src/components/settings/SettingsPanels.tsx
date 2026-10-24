@@ -482,6 +482,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
+    ...(settings.startNewThreadsInBackground !==
+    DEFAULT_UNIFIED_SETTINGS.startNewThreadsInBackground
+      ? ["Start new threads in background"]
+      : []),
     ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
       ? ["Context window indicator"]
       : []),
@@ -601,6 +605,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
+      startNewThreadsInBackground: DEFAULT_UNIFIED_SETTINGS.startNewThreadsInBackground,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -783,7 +788,9 @@ function LegacyFeaturesSection() {
 }
 
 export function GeneralSettingsPanel() {
-  const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
+  const isMac = isMacPlatform(navigator.platform);
+  const modifierLabel = isMac ? "⌘" : "Ctrl";
+  const altLabel = isMac ? "Option" : "Alt";
   const sendShortcutOptions = [
     { value: "enter", label: "Enter" },
     { value: "mod-enter-multiline", label: `${modifierLabel} + Enter for multiline prompts` },
@@ -1548,6 +1555,39 @@ export function GeneralSettingsPanel() {
                 <SelectItem value="steer">Steer</SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("start-new-threads-in-background")}
+          description={
+            "Sending from a new thread starts it in the background and keeps the new-thread composer open. " +
+            (settings.sendShortcut === "mod-enter-multiline"
+              ? `Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + ${altLabel} + Enter for multiline prompts to open the thread instead.`
+              : `Press ${modifierLabel}${settings.sendShortcut === "mod-enter" ? ` + ${altLabel}` : ""} + Enter to open the thread instead.`)
+          }
+          resetAction={
+            settings.startNewThreadsInBackground !==
+            DEFAULT_UNIFIED_SETTINGS.startNewThreadsInBackground ? (
+              <SettingResetButton
+                label="start new threads in background"
+                onClick={() =>
+                  updateSettings({
+                    startNewThreadsInBackground:
+                      DEFAULT_UNIFIED_SETTINGS.startNewThreadsInBackground,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.startNewThreadsInBackground}
+              onCheckedChange={(checked) =>
+                updateSettings({ startNewThreadsInBackground: Boolean(checked) })
+              }
+              aria-label="Start new threads in background"
+            />
           }
         />
 
