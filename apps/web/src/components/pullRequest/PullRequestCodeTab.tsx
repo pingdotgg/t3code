@@ -81,6 +81,7 @@ import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import {
   buildDiffReviewComment,
+  diffReviewSelectionId,
   resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
@@ -898,7 +899,7 @@ function PullRequestCodeTab({
       file === undefined
         ? null
         : buildDiffReviewComment({
-            id: `pull-request-selection:${anchor.fileKey}:${anchor.range.start}:${anchor.range.end}`,
+            id: `pull-request-selection:${diffReviewSelectionId(anchor.fileKey, anchor.range)}`,
             sectionId: `pull-request:${detail.number}`,
             sectionTitle: `PR #${detail.number} review`,
             filePath: anchor.path,
