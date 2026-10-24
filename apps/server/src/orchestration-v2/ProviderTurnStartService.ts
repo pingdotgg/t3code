@@ -894,10 +894,11 @@ export const layer: Layer.Layer<
         sameSelection ||
         (previousSelection !== undefined &&
           session.canReuseContextUsage?.(previousSelection, run.modelSelection) === true);
-      const knownModelWindow = session.getModelContextWindow?.(
+      const modelWindow = session.getModelContextWindow?.(
         run.modelSelection,
         resolvedRuntimePolicy.cwd,
       );
+      const knownModelWindow = Effect.isEffect(modelWindow) ? yield* modelWindow : modelWindow;
       const handoffUsage = contextUsageForHandoff({
         sameNativeThread,
         sameSelection,

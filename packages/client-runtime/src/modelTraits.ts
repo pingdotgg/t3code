@@ -112,6 +112,7 @@ export function buildTraitsTriggerDisplay(input: {
   reportedModelSelection?: ModelSelection | null | undefined;
 }): { label: string } {
   let fastModeFallbackLabel: string | null = null;
+  let thinkingFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
@@ -119,6 +120,18 @@ export function buildTraitsTriggerDisplay(input: {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";
+      continue;
+    }
+    if (
+      input.provider === "claudeAgent" &&
+      descriptor.id === "thinking" &&
+      descriptor.type === "boolean"
+    ) {
+      if (descriptor.currentValue === false) {
+        labels.push("Thinking Off");
+      } else {
+        thinkingFallbackLabel = descriptor.label;
+      }
       continue;
     }
     if (
@@ -177,5 +190,5 @@ export function buildTraitsTriggerDisplay(input: {
       labels.push(speedLabel);
     }
   }
-  return { label: labels.join(" · ") };
+  return { label: labels.join(" · ") || thinkingFallbackLabel || "" };
 }

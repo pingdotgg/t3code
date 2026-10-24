@@ -87,8 +87,10 @@ device until you sign back into the same account.
 ## Custom models
 
 On web and desktop, use Settings → Providers → **Models** to add an unlisted model with a custom
-name and options. Only options supported by the provider integration affect turns. Antigravity
-uses its account catalog and does not support custom models.
+name and options. Only options supported by the provider integration affect turns. A Claude custom
+model added without options gets Reasoning, Thinking, and Context Window controls. Choosing 1M
+sends the model id with `[1m]`, so the route behind it must accept that. Antigravity uses its
+account catalog and does not support custom models.
 
 To rename a built-in model on every client, edit the server's `settings.json` in its `userdata`
 directory. Add a custom model entry with the built-in model ID and a new name under that provider

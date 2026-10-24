@@ -196,6 +196,45 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
+  it.effect("keeps a configured custom alias opaque to the Claude CLI", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Keep custom model",
+            body: "",
+          },
+        }),
+        // The custom alias stays opaque: it resolves to itself rather than the
+        // built-in it shadows, so its own default Reasoning control is what
+        // reaches the CLI, not the built-in's `[expanded]` mapping.
+        argsMustContain: `--model ${SYNTHETIC_CLAUDE_COLLIDING_ALIAS} --effort max --settings ${JSON.stringify({ disableAllHooks: true, alwaysThinkingEnabled: true })}`,
+        claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "feature/custom-model",
+            commitSummary: "Keep custom model",
+            diffSummary: "1 file changed",
+            diffPatch: "diff --git a/README.md b/README.md",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
+              [
+                { id: "effort", value: "max" },
+                { id: "fastMode", value: true },
+                { id: "contextWindow", value: "expanded" },
+              ],
+            ),
+          });
+
+          expect(generated.title).toBe("Keep custom model");
+        }),
+    ),
+  );
   it.effect(
     "keeps canonical built-in capabilities when a custom model collides with its alias",
     () =>

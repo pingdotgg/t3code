@@ -105,7 +105,7 @@ function makeTestAdapter(input: {
   readonly failResume?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
-  readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
+  readonly getModelContextWindow?: ProviderAdapter.ProviderAdapterV2SessionRuntime["getModelContextWindow"];
   readonly canReuseContextUsage?: ProviderAdapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
   readonly tokenUsageByRunOrdinal?: Readonly<
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
@@ -417,6 +417,8 @@ describe("orchestration v2 provider switching", () => {
     "prior-images-telemetry-native",
     "prior-images-unsent-native",
     "prior-images-legacy-replacement-native",
+    "prior-images-catalog-growth-native",
+    "prior-images-catalog-shrink-native",
     "delivery-write-failure",
   ] as const)("preserves handoffs through %s", (scenario) =>
     Effect.scoped(
@@ -424,6 +426,10 @@ describe("orchestration v2 provider switching", () => {
         const cwd = yield* checkpointWorkspace(`handoff-${scenario}`);
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const catalogScenario = scenario.includes("catalog-");
+        const catalogWindow = yield* Ref.make(
+          scenario.includes("catalog-shrink") ? 1_000_000 : 200_000,
+        );
         const reasoningScenario = scenario.includes("reasoning-change");
         const turnUsageScenario = reasoningScenario || scenario.includes("turn-usage");
         const modelScenario =
@@ -467,6 +473,16 @@ describe("orchestration v2 provider switching", () => {
             ...(scenario.includes("reported-capacity")
               ? { initialContextUsage: { usedTokens: 999_999, maxTokens: 1_000_000 } }
               : {}),
+            ...(catalogScenario
+              ? {
+                  tokenUsageByRunOrdinal: {
+                    2: {
+                      usedTokens: 145_000,
+                      maxTokens: scenario.includes("catalog-shrink") ? 1_000_000 : 200_000,
+                    },
+                  },
+                }
+              : {}),
             ...(turnUsageScenario
               ? {
                   canReuseContextUsage: canReuseCodexContextUsage,
@@ -494,6 +510,7 @@ describe("orchestration v2 provider switching", () => {
                 : scenario === "large-current-input" || priorImages
                   ? { getModelContextWindow: () => 32_000 }
                   : {}),
+            ...(catalogScenario ? { getModelContextWindow: () => Ref.get(catalogWindow) } : {}),
             ...(scenario.endsWith("-native") || scenario === "large-current-input"
               ? { injectedHistory }
               : {}),
@@ -608,6 +625,12 @@ describe("orchestration v2 provider switching", () => {
               CLAUDE_MODEL_SELECTION,
             );
             yield* wait(2);
+            if (catalogScenario) {
+              yield* Ref.set(
+                catalogWindow,
+                scenario.includes("catalog-growth") ? 1_000_000 : 200_000,
+              );
+            }
             if (modelScenario && !turnUsageScenario) {
               const target = (yield* orchestrator.getThreadProjection(
                 threadId,
@@ -784,6 +807,7 @@ describe("orchestration v2 provider switching", () => {
               scenario.startsWith("imported") ||
               scenario.includes("telemetry") ||
               scenario.includes("unsent") ||
+              scenario.includes("catalog-growth") ||
               replaceNative;
             const sourceText =
               `${replaceNative ? "Another" : "New"} source constraint ` + "q".repeat(9_000);

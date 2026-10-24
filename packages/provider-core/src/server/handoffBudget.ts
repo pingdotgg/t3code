@@ -79,7 +79,11 @@ export function contextUsageForHandoff(input: {
   readonly knownModelWindow?: number | undefined;
 }): ThreadTokenUsageSnapshot | null {
   if (!input.sameNativeThread || input.previousUsage == null) return null;
-  if (input.sameSelection) return input.previousUsage;
+  if (input.sameSelection) {
+    return input.knownModelWindow === undefined
+      ? input.previousUsage
+      : { ...input.previousUsage, maxTokens: input.knownModelWindow };
+  }
   const reportedMax =
     input.previousUsage.maxTokens != null && input.previousUsage.maxTokens > 0
       ? input.previousUsage.maxTokens

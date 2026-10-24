@@ -3,6 +3,7 @@ import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
+  getProviderOptionCurrentValue,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 
@@ -39,7 +40,8 @@ export function compileClaudeModelSelection(
     ? (getModelSelectionBooleanOptionValue(selection, "fastMode") ?? false)
     : undefined;
   const thinking = supportsBoolean("thinking")
-    ? getModelSelectionBooleanOptionValue(selection, "thinking")
+    ? (getModelSelectionBooleanOptionValue(selection, "thinking") ??
+      getProviderOptionCurrentValue(descriptors.find((descriptor) => descriptor.id === "thinking")))
     : undefined;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),

@@ -62,6 +62,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -85,6 +86,11 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+  scopeClaudeModelCatalog,
+} from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -119,6 +125,9 @@ beforeEach(() => {
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
+});
+const BARE_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: [{ slug: "gateway-bare", name: "Gateway Bare" }],
 });
 const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   customModels: [
@@ -585,6 +594,38 @@ describe("ClaudeAdapterV2 context usage", () => {
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
     );
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
+  });
+
+  it("defaults a bare custom slug and opens 1M through the turn path", () => {
+    const settings = BARE_CUSTOM_MODEL_CLAUDE_SETTINGS;
+    const bareSelection = {
+      instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+      model: "gateway-bare",
+      options: [
+        { id: "effort", value: "max" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    } satisfies ModelSelection;
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: bareSelection,
+      nativeThreadId: "bare-model-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings,
+    });
+    assert.equal(options.model, "gateway-bare[1m]");
+    assert.equal(options.effort, "max");
+    assert.equal(
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        { input_tokens: 1, output_tokens: 1 },
+        bareSelection,
+        "2026-08-29T00:00:00.000Z",
+        "",
+        undefined,
+        scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, settings.customModels),
+      ).maxTokens,
+      1_000_000,
+    );
   });
 });
 
@@ -2151,6 +2192,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
+    readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
@@ -2206,6 +2248,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+        ...(options?.modelCatalog === undefined ? {} : { modelCatalog: options.modelCatalog }),
         environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
@@ -9694,6 +9737,272 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("keeps the live query's context limit when a catalog refresh is rejected", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const initial = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, ["gateway-bare"]);
+        const catalog = yield* Ref.make(initial);
+        const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(catalog) });
+        const selection = { ...CLAUDE_TEST_MODEL_SELECTION, model: "gateway-bare" };
+        const turn = (ordinal: number, modelSelection: ModelSelection) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: DateTime.makeUnsafe("2026-10-22T00:00:00.000Z"),
+            attemptId: RunAttemptId.make(`attempt-rejected-catalog-${ordinal}`),
+            text: "Keep the background command alive.",
+            attachments: [],
+            modelSelection,
+            providerTurnOrdinal: ordinal,
+          });
+        yield* harness.runtime.startTurn(turn(1, selection));
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* Ref.set(catalog, {
+          models: initial.models.map((entry) =>
+            entry.model.slug === selection.model
+              ? {
+                  ...entry,
+                  runtime: {
+                    ...entry.runtime,
+                    contextWindowTokens: { "200k": 750_000, "1m": 1_000_000 },
+                  },
+                }
+              : entry,
+          ),
+        });
+        const rejected = yield* harness.runtime
+          .startTurn(turn(2, { ...selection, options: [{ id: "thinking", value: false }] }))
+          .pipe(Effect.result);
+        assert.equal(rejected._tag, "Failure");
+        if (rejected._tag === "Failure") {
+          assert.instanceOf(
+            rejected.failure.cause,
+            ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+          );
+        }
+        const continuation = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-rejected-catalog-continuation"),
+          providerTurnOrdinal: 3,
+          text: "Continue.",
+          attachments: [],
+          modelSelection: selection,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        });
+        yield* harness.offerAndWait(
+          usageSnapshotFrame("msg-old-catalog", "00000000-0000-4000-8000-000000009726", {
+            input_tokens: 100,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          }),
+        );
+        yield* harness.runtime.startTurn(continuation);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) => event.type === "provider_turn.updated" && event.providerTurn.tokenUsage,
+          ),
+        );
+        assert.equal(
+          harness.events
+            .flatMap((event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+                ? [event.providerTurn.tokenUsage.maxTokens]
+                : [],
+            )
+            .at(-1),
+          200_000,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("uses the refreshed catalog for query options and context limits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const catalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
+        const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(catalog) });
+        yield* Ref.set(catalog, {
+          models: [
+            {
+              model: {
+                slug: "refreshed-route",
+                name: "Refreshed route",
+                isCustom: false,
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "effort",
+                      label: "Reasoning",
+                      type: "select",
+                      options: [
+                        { id: "high", label: "High", isDefault: true },
+                        { id: "ultrathink", label: "Ultrathink" },
+                      ],
+                      promptInjectedValues: ["ultrathink"],
+                    },
+                    {
+                      id: "contextWindow",
+                      label: "Context Window",
+                      type: "select",
+                      options: [{ id: "large", label: "Large", isDefault: true }],
+                    },
+                  ],
+                },
+              },
+              runtime: {
+                modelSuffixes: { contextWindow: { large: "[large]" } },
+                contextWindowTokens: { large: 750_000 },
+              },
+              compatibility: {},
+            },
+          ],
+        });
+        const selection = {
+          ...CLAUDE_TEST_MODEL_SELECTION,
+          model: "refreshed-route",
+          options: [{ id: "effort", value: "ultrathink" }],
+        } satisfies ModelSelection;
+        const contextWindow = harness.runtime.getModelContextWindow?.(selection);
+        assert.equal(
+          Effect.isEffect(contextWindow) ? yield* contextWindow : contextWindow,
+          750_000,
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-refreshed-catalog"),
+            text: "Use the refreshed model profile.",
+            attachments: [],
+            modelSelection: selection,
+          }),
+        );
+        assert.equal(harness.getOpenedOptions()?.model, "refreshed-route[large]");
+        assert.equal(
+          harness.offeredMessages[0]?.message.content,
+          "Ultrathink:\nUse the refreshed model profile.",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { model: "gateway-bare", canonical: "gateway-bare", effort: "max" },
+    { model: "sonnet-4.6", canonical: "claude-sonnet-4-6", effort: "high" },
+  ])(
+    "preserves inherited thinking and context in a native child of $model",
+    ({ model, canonical, effort }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: BARE_CUSTOM_MODEL_CLAUDE_SETTINGS,
+          });
+          const selection = {
+            ...CLAUDE_TEST_MODEL_SELECTION,
+            model,
+            options: [
+              { id: "contextWindow", value: "1m" },
+              { id: "thinking", value: false },
+              { id: "effort", value: effort },
+            ],
+          } satisfies ModelSelection;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-inherited-options"),
+              text: "Start a native child with the inherited model.",
+              attachments: [],
+              modelSelection: selection,
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              parent_tool_use_id: null,
+              message: {
+                model: selection.model,
+                id: "msg_inherited_options",
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: "inherited-options-tool",
+                    name: "Agent",
+                    input: {
+                      model: "inherit",
+                      description: "Inherited options",
+                      subagent_type: "general-purpose",
+                      prompt: "Check the inherited options.",
+                    },
+                  },
+                ],
+              },
+              uuid: "00000000-0000-4000-8000-000000000240",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "inherited-options-child",
+              tool_use_id: "inherited-options-tool",
+              description: "Inherited options",
+              task_type: "local_agent",
+              uuid: "00000000-0000-4000-8000-000000000241",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* Queue.take(harness.subagentReceipts);
+          const child = harness.events.find((event) => event.type === "app_thread.created");
+          const expected = { ...selection, model: canonical };
+          assert.deepEqual(child?.appThread.modelSelection, expected);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              parent_tool_use_id: "inherited-options-tool",
+              message: {
+                model: `${canonical}[1m]`,
+                id: "msg_inherited_options_observed",
+                type: "message",
+                role: "assistant",
+                content: [{ type: "text", text: "Checking the inherited options." }],
+              },
+              uuid: "00000000-0000-4000-8000-000000000242",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          const latest = harness.events.findLast((event) => event.type === "subagent.updated");
+          assert.deepEqual(latest?.subagent.modelSelection, expected);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([
     "requested",
     "observed-before",
@@ -9910,7 +10219,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             model: "claude-custom-tuned",
             options: [{ id: "effort", value: "brutal" }],
           },
-          [`task-${SHADOW_TOOL_USE_ID}`]: { instanceId, model: "opus" },
+          [`task-${SHADOW_TOOL_USE_ID}`]: {
+            instanceId,
+            model: "opus",
+            options: [{ id: "effort", value: "high" }],
+          },
         });
       }).pipe(
         Effect.provide(

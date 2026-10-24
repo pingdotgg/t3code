@@ -576,10 +576,11 @@ export interface ProviderAdapterV2SessionRuntime {
    * thread keeps showing Waiting.
    */
   readonly backgroundTasksEndWithProcess?: true;
+  /** Resolves the requested selection's current limit before handoff delivery. */
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,
     cwd?: string | null,
-  ) => number | undefined;
+  ) => number | undefined | Effect.Effect<number | undefined>;
   readonly canReuseContextUsage?: (previous: ModelSelection, next: ModelSelection) => boolean;
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,

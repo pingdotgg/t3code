@@ -249,6 +249,29 @@ describe("handoff budget", () => {
     assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
   });
 
+  it.each([
+    { previousWindow: 200_000, currentWindow: 1_000_000 },
+    { previousWindow: 1_000_000, currentWindow: 200_000 },
+  ])(
+    "refreshes a matching selection's context limit to $currentWindow",
+    ({ previousWindow, currentWindow }) => {
+      assert.deepEqual(
+        contextUsageForHandoff({
+          sameNativeThread: true,
+          sameSelection: true,
+          reuseTelemetry: true,
+          previousUsage: {
+            usedTokens: 145_000,
+            maxTokens: previousWindow,
+            autoCompactThreshold: 170_000,
+          },
+          knownModelWindow: currentWindow,
+        }),
+        { usedTokens: 145_000, maxTokens: currentWindow, autoCompactThreshold: 170_000 },
+      );
+    },
+  );
+
   it("keeps measured occupancy across a model change", () => {
     const previous = {
       usedTokens: 37_321,

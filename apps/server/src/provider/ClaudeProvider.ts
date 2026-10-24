@@ -1,6 +1,5 @@
 import {
   type ClaudeSettings,
-  type ModelCapabilities,
   type ServerProvider,
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
@@ -14,7 +13,6 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
@@ -48,14 +46,11 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  DEFAULT_CLAUDE_CUSTOM_MODEL_CAPABILITIES,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
 } from "./ClaudeModelCatalog.ts";
-
-const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [],
-});
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -494,7 +489,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const allModels = providerModelsFromSettings(
     modelCatalog.models.map((entry) => entry.model),
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    DEFAULT_CLAUDE_CUSTOM_MODEL_CAPABILITIES,
   );
 
   if (!claudeSettings.enabled) {
@@ -585,7 +580,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const models = providerModelsFromSettings(
     resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    DEFAULT_CLAUDE_CUSTOM_MODEL_CAPABILITIES,
   );
   const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
@@ -710,7 +705,7 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
     const models = providerModelsFromSettings(
       modelCatalog.models.map((entry) => entry.model),
       claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+      DEFAULT_CLAUDE_CUSTOM_MODEL_CAPABILITIES,
     );
 
     if (!claudeSettings.enabled) {

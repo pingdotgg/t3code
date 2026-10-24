@@ -8,6 +8,8 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import {
+  createModelCapabilities,
+  type CustomModelDefinition,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -26,6 +28,63 @@ import { BUNDLED_MODEL_MANIFEST, resolveProviderCatalog } from "./ModelManifest.
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
+
+/**
+ * Controls a custom Claude model gets when it declares none of its own. Custom
+ * slugs are usually gateway routes, and a bare slug otherwise has no way to
+ * pick an effort, turn thinking off, or open 1M.
+ */
+export const DEFAULT_CLAUDE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "effort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High", isDefault: true },
+        { id: "xhigh", label: "Extra High" },
+        { id: "max", label: "Max" },
+      ],
+    },
+    { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+    {
+      id: "contextWindow",
+      label: "Context Window",
+      type: "select",
+      options: [
+        { id: "200k", label: "200k", isDefault: true },
+        { id: "1m", label: "1M" },
+      ],
+    },
+  ],
+});
+
+/** Matching runtime profile: the 1M choice appends `[1m]`, the only way Claude Code opens 1M. */
+const DEFAULT_CLAUDE_CUSTOM_MODEL_RUNTIME: ClaudeCodeProfile = {
+  modelSuffixes: { contextWindow: { "1m": "[1m]" } },
+  contextWindowTokens: { "200k": 200_000, "1m": 1_000_000 },
+};
+
+/**
+ * Fill in the controls for a custom entry. An entry that declares its own keeps
+ * them. The runtime mapping is attached either way: it only matches a choice
+ * named `1m`, so an entry without a Context Window control is unaffected, and a
+ * route still opens 1M after the user adds descriptors of their own.
+ */
+function withCustomClaudeDefaults(entry: CustomModelDefinition): ClaudeCatalogModel {
+  return {
+    model: {
+      slug: entry.slug,
+      name: entry.name,
+      isCustom: true,
+      capabilities: entry.capabilities ?? DEFAULT_CLAUDE_CUSTOM_MODEL_CAPABILITIES,
+    },
+    runtime: DEFAULT_CLAUDE_CUSTOM_MODEL_RUNTIME,
+    compatibility: {},
+  };
+}
 
 export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
@@ -100,17 +159,8 @@ export function scopeClaudeModelCatalog(
   const builtInSlugs = new Set(builtInModels.map((entry) => entry.model.slug));
   const customCatalogModels: Array<ClaudeCatalogModel> = [];
   for (const entry of customEntries) {
-    if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
-    customCatalogModels.push({
-      model: {
-        slug: entry.slug,
-        name: entry.name,
-        isCustom: true,
-        capabilities: entry.capabilities,
-      },
-      runtime: {},
-      compatibility: {},
-    });
+    if (builtInSlugs.has(entry.slug)) continue;
+    customCatalogModels.push(withCustomClaudeDefaults(entry));
   }
 
   return { models: [...builtInModels, ...customCatalogModels] };
@@ -270,7 +320,10 @@ export function resolveClaudeCatalogApiModelId(
     const value = getProviderOptionCurrentValue(
       descriptors.find((descriptor) => descriptor.id === optionId),
     );
-    if (typeof value === "string" && suffixes[value]) return `${slug}${suffixes[value]}`;
+    const suffix = typeof value === "string" ? suffixes[value] : undefined;
+    // A slug can carry the marker already, since `[1m]` is how a user opts a
+    // gateway route into 1M by hand. Appending again would break the route id.
+    if (suffix && !slug.toLowerCase().endsWith(suffix.toLowerCase())) return `${slug}${suffix}`;
   }
   return slug;
 }
@@ -282,6 +335,9 @@ export function resolveClaudeCatalogContextWindowTokens(
   const entry = resolveClaudeCatalogModel(catalog, modelSelection?.model);
   if (!entry) return undefined;
   if (entry.runtime.fixedContextWindowTokens) return entry.runtime.fixedContextWindowTokens;
+  // Claude Code reads `[1m]` off the id itself, so a route the user marked by
+  // hand runs at 1M whether or not it declares a Context Window control.
+  if (/\[1m\]$/i.test(entry.model.slug)) return 1_000_000;
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
   return contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined;
 }

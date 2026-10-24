@@ -1611,19 +1611,23 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      const budget = (model: string) =>
-        handoffBudget({
+      const budget = Effect.fn("PiTest.handoffBudget")(function* (model: string) {
+        const modelContextWindow = runtime.getModelContextWindow?.(modelSelection(model));
+        return handoffBudget({
           tokenCap: 16_000,
           userText: "$handoff",
           attachments: [],
           providerThread,
           nativeContextEstimate: 307_543,
-          modelContextWindow: runtime.getModelContextWindow?.(modelSelection(model)),
+          modelContextWindow: Effect.isEffect(modelContextWindow)
+            ? yield* modelContextWindow
+            : modelContextWindow,
         });
-      assert.equal(budget("default"), 16_000);
-      assert.equal(budget("anthropic/large"), 16_000);
+      });
+      assert.equal(yield* budget("default"), 16_000);
+      assert.equal(yield* budget("anthropic/large"), 16_000);
       assert.equal(runtime.getModelContextWindow?.(modelSelection("anthropic/small")), 32_000);
-      assert.equal(budget("anthropic/small"), 0);
+      assert.equal(yield* budget("anthropic/small"), 0);
       assert.isUndefined(runtime.getModelContextWindow?.(modelSelection("anthropic/unknown")));
       assert.isUndefined(
         runtime.getModelContextWindow?.({

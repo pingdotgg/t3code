@@ -115,6 +115,29 @@ describe("Claude model catalog", () => {
     assert.isUndefined(
       resolveClaudeCatalogContextWindowTokens(catalog, { ...selection, model: "custom" }),
     );
+    // A route the user marked `[1m]` by hand runs at 1M, so it reports 1M even
+    // with no Context Window control of its own.
+    assert.equal(
+      resolveClaudeCatalogContextWindowTokens(
+        scopeClaudeModelCatalog(catalog, [
+          {
+            slug: "route/pro[1m]",
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [{ id: "high", label: "High", isDefault: true }],
+                },
+              ],
+            },
+          },
+        ]),
+        { ...selection, model: "route/pro[1m]" },
+      ),
+      1_000_000,
+    );
   });
 
   it("filters models at runtime-version boundaries and derives the upgrade message", () => {
@@ -170,7 +193,25 @@ describe("Claude model catalog", () => {
     );
   });
 
-  it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
+  it("only treats a trailing 1M marker as an explicit context window", () => {
+    const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
+      "route[1m]-revision",
+      "route[1M]",
+    ]);
+    for (const [model, expected] of [
+      ["route[1m]-revision", 200_000],
+      ["route[1M]", 1_000_000],
+    ] as const) {
+      assert.strictEqual(
+        resolveClaudeCatalogContextWindowTokens(catalog, {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model,
+        }),
+        expected,
+      );
+    }
+  });
+  it("appends custom models, defaulting a bare slug and keeping declared descriptors", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",
       {
@@ -193,9 +234,65 @@ describe("Claude model catalog", () => {
     ]);
 
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
-    assert.isUndefined(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"));
-    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "max"), "max");
-    assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "max", "synthetic"), "max");
+
+    // With no descriptors of its own it gets the default Reasoning and Context
+    // Window controls, and 1M appends the suffix Claude Code needs to open 1M.
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), "high");
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "synthetic",
+        options: [{ id: "contextWindow", value: "1m" }],
+      }),
+      "synthetic[1m]",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogContextWindowTokens(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "synthetic",
+        options: [{ id: "contextWindow", value: "1m" }],
+      }),
+      1_000_000,
+    );
+
+    // A slug a user already marked `[1m]` by hand keeps the marker once.
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(scopeClaudeModelCatalog(catalog, ["route/deepseek[1m]"]), {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "route/deepseek[1m]",
+        options: [{ id: "contextWindow", value: "1m" }],
+      }),
+      "route/deepseek[1m]",
+    );
+
+    // A custom entry that declares its own Context Window still gets the suffix.
+    const declared = scopeClaudeModelCatalog(catalog, [
+      {
+        slug: "route/glm",
+        name: "GLM",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "contextWindow",
+              label: "Context Window",
+              type: "select",
+              options: [
+                { id: "200k", label: "200k", isDefault: true },
+                { id: "1m", label: "1M" },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(declared, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "route/glm",
+        options: [{ id: "contextWindow", value: "1m" }],
+      }),
+      "route/glm[1m]",
+    );
 
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "brutal"),
@@ -213,13 +310,16 @@ describe("Claude model catalog", () => {
       resolveClaudeCatalogApiModelId(catalog, {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-custom-tuned",
-        options: [{ id: "effort", value: "brutal" }],
+        options: [
+          { id: "effort", value: "brutal" },
+          { id: "contextWindow", value: "1m" },
+        ],
       }),
       "claude-custom-tuned",
     );
     assert.deepStrictEqual(
       resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
-      ["claude-synthetic-next", "claude-custom-tuned"],
+      ["claude-synthetic-next", "synthetic", "claude-custom-tuned"],
     );
   });
 });

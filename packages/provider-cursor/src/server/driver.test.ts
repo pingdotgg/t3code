@@ -309,7 +309,8 @@ it.layer(layerTest)("CursorDriver", (it) => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runDrain,
         );
-        const window = runtime.getModelContextWindow?.(modelSelection);
+        const modelWindow = runtime.getModelContextWindow?.(modelSelection);
+        const window = Effect.isEffect(modelWindow) ? yield* modelWindow : modelWindow;
         return {
           model: sentModels.at(-1),
           window,
