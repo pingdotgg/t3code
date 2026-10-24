@@ -163,7 +163,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
-  remarkGfm,
+  [remarkGfm, { singleTilde: false }],
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -174,7 +174,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 ];
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
-  remarkGfm,
+  [remarkGfm, { singleTilde: false }],
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
