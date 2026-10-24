@@ -50,7 +50,7 @@ export const definition = defineSourceControl({
     plural: "pull requests",
   },
   repositoryPathHint: "owner/repo",
-  publicHost: null,
+  publicHost: "git.cafe",
   publishDescription: "git.cafe",
   publishHost: () => "git.cafe",
   newRepositoryOwner: (account) => (account ? { owner: account } : null),

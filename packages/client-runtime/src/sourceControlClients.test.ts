@@ -357,6 +357,7 @@ describe("sourceControlClients.findByPublicDomain", () => {
     expect(kindOf("gist.github.com")).toBe("github");
     expect(kindOf("GitLab.com")).toBe("gitlab");
     expect(kindOf("codeberg.org")).toBe("forgejo");
+    expect(kindOf("git.cafe")).toBe("gitcafe");
     expect(kindOf("notgithub.com")).toBeUndefined();
     expect(kindOf("github.com.example")).toBeUndefined();
   });
