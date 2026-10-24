@@ -6,6 +6,8 @@ import {
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -218,15 +220,20 @@ function probeCli(input: {
           }) satisfies DiscoveryProbeResult,
       ),
       Effect.catch((cause) =>
-        Effect.succeed({
-          kind: input.spec.kind,
-          label: input.spec.label,
-          executable: input.spec.executable,
-          status: "missing" as const,
-          version: Option.none<string>(),
-          installHint: input.spec.installHint,
-          detail: detailFromCause(cause),
-        } satisfies DiscoveryProbeResult),
+        unavailableInstallHint(input.spec.executable, input.spec.installHint, cause).pipe(
+          Effect.map(
+            (installHint) =>
+              ({
+                kind: input.spec.kind,
+                label: input.spec.label,
+                executable: input.spec.executable,
+                status: "missing" as const,
+                version: Option.none<string>(),
+                installHint,
+                detail: detailFromCause(cause),
+              }) satisfies DiscoveryProbeResult,
+          ),
+        ),
       ),
     );
 }
@@ -313,6 +320,35 @@ export function isMissingExecutable(error: unknown): boolean {
     error.cause.reason.module === "ChildProcess"
   );
 }
+
+// macOS's EBADARCH, which Node has no name for: the binary is built for another CPU, such as an
+// Intel-only `gh` on Apple Silicon without Rosetta.
+const BAD_CPU_TYPE_ERRNO = -86;
+
+/**
+ * The hint for a CLI that failed to start. One built for another CPU looks installed to the user,
+ * so the hint names the file the server tried to run.
+ */
+export const unavailableInstallHint = Effect.fn("discovery.unavailableInstallHint")(function* (
+  executable: string,
+  installHint: string,
+  cause: unknown,
+) {
+  const platform = yield* HostProcess.Platform;
+  if (
+    platform !== "darwin" ||
+    !isVcsProcessSpawnError(cause) ||
+    !(cause.cause instanceof Error) ||
+    !("errno" in cause.cause) ||
+    cause.cause.errno !== BAD_CPU_TYPE_ERRNO
+  ) {
+    return installHint;
+  }
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const path = resolveExecutable(executable, platform, yield* HostProcess.Environment);
+  const architecture = yield* HostProcess.Architecture;
+  return `\`${path ?? executable}\` is built for another CPU architecture, so this ${architecture} machine cannot run it. Remove or replace it. ${installHint}`;
+});
 
 class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered>()(
   "UnknownRemoteUnanswered",

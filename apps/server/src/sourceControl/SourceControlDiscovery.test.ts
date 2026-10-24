@@ -10,6 +10,8 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpClient } from "effect/http";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -96,6 +98,71 @@ const processOutput = (
 });
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+it.effect("names a CLI built for another CPU instead of asking to install it", () => {
+  const processMock = {
+    run: (input: VcsProcess.VcsProcessInput) =>
+      Effect.fail(
+        new VcsProcessSpawnError({
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          // What Node throws on macOS for an Intel-only binary when Rosetta is not installed.
+          cause:
+            input.command === "gh" || input.command === "git"
+              ? Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 })
+              : new Error(`${input.command} not found`),
+        }),
+      ),
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
+  const layerTest = SourceControlDiscovery.layer.pipe(
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-source-control-arch-discovery-",
+      }),
+    ),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
+    Layer.provide(
+      layerSourceControlProviderRegistryTest({
+        process: processMock,
+        bitbucket: {
+          probeAuth: Effect.succeed({
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const result = yield* discovery.discover.pipe(
+      Effect.provideService(SpawnExecutableResolution, (command) => `/usr/local/bin/${command}`),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Architecture, "arm64"),
+    );
+    const item = (kind: string) =>
+      [...result.versionControlSystems, ...result.sourceControlProviders].find(
+        (entry) => entry.kind === kind,
+      );
+
+    assert.strictEqual(item("git")?.status, "missing");
+    assert.strictEqual(
+      item("git")?.installHint,
+      "`/usr/local/bin/git` is built for another CPU architecture, so this arm64 machine cannot run it. Remove or replace it. Install Git from https://git-scm.com/downloads or with your package manager.",
+    );
+    assert.strictEqual(item("github")?.status, "missing");
+    assert.strictEqual(
+      item("github")?.installHint,
+      "`/usr/local/bin/gh` is built for another CPU architecture, so this arm64 machine cannot run it. Remove or replace it. Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
+    );
+    assert.notInclude(item("gitlab")?.installHint ?? "", "CPU");
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect("probes provider authentication without exposing token details", () => {
   const processMock = {

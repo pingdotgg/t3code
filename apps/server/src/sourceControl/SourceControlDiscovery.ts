@@ -10,7 +10,11 @@ import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { detailFromCause, firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
+import {
+  detailFromCause,
+  firstNonEmptyLine,
+  unavailableInstallHint,
+} from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 interface DiscoveryProbe {
@@ -115,16 +119,21 @@ export const make = Effect.gen(function* () {
             }) satisfies DiscoveryProbeResult<Kind>,
         ),
         Effect.catch((cause) =>
-          Effect.succeed({
-            kind: input.kind,
-            label: input.label,
-            executable,
-            implemented: input.implemented,
-            status: "missing" as const,
-            version: Option.none<string>(),
-            installHint: input.installHint,
-            detail: detailFromCause(cause),
-          } satisfies DiscoveryProbeResult<Kind>),
+          unavailableInstallHint(executable, input.installHint, cause).pipe(
+            Effect.map(
+              (installHint) =>
+                ({
+                  kind: input.kind,
+                  label: input.label,
+                  executable,
+                  implemented: input.implemented,
+                  status: "missing" as const,
+                  version: Option.none<string>(),
+                  installHint,
+                  detail: detailFromCause(cause),
+                }) satisfies DiscoveryProbeResult<Kind>,
+            ),
+          ),
         ),
       );
   };
