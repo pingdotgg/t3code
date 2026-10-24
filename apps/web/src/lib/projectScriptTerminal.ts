@@ -1,18 +1,22 @@
 /**
- * Project actions reuse only an idle drawer terminal (the active one first). Right-panel ids
- * are excluded even when drawer state lists them: reusing one renders a single PTY in both
- * surfaces, and closing the drawer copy kills the panel shell.
+ * Reuse an idle terminal only in the requested surface (the active one first).
+ * Panel ids can linger in drawer state; keeping ownership separate prevents a single
+ * PTY appearing in both surfaces, where closing one copy would kill the other.
  */
 export function findReusableProjectScriptTerminal(input: {
+  readonly placement?: "drawer" | "right-panel";
   readonly drawerTerminalIds: ReadonlyArray<string>;
   readonly activeTerminalId: string;
   readonly panelTerminalIds: ReadonlySet<string>;
   readonly runningTerminalIds: ReadonlyArray<string>;
 }): string | null {
-  const idleDrawerTerminalIds = input.drawerTerminalIds.filter(
-    (terminalId) =>
-      !input.panelTerminalIds.has(terminalId) && !input.runningTerminalIds.includes(terminalId),
+  const candidates =
+    input.placement === "right-panel"
+      ? [...input.panelTerminalIds]
+      : input.drawerTerminalIds.filter((terminalId) => !input.panelTerminalIds.has(terminalId));
+  const idleTerminalIds = candidates.filter(
+    (terminalId) => !input.runningTerminalIds.includes(terminalId),
   );
-  if (idleDrawerTerminalIds.includes(input.activeTerminalId)) return input.activeTerminalId;
-  return idleDrawerTerminalIds[0] ?? null;
+  if (idleTerminalIds.includes(input.activeTerminalId)) return input.activeTerminalId;
+  return idleTerminalIds[0] ?? null;
 }
