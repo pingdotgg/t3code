@@ -635,8 +635,17 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
+        // Claude's `/clear` can move a run to a new native session after its attempt was
+        // written; rollback and fork must pair this run's cursor with that session.
+        const reportedNativeThreadId =
+          input.providerThread.id === input.attempt.providerThreadId
+            ? input.providerThread.nativeThreadRef?.nativeId
+            : undefined;
         const finalizedAttempt: OrchestrationV2RunAttempt | null = {
           ...input.attempt,
+          ...(input.attempt.nativeThreadId === undefined || reportedNativeThreadId == null
+            ? {}
+            : { nativeThreadId: reportedNativeThreadId }),
           status: input.terminal.status,
           completedAt,
         };

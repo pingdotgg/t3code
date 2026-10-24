@@ -2945,6 +2945,184 @@ it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests wit
   }),
 );
 
+it.effect("ProviderSessionManagerV2 persists a provider thread update without a run", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-idle-thread-update",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-idle-thread-update",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
+      const persistedFiber = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter((stored) => stored.event.type === "provider-thread.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterEvents);
+      yield* Queue.offer(adapterEvents!, {
+        type: "provider_thread.updated",
+        driver: CODEX_DRIVER,
+        providerThread: {
+          ...providerThread,
+          nativeThreadRef: {
+            driver: CODEX_DRIVER,
+            nativeId: "cleared-session",
+            strength: "strong",
+          },
+        },
+      });
+      yield* Fiber.join(persistedFiber);
+
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.providerThreads.map((candidate) => candidate.nativeThreadRef?.nativeId),
+        ["cleared-session"],
+      );
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 persists a provider thread update queued behind a closing run",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-thread-update-behind-terminal",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-thread-update-behind-terminal",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        // The run consumer is still subscribed while it finalizes the terminal.
+        const runSubscription = yield* runtime.subscribeEvents!;
+        const afterSequence = yield* eventSink.latestSequence({ threadId });
+        const sessionUpdates = yield* Queue.unbounded<void>();
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter((stored) => stored.event.type === "provider-session.updated"),
+          Stream.runForEach(() => Queue.offer(sessionUpdates, undefined)),
+          Effect.forkScoped,
+        );
+        const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(adapterEvents);
+        yield* Queue.offer(adapterEvents!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "turn-before-clear",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        // Claude's root init for the cleared session lands before the run closes.
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "cleared-session",
+              strength: "strong",
+            },
+          },
+        });
+        // The event pump handles events in order, so once this sentinel is
+        // persisted the thread update has already been routed.
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        yield* Queue.take(sessionUpdates);
+
+        const consumed = yield* runSubscription.events.pipe(Stream.take(1), Stream.runCollect);
+        assert.deepEqual(
+          Array.from(consumed).map((event) => event.type),
+          ["turn.terminal"],
+        );
+        yield* runSubscription.close;
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        yield* Queue.take(sessionUpdates);
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.deepEqual(
+          projection.providerThreads.map((candidate) => candidate.nativeThreadRef?.nativeId),
+          ["cleared-session"],
+        );
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 opens one shared runtime, broadcasts events, and detaches threads independently",
   () =>

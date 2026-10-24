@@ -704,12 +704,27 @@ export const layer: Layer.Layer<
           const sourceRun = sourceProjection.runs.find(
             (candidate) => candidate.id === nativeForkTransfer.sourcePoint.runId,
           );
-          const sourceProviderThread = sourceProjection.providerThreads.find(
-            (candidate) => candidate.id === sourceRun?.providerThreadId,
-          );
           const sourceAttempt = sourceProjection.attempts.find(
             (candidate) => candidate.id === sourceRun?.activeAttemptId,
           );
+          const currentSourceProviderThread = sourceProjection.providerThreads.find(
+            (candidate) => candidate.id === sourceRun?.providerThreadId,
+          );
+          // A provider can move its thread to another native session (Claude's `/clear`), so
+          // fork from the session the source attempt ran in.
+          const sourceProviderThread =
+            currentSourceProviderThread?.nativeThreadRef == null ||
+            sourceAttempt?.nativeThreadId === undefined ||
+            sourceAttempt.nativeThreadId === currentSourceProviderThread.nativeThreadRef.nativeId
+              ? currentSourceProviderThread
+              : {
+                  ...currentSourceProviderThread,
+                  nativeThreadRef: {
+                    ...currentSourceProviderThread.nativeThreadRef,
+                    nativeId: sourceAttempt.nativeThreadId,
+                  },
+                  nativeConversationHeadRef: null,
+                };
           const sourceProviderTurn =
             latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
             sourceProjection.providerTurns.find(
@@ -1100,6 +1115,19 @@ export const layer: Layer.Layer<
           .filter((source) => source.nativeThreadId === undefined)
           .map((source) => source.runId),
       );
+      // A run commits the native id it starts on with its attempt, so a current id no
+      // attempt names was adopted by the provider mid-turn (Claude's `/clear`), and the
+      // provider has already written that session.
+      const runningNativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
+      const providerAdoptedNativeThread =
+        sameNativeThread &&
+        runningNativeThreadId != null &&
+        acceptedAttempts.some((source) => source.nativeThreadId !== undefined) &&
+        !projection.attempts.some(
+          (source) =>
+            source.providerThreadId === providerThread.id &&
+            source.nativeThreadId === runningNativeThreadId,
+        );
       const legacyRecoveredRunIds = new Set(
         projection.runs
           .filter(
@@ -1326,6 +1354,7 @@ export const layer: Layer.Layer<
           ) + 1,
         nativeThreadHasTurns:
           nativeInputRunIds.size > 0 ||
+          providerAdoptedNativeThread ||
           (legacyInputRunIds.size > 0 &&
             sameNativeThread &&
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),

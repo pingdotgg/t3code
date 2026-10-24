@@ -519,10 +519,10 @@ export const layerWithOptions = (
       ) =>
         Ref.get(subscribers).pipe(
           Effect.flatMap((current) =>
-            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal), {
-              discard: true,
-            }),
+            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal)),
           ),
+          // A closing subscriber's queue refuses offers, so false means no reader got it.
+          Effect.map((accepted) => accepted.includes(true)),
         );
 
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
@@ -1673,6 +1673,75 @@ export const layerWithOptions = (
           ),
         );
 
+      // Callers hold `entry.requestEventPermit`.
+      const ingestRunlessEventHeld = Effect.fn("ProviderSessionManager.ingestRunlessEventHeld")(
+        function* (
+          entry: LiveSessionEntry,
+          threadId: ThreadId,
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
+          const current = (yield* Ref.get(sessions)).get(
+            sessionKey(entry.runtime.providerSessionId),
+          );
+          if (current?.runtime !== entry.runtime) return;
+          yield* providerEventIngestor
+            .ingestNormalized({
+              providerSessionId: entry.runtime.providerSessionId,
+              providerInstanceId: entry.runtime.instanceId,
+              threadId,
+              event,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterEventStreamError({
+                    driver: entry.runtime.driver,
+                    providerSessionId: entry.runtime.providerSessionId,
+                    cause,
+                  }),
+              ),
+            );
+        },
+      );
+
+      const ingestRunlessEvent = (
+        entry: LiveSessionEntry,
+        threadId: ThreadId,
+        event: ProviderAdapter.ProviderAdapterV2Event,
+      ) =>
+        ingestRunlessEventHeld(entry, threadId, event).pipe(
+          entry.requestEventPermit.withPermits(1),
+        );
+
+      // A run stops reading once it settles, but Claude can adopt a new native session
+      // (`/clear`) in events queued behind the terminal. Persist those provider thread
+      // updates when the last reader leaves, or a later resume reopens the old session.
+      const persistUnreadProviderThreadUpdates = Effect.fn(
+        "ProviderSessionManager.persistUnreadProviderThreadUpdates",
+      )(
+        function* (entry: LiveSessionEntry, unread: ReadonlyArray<ProviderSessionEventSignal>) {
+          if ((yield* Ref.get(entry.eventSubscribers)).size > 0) return;
+          for (const signal of unread) {
+            if (
+              signal.type === "event" &&
+              signal.event.type === "provider_thread.updated" &&
+              signal.event.providerThread.appThreadId !== null
+            ) {
+              yield* ingestRunlessEventHeld(
+                entry,
+                signal.event.providerThread.appThreadId,
+                signal.event,
+              );
+            }
+          }
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.driver-session.unread-thread-update-failed", {
+            cause,
+          }),
+        ),
+      );
+
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
           subscribers: Ref.Ref<
@@ -1686,21 +1755,45 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.modify(subscribers, (current) => {
-            if (!current.has(subscriberId)) {
-              return [false, current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(subscriberId);
-            return [true, updated] as const;
-          }).pipe(
-            Effect.flatMap((removed) =>
-              removed
-                ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
-                : Effect.void,
+          const removeAndDrain = (entry: LiveSessionEntry | undefined) =>
+            Ref.modify(subscribers, (current) => {
+              if (!current.has(subscriberId)) {
+                return [false, current] as const;
+              }
+              const updated = new Map(current);
+              updated.delete(subscriberId);
+              return [true, updated] as const;
+            }).pipe(
+              Effect.flatMap((removed) =>
+                removed
+                  ? // Ending first makes every later offer report it was refused, so a signal is
+                    // either drained here or seen as undelivered by its publisher.
+                    Queue.end(queue).pipe(
+                      Effect.andThen(Queue.clear(queue)),
+                      Effect.flatMap((unread) =>
+                        entry === undefined
+                          ? Effect.void
+                          : persistUnreadProviderThreadUpdates(entry, unread),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+            );
+          // The pump persists a refused update under the same permit. Holding it from
+          // the end of the queue through the drained writes keeps an older drained
+          // update from committing over a newer refused one.
+          const close = Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              [...current.values()].find((candidate) => candidate.eventSubscribers === subscribers),
+            ),
+            Effect.flatMap((entry) =>
+              entry === undefined
+                ? removeAndDrain(undefined)
+                : removeAndDrain(entry).pipe(entry.requestEventPermit.withPermits(1)),
             ),
           );
-          const events = Stream.fromQueue(queue).pipe(
+          // One signal per pull, so what a reader never pulled is still queued at close.
+          const events = Stream.fromEffectRepeat(Queue.take(queue)).pipe(
             Stream.mapEffect((signal) =>
               signal.type === "event"
                 ? Effect.succeed(signal.event)
@@ -1994,32 +2087,24 @@ export const layerWithOptions = (
                   // request UI can answer them and unblock session setup.
                   const threadId = sessionScopedRuntimeRequestThreadId(event);
                   if (threadId !== undefined) {
-                    yield* Effect.gen(function* () {
-                      const current = (yield* Ref.get(sessions)).get(
-                        sessionKey(entry.runtime.providerSessionId),
-                      );
-                      if (current?.runtime !== entry.runtime) return;
-                      yield* providerEventIngestor
-                        .ingestNormalized({
-                          providerSessionId: entry.runtime.providerSessionId,
-                          providerInstanceId: entry.runtime.instanceId,
-                          threadId,
-                          event,
-                        })
-                        .pipe(
-                          Effect.mapError(
-                            (cause) =>
-                              new ProviderAdapter.ProviderAdapterEventStreamError({
-                                driver: entry.runtime.driver,
-                                providerSessionId: entry.runtime.providerSessionId,
-                                cause,
-                              }),
-                          ),
-                        );
-                    }).pipe(entry.requestEventPermit.withPermits(1));
+                    yield* ingestRunlessEvent(entry, threadId, event);
                     return;
                   }
-                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                  const delivered = yield* publishToSubscribers(entry.eventSubscribers, {
+                    type: "event",
+                    event,
+                  });
+                  // A provider thread can also change while idle (Claude adopts
+                  // a new session after `/clear`). With no run reading it, that
+                  // update would be dropped and a later resume would reopen the
+                  // old native session.
+                  if (
+                    !delivered &&
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.appThreadId !== null
+                  ) {
+                    yield* ingestRunlessEvent(entry, event.providerThread.appThreadId, event);
+                  }
                   yield* releaseLiveOutput;
                 }),
               ),
