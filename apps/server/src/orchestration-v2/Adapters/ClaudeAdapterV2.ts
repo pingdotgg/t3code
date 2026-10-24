@@ -3158,6 +3158,17 @@ function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is S
   return message.type === "result" && message.origin?.kind === "task-notification";
 }
 
+function isClaudeEmptyTaskNotificationSuccess(message: SDKMessage): boolean {
+  return (
+    isClaudeTaskNotificationOriginResult(message) &&
+    message.subtype === "success" &&
+    !message.is_error &&
+    message.num_turns === 0 &&
+    message.result.length === 0 &&
+    terminalStatusFromResult(message) === "completed"
+  );
+}
+
 // The CLI throttles unchanged rate_limit_event frames, but repeats this
 // undeclared payload on each blocked assistant response.
 const isClaudeBlockedAssistantRateLimit = Schema.is(
@@ -3458,9 +3469,9 @@ interface ActiveClaudeTurnContext {
   // Set while this turn's latest compaction status reports a failure, with
   // Claude's error text when it sent one.
   compactionFailure: { readonly message: string | undefined } | null;
-  // Usage of the results that steers ended, oldest first. The final result's
+  // Usage of earlier steered segments and buffered wakes, oldest first. The final result's
   // usage covers only its own segment, so the turn bills these as well.
-  readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
+  readonly earlierSegmentUsage: Array<SDKResultMessage["usage"]>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -6825,7 +6836,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context.subagentsByTaskId.size > 0 ||
                       input.context.subagentsByToolUseId.size > 0,
                     input.status,
-                    input.context.steeredSegmentUsage,
+                    input.context.earlierSegmentUsage,
                   ),
                 },
               }),
@@ -6962,6 +6973,49 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: 1 },
           );
+        });
+
+        // A later root init owns settlement. This per-frame helper keeps only
+        // billing and errors; assistant frames already carry the wake's text.
+        const recordEarlierWakeResult = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          result: SDKResultMessage,
+        ) {
+          if (isClaudeEmptyTaskNotificationSuccess(result)) return;
+          context.earlierSegmentUsage.push(result.usage);
+          const now = yield* DateTime.now;
+          const failure = providerFailureFromResult(result, now);
+          if (failure !== null) {
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId: result.uuid,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: result.uuid,
+                  strength: "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, result.uuid),
+                type: "system_notice",
+                status: "completed",
+                title: failure.message,
+                message: failure.message,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
+          }
         });
 
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
@@ -8550,7 +8604,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
-              context.steeredSegmentUsage.push(message.usage);
+              context.earlierSegmentUsage.push(message.usage);
               return;
             }
             yield* Ref.update(steeredTurns, (current) => {
@@ -9536,7 +9590,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimit: null,
               compactionFailure: null,
-              steeredSegmentUsage: [],
+              earlierSegmentUsage: [],
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
@@ -9638,34 +9692,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
                 // Replay any result message last: a result finalizes the turn, and
                 // replaying it before the rest would drop them back into the wake
-                // buffer and request another continuation. When Claude dequeues
-                // several notifications at once it can end an empty turn and open
-                // the next within a millisecond; that next turn is still running
-                // and owns this run, so the empty turn's result must not settle it.
+                // buffer and request another continuation. Results before the
+                // last root init must not settle a successor still running:
+                // keep their error notices and usage instead.
+                const lastTurnStartIndex = drained.findLastIndex(isClaudeTurnStartMessage);
                 const lastResultIndex = drained.findLastIndex((entry) => entry.type === "result");
-                const tailResult = drained[lastResultIndex];
-                const emptyTurnBeforeNextTurn =
-                  tailResult?.type === "result" &&
-                  tailResult.num_turns === 0 &&
-                  !tailResult.is_error &&
-                  terminalStatusFromResult(tailResult) === "completed" &&
-                  drained
-                    .slice(lastResultIndex + 1)
-                    .some((entry) => isClaudeTurnStartMessage(entry));
-                // The CLI can append empty task successes after a failure. Filter
-                // those for replay without changing the raw-tail successor guard.
-                const isEmptyTaskNotificationSuccess = (entry: SDKMessage) =>
-                  isClaudeTaskNotificationOriginResult(entry) &&
-                  entry.subtype === "success" &&
-                  !entry.is_error &&
-                  entry.num_turns === 0 &&
-                  entry.result.length === 0 &&
-                  terminalStatusFromResult(entry) === "completed";
+                // Preserve the base fallback when the latest wake has only empty
+                // task successes: an earlier non-empty result still owns failure.
                 const replayResultIndex = drained.findLastIndex(
-                  (entry) => entry.type === "result" && !isEmptyTaskNotificationSuccess(entry),
+                  (entry) =>
+                    entry.type === "result" && !isClaudeEmptyTaskNotificationSuccess(entry),
                 );
                 const lastResult =
-                  drained[replayResultIndex === -1 ? lastResultIndex : replayResultIndex];
+                  lastResultIndex > lastTurnStartIndex
+                    ? drained[replayResultIndex === -1 ? lastResultIndex : replayResultIndex]
+                    : undefined;
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
                   yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
                   nativeThreadId,
@@ -9676,7 +9717,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     entry.subtype === "task_notification" &&
                     opaqueReplayTombstones.has(entry.task_id),
                 );
-                for (const entry of drained) {
+                for (const [index, entry] of drained.entries()) {
                   if (
                     !(yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages.includes(entry)
                   ) {
@@ -9684,6 +9725,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }
                   if (entry.type !== "result") {
                     yield* handleSdkMessage({ query: querySession.query, message: entry });
+                  } else if (index < lastTurnStartIndex && entry !== lastResult) {
+                    yield* recordEarlierWakeResult(context, entry);
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
                     const buffered = current.get(nativeThreadId);
@@ -9700,7 +9743,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     return next;
                   });
                 }
-                if (lastResult !== undefined && !emptyTurnBeforeNextTurn) {
+                if (lastResult !== undefined) {
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
                   return;
                 }
