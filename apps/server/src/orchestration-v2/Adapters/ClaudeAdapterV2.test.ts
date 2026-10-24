@@ -3446,6 +3446,312 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #17270 assistant text streams before the completed snapshot
+  it.effect.each([
+    { snapshot: "matching", snapshotText: "Movable type changed Europe." },
+    { snapshot: "corrected", snapshotText: "Movable type reshaped Europe." },
+    // An empty authoritative block keeps the streamed text rather than blanking it.
+    { snapshot: "empty", snapshotText: "" },
+  ])("streams Claude assistant text and settles it with a $snapshot snapshot", ({ snapshotText }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("text-stream-attempt"),
+          text: "Explain the printing press.",
+          attachments: [],
+        }),
+      );
+      const stream = (event: unknown) =>
+        claudeSdkFrame({
+          type: "stream_event",
+          event,
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "text-stream-frame",
+        });
+      const assistantMessages = () =>
+        harness.events.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "assistant"
+            ? [event.message]
+            : [],
+        );
+      for (const frame of [
+        stream({ type: "message_start", message: { id: "answer-message" } }),
+        stream({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        }),
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Movable type " },
+        }),
+      ]) {
+        yield* harness.offerAndWait(frame);
+      }
+      yield* TestClock.adjust("1 second");
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "changed Europe." },
+        }),
+      );
+      yield* TestClock.adjust("1 second");
+      assert.deepEqual(
+        assistantMessages().map((message) => [message.text, message.streaming]),
+        [
+          ["Movable type ", true],
+          ["Movable type changed Europe.", true],
+        ],
+      );
+
+      yield* harness.offerAndWait(stream({ type: "content_block_stop", index: 0 }));
+      const snapshot = makeAssistantTextFrame({ uuid: "answer-snapshot", text: snapshotText });
+      assert(snapshot.type === "assistant");
+      const answerSnapshot = {
+        ...snapshot,
+        message: { ...snapshot.message, id: "answer-message" },
+      };
+      yield* harness.offerAndWait(answerSnapshot);
+      yield* harness.offerAndWait(answerSnapshot);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "text-stream-result", result: "Movable type changed Europe." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const messages = assistantMessages();
+      assert.lengthOf(messages, 3);
+      assert.equal(new Set(messages.map((message) => message.id)).size, 1);
+      assert.equal(
+        new Set(messages.map((message) => DateTime.toEpochMillis(message.createdAt))).size,
+        1,
+      );
+      assert.equal(messages.at(-1)?.text, snapshotText || "Movable type changed Europe.");
+      assert.isFalse(messages.at(-1)?.streaming);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => item.status),
+        ["running", "running", "completed"],
+      );
+      assert.equal(new Set(items.map((item) => `${item.id}:${item.ordinal}`)).size, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  // regression: #17270 streamed text without a snapshot settles with the turn
+  it.effect.each([
+    { outcome: "result", flushed: true, turnStatus: "completed" },
+    { outcome: "error_result", flushed: true, turnStatus: "failed" },
+    { outcome: "query_exit", flushed: true, turnStatus: "failed" },
+    // Stop inside the 50ms coalescer window, before any delta was emitted.
+    { outcome: "interrupt", flushed: false, turnStatus: "interrupted" },
+  ] as const)(
+    "settles streamed Claude text without a snapshot on $outcome",
+    ({ outcome, flushed, turnStatus }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const attemptId = RunAttemptId.make(`text-stream-${outcome}`);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Explain the printing press.",
+            attachments: [],
+          }),
+        );
+        const stream = (event: unknown) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "text-stream-frame",
+          });
+        for (const frame of [
+          stream({ type: "message_start", message: { id: "partial-answer" } }),
+          stream({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "Movable " },
+          }),
+          stream({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "type" },
+          }),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+        if (flushed) yield* TestClock.adjust("1 second");
+        const assistantMessages = () =>
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message]
+              : [],
+          );
+        assert.lengthOf(assistantMessages(), flushed ? 1 : 0);
+
+        if (outcome === "query_exit") {
+          yield* Queue.shutdown(harness.sdkMessages);
+        } else if (outcome === "interrupt") {
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+          });
+        } else {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: `text-stream-${outcome}-result`,
+              result: "Movable type",
+              ...(outcome === "error_result"
+                ? { subtype: "error_during_execution", isError: true }
+                : {}),
+            }),
+          );
+        }
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, turnStatus);
+        const messages = assistantMessages();
+        assert.equal(new Set(messages.map((message) => message.id)).size, 1);
+        assert.equal(messages.at(-1)?.text, "Movable type");
+        assert.isFalse(messages.at(-1)?.streaming);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.equal(items.at(-1)?.status, "completed");
+        assert.isNotNull(items.at(-1)?.completedAt);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  // regression: #17270 stream frames that carry no main-thread text emit nothing
+  it.effect.each([
+    {
+      response: "result-only",
+      result: "Only the result.",
+      emptySnapshot: false,
+      expected: ["Only the result."],
+    },
+    {
+      response: "empty-snapshot result",
+      result: "Only the result.",
+      emptySnapshot: true,
+      expected: ["Only the result."],
+    },
+    { response: "empty", result: "", emptySnapshot: true, expected: [] },
+  ])(
+    "projects a $response Claude response without phantom text",
+    ({ response, result, emptySnapshot, expected }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`text-stream-${response}`),
+            text: "Explain the printing press.",
+            attachments: [],
+          }),
+        );
+        const stream = (event: unknown, parent: string | null = null) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: parent,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "text-stream-frame",
+          });
+        for (const frame of [
+          stream({ type: "message_start", message: { id: "quiet-message" } }),
+          stream({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          }),
+          stream({ type: "content_block_stop", index: 0 }),
+          stream({
+            type: "content_block_delta",
+            index: 5,
+            delta: { type: "text_delta", text: "Stray delta" },
+          }),
+          stream({ type: "message_start", message: { id: "child-message" } }, "child-tool"),
+          stream(
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "text", text: "Child " },
+            },
+            "child-tool",
+          ),
+          stream(
+            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "text" } },
+            "child-tool",
+          ),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+        if (emptySnapshot) {
+          const snapshot = makeAssistantTextFrame({ uuid: "quiet-snapshot", text: "" });
+          assert(snapshot.type === "assistant");
+          yield* harness.offerAndWait({
+            ...snapshot,
+            message: { ...snapshot.message, id: "quiet-message" },
+          });
+        }
+        yield* TestClock.adjust("1 second");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: `text-stream-${response}-result`, result }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const messages = harness.events.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "assistant"
+            ? [event.message]
+            : [],
+        );
+        assert.deepEqual(
+          messages.map((message) => message.text),
+          expected,
+        );
+        for (const message of messages) assert.isFalse(message.streaming);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
   it.effect.each(["cancelled", "denied", "permission_denied", undefined])(
     "preserves native tool non-execution metadata %s without inferring a denial from text",
