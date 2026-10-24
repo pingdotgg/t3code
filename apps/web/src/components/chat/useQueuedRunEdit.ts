@@ -16,6 +16,7 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContex
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import {
+  composerDraftHasUserContent,
   DraftId,
   useComposerDraftStore,
   type ComposerFileAttachment,
@@ -219,17 +220,34 @@ export function useQueuedRunEdit(input: {
 
   const beginEdit = useStableCallback((request: EditQueuedRunRequest) => {
     if (activeThreadId === null) return;
-    if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
     const target = queuedEditDraftTarget(routeThreadRef, request.runId);
     const store = useComposerDraftStore.getState();
-    store.clearComposerContent(target);
-    store.setPrompt(target, request.text);
+    const savedDraft = store.getComposerDraft(target);
+    const savedEdit = savedDraft?.queuedMessageEdit;
+    // An untouched draft reseeds, so it never restores text another client replaced.
+    const savedEditIsDirty =
+      savedDraft !== null &&
+      savedEdit !== undefined &&
+      (savedDraft.prompt !== savedEdit.originalText ||
+        savedEdit.removedAttachmentIds.length > 0 ||
+        composerDraftHasUserContent({ ...savedDraft, prompt: "" }));
+    const edit =
+      savedEdit?.messageId === request.messageId && savedEditIsDirty
+        ? savedEdit
+        : { messageId: request.messageId, originalText: request.text, removedAttachmentIds: [] };
+    if (edit !== savedEdit) {
+      store.clearComposerContent(target);
+      store.setQueuedMessageEdit(target, edit);
+      store.setPrompt(target, request.text);
+    }
     setEditing({
       threadId: activeThreadId,
       runId: request.runId,
       messageId: request.messageId,
-      originalText: request.text,
-      existingAttachments: request.attachments,
+      originalText: edit.originalText,
+      existingAttachments: request.attachments.filter(
+        (attachment) => !edit.removedAttachmentIds.includes(attachment.id),
+      ),
       context: serverProjection?.messages.find((message) => message.id === request.messageId)
         ?.context,
     });
@@ -242,6 +260,14 @@ export function useQueuedRunEdit(input: {
     focusComposerSoon();
   });
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
+    if (editing === null) return;
+    const store = useComposerDraftStore.getState();
+    const draft = store.getComposerDraft(draftTarget)?.queuedMessageEdit;
+    if (draft)
+      store.setQueuedMessageEdit(draftTarget, {
+        ...draft,
+        removedAttachmentIds: [...draft.removedAttachmentIds, attachmentId],
+      });
     setEditing((current) =>
       current === null
         ? current

@@ -6,6 +6,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   EnvironmentId,
+  MessageId,
   ModelSelection,
   ProjectId,
   ProviderInstanceId,
@@ -233,8 +234,17 @@ const PersistedTerminalContextDraft = Schema.Struct({
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
+const QueuedMessageEditDraft = Schema.Struct({
+  messageId: MessageId,
+  originalText: Schema.String,
+  removedAttachmentIds: Schema.Array(Schema.String),
+});
+type QueuedMessageEditDraft = typeof QueuedMessageEditDraft.Type;
+const isQueuedMessageEditDraft = Schema.is(QueuedMessageEditDraft);
+
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
+  queuedMessageEdit: Schema.optionalKey(QueuedMessageEditDraft),
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
@@ -360,6 +370,7 @@ const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler
 
 export interface ComposerThreadDraftState {
   prompt: string;
+  queuedMessageEdit?: QueuedMessageEditDraft | undefined;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
   nonPersistedImageIds: string[];
@@ -499,6 +510,10 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
+  setQueuedMessageEdit: (
+    threadRef: ComposerThreadTarget,
+    edit: QueuedMessageEditDraft | undefined,
+  ) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
     threadRef: ComposerThreadTarget,
@@ -866,6 +881,7 @@ function normalizeTerminalContextsForThread(
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
+    draft.queuedMessageEdit === undefined &&
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
@@ -1761,6 +1777,12 @@ function normalizePersistedDraftsByThreadId(
       continue;
     }
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
+    const queuedMessageEdit = isQueuedMessageEditDraft(draftCandidate.queuedMessageEdit)
+      ? {
+          ...draftCandidate.queuedMessageEdit,
+          removedAttachmentIds: [...draftCandidate.queuedMessageEdit.removedAttachmentIds],
+        }
+      : undefined;
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
       ? draftCandidate.attachments.flatMap((entry) => {
@@ -1893,6 +1915,7 @@ function normalizePersistedDraftsByThreadId(
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
       promptCandidate.length === 0 &&
+      queuedMessageEdit === undefined &&
       attachments.length === 0 &&
       files.length === 0 &&
       terminalContexts.length === 0 &&
@@ -1919,6 +1942,7 @@ function normalizePersistedDraftsByThreadId(
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
       prompt,
+      ...(queuedMessageEdit ? { queuedMessageEdit } : {}),
       attachments,
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
@@ -2021,6 +2045,7 @@ export function partializeComposerDraftStoreState(
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
       draft.prompt.length === 0 &&
+      draft.queuedMessageEdit === undefined &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
       draft.terminalContexts.length === 0 &&
@@ -2035,6 +2060,14 @@ export function partializeComposerDraftStoreState(
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
+      ...(draft.queuedMessageEdit
+        ? {
+            queuedMessageEdit: {
+              ...draft.queuedMessageEdit,
+              removedAttachmentIds: [...draft.queuedMessageEdit.removedAttachmentIds],
+            },
+          }
+        : {}),
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
         ? {
@@ -2344,6 +2377,9 @@ function toHydratedThreadDraft(
       ...files.map(fileContextReference),
     ]),
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
+    ...(persistedDraft.queuedMessageEdit
+      ? { queuedMessageEdit: persistedDraft.queuedMessageEdit }
+      : {}),
     files,
     nonPersistedImageIds: [],
     persistedAttachments: [...persistedDraft.attachments],
@@ -2865,6 +2901,18 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setQueuedMessageEdit: (threadRef, queuedMessageEdit) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const nextDraft = { ...existing, queuedMessageEdit };
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];
+            else draftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey };
           });
         },
         setPrompt: (threadRef, prompt) => {
@@ -3950,6 +3998,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
+              queuedMessageEdit: undefined,
               prompt: "",
               images: [],
               files: [],
