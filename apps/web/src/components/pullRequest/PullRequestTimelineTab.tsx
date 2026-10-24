@@ -389,7 +389,7 @@ function ReviewThreadEvent({
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
-        className="top-6"
+        className="top-4"
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!expanded}
       />
