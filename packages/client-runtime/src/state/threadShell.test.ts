@@ -53,6 +53,74 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("hides cached suggestion shells while an environment is unsupported and restores current shells", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness();
+    const atom = threads.environmentThreadShellsAtom(environmentId);
+    const dispose = registry.mount(atom);
+    expect(registry.get(atom).map((thread) => thread.id)).toEqual([v2ThreadShell.id]);
+
+    const setUnsupported = (unsupported: boolean) => {
+      const catalog = registry.get(catalogValueAtom);
+      const entries = new Map(catalog.entries);
+      entries.set(environmentId, {
+        ...entries.get(environmentId)!,
+        ...{ unsupportedReason: unsupported ? "Protocol version mismatch" : undefined },
+      });
+      registry.set(catalogValueAtom, { ...catalog, entries });
+    };
+    setUnsupported(true);
+    expect(registry.get(atom)).toEqual([]);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...v2ThreadShell, title: "Updated cached thread" }],
+    });
+    expect(registry.get(atom)).toEqual([]);
+    setUnsupported(false);
+    expect(registry.get(atom).map((thread) => thread.title)).toEqual(["Updated cached thread"]);
+    dispose();
+    registry.dispose();
+  });
+
+  it("scopes shell lists to enabled environments and reuses unchanged shells", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const other = { ...v2ThreadShell, id: ThreadId.make("other") };
+    const snapshot = { ...v2ShellSnapshot, threads: [v2ThreadShell, other] };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const atom = threads.environmentThreadShellsAtom(environmentId);
+    const dispose = registry.mount(atom);
+    const before = registry.get(atom);
+    expect(before.map((shell) => shell.environmentId)).toEqual([environmentId, environmentId]);
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...snapshot,
+      threads: [{ ...other, title: "Remote change" }],
+    });
+    expect(registry.get(atom)).toBe(before);
+    registry.set(snapshotAtom(environmentId), { ...snapshot, threads: [...snapshot.threads] });
+    expect(registry.get(atom)).toBe(before);
+    registry.set(snapshotAtom(environmentId), {
+      ...snapshot,
+      threads: [v2ThreadShell, { ...other, title: "Changed" }],
+    });
+    const after = registry.get(atom);
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]?.title).toBe("Changed");
+    registry.update(catalogValueAtom, (catalog) => ({
+      ...catalog,
+      entries: new Map(
+        [...catalog.entries].map(([id, entry]) => [
+          id,
+          { ...entry, enabled: id !== environmentId },
+        ]),
+      ),
+    }));
+    expect(registry.get(atom)).toEqual([]);
+    dispose();
+    registry.dispose();
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {
