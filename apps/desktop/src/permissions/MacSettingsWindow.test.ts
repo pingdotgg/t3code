@@ -42,3 +42,9 @@ it("distinguishes unavailable tracking from a valid absent window", () => {
   expect(unavailable).toHaveBeenCalledTimes(2);
   stop();
 });
+it("stops the tracker once its parent exits", () => {
+  watchMacSettingsWindow(vi.fn(), vi.fn())();
+  const script = mocks.spawn.mock.lastCall?.[1][3];
+  expect(script).toContain('ObjC.import("unistd");');
+  expect(script).toContain("while ($.getppid() !== 1) {");
+});
