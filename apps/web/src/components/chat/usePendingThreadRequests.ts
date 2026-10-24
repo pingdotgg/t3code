@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
@@ -5,6 +6,7 @@ import {
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ScopedThreadRef,
+  type ThreadContextRecord,
   type ThreadId,
   type UserInputAttachments,
 } from "@t3tools/contracts";
@@ -217,12 +219,53 @@ export function usePendingThreadRequests(input: {
       Object.fromEntries(pendingQuestionDraftKeys.map((key) => [key, state.counts[key] ?? 0])),
     ),
   );
+  // A question that closes without an answer (Stop cancels it) never sent the
+  // user's typed text, so it goes back to the thread draft instead of vanishing.
+  // The composer may be showing a temporary queued-message edit, so the text
+  // goes to the owning thread's own draft, which outlives that edit.
+  const carryUnsentCustomAnswers = useStableCallback((threadId: ThreadId) => {
+    if (serverProjection?.thread.id !== threadId) return;
+    const drafts = usePendingUserInputAnswers.getState();
+    const store = useComposerDraftStore.getState();
+    const threadDraftTarget = scopeThreadRef(environmentId, threadId);
+    const currentPrompt = store.getComposerDraft(threadDraftTarget)?.prompt ?? "";
+    let nextPrompt = currentPrompt;
+    const threadContexts: ThreadContextRecord[] = [];
+    for (const request of serverProjection.runtimeRequests) {
+      if (request.kind !== "user_input") continue;
+      if (request.status !== "cancelled" && request.status !== "expired") continue;
+      const requestDrafts = drafts[pendingUserInputRequestKey(environmentId, threadId, request.id)];
+      if (!requestDrafts) continue;
+      const item = serverProjection.turnItems.findLast(
+        (candidate) =>
+          candidate.type === "user_input_request" && candidate.requestId === request.id,
+      );
+      if (item?.type !== "user_input_request") continue;
+      for (const question of item.questions) {
+        const customAnswer = requestDrafts[question.id]?.customAnswer;
+        if (customAnswer === undefined || customAnswer === question.initialAnswer) continue;
+        nextPrompt = carryDisplacedCustomAnswerIntoPrompt(nextPrompt, customAnswer);
+        threadContexts.push(
+          ...threadContextsReferencedByAnswer(
+            customAnswer,
+            store.getComposerDraft(
+              questionAttachmentDraftId(environmentId, threadId, request.id, question.id),
+            )?.threadContexts ?? [],
+          ),
+        );
+      }
+    }
+    if (nextPrompt === currentPrompt) return;
+    setComposerDraftPrompt(threadDraftTarget, nextPrompt);
+    store.addThreadContexts(threadDraftTarget, threadContexts, { appendReference: false });
+  });
   useEffect(() => {
     // A thread shell can arrive before its requests; missing detail is not resolution.
     if (!activeThread || projectedThreadId !== activeThread.id) return;
     const questionThread = activeThread;
     const currentRequests = pendingUserInputs;
     const pendingRequestIds = currentRequests.map((request) => request.requestId);
+    carryUnsentCustomAnswers(questionThread.id);
     usePendingUserInputAnswers.setState(
       (existing) =>
         pruneResolvedUserInputDrafts(existing, environmentId, questionThread.id, pendingRequestIds),
@@ -254,7 +297,7 @@ export function usePendingThreadRequests(input: {
       if (key.startsWith(prefix) && !retained.has(DraftId.make(key)))
         clearQuestionAttachmentDraft(DraftId.make(key));
     }
-  }, [environmentId, activeThread, projectedThreadId, pendingUserInputs]);
+  }, [environmentId, activeThread, projectedThreadId, pendingUserInputs, carryUnsentCustomAnswers]);
   const activePendingDraftAnswers =
     !activePendingUserInput || !activeThreadId
       ? EMPTY_PENDING_USER_INPUT_ANSWERS

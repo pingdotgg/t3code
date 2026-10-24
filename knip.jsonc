@@ -26,15 +26,18 @@
         "fixtures/issue-16534/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
+        // Agents import this replay from their Browser-panel session by path.
+        "replay-issue-8963.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "verify-windows-desktop-artifact.ts",
       ],
       "ignoreDependencies": ["esbuild"],
-      // The `t3` npm package's files: copied into the package, never imported.
+      // The `t3` npm package's files: copied into the package, never imported. The
+      // issue 8963 probe is loaded into the web dev server, which resolves its /src imports.
       // knip-schemas.test.ts writes a throwaway project to .knip-test-*, which a
       // knip run beside it in check:changed must not report.
-      "ignore": ["npm-launcher/**", ".knip-test-*/**"],
+      "ignore": ["npm-launcher/**", "fixtures/issue-8963-client-probe.mjs", ".knip-test-*/**"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.

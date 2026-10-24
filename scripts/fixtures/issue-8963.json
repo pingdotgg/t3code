@@ -1,0 +1,77 @@
+{
+  "projectPath": "/tmp/issue8963-proof-project",
+  "projectName": "Proof workspace",
+  "threads": ["Proof A", "Proof B", "Proof C"],
+  "r1": {
+    "prompt": "For a UI reproduction, call the native blocking request_user_input tool (not request_user_input_async) with one question Which color? and Purple, Green choices. Wait for my answer. Do not edit files.",
+    "answer": "Purple please. Keep this unsent answer.",
+    "editedAnswer": "Purple please. Keep this unsent answer. Edited."
+  },
+  "r2": {
+    "priorDraft": "Earlier draft",
+    "firstAnswer": "First answer",
+    "longAnswer": "Synthetic line 01\nSynthetic line 02\nSynthetic line 03\nSynthetic line 04\nSynthetic line 05\nSynthetic line 06\nSynthetic line 07\nSynthetic line 08\nSynthetic line 09\nSynthetic line 10\nSynthetic line 11\nSynthetic line 12\nSynthetic line 13\nSynthetic line 14\nSynthetic line 15\nSynthetic line 16\nSynthetic line 17\nSynthetic line 18\nSynthetic line 19\nSynthetic line 20\nSynthetic line 21\nSynthetic line 22\nSynthetic line 23\nSynthetic line 24\nSynthetic line 25\nSynthetic line 26\nSynthetic line 27\nSynthetic line 28\nSynthetic line 29\nEND-8963"
+  },
+  "r3": {
+    "queued": "Queued original",
+    "priorDraft": "Earlier draft",
+    "answer": "Answer belongs to Proof A"
+  },
+  "r4": {
+    "questions": [
+      {
+        "id": "seed-unchanged",
+        "header": "Q1",
+        "question": "Keep initial answer",
+        "initialAnswer": "Seed unchanged",
+        "options": [],
+        "allowCustomAnswer": true
+      },
+      {
+        "id": "seed-edited",
+        "header": "Q2",
+        "question": "Edit initial answer",
+        "initialAnswer": "Seed old",
+        "options": [],
+        "allowCustomAnswer": true
+      },
+      {
+        "id": "blank",
+        "header": "Q3",
+        "question": "Blank answer",
+        "options": [],
+        "allowCustomAnswer": true
+      },
+      {
+        "id": "option-only",
+        "header": "Q4",
+        "question": "Option only",
+        "options": [
+          {
+            "label": "Selected option"
+          }
+        ],
+        "allowCustomAnswer": false
+      }
+    ],
+    "changedAnswer": "Seed edited"
+  },
+  "r5": {
+    "submitted": "Submitted answer",
+    "pending": "Still pending",
+    "blank": "   "
+  },
+  "r6": {
+    "requestIds": ["request-one", "request-two"],
+    "answers": ["Request one", "Request two"]
+  },
+  "r7": {
+    "answer": "A only",
+    "otherThreadDraft": "B untouched",
+    "otherEnvironmentDraft": "E2 untouched"
+  },
+  "r8": {
+    "answer": "Expired answer",
+    "transition": ["pending", "expired"]
+  }
+}
