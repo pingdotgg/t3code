@@ -33,6 +33,7 @@ import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
+import { providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import { parseChangeRequestUrl } from "../lib/openPullRequestLink";
 import { useEnvironmentQuery } from "../state/query";
 import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
@@ -120,7 +121,7 @@ export function useLinkedThreadPullRequest(
 }
 
 function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
-  const host = parseChangeRequestUrl(fallback.url)?.host;
+  const host = parseChangeRequestUrl(fallback.url, providerUrlHosts(fallback.url))?.host;
   return { ...fallback, ...(host === undefined ? {} : { host }) };
 }
 

@@ -99,6 +99,7 @@ function LinkPullRequestDialog({
     reference,
     project: ownProject,
     hasProject: (reference) => linking.canLink(reference.url),
+    parse: linking.parse,
   });
 
   const submit = async () => {

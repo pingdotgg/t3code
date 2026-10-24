@@ -24,7 +24,10 @@ import {
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  isSshRemoteUrl,
+} from "@t3tools/shared/sourceControl";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -444,6 +447,28 @@ export function pullRequestCheckoutBranchName(input: {
     ? `${input.headOwner}/${input.headRefName}`
     : input.headRefName;
 }
+
+// Discovery needs the web origin to look up a custom host's GitHub credential.
+const refineRepositoryIdentity: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+> = Effect.fn("GitHubSourceControlProvider.refineRepositoryIdentity")(function* ({
+  identity,
+  resolveContext,
+}) {
+  if (!identity.rootPath || (identity.provider !== undefined && identity.provider !== "unknown"))
+    return identity;
+  const baseUrl = detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl)?.baseUrl;
+  if (!baseUrl) return identity;
+  const context = yield* resolveContext({
+    cwd: identity.rootPath,
+    context: {
+      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl },
+      remoteName: identity.locator.remoteName,
+      remoteUrl: identity.locator.remoteUrl,
+    },
+  });
+  return context?.provider.kind === "github" ? { ...identity, provider: "github" } : identity;
+});
 
 const contextHost = (context: SourceControlProvider.SourceControlProviderContext | undefined) =>
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
@@ -882,6 +907,7 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
+    refineRepositoryIdentity,
     // `gh pr list --head` filters on the head ref name alone and accepts anything, so an
     // `owner:branch` or `remote:branch` selector silently lists zero pull requests while
     // spending a GraphQL call; the bare branch is always among the selectors. Without the owner,

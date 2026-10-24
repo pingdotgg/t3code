@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { gitHubHostsOf, parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+
 import { sourceControlClients } from "./sourceControlClients.ts";
 
-import { parsePullRequestReference, resolveLinkPullRequestInput } from "./pullRequestLinkInput.ts";
+import {
+  parsePullRequestReference,
+  pullRequestLinkProject,
+  resolveLinkPullRequestInput,
+} from "./pullRequestLinkInput.ts";
 
 const changeRequestWebUrl = (kind: string, host: string, repository: string, number: number) =>
   sourceControlClients.get(kind).changeRequestUrl({ host, repository, number });
@@ -14,6 +20,43 @@ const project = {
 };
 
 describe("resolveLinkPullRequestInput", () => {
+  it("links an Enterprise URL or number using the environment's claimed GitHub project", () => {
+    const identity = {
+      provider: "github",
+      canonicalKey: "git.corp.example/team/workspace",
+      displayName: "team/workspace",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "git@git.corp.example:team/workspace.git",
+      },
+    };
+    const url = "https://git.corp.example/team/workspace/pull/7";
+    const input = {
+      project: pullRequestLinkProject(identity),
+      hasProject: (candidate: { host: string; repository: string }) =>
+        candidate.host === "git.corp.example" && candidate.repository === "team/workspace",
+      parse: (reference: string) =>
+        parseChangeRequestUrl(reference, gitHubHostsOf([{ repositoryIdentity: identity }])),
+    };
+    const expected = {
+      link: { host: "git.corp.example", repository: "team/workspace", number: 7, url },
+    };
+    expect(resolveLinkPullRequestInput({ ...input, reference: ` ${url} ` })).toEqual(expected);
+    expect(resolveLinkPullRequestInput({ ...input, reference: "#7" })).toEqual(expected);
+    expect(
+      resolveLinkPullRequestInput({ ...input, reference: url, parse: parseChangeRequestUrl }),
+    ).toBeNull();
+    expect(
+      resolveLinkPullRequestInput({
+        ...input,
+        reference: "https://git.corp.example/team/other/pull/7",
+      }),
+    ).toEqual({
+      error: "No project in this environment can read git.corp.example/team/other.",
+    });
+  });
+
   it.each([
     ["https://bitbucket.org/acme/web/pull-requests/42", "bitbucket.org"],
     ["https://github.acme.test/acme/web/pull/42", "github.acme.test"],

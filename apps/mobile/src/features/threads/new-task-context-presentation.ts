@@ -1,5 +1,5 @@
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
 import type { ComposerDraftWorkspaceSelection } from "../../state/use-composer-drafts";
 
@@ -79,7 +79,10 @@ export function resolveNewTaskBranchLabel(input: {
   readonly pullRequestReference?: string;
 }): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
-    const pr = parseChangeRequestUrl(input.pullRequestReference);
+    const pr = parseChangeRequestUrl(
+      input.pullRequestReference,
+      providerUrlHosts(input.pullRequestReference),
+    );
     if (pr) return `From PR #${pr.number}`;
   }
   if (!input.branchName) {

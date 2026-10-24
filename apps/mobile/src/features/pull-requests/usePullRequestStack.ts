@@ -1,6 +1,6 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import type { PullRequestDetail } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import { useMemo } from "react";
 import { useEnvironmentServerConfig, useNavigationThreadShells } from "../../state/entities";
 import { pullRequestStackAtom } from "../../state/pull-requests";
@@ -18,7 +18,9 @@ export function usePullRequestStack(params: PullRequestParams, pr: PullRequestDe
   const reference = useMemo(
     () => ({
       ...pullRequestTarget(params).input,
-      host: params.host ?? (pr ? parseChangeRequestUrl(pr.url)?.host : undefined),
+      host:
+        params.host ??
+        (pr ? parseChangeRequestUrl(pr.url, providerUrlHosts(pr.url))?.host : undefined),
     }),
     [params, pr],
   );

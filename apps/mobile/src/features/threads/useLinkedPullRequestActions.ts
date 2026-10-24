@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { planThreadPullRequestMutation } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { AuthOrchestrationOperateScope, type ThreadPullRequestLink } from "@t3tools/contracts";
+import { gitHubHostsOf, parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as Clipboard from "expo-clipboard";
 import { useCallback, useMemo } from "react";
 
@@ -20,6 +21,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import type { EnvironmentRuntimeState } from "../../state/remote-runtime-types";
+import { useProjects } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -46,6 +48,7 @@ export function useLinkedPullRequestActions(input: {
     thread.settledAt === null &&
     thread.settledOverride !== "settled" &&
     thread.lineage.relationshipToParent !== "subagent";
+  const projects = useProjects();
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: false });
@@ -93,10 +96,14 @@ export function useLinkedPullRequestActions(input: {
       initialValue: "",
       confirmText: "Link",
       onConfirm: (reference) => {
+        const gitHubHosts = gitHubHostsOf(
+          projects.filter((candidate) => candidate.environmentId === thread?.environmentId),
+        );
         const resolved = resolveLinkPullRequestInput({
           reference,
           project: pullRequestLinkProject(project?.repositoryIdentity),
           hasProject: () => true,
+          parse: (url) => parseChangeRequestUrl(url, gitHubHosts),
         });
         if (resolved === null) {
           Dialog.alert("Couldn't link this pull request", "Use a pull request URL, 123, or #123.");
@@ -109,7 +116,7 @@ export function useLinkedPullRequestActions(input: {
         setLinked(resolved.link, true);
       },
     });
-  }, [project, setLinked]);
+  }, [project, projects, setLinked, thread?.environmentId]);
 
   const menuActions = useCallback(
     (link: ThreadPullRequestLink): MenuAction[] => {

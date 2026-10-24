@@ -11,7 +11,7 @@ import {
   type PullRequestLinkedThreadsResult,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import { useRef, useState } from "react";
 import { Platform } from "react-native";
@@ -49,7 +49,7 @@ export function usePullRequestThreads(
   const target = pullRequestTarget(params);
   const config = useEnvironmentServerConfig(target.environmentId);
   const supported = threadPullRequestLinkMode(config?.environment.capabilities) === "multiple";
-  const parsed = pr ? parseChangeRequestUrl(pr.url) : null;
+  const parsed = pr ? parseChangeRequestUrl(pr.url, providerUrlHosts(pr.url)) : null;
   const reference = {
     ...target,
     input: { ...target.input, ...(parsed ? normalizeThreadPullRequestKey(parsed) : {}) },

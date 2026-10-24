@@ -8,8 +8,10 @@ import {
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
+  resolvePullRequestPreviewTarget,
 } from "./openPullRequestLink";
-import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 
 function repositoryIdentity(
   provider: string,
@@ -350,5 +352,78 @@ describe("findProjectForChangeRequest", () => {
         number: 1,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("resolvePullRequestPreviewTarget", () => {
+  it("resolves an Enterprise preview only for a claimed repository in the target environment", () => {
+    const environmentId = EnvironmentId.make("local");
+    const project = {
+      id: ProjectId.make("workspace"),
+      environmentId,
+      title: "workspace",
+      workspaceRoot: "/repo",
+      defaultModelSelection: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      scripts: [],
+      repositoryIdentity: {
+        ...repositoryIdentity(
+          "github",
+          "git.corp.example/team/workspace",
+          "git@git.corp.example:team/workspace.git",
+        ),
+        displayName: "team/workspace",
+      },
+    } satisfies EnvironmentProject;
+    const input = {
+      environmentId,
+      projects: [project],
+      pullRequestsEnabled: true,
+      url: "https://git.corp.example/team/workspace/pull/7",
+    };
+    expect(resolvePullRequestPreviewTarget(input)).toEqual({
+      environmentId,
+      input: {
+        projectId: project.id,
+        host: "git.corp.example",
+        repository: "team/workspace",
+        number: 7,
+      },
+    });
+    expect(resolvePullRequestPreviewTarget({ ...input, projects: [] })).toBeNull();
+    expect(
+      resolvePullRequestPreviewTarget({
+        ...input,
+        environmentId: EnvironmentId.make("remote"),
+      }),
+    ).toBeNull();
+    expect(resolvePullRequestPreviewTarget({ ...input, pullRequestsEnabled: false })).toBeNull();
+    expect(
+      resolvePullRequestPreviewTarget({
+        ...input,
+        url: "https://git.corp.example/team/other/pull/7",
+      }),
+    ).toBeNull();
+    expect(
+      resolvePullRequestPreviewTarget({
+        ...input,
+        url: "https://git.corp.example.attacker.test/team/workspace/pull/7",
+      }),
+    ).toBeNull();
+    for (const provider of ["unknown", "forgejo"]) {
+      expect(
+        resolvePullRequestPreviewTarget({
+          ...input,
+          projects: [
+            {
+              ...project,
+              repositoryIdentity: { ...project.repositoryIdentity, provider },
+            },
+          ],
+        }),
+        provider,
+      ).toBeNull();
+    }
   });
 });
