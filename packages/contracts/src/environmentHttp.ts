@@ -35,6 +35,7 @@ import {
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
   AuthSessionState,
+  AuthWebSocketTicketParams,
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
@@ -558,6 +559,14 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
   .add(
     HttpApiEndpoint.post("webSocketTicket", "/api/auth/websocket-ticket", {
       headers: OptionalBearerHeaders,
+      success: AuthWebSocketTicketResult,
+      error: [EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("webSocketTicketFor", "/api/auth/websocket-ticket/:use", {
+      headers: OptionalBearerHeaders,
+      params: AuthWebSocketTicketParams,
       success: AuthWebSocketTicketResult,
       error: [EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),

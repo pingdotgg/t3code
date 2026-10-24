@@ -59,8 +59,16 @@ T3 Connect tunnel. A proxy that rewrites Host or drops the protocol header
 breaks sign-in.
 
 Bearer and DPoP clients obtain short-lived WebSocket tickets through authenticated
-HTTP so long-lived tokens stay out of socket URLs. Browser sessions can
-authenticate the upgrade with their cookie. A successful handshake grants no
+HTTP so long-lived tokens stay out of socket URLs. A ticket names the route it
+opens: the RPC socket, or the media routes (device hub, preview stream), which
+share one ticket across `<img>`, `EventSource` and several sockets. A DPoP
+client's RPC ticket is bound to its proof key and the upgrade carries a fresh
+proof in the `dpop` query parameter, since a WebSocket cannot set headers; a
+ticket captured on a plain HTTP LAN route is useless without the key, and the
+proof's `jti` is consumed like any other. Media tickets stay bearer because each
+media request would need its own proof. Clients that predate this mint unbound
+tickets that open either route. Browser sessions can authenticate the upgrade
+with their cookie. A successful handshake grants no
 extra authority: [every RPC declares a required
 scope](../../apps/server/src/auth/RpcAuthorization.ts), and the WebSocket RPC
 group's `RpcScopeAuthorization` middleware checks it before any handler runs.

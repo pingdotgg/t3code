@@ -218,26 +218,20 @@ export const make = Effect.gen(function* () {
       timeoutMs?: number,
       endpoint: { readonly httpBaseUrl: string; readonly wsBaseUrl: string } = token.endpoint,
     ) {
-      const ticketProof = yield* signer
-        .createProof({
-          method: "POST",
-          url: environmentEndpointUrl(endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
-          accessToken: token.accessToken,
-        })
-        .pipe(
-          Effect.mapError(
-            () =>
-              new ConnectionBlockedError({
-                reason: "configuration",
-                detail: "Could not create the websocket authorization proof.",
-              }),
-          ),
-        );
       return yield* resolveRemoteDpopWebSocketConnectionUrl({
         wsBaseUrl: endpoint.wsBaseUrl,
         httpBaseUrl: endpoint.httpBaseUrl,
         accessToken: token.accessToken,
-        dpopProof: ticketProof,
+        createProof: (proof) =>
+          signer.createProof(proof).pipe(
+            Effect.mapError(
+              () =>
+                new ConnectionBlockedError({
+                  reason: "configuration",
+                  detail: "Could not create the websocket authorization proof.",
+                }),
+            ),
+          ),
         clientMetadata: presentation.metadata,
         connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),

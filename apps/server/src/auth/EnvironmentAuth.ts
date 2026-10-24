@@ -21,6 +21,7 @@ import {
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
+  type AuthWebSocketTicketUse,
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
 } from "@t3tools/contracts";
@@ -543,9 +544,11 @@ export class EnvironmentAuth extends Context.Service<
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly authenticateWebSocketUpgrade: (
       request: HttpServerRequest.HttpServerRequest,
+      use: AuthWebSocketTicketUse,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly issueWebSocketTicket: (
-      session: Pick<AuthenticatedSession, "sessionId">,
+      session: Pick<AuthenticatedSession, "sessionId" | "proofKeyThumbprint">,
+      input?: { readonly use?: AuthWebSocketTicketUse },
     ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
     readonly issueStartupPairingUrl: (
       baseUrl: string,
@@ -591,6 +594,7 @@ type BootstrapExchangeResult = {
 const AUTHORIZATION_PREFIX = "Bearer ";
 const DPOP_AUTHORIZATION_PREFIX = "DPoP ";
 const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
+const WEBSOCKET_PROOF_QUERY_PARAM = "dpop";
 
 const bySessionPriority = (left: AuthClientSession, right: AuthClientSession) => {
   const leftCanManage = left.scopes.includes(AuthAccessWriteScope);
@@ -1220,18 +1224,31 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.issueStartupPairingUrl"),
     );
 
-  const issueWebSocketTicket: EnvironmentAuth["Service"]["issueWebSocketTicket"] = (session) =>
-    sessions.issueWebSocketToken(session.sessionId).pipe(
-      Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
-      Effect.map(
-        (issued) =>
-          ({
-            ticket: issued.token,
-            expiresAt: DateTime.toUtc(issued.expiresAt),
-          }) satisfies AuthWebSocketTicketResult,
-      ),
-      Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
-    );
+  // Only the RPC socket's ticket is bound to the client's proof key. The media
+  // routes reuse one ticket across <img>, EventSource and several sockets, and
+  // each of those would need its own single-use proof.
+  const issueWebSocketTicket: EnvironmentAuth["Service"]["issueWebSocketTicket"] = (
+    session,
+    input,
+  ) =>
+    sessions
+      .issueWebSocketToken(session.sessionId, {
+        ...(input?.use ? { audience: input.use } : {}),
+        ...(input?.use === "rpc" && session.proofKeyThumbprint
+          ? { proofKeyThumbprint: session.proofKeyThumbprint }
+          : {}),
+      })
+      .pipe(
+        Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
+        Effect.map(
+          (issued) =>
+            ({
+              ticket: issued.token,
+              expiresAt: DateTime.toUtc(issued.expiresAt),
+            }) satisfies AuthWebSocketTicketResult,
+        ),
+        Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
+      );
 
   const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
     request,
@@ -1239,22 +1256,55 @@ export const make = Effect.gen(function* () {
     authenticateRequest(request).pipe(Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"));
 
   const authenticateWebSocketUpgrade: EnvironmentAuth["Service"]["authenticateWebSocketUpgrade"] =
-    Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request) {
+    Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request, use) {
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
         const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
         if (websocketTicket && websocketTicket.trim().length > 0) {
-          return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
-            mapSessionVerificationErrors,
-            Effect.flatMap(rejectMcpClientAudience),
-            Effect.map((session) => ({
-              sessionId: session.sessionId,
-              subject: session.subject,
-              method: session.method,
-              scopes: session.scopes,
-              ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-            })),
-          );
+          const session = yield* sessions
+            .verifyWebSocketToken(websocketTicket)
+            .pipe(mapSessionVerificationErrors, Effect.flatMap(rejectMcpClientAudience));
+          if (session.audience !== undefined && session.audience !== use) {
+            return yield* new ServerAuthInvalidCredentialError({
+              diagnostic: `WebSocket ticket was issued for the ${session.audience} route.`,
+            });
+          }
+          if (session.proofKeyThumbprint) {
+            // A WebSocket cannot set headers, so the proof rides in the query.
+            // The ticket is the token the proof hashes, and the proof's jti is
+            // consumed like any other, so a captured socket URL is dead once the
+            // client has used it. Beating the client to first use still needs an
+            // active interceptor, which only encrypted transport rules out.
+            const proof =
+              request.headers.dpop ??
+              requestUrl.value.searchParams.get(WEBSOCKET_PROOF_QUERY_PARAM) ??
+              undefined;
+            if (!proof) {
+              return yield* new ServerAuthInvalidCredentialError({
+                diagnostic: "DPoP-bound WebSocket ticket requires a DPoP proof.",
+                dpopFailureReason: "invalid_proof",
+              });
+            }
+            yield* verifyRequestDpopProof({
+              request,
+              proof,
+              expectedThumbprint: session.proofKeyThumbprint,
+              expectedAccessToken: websocketTicket,
+            }).pipe(
+              Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+              Effect.provideService(Crypto.Crypto, crypto),
+            );
+          }
+          return {
+            sessionId: session.sessionId,
+            subject: session.subject,
+            method: session.method,
+            scopes: session.scopes,
+            ...(session.proofKeyThumbprint
+              ? { proofKeyThumbprint: session.proofKeyThumbprint }
+              : {}),
+            ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+          };
         }
       }
 

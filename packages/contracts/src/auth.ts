@@ -246,6 +246,18 @@ export const AuthWebSocketTicketResult = Schema.Struct({
 });
 export type AuthWebSocketTicketResult = typeof AuthWebSocketTicketResult.Type;
 
+/**
+ * The route a WebSocket ticket opens: the RPC socket, or the media routes
+ * (device hub, preview stream) that share one ticket across many requests.
+ * It is a path segment so a DPoP mint proof covers it; a query parameter is
+ * outside the proof's `htu` and could be stripped on the way to the server.
+ * Clients that predate this mint at the bare path and get tickets that open either.
+ */
+export const AuthWebSocketTicketUse = Schema.Literals(["rpc", "media"]);
+export type AuthWebSocketTicketUse = typeof AuthWebSocketTicketUse.Type;
+
+export const AuthWebSocketTicketParams = Schema.Struct({ use: AuthWebSocketTicketUse });
+
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString,
