@@ -20,9 +20,15 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
   return (
     <View style={{ height }} className="flex-row items-end gap-px">
       {/* column-reverse stacks the bottom-first provider values upward
-          without reversing the array (Hermes lacks Array#toReversed). */}
+          without reversing the array (Hermes lacks Array#toReversed).
+          Each column is only as tall as its stack so the rounding clips the
+          bar's top, not empty space above it. */}
       {chartDays.map((day) => (
-        <View key={day.day} className="h-full flex-1 flex-col-reverse overflow-hidden rounded-sm">
+        <View
+          key={day.day}
+          style={{ height: max === 0 ? 0 : (day.total / max) * height }}
+          className="flex-1 flex-col-reverse overflow-hidden rounded-t-sm"
+        >
           {day.values.map((entry) => (
             <View
               key={entry.provider}
