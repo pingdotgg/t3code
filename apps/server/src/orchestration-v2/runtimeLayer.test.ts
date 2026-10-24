@@ -3632,6 +3632,91 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("rejects archiving a thread while a run is active", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-active-archive-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-active-archive-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-active-archive-project"),
+        title: "Active archive",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-active-archive",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-active-archive-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-active-archive-message"),
+        text: "Keep this run active.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+
+      const error = yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("runtime-layer-active-archive"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.equal(
+        error.cause,
+        `Thread ${threadId} is still running. Archive it after the turn ends.`,
+      );
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const run = projection.runs[0]!;
+      assert.equal(run.status, "starting");
+      assert.isNull(projection.thread.archivedAt);
+
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-layer-active-archive-running"),
+        events: [
+          {
+            id: EventId.make("runtime-layer-active-archive-running-event"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "running", startedAt: now },
+          },
+        ],
+      });
+
+      const runningError = yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("runtime-layer-active-archive-running-attempt"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(runningError._tag, "OrchestratorDispatchError");
+      assert.equal(
+        runningError.cause,
+        `Thread ${threadId} is still running. Archive it after the turn ends.`,
+      );
+      const runningProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(runningProjection.runs[0]?.status, "running");
+      assert.isNull(runningProjection.thread.archivedAt);
+    }),
+  );
+
   it.effect("settles a thread its own agent settled once the turn completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

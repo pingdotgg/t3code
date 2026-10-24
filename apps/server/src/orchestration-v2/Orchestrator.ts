@@ -2784,6 +2784,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is already archived.`,
       });
     }
+    // Archive detaches every provider session below, which would fail a turn
+    // in flight. Queued and preparing runs are cancelled by the archive itself.
+    if (command.type === "thread.archive") {
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+      if (runs.some((run) => run.status === "starting" || run.status === "running"))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is still running. Archive it after the turn ends.`,
+        });
+    }
     if (command.type === "thread.unarchive" && thread.archivedAt === null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3688,10 +3699,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Settle joins archive here: both mean "done with this
     // thread", so a live provider session must not keep running background
     // work (PR monitors, dev servers, subagent fleets) after any of them
-    // lands. The settle guard above already rejects active or blocked runs,
-    // so for settle this only ever stops an idle session; commands are
-    // decided serially against the projection, so a turn start that
-    // re-engages the thread cannot race this detach.
+    // lands. The guards above reject a starting or running run for archive,
+    // and any active or blocked run for settle, so this never detaches a
+    // provider mid-turn; commands are decided serially against the
+    // projection, so a turn start that re-engages the thread cannot race
+    // this detach.
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
