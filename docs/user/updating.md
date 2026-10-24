@@ -94,6 +94,16 @@ asks before restarting the background service; if you decline, run
 stop it and start it again afterwards with your usual options such as `--host`
 or `--tailscale-serve`.
 
+A remote background-service update replaces the server process but keeps its
+existing launcher and the Node.js runtime bundled with that launcher. To replace
+both, run `t3 update` on the host and accept the restart, or run `service install`
+with the latest CLI from an external host terminal or SSH session. Follow the
+[launcher refresh procedure](./background-service.md#manage-the-service), keeping
+the service's existing T3 home. Use
+`t3 doctor --dry-run --base-dir <existing-home>` afterwards to check the CLI,
+running server, and service launcher runtimes; the host's `node --version` does
+not verify T3 Code's packaged runtime.
+
 If you run the server with `npx` rather than an installed `t3`, there is
 nothing to update on the host: stop the server and relaunch it as
 `npx t3@<client-version>` with the same subcommand and options.

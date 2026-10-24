@@ -173,14 +173,14 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       }),
   );
 
-  it.effect("a fresh launcher clears a restart deferred by t3 update", () =>
+  it.effect("only the selected launcher executable clears a restart deferred by t3 update", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-restart-" });
       const statePath = path.join(root, "runtime", "service-state.json");
       const restartPending = path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE);
-      yield* writeFakeRuntime(
+      const executablePath = yield* writeFakeRuntime(
         fs,
         path,
         path.join(root, "runtime", "versions", "1.0.0"),
@@ -192,11 +192,18 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           activeVersion: "1.0.0",
         }),
       );
-      const run = () =>
+      const olderExecutablePath = yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "0.9.0"),
+        "setInterval(() => {}, 1_000);\n",
+      );
+      const run = (launcherExecutable = executablePath) =>
         Effect.gen(function* () {
           const launcher = new Launcher(
             root,
             yield* Effect.promise(() => readServiceState(statePath)),
+            { executablePath: launcherExecutable },
           );
           const running = launcher.run();
           yield* Effect.promise(() => launcher.stop("SIGTERM"));
@@ -208,6 +215,9 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       assert.isTrue(yield* fs.exists(restartPending));
 
       yield* fs.writeFileString(restartPending, "1.0.0\n");
+      yield* run(olderExecutablePath);
+      assert.isTrue(yield* fs.exists(restartPending));
+
       yield* run();
       assert.isFalse(yield* fs.exists(restartPending));
     }),
@@ -251,6 +261,95 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
     }),
+  );
+
+  it.effect.each(["pending trial", "interrupted rollback"] as const)(
+    "recovers a persisted %s using only that update's database snapshot",
+    (phase) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-recovery-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const databasePath = path.join(root, "custom", "actual.sqlite");
+        const decoyDatabase = path.join(root, "userdata", "statev2.sqlite");
+        const backupDir = path.join(root, "runtime", "db-backup", "pending-update");
+        const unrelatedBackup = path.join(root, "runtime", "db-backup", "other-update", "database");
+        for (const [filePath, contents] of [
+          [databasePath, "partially migrated database"],
+          [`${databasePath}-wal`, "trial wal"],
+          [`${databasePath}-shm`, "trial shm"],
+          [decoyDatabase, "unrelated database"],
+          [path.join(backupDir, "database"), "before update"],
+          [path.join(backupDir, "database-wal"), "before update wal"],
+          [unrelatedBackup, "unrelated backup"],
+        ] as const) {
+          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fs.writeFileString(filePath, contents);
+        }
+        if (phase === "interrupted rollback") {
+          yield* fs.writeFileString(path.join(backupDir, ".restore-pending"), "");
+        }
+        const childSource = `
+import { writeFileSync } from "node:fs";
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update?.status === "pending") {
+  writeFileSync(context.update.dbPath, "retried trial migration");
+  process.exit(1);
+}
+process.exit(0);
+`;
+        for (const version of ["1.0.0", "1.1.0"]) {
+          yield* writeFakeRuntime(
+            fs,
+            path,
+            path.join(root, "runtime", "versions", version),
+            childSource,
+          );
+        }
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            update: {
+              id: "pending-update",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              dbPath: databasePath,
+              status: "pending",
+            },
+          }),
+        );
+        const childCount = spawnedChildren.length;
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+        );
+
+        yield* Effect.promise(() =>
+          launcher.run().then(
+            () => Promise.reject(new Error("launcher unexpectedly completed")),
+            () => Promise.resolve(),
+          ),
+        );
+
+        const state = yield* Effect.promise(() => readServiceState(statePath));
+        assert.equal(state.activeVersion, "1.0.0");
+        assert.deepEqual(state.update, {
+          id: "pending-update",
+          fromVersion: "1.0.0",
+          targetVersion: "1.1.0",
+          status: phase === "pending trial" ? "rolled-back" : "failed",
+          reason: phase === "pending trial" ? "candidate-exited:1" : "rollback-interrupted",
+        });
+        assert.equal(spawnedChildren.length - childCount, phase === "pending trial" ? 2 : 1);
+        assert.equal(yield* fs.readFileString(databasePath), "before update");
+        assert.equal(yield* fs.readFileString(`${databasePath}-wal`), "before update wal");
+        assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
+        assert.equal(yield* fs.readFileString(decoyDatabase), "unrelated database");
+        assert.equal(yield* fs.readFileString(unrelatedBackup), "unrelated backup");
+        assert.isFalse(yield* fs.exists(backupDir));
+      }),
   );
 
   it.effect("commits only after the trial reports prepared", () =>

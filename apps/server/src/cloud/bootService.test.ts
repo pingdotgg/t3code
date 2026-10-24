@@ -2,8 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -85,8 +88,16 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const commands: string[] = [];
   const invocations: ProcessRunner.ProcessRunInput[] = [];
   const timeouts = new Map<string, unknown>();
+  const starts: Array<{
+    program: string | undefined;
+    state: string | undefined;
+    marker: string | undefined;
+  }> = [];
   const control: {
     failCommand: string | undefined;
+    failOnce?: boolean;
+    beforeCommand?: (command: string) => Effect.Effect<void>;
+    loadedUnit?: string | undefined;
     stateAfterStop?: string;
     linger: string;
     enabled: boolean;
@@ -105,7 +116,34 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       commands.push(command);
       invocations.push(input);
       timeouts.set(command, input.timeout);
+      if (control.beforeCommand !== undefined) yield* control.beforeCommand(command);
       const failed = command === control.failCommand;
+      if (failed && control.failOnce) control.failCommand = undefined;
+      if (!failed && command === "systemctl --user daemon-reload") {
+        control.loadedUnit = yield* fs
+          .readFileString(path.join(home, ".config", "systemd", "user", "t3code.service"))
+          .pipe(Effect.orElseSucceed(() => undefined));
+      }
+      if (
+        command === "systemctl --user restart t3code.service" ||
+        command.startsWith("launchctl bootstrap ")
+      ) {
+        const unit =
+          platform === "linux"
+            ? control.loadedUnit
+            : yield* fs.readFileString(input.args[2]!).pipe(Effect.orDie);
+        const selectedHome = unit === undefined ? baseDir : BootService.bootServiceBaseDirOf(unit);
+        const selectedRuntime = path.join(selectedHome ?? baseDir, "runtime");
+        starts.push({
+          program: unit === undefined ? undefined : BootService.bootServiceProgramOf(unit),
+          state: yield* fs
+            .readFileString(path.join(selectedRuntime, "service-state.json"))
+            .pipe(Effect.orElseSucceed(() => undefined)),
+          marker: yield* fs
+            .readFileString(path.join(selectedRuntime, SERVICE_RESTART_PENDING_FILE))
+            .pipe(Effect.orElseSucceed(() => undefined)),
+        });
+      }
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
@@ -151,6 +189,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     cliVersion = "1.2.3",
     serviceBaseDir = baseDir,
     insideService = false,
+    fileSystem = fs,
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
@@ -165,6 +204,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       });
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, platform),
@@ -198,6 +238,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     commands,
     invocations,
     timeouts,
+    starts,
     control,
     runtime,
   };
@@ -504,6 +545,421 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
       ).toBe(true);
     }),
+  );
+
+  it.effect.each(["linux", "darwin"] as const)(
+    "a host upgrade persists the newer launcher and server across a full restart on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, starts, makeService } =
+          yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const retained = [
+          [path.join(baseDir, SERVICE_ENV_FILE), 'T3CODE_TOKEN="literal $HOME # token"\r\n'],
+          [path.join(baseDir, "userdata", "settings.json"), '{"continueThreads":true}\n'],
+          [path.join(baseDir, "userdata", "secrets", "server-signing-key.bin"), "auth key\0"],
+          [path.join(baseDir, "userdata", "statev2.sqlite"), "threads and auth sessions"],
+        ] as const;
+        for (const [filePath, contents] of retained) {
+          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fs.writeFileString(filePath, contents);
+        }
+        yield* service.install();
+        const newer = yield* makeService(undefined, "1.2.4");
+
+        const plan = yield* newer.install();
+        expect(BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath))).toBe(
+          pinnedRuntimePaths(path, baseDir, "1.2.4", platform).entryPath,
+        );
+        expect(starts.at(-1)).toMatchObject({
+          program: plan.program[0],
+          state: yield* fs.readFileString(statePath),
+        });
+        expect(parseServiceState(starts.at(-1)!.state!)?.activeVersion).toBe("1.2.4");
+
+        const fresh = yield* makeService(undefined, "1.2.4");
+        yield* fresh.restart;
+        expect(starts.at(-1)).toEqual({
+          program: plan.program[0],
+          state: yield* fs.readFileString(statePath),
+          marker: undefined,
+        });
+        for (const [filePath, contents] of retained) {
+          expect(yield* fs.readFileString(filePath)).toBe(contents);
+        }
+      }),
+  );
+
+  it.effect.each(["linux", "darwin"] as const)(
+    "refreshing only the launcher preserves the committed update and rollback runtime on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, starts, makeService } = yield* makeHarness(platform);
+        const plan = yield* service.install();
+        const committed = JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.4",
+          update: {
+            id: "remote-update",
+            fromVersion: "1.2.3",
+            targetVersion: "1.2.4",
+            status: "committed",
+          },
+        });
+        yield* fs.writeFileString(statePath, committed);
+        const newer = yield* makeService(undefined, "1.2.4");
+
+        yield* newer.install();
+
+        expect(yield* fs.readFileString(statePath)).toBe(committed);
+        expect(starts.at(-1)?.state).toBe(committed);
+        expect(BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath))).toContain(
+          "/versions/1.2.4/t3",
+        );
+      }),
+  );
+
+  it.effect.each(
+    (["linux", "darwin"] as const).flatMap((platform) =>
+      (["failure", "interruption"] as const).map((outcome) => ({ platform, outcome })),
+    ),
+  )(
+    "keeps the replacement selection after a start command $outcome may have migrated the database on $platform",
+    ({ platform, outcome }) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, starts, commands, control, makeService } =
+          yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
+        yield* fs.writeFileString(databasePath, "original database");
+        const startCommand =
+          platform === "linux"
+            ? "systemctl --user restart t3code.service"
+            : `launchctl bootstrap gui/501 ${plan.unitPath}`;
+        const replacementState = JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.4",
+          update: {
+            id: "replacement-committed",
+            fromVersion: "1.2.3",
+            targetVersion: "1.2.4",
+            status: "committed",
+          },
+        });
+        const reached = yield* Deferred.make<void>();
+        let started = false;
+        control.beforeCommand = (command) =>
+          Effect.gen(function* () {
+            if (command !== startCommand || started) return;
+            started = true;
+            // The manager can launch the server before returning an error or hanging.
+            yield* fs.writeFileString(databasePath, "replacement migrated database");
+            yield* fs.writeFileString(statePath, replacementState);
+            if (outcome === "interruption") {
+              yield* Deferred.succeed(reached, undefined);
+              return yield* Effect.never;
+            }
+          }).pipe(Effect.orDie);
+        control.failCommand = startCommand;
+        control.failOnce = true;
+        const newer = yield* makeService(undefined, "1.2.4");
+        commands.length = 0;
+        starts.length = 0;
+
+        if (outcome === "interruption") {
+          const installing = yield* newer.install().pipe(Effect.forkChild);
+          yield* Deferred.await(reached);
+          yield* Fiber.interrupt(installing);
+          expect(Exit.hasInterrupts(yield* Fiber.await(installing))).toBe(true);
+        } else {
+          expect((yield* newer.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+        }
+
+        const replacement = pinnedRuntimePaths(path, baseDir, "1.2.4", platform).entryPath;
+        expect(BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath))).toBe(
+          replacement,
+        );
+        expect(yield* fs.readFileString(statePath)).toBe(replacementState);
+        expect(yield* fs.readFileString(databasePath)).toBe("replacement migrated database");
+        expect(
+          yield* fs.readFileString(path.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE)),
+        ).toBe("1.2.4\n");
+        expect(commands.at(-1)).toBe(startCommand);
+        expect(starts.every((entry) => entry.program === replacement)).toBe(true);
+      }),
+  );
+
+  it.effect.each(
+    (["linux", "darwin"] as const).flatMap((platform) =>
+      (
+        [
+          "activation",
+          "state write",
+          "unit write",
+          "stop interruption",
+          "activation interruption",
+          "state write interruption",
+          "unit write interruption",
+        ] as const
+      )
+        // launchd's enable step is optional; bootstrap itself may already start the server.
+        .filter((stage) => platform === "linux" || stage !== "activation")
+        .map((stage) => ({ platform, stage })),
+    ),
+  )(
+    "restores the previous selection before restarting after $stage on $platform",
+    ({ platform, stage }) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, starts, commands, control, makeService } =
+          yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        const state = yield* fs.readFileString(statePath);
+        const retained = [
+          [path.join(baseDir, SERVICE_ENV_FILE), 'T3CODE_TOKEN="literal $HOME # token"\r\n'],
+          [path.join(baseDir, "userdata", "settings.json"), '{"continueThreads":true}\n'],
+          [path.join(baseDir, "userdata", "secrets", "server-signing-key.bin"), "auth key\0"],
+          [path.join(baseDir, "userdata", "statev2.sqlite"), "threads and auth sessions"],
+        ] as const;
+        for (const [filePath, contents] of retained) {
+          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fs.writeFileString(filePath, contents);
+        }
+        const settledState = JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.3",
+          update: {
+            id: "finished-while-stopping",
+            fromVersion: "1.2.2",
+            targetVersion: "1.2.3",
+            status: "committed",
+          },
+        });
+        control.stateAfterStop = settledState;
+        const previousState = stage === "stop interruption" ? state : settledState;
+        const markerPath = path.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+        const marker = stage === "activation" || stage === "state write" ? undefined : "1.2.3\n";
+        if (marker !== undefined) yield* fs.writeFileString(markerPath, marker);
+        const reached = yield* Deferred.make<void>();
+        let injected = false;
+        const activation =
+          platform === "linux"
+            ? "systemctl --user enable t3code.service"
+            : "launchctl enable gui/501/com.t3tools.t3code.service";
+        if (stage === "activation") {
+          control.failCommand = activation;
+          control.failOnce = true;
+        }
+        control.beforeCommand = (command) => {
+          const selected =
+            stage === "stop interruption"
+              ? command === "systemctl --user stop t3code.service" ||
+                command.startsWith("launchctl bootout ")
+              : stage === "activation interruption" && command === activation;
+          if (!selected || injected) return Effect.void;
+          injected = true;
+          return Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.never));
+        };
+        const fileSystem = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              yield* fs.rename(from, to);
+              const selected =
+                stage === "state write" || stage === "state write interruption"
+                  ? to === statePath
+                  : (stage === "unit write" || stage === "unit write interruption") &&
+                    to === plan.unitPath;
+              if (!selected || injected) return;
+              injected = true;
+              if (stage.includes("interruption")) {
+                yield* Deferred.succeed(reached, undefined);
+                return yield* Effect.never;
+              } else {
+                // The replacement already landed; fail like a post-rename directory fsync.
+                yield* fs.rename(from, to);
+              }
+            }),
+        });
+        const newer = yield* makeService(undefined, "1.2.4", baseDir, false, fileSystem);
+        starts.length = 0;
+        commands.length = 0;
+        if (stage.includes("interruption")) {
+          const installing = yield* newer.install().pipe(Effect.forkChild);
+          yield* Deferred.await(reached);
+          yield* Fiber.interrupt(installing);
+          expect(Exit.hasInterrupts(yield* Fiber.await(installing))).toBe(true);
+        } else {
+          expect((yield* newer.install().pipe(Effect.flip))._tag).toBe(
+            stage === "activation" ? "BootServiceCommandError" : "BootServiceInstallError",
+          );
+        }
+
+        expect(starts.at(-1)).toEqual({ program: plan.program[0], state: previousState, marker });
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+        expect(yield* fs.readFileString(statePath)).toBe(previousState);
+        expect(
+          yield* fs.readFileString(markerPath).pipe(Effect.orElseSucceed(() => undefined)),
+        ).toBe(marker);
+        for (const [filePath, contents] of retained) {
+          expect(yield* fs.readFileString(filePath)).toBe(contents);
+        }
+      }),
+  );
+
+  it.effect.each(
+    (["linux", "darwin"] as const).flatMap((platform) =>
+      (["state", "unit"] as const).flatMap((failedRestore) =>
+        [false, true].map((hasMarker) => ({ platform, failedRestore, hasMarker })),
+      ),
+    ),
+  )(
+    "restores remaining files and leaves the service stopped after $failedRestore restore failure on $platform (marker: $hasMarker)",
+    ({ platform, failedRestore, hasMarker }) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, starts, commands, makeService } =
+          yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const markerPath = path.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+        if (hasMarker) yield* fs.writeFileString(markerPath, "1.2.3\n");
+        let stateWrites = 0;
+        let unitWrites = 0;
+        const fileSystem = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (to === statePath && ++stateWrites === 2 && failedRestore === "state") {
+                return yield* fs.rename(path.join(baseDir, "missing-restore-source"), to);
+              }
+              if (to === plan.unitPath && ++unitWrites === 2 && failedRestore === "unit") {
+                return yield* fs.rename(path.join(baseDir, "missing-restore-source"), to);
+              }
+              yield* fs.rename(from, to);
+              if (to === plan.unitPath && unitWrites === 1) {
+                yield* fs.rename(from, to);
+              }
+            }),
+        });
+        const newer = yield* makeService(undefined, "1.2.4", baseDir, false, fileSystem);
+        commands.length = 0;
+        starts.length = 0;
+
+        expect((yield* newer.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+
+        expect(starts).toHaveLength(0);
+        expect(commands.at(-1)).toBe(
+          platform === "linux"
+            ? "systemctl --user stop t3code.service"
+            : "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+        );
+        expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe(
+          failedRestore === "state" ? "1.2.4" : "1.2.3",
+        );
+        expect(BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath))).toBe(
+          pinnedRuntimePaths(path, baseDir, failedRestore === "unit" ? "1.2.4" : "1.2.3", platform)
+            .entryPath,
+        );
+        expect(
+          yield* fs.readFileString(markerPath).pipe(Effect.orElseSucceed(() => undefined)),
+        ).toBe(hasMarker ? "1.2.3\n" : undefined);
+        const log = yield* fs.readFileString(plan.logPath);
+        expect(log).toContain("Could not set up the T3 Code background service.");
+        expect(log).toContain(
+          "Restoring the previous background service failed. The service was left stopped.",
+        );
+        expect(log).not.toContain("missing-restore-source");
+      }),
+  );
+
+  it.effect.each(["linux", "darwin"] as const)(
+    "a failed install for another home restores its absent state and the previous home's service on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, starts, makeService } =
+          yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        const state = yield* fs.readFileString(statePath);
+        const markerPath = path.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+        yield* fs.writeFileString(markerPath, "1.2.3\n");
+        const otherHome = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-service-install-other-",
+        });
+        let unitWritten = false;
+        const fileSystem = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              yield* fs.rename(from, to);
+              if (to === plan.unitPath && !unitWritten) {
+                unitWritten = true;
+                yield* fs.rename(from, to);
+              }
+            }),
+        });
+        const other = yield* makeService(undefined, "1.2.4", otherHome, false, fileSystem);
+
+        expect((yield* other.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+        expect(yield* fs.readFileString(statePath)).toBe(state);
+        expect(yield* fs.readFileString(markerPath)).toBe("1.2.3\n");
+        expect(yield* fs.exists(path.join(otherHome, "runtime", "service-state.json"))).toBe(false);
+        expect(
+          yield* fs.exists(path.join(otherHome, "runtime", SERVICE_RESTART_PENDING_FILE)),
+        ).toBe(false);
+        expect(starts.at(-1)).toEqual({ program: plan.program[0], state, marker: "1.2.3\n" });
+      }),
+  );
+
+  it.effect.each(["linux", "darwin"] as const)(
+    "restarts a stopped pending update with its original database snapshot association on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, starts, control, makeService } =
+          yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        const dbPath = path.join(baseDir, "custom", "actual.sqlite");
+        const backupPath = path.join(baseDir, "runtime", "db-backup", "pending-update", "database");
+        for (const filePath of [dbPath, backupPath, `${backupPath}-wal`]) {
+          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fs.writeFileString(filePath, filePath);
+        }
+        const pending = JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.3",
+          update: {
+            id: "pending-update",
+            fromVersion: "1.2.3",
+            targetVersion: "1.2.4",
+            dbPath,
+            status: "pending",
+          },
+        });
+        control.stateAfterStop = pending;
+        const newer = yield* makeService(undefined, "1.2.4");
+
+        expect((yield* newer.install().pipe(Effect.flip))._tag).toBe(
+          "BootServiceUpdatePendingError",
+        );
+
+        expect(starts.at(-1)).toEqual({
+          program: plan.program[0],
+          state: pending,
+          marker: undefined,
+        });
+        expect(yield* fs.readFileString(statePath)).toBe(pending);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+        for (const filePath of [dbPath, backupPath, `${backupPath}-wal`]) {
+          expect(yield* fs.readFileString(filePath)).toBe(filePath);
+        }
+      }),
   );
 
   it.effect("install with start=false refuses while a remote update is pending", () =>

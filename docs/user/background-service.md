@@ -29,6 +29,32 @@ to pick up the new version. Wait for any remote update already in progress
 before updating; to match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
+Remote service updates replace the server process while keeping the existing
+service launcher and its bundled Node.js runtime. A host-side `t3 update` with
+a restart replaces both. If the server has already updated remotely, refresh
+an older launcher with a current CLI. From a terminal or SSH session on the
+host, outside T3 Code's own terminals and agents, run:
+
+```sh
+curl -fsSL https://t3.codes/install.sh | sh
+"$HOME/.local/bin/t3" service install
+```
+
+The installer above selects the latest stable release. For a nightly service,
+use `curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh` instead.
+For a custom T3 home, add `--base-dir <existing-home>` to `service install`;
+use the same home that the service already serves. Installation keeps threads,
+settings, authentication, and `service.env`, and restarts the service.
+
+Verify the packaged runtimes with the current CLI:
+
+```sh
+t3 doctor --dry-run --base-dir <existing-home>
+```
+
+Check the CLI, running server, and service launcher Node.js versions separately.
+Your shell's `node --version` does not identify the runtimes packaged with T3 Code.
+
 Pass an exact version (`t3 update 0.0.42`) to pin one, `--channel nightly` to
 switch trains, or `--allow-downgrade` to move backwards. `preview` is a
 maintainers' test train: its builds can be broken and are never offered as

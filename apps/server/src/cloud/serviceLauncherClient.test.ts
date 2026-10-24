@@ -49,6 +49,29 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provideService(HostProcess.Environment, host.env),
   );
 
+it.effect("records launcher runtime diagnostics only from its own IPC parent", () =>
+  Effect.gen(function* () {
+    const launcherRuntime = {
+      pid: 123,
+      nodeVersion: "26.12.1",
+      executablePath: "/isolated/runtime/versions/1.1.0/t3",
+    };
+    const context = { protocol: SERVICE_LAUNCHER_PROTOCOL, childVersion: "1.1.0", launcherRuntime };
+    expect(yield* makeClient(new FakeLauncherProcess(context), "1.1.0")).toMatchObject({
+      launcherRuntime,
+    });
+    expect(yield* makeClient(new FakeLauncherProcess(context, false), "1.1.0")).not.toHaveProperty(
+      "launcherRuntime",
+    );
+    expect(
+      yield* makeClient(
+        new FakeLauncherProcess({ protocol: SERVICE_LAUNCHER_PROTOCOL, childVersion: "1.1.0" }),
+        "1.1.0",
+      ),
+    ).not.toHaveProperty("launcherRuntime");
+  }),
+);
+
 it.effect("waits for the launcher to durably commit the trial update ID", () =>
   Effect.gen(function* () {
     const pending = {

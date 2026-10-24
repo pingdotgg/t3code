@@ -2,12 +2,14 @@ import { DATABASE_COMPACTION_RECOMMENDED_BYTES } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
 const formatBytes = (bytes: number) =>
   bytes >= 1024 ** 3
@@ -18,8 +20,37 @@ const formatBytes = (bytes: number) =>
 
 export const runDoctor = Effect.fn("runDoctor")(function* (
   databasePath: string,
-  options: { readonly fix: boolean; readonly dryRun: boolean; readonly interactive?: boolean },
+  options: {
+    readonly fix: boolean;
+    readonly dryRun: boolean;
+    readonly interactive?: boolean;
+    readonly runtimeStatePath?: string;
+  },
 ) {
+  yield* Console.log(`CLI: Node ${process.versions.node} (${process.execPath})`);
+  if (options.runtimeStatePath !== undefined) {
+    const state = yield* readPersistedServerRuntimeState(options.runtimeStatePath);
+    if (Option.isSome(state) && isProcessAlive(state.value.pid)) {
+      const runtime = state.value;
+      yield* Console.log(
+        runtime.nodeVersion === undefined
+          ? "Server: Node runtime not recorded by this release."
+          : `Server: Node ${runtime.nodeVersion} (${runtime.executablePath ?? "executable not recorded"}; pid ${String(runtime.pid)})`,
+      );
+      if (runtime.serviceManaged === true) {
+        const launcher = runtime.launcherRuntime;
+        yield* Console.log(
+          launcher === undefined
+            ? "Service launcher: Node runtime not recorded. Reinstall the service with the updated CLI to replace an older launcher."
+            : isProcessAlive(launcher.pid)
+              ? `Service launcher: Node ${launcher.nodeVersion} (${launcher.executablePath}; pid ${String(launcher.pid)})`
+              : "Service launcher: recorded process is no longer running.",
+        );
+      }
+    } else {
+      yield* Console.log("Server: no running process recorded for this T3 home.");
+    }
+  }
   const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
   const status = yield* maintenance.inspect(databasePath);
   yield* Console.log(
@@ -142,9 +173,11 @@ export const doctorCommand = Command.make("doctor", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
-      yield* runDoctor(config.dbPath, { fix: flags.fix, dryRun: flags.dryRun }).pipe(
-        Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))),
-      );
+      yield* runDoctor(config.dbPath, {
+        fix: flags.fix,
+        dryRun: flags.dryRun,
+        runtimeStatePath: config.serverRuntimeStatePath,
+      }).pipe(Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))));
     }),
   ),
 );

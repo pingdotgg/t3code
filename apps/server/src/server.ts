@@ -771,6 +771,9 @@ const layerMakeServer = Layer.unwrap(
           config,
           port: address.port,
           serviceManaged: launcher.managed,
+          ...(launcher.launcherRuntime === undefined
+            ? {}
+            : { launcherRuntime: launcher.launcherRuntime }),
         });
         yield* ownership
           .publish(state)

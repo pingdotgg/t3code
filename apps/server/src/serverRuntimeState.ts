@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
+import type { ServiceProcessRuntime } from "./cloud/serviceProtocol.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
@@ -21,6 +22,15 @@ export const PersistedServerRuntimeState = Schema.Struct({
   startedAt: Schema.String,
   serviceManaged: Schema.optional(Schema.Boolean),
   serverVersion: Schema.optional(Schema.String),
+  nodeVersion: Schema.optional(Schema.String),
+  executablePath: Schema.optional(Schema.String),
+  launcherRuntime: Schema.optional(
+    Schema.Struct({
+      pid: Schema.Int,
+      nodeVersion: Schema.String,
+      executablePath: Schema.String,
+    }),
+  ),
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
@@ -54,6 +64,7 @@ export const makePersistedServerRuntimeState = (input: {
   readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
   readonly port: number;
   readonly serviceManaged?: boolean;
+  readonly launcherRuntime?: ServiceProcessRuntime;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
     version: 1,
@@ -65,6 +76,9 @@ export const makePersistedServerRuntimeState = (input: {
     startedAt: DateTime.formatIso(now),
     ...(input.serviceManaged ? { serviceManaged: true } : {}),
     serverVersion: packageJson.version,
+    nodeVersion: process.versions.node,
+    executablePath: process.execPath,
+    ...(input.launcherRuntime === undefined ? {} : { launcherRuntime: input.launcherRuntime }),
   }));
 
 export const persistServerRuntimeState = (input: {

@@ -144,6 +144,32 @@ describe("server ownership", () => {
     port: 3773,
   });
 
+  it.effect("persists the executing Node and launcher separately from the host Node", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const statePath = path.join(yield* fs.makeTempDirectoryScoped(), "server-runtime.json");
+      const launcherRuntime = {
+        pid: 123,
+        nodeVersion: "26.12.1",
+        executablePath: "/isolated/runtime/versions/1.0.0/t3",
+      };
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 3773,
+        serviceManaged: true,
+        launcherRuntime,
+      });
+      yield* ServerRuntimeState.persistServerRuntimeState({ path: statePath, state });
+      const recorded = Option.getOrThrow(
+        yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath),
+      );
+      assert.propertyVal(recorded, "nodeVersion", process.versions.node);
+      assert.propertyVal(recorded, "executablePath", process.execPath);
+      assert.deepPropertyVal(recorded, "launcherRuntime", launcherRuntime);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("lets only one of two racing starts own a state directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

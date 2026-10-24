@@ -36,6 +36,13 @@ export interface ServiceLauncherContext {
   readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
   readonly childVersion: string;
   readonly update?: ServiceUpdateRecord;
+  readonly launcherRuntime?: ServiceProcessRuntime;
+}
+
+export interface ServiceProcessRuntime {
+  readonly pid: number;
+  readonly nodeVersion: string;
+  readonly executablePath: string;
 }
 
 export type ServiceLauncherChildMessage =
@@ -229,6 +236,20 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
     protocol: SERVICE_LAUNCHER_PROTOCOL,
     childVersion: parsed.childVersion,
     ...(update === undefined ? {} : { update }),
+    ...(isRecord(parsed.launcherRuntime) &&
+    Number.isSafeInteger(parsed.launcherRuntime.pid) &&
+    typeof parsed.launcherRuntime.pid === "number" &&
+    parsed.launcherRuntime.pid > 0 &&
+    typeof parsed.launcherRuntime.nodeVersion === "string" &&
+    typeof parsed.launcherRuntime.executablePath === "string"
+      ? {
+          launcherRuntime: {
+            pid: parsed.launcherRuntime.pid,
+            nodeVersion: parsed.launcherRuntime.nodeVersion,
+            executablePath: parsed.launcherRuntime.executablePath,
+          },
+        }
+      : {}),
   };
 }
 

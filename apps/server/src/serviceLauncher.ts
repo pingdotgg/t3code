@@ -476,6 +476,7 @@ export class Launcher {
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #executablePath: string;
 
   constructor(
     baseDir: string,
@@ -483,11 +484,13 @@ export class Launcher {
     options: {
       readonly backupSpaceProbe?: Partial<BackupSpaceProbe>;
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
+      readonly executablePath?: string;
     } = {},
   ) {
     this.#baseDir = baseDir;
     this.#backupSpaceProbe = options.backupSpaceProbe;
     this.#environment = { ...(options.environment ?? process.env) };
+    this.#executablePath = options.executablePath ?? process.execPath;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
   }
@@ -568,7 +571,16 @@ export class Launcher {
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
-    if (awaitedVersion?.trim() === this.#state.activeVersion) {
+    const awaitedEntry = runtimePaths(this.#baseDir, this.#state.activeVersion).entryPath;
+    const [launcherExecutable, selectedExecutable] = await Promise.all([
+      NodeFSP.realpath(this.#executablePath).catch(() => undefined),
+      NodeFSP.realpath(awaitedEntry).catch(() => undefined),
+    ]);
+    if (
+      awaitedVersion?.trim() === this.#state.activeVersion &&
+      launcherExecutable !== undefined &&
+      launcherExecutable === selectedExecutable
+    ) {
       await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
     }
     const update = this.#state.update;
@@ -615,6 +627,11 @@ export class Launcher {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: version,
       ...(update === undefined ? {} : { update }),
+      launcherRuntime: {
+        pid: process.pid,
+        nodeVersion: process.versions.node,
+        executablePath: process.execPath,
+      },
     };
     const spawnArguments = runtimeSpawnArguments(paths);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
