@@ -295,6 +295,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);
+      if (input.quiet !== undefined && input.action !== "snooze") {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "quiet is valid only for snooze.",
+        });
+      }
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {
         return yield* threads
@@ -310,7 +316,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               message: "snooze requires snoozedUntil.",
             });
           }
-          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
+          command = {
+            ...common,
+            type: "thread.snooze",
+            snoozedUntil: input.snoozedUntil,
+            quiet: input.quiet,
+          };
           break;
         case "unsnooze":
         case "unsettle":

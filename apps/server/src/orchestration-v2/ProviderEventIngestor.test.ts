@@ -1913,7 +1913,12 @@ layer("ProviderEventIngestorV2", (it) => {
           ["thread.metadata-updated"],
         );
         const thread = yield* projectionStore.getThread(childThreadId);
-        assert.deepEqual(thread, { ...saved, ...metadata, updatedAt: thread.updatedAt });
+        assert.deepEqual(thread, {
+          ...saved,
+          ...metadata,
+          snoozeQuiet: false,
+          updatedAt: thread.updatedAt,
+        });
       }
       assert.deepEqual(
         yield* ingest({
@@ -1977,7 +1982,10 @@ layer("ProviderEventIngestorV2", (it) => {
           created.flat().map((stored) => stored.event.type),
           ["thread.created"],
         );
-        assert.deepEqual(yield* projectionStore.getThread(childThreadId), recovered);
+        assert.deepEqual(yield* projectionStore.getThread(childThreadId), {
+          ...recovered,
+          snoozeQuiet: false,
+        });
 
         yield* ingest(
           {

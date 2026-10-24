@@ -202,8 +202,17 @@ describe("remote thread lifecycle commands", () => {
   const actions = [
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],
-    ["snooze", { snoozedUntil: "2099-01-01T00:00:00.000Z" }, { snoozedUntil: FUTURE }],
-    ["unsnooze", { reason: "user" }, { snoozedUntil: null, snoozedAt: null }],
+    [
+      "snooze",
+      { snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      { snoozedUntil: FUTURE, snoozeQuiet: false },
+    ],
+    [
+      "snooze",
+      { snoozedUntil: "2099-01-01T00:00:00.000Z", quiet: true },
+      { snoozedUntil: FUTURE, snoozeQuiet: true },
+    ],
+    ["unsnooze", { reason: "user" }, { snoozedUntil: null, snoozedAt: null, snoozeQuiet: false }],
     ["pin", { orderKey: "a" }, { pinnedAt: expect.any(Object), pinOrderKey: "a" }],
     ["unpin", {}, { pinnedAt: null, pinOrderKey: null }],
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
@@ -226,7 +235,7 @@ describe("remote thread lifecycle commands", () => {
                 ? { settledOverride: "settled" as const, settledAt: NOW }
                 : {}),
               ...(action === "unsnooze" || action === "settle" || action === "pin"
-                ? { snoozedUntil: FUTURE, snoozedAt: NOW }
+                ? { snoozedUntil: FUTURE, snoozedAt: NOW, snoozeQuiet: true }
                 : {}),
               ...(action === "unpin" || action === "settle"
                 ? { pinnedAt: NOW, pinOrderKey: "a" }

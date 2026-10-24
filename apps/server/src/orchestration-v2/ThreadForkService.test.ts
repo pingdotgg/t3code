@@ -134,8 +134,13 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
     const sourceRun = makeSourceRun("completed");
-    const result = yield* planFork(sourceRun);
+    const sourceProjection = makeSourceProjection(sourceRun);
+    const result = yield* planFork(sourceRun, {
+      ...sourceProjection,
+      thread: { ...sourceProjection.thread, snoozeQuiet: true },
+    });
 
+    assert.isFalse(result.targetThread.snoozeQuiet);
     assert.isNull(result.targetThread.snoozedUntil);
     assert.isNull(result.targetThread.snoozedAt);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);

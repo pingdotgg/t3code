@@ -74,6 +74,7 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest">;
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
+  readonly snoozeQuiet?: boolean;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;

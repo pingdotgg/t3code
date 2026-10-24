@@ -13,6 +13,17 @@ export interface AgentActivityAlert {
 
 export const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
 
+function completionIsQuiet(
+  row: { readonly phase: string; readonly completionQuietUntil?: string | undefined },
+  nowMs: number,
+): boolean {
+  const wake =
+    row.completionQuietUntil === undefined
+      ? null
+      : Option.getOrNull(DateTime.make(row.completionQuietUntil));
+  return row.phase === "completed" && wake !== null && wake.epochMilliseconds > nowMs;
+}
+
 export function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean {
   const timestamp = Option.getOrNull(DateTime.make(updatedAt));
   return (
@@ -107,6 +118,7 @@ export function terminalTransitionRows(
     input.includeUnobserved,
   ).filter((row) => {
     return (
+      !completionIsQuiet(row, input.nowMs) &&
       alertAllowedForPhase(input.preferences, row.phase) &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)
     );
@@ -139,20 +151,25 @@ export function alertForNewlyTerminal(
 
 export function alertForTerminalAggregate(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly nowMs: number;
   readonly preferences: RelayAgentAwarenessPreferences | null;
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
   if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
-  return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
+  return !completionIsQuiet(row, input.nowMs) && alertAllowedForPhase(input.preferences, row.phase)
+    ? alertForActivityRows([row])
+    : null;
 }
 
 export function shouldAlertForActivity(input: {
   readonly phase: RelayAgentActivityAggregateRow["phase"];
   readonly updatedAt: string;
+  readonly completionQuietUntil?: string | undefined;
   readonly preferences: RelayAgentAwarenessPreferences | null;
   readonly nowMs: number;
 }): boolean {
   return (
+    !completionIsQuiet(input, input.nowMs) &&
     input.preferences?.notificationsEnabled === true &&
     alertAllowedForPhase(input.preferences, input.phase) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||

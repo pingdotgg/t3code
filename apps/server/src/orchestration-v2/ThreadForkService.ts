@@ -110,6 +110,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        snoozeQuiet: false,
         lastVisitedAt: null,
         deletedAt: null,
       };

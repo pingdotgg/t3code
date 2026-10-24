@@ -70,6 +70,37 @@ function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTu
 }
 
 describe("effectiveSnoozed", () => {
+  it("keeps quiet completions snoozed until expiry, without hiding requests or new failures", () => {
+    const completed = {
+      ...makeShell({
+        snoozedUntil: FUTURE_WAKE,
+        turnRequestedAt: "2026-04-10T09:00:00.001Z",
+        turnCompletedAt: NOW,
+      }),
+      snoozeQuiet: true,
+    };
+    expect(effectiveSnoozed(completed, { now: NOW })).toBe(true);
+    expect(threadRaisedHandWhileSnoozed(completed)).toBe(false);
+    expect(threadWokeAt(completed, { now: NOW })).toBeNull();
+    expect(effectiveSnoozed(completed, { now: FUTURE_WAKE })).toBe(false);
+    expect(threadWokeAt(completed, { now: FUTURE_WAKE })).toBe(FUTURE_WAKE);
+    expect(effectiveSnoozed({ ...completed, snoozedUntil: null }, { now: NOW })).toBe(false);
+    for (const pending of ["approval", "user-input"] as const) {
+      expect(
+        effectiveSnoozed(
+          { ...completed, ...makeShell({ snoozedUntil: FUTURE_WAKE, pending }) },
+          { now: NOW },
+        ),
+      ).toBe(false);
+    }
+    expect(
+      effectiveSnoozed(
+        { ...completed, ...makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "error" }) },
+        { now: NOW },
+      ),
+    ).toBe(false);
+  });
+
   it("never hides on malformed wake data", () => {
     expect(effectiveSnoozed(makeShell({ snoozedUntil: "not-a-date" }), { now: NOW })).toBe(false);
   });

@@ -84,7 +84,10 @@ const SHELL = {
 } satisfies OrchestrationV2ShellSnapshot;
 const THREAD = {
   snapshotSequence: 2,
-  projection: v2Projection,
+  projection: {
+    ...v2Projection,
+    thread: { ...v2Projection.thread, snoozeQuiet: false },
+  },
 } satisfies OrchestrationV2ThreadDetailSnapshot;
 const TRANSCRIPT = {
   threadId: v2Projection.thread.id,
@@ -282,6 +285,21 @@ describe("authenticated environment HTTP requests", () => {
         status: 502,
       });
     }),
+  );
+
+  it.effect.each(LOADERS.filter((loader) => loader.name.includes("thread snapshot")))(
+    "normalizes legacy $name responses without quiet snooze metadata",
+    (loader) =>
+      Effect.gen(function* () {
+        const legacyResponse = JSON.parse(
+          JSON.stringify(loader.response, (key, value) =>
+            key === "snoozeQuiet" ? undefined : value,
+          ),
+        );
+        const harness = makeHarness(() => Response.json(legacyResponse));
+        const result = yield* loader.load(harness.input).pipe(Effect.provide(harness.httpLayer));
+        expect(result).toEqual(loader.expected);
+      }),
   );
 
   it.effect.each(LOADERS)("uses current relay authorization and endpoint for $name", (loader) =>

@@ -90,6 +90,8 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
@@ -104,8 +106,6 @@ function shouldPublishAgentAwarenessEvent(
       return true;
     // Unsettling must not re-alert a dismissed result.
     case "thread.unsettled":
-    case "thread.snoozed":
-    case "thread.unsnoozed":
     case "thread.auto-settle-set":
     case "thread.pinned":
     case "thread.unpinned":

@@ -150,6 +150,7 @@ const seedParentWithTerminalTask = (input: {
   readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
+  readonly taskStatus?: "completed" | "failed";
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -281,7 +282,7 @@ const seedParentWithTerminalTask = (input: {
               state: input.deliveryState,
               observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
             },
-            status: "completed",
+            status: input.taskStatus ?? "completed",
             result: "child finished",
             startedAt: input.now,
             completedAt: input.now,
@@ -293,6 +294,58 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
+  it.effect.each(["completed", "failed"] as const)(
+    "only successful delegated completion preserves quiet snooze: %s",
+    (taskStatus) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:quiet-delegated:${taskStatus}`);
+        const runId = RunId.make(`run:quiet-delegated:${taskStatus}`);
+        const taskId = NodeId.make(`task:quiet-delegated:${taskStatus}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:quiet-delegated:${taskStatus}`),
+          runId,
+          rootNodeId: NodeId.make(`root:quiet-delegated:${taskStatus}`),
+          taskId,
+          deliveryState: "claimed",
+          completionWake: "always",
+          deliveryTaskIds: [taskId],
+          taskStatus,
+          now,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`snooze:${threadId}`),
+          threadId,
+          snoozedUntil: "2099-07-25T09:00:00.000Z",
+          quiet: true,
+        });
+        const snoozed = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        // ProviderContinuationService sends no notification field for app-owned
+        // children. The live cohort, rather than caller-supplied taskIds, owns
+        // the success/failure classification used by notificationTurnItem.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`dispatch:${threadId}`),
+          threadId,
+          messageId: MessageId.make(`message:delegated-delivery:${threadId}`),
+          text: "Delegated task reached a terminal state.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [] },
+        });
+        const after = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        const staysSnoozed = taskStatus === "completed";
+        assert.equal(after.snoozeQuiet, staysSnoozed);
+        assert.deepEqual(after.snoozedUntil, staysSnoozed ? snoozed.snoozedUntil : null);
+        assert.deepEqual(after.snoozedAt, staysSnoozed ? snoozed.snoozedAt : null);
+      }),
+  );
+
   it.effect(
     "interrupting a completion wake disposes both cohorts without reviving them on late results",
     () =>

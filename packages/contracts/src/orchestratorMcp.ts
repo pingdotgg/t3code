@@ -346,6 +346,7 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozeQuiet: Schema.optional(Schema.Boolean),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
@@ -424,6 +425,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozeQuiet: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

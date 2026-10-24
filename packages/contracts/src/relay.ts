@@ -128,6 +128,7 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  completionQuietUntil: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
@@ -141,6 +142,7 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  completionQuietUntil: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateRow.Type;
 

@@ -7,6 +7,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as DateTime from "effect/DateTime";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
@@ -160,6 +161,13 @@ function EnvironmentNotifications({
             ? "completion"
             : null;
       if (!kind) continue;
+      if (
+        kind === "completion" &&
+        thread.snoozeQuiet === true &&
+        thread.snoozedUntil !== null &&
+        Date.parse(thread.snoozedUntil) > DateTime.nowUnsafe().epochMilliseconds
+      )
+        continue;
       const title =
         kind === "completion"
           ? "Thread completed"

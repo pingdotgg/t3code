@@ -2492,6 +2492,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       settledAt: null,
       snoozedUntil: null,
       snoozedAt: null,
+      snoozeQuiet: false,
       lastVisitedAt: null,
       deletedAt: null,
     };
@@ -3097,6 +3098,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeQuiet: false,
             updatedAt:
               alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
                 ? thread.updatedAt
@@ -3120,6 +3122,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             snoozedUntil,
+            snoozeQuiet: command.quiet ?? false,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
             updatedAt: now,
@@ -3131,6 +3134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeQuiet: false,
             lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
@@ -3157,6 +3161,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeQuiet: false,
             lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
@@ -3217,13 +3222,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   // Recovery changes acknowledge the same stopped run; keep its
                   // metadata timestamp from appearing as a fresh failure wake.
                   snoozedAt: now,
+                  snoozeQuiet: false,
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&
                   thread.snoozedUntil != null &&
                   DateTime.toEpochMillis(thread.snoozedUntil) ===
                     Date.parse(thread.limitRecovery.resetAt)
-                ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
+                ? { snoozedUntil: null, snoozedAt: null, snoozeQuiet: false, lastSnoozeWakeAt: now }
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
@@ -4977,30 +4983,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
-    // Background wakes and delegated completions continue work the user already snoozed, so
-    // only a message someone actually sent ends the snooze.
-    const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
-    if (projection.thread.snoozedUntil != null && !automaticWake) {
-      const now = yield* DateTime.now;
-      const thread: OrchestrationV2AppThread = {
-        ...projection.thread,
-        snoozedUntil: null,
-        snoozedAt: null,
-        updatedAt: now,
-      };
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.unsnoozed",
-        threadId: command.threadId,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
-        payload: thread,
-      });
-      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-    }
     const userMessages = projection.messages.filter((message) => message.role === "user");
     const onlyMaintenanceHistory =
       userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
@@ -5128,6 +5110,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         generation: delivery.generation,
         taskIds: delivery.taskIds,
       };
+    }
+    // Background completion delivery can start another turn. Keep its eventual
+    // completion quiet too; human sends and attention notifications still wake.
+    const completedDelivery =
+      delegatedCompletion === undefined
+        ? command.notification?.outcome === "completed"
+        : delegatedCompletion.taskIds.length > 0 &&
+          delegatedCompletion.taskIds.every(
+            (id) => projection.subagents.find((task) => task.id === id)?.status === "completed",
+          );
+    const quietCompletion =
+      projection.thread.snoozeQuiet === true &&
+      command.createdBy === "agent" &&
+      (command.creationSource === "server" || command.creationSource === "provider") &&
+      completedDelivery;
+    const automaticWake = command.notification !== undefined || delegatedCompletion !== undefined;
+    const preserveSnooze = projection.thread.snoozeQuiet === true ? quietCompletion : automaticWake;
+    if (projection.thread.snoozedUntil != null && !preserveSnooze) {
+      const now = yield* DateTime.now;
+      const thread: OrchestrationV2AppThread = {
+        ...projection.thread,
+        snoozedUntil: null,
+        snoozedAt: null,
+        snoozeQuiet: false,
+        updatedAt: now,
+      };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.unsnoozed",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: thread,
+      });
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     // Route durable mailbox deliveries under the thread lock, using the live
     // session's capabilities. Never interrupt/restart a turn for a notification.

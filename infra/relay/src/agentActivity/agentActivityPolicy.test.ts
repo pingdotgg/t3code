@@ -4,6 +4,8 @@ import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
   attentionTransitionRows,
+  alertForTerminalAggregate,
+  alertForNewlyTerminal,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -31,6 +33,41 @@ const aggregate = (states: RelayAgentActivityState[]) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 describe("shared agent activity policy", () => {
+  it("propagates quiet snooze and suppresses every completion alert path until wake", () => {
+    const quietUntil = "1970-01-01T00:01:00.000Z";
+    const previousAggregate = aggregate([state]);
+    const completed = { ...state, phase: "completed" as const, completionQuietUntil: quietUntil };
+    const nextAggregate = aggregate([completed]);
+    expect(nextAggregate.activities[0]?.completionQuietUntil).toBe(quietUntil);
+    for (const nowMs of [0, 59_999]) {
+      const input = { previousAggregate, nextAggregate, preferences, nowMs };
+      expect(terminalTransitionRows(input)).toEqual([]);
+      expect(alertForNewlyTerminal(input)).toBeNull();
+      expect(
+        alertForTerminalAggregate({ aggregate: nextAggregate, preferences, nowMs }),
+      ).toBeNull();
+      expect(shouldAlertForActivity({ ...completed, preferences, nowMs })).toBe(false);
+    }
+    expect(shouldAlertForActivity({ ...completed, preferences, nowMs: 60_000 })).toBe(true);
+    expect(
+      alertForTerminalAggregate({ aggregate: nextAggregate, preferences, nowMs: 60_000 }),
+    ).not.toBeNull();
+    expect(
+      terminalTransitionRows({ previousAggregate, nextAggregate, preferences, nowMs: 60_000 }),
+    ).toHaveLength(1);
+    expect(
+      terminalTransitionRows({
+        previousAggregate: nextAggregate,
+        nextAggregate,
+        preferences,
+        nowMs: 60_000,
+      }),
+    ).toEqual([]);
+    for (const phase of ["failed", "waiting_for_approval", "waiting_for_input"] as const) {
+      expect(shouldAlertForActivity({ ...completed, phase, preferences, nowMs: 0 })).toBe(true);
+    }
+  });
+
   it.each(["waiting_for_approval", "waiting_for_input"] as const)(
     "keeps an older %s ahead of five running rows",
     (phase) => {

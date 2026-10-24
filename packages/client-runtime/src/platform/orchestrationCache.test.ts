@@ -16,14 +16,18 @@ import {
   v2Projection,
   v2ShellSnapshot,
   v2ThreadId,
+  v2ThreadShell,
 } from "../state/orchestrationV2TestFixtures.ts";
 
 import { applyOrchestrationV2ProjectionEvent } from "../state/orchestrationV2Projection.ts";
 
 const environmentId = EnvironmentId.make("environment-cache-test");
+const StoredShellSnapshotJson = Schema.fromJsonString(StoredOrchestrationShellSnapshot);
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredOrchestrationThreadSnapshot);
 const encodeStoredShellSnapshot = Schema.encodeSync(StoredOrchestrationShellSnapshot);
 const decodeStoredShellSnapshotSync = Schema.decodeUnknownSync(StoredOrchestrationShellSnapshot);
+const encodeStoredShellSnapshotJson = Schema.encodeSync(StoredShellSnapshotJson);
+const decodeStoredShellSnapshotJson = Schema.decodeUnknownSync(StoredShellSnapshotJson);
 const encodeStoredThreadSnapshotJson = Schema.encodeSync(StoredThreadSnapshotJson);
 const decodeStoredThreadSnapshotJson = Schema.decodeUnknownSync(StoredThreadSnapshotJson);
 
@@ -72,6 +76,41 @@ describe("orchestration cache envelopes", () => {
     const decoded = decodeStoredThreadSnapshotJson(encoded).snapshot.projection;
     expect(decoded.turnItems.find((entry) => entry.id === item.id)).toEqual(item);
     expect(decoded.visibleTurnItems.find((entry) => entry.item.id === item.id)?.item).toEqual(item);
+  });
+
+  it("normalizes legacy shell and thread cache envelopes without quiet snooze metadata", () => {
+    const omitQuietSnooze = (key: string, value: unknown) =>
+      key === "snoozeQuiet" ? undefined : value;
+    const shell = encodeStoredShellSnapshotJson({
+      schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+      environmentId,
+      snapshot: v2ShellSnapshot,
+    });
+    const thread = encodeStoredThreadSnapshotJson({
+      schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+      environmentId,
+      threadId: v2ThreadId,
+      snapshot: { snapshotSequence: 4, projection: v2Projection },
+    });
+    expect(
+      decodeStoredShellSnapshotJson(JSON.stringify(JSON.parse(shell), omitQuietSnooze)).snapshot,
+    ).toEqual({
+      ...v2ShellSnapshot,
+      threads: [
+        {
+          ...v2ThreadShell,
+          pendingBackgroundTasks: [],
+          providerInstanceHistory: [],
+          snoozeQuiet: false,
+        },
+      ],
+    });
+    expect(
+      decodeStoredThreadSnapshotJson(JSON.stringify(JSON.parse(thread), omitQuietSnooze)).snapshot,
+    ).toEqual({
+      snapshotSequence: 4,
+      projection: { ...v2Projection, thread: { ...v2Projection.thread, snoozeQuiet: false } },
+    });
   });
 
   it("rejects thread snapshots saved before queued-run items were kept, but not shells", () => {

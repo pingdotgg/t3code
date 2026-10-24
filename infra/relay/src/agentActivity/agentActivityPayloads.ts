@@ -115,5 +115,8 @@ export function notificationForActivity(
     deepLink: activity.deepLink,
     phase: activity.phase,
     updatedAt: activity.updatedAt,
+    ...(activity.completionQuietUntil === undefined
+      ? {}
+      : { completionQuietUntil: activity.completionQuietUntil }),
   });
 }

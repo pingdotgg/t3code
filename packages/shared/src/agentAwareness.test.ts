@@ -48,6 +48,18 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
+  it("propagates quiet-until for relay completion delivery and omits it for ordinary snooze", () => {
+    const input = {
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: { ...v2Thread({ status: "completed" }), snoozeQuiet: true, snoozedUntil: updatedAt },
+    };
+    expect(projectThreadAwarenessV2(input)).toMatchObject({ completionQuietUntil: NOW });
+    expect(
+      projectThreadAwarenessV2({ ...input, thread: { ...input.thread, snoozeQuiet: false } }),
+    ).not.toHaveProperty("completionQuietUntil");
+  });
+
   it("does not announce completion after a manual stop", () => {
     const input = {
       environmentId: "env-1" as EnvironmentId,

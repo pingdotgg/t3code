@@ -839,10 +839,11 @@ function threadSettlement(
 function threadSnooze(
   thread: Parameters<typeof isSnoozed>[0],
   nowMs: number,
-): Pick<OrchestratorMcpThreadListItem, "snoozed" | "snoozedUntil"> {
+): Pick<OrchestratorMcpThreadListItem, "snoozed" | "snoozedUntil" | "snoozeQuiet"> {
   const snoozed = isSnoozed(thread, nowMs);
   return {
     snoozed,
+    snoozeQuiet: thread.snoozeQuiet ?? false,
     snoozedUntil:
       snoozed && thread.snoozedUntil != null ? DateTime.formatIso(thread.snoozedUntil) : null,
   };

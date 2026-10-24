@@ -1062,6 +1062,33 @@ describe("ThreadSettlementServiceV2 terminals", () => {
 
 describe("isSnoozed", () => {
   const snoozed = { snoozedAt: at(-2 * DAY_MS), snoozedUntil: at(DAY_MS) };
+  it("quiet completion stays parked without auto-settling; failure and pending requests still wake", () => {
+    const completed = shell({
+      ...snoozed,
+      snoozeQuiet: true,
+      status: "completed",
+      latestRunRequestedAt: at(-2 * DAY_MS + 1),
+      latestRunCompletedAt: at(-DAY_MS),
+    });
+    expect(ThreadSettlementService.isSnoozed(completed, NOW_MS)).toBe(true);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(completed, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        { ...completed, status: "interrupted" },
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(ThreadSettlementService.isSnoozed({ ...completed, status: "failed" }, NOW_MS)).toBe(
+      false,
+    );
+    expect(
+      ThreadSettlementService.isSnoozed(
+        { ...completed, pendingRuntimeRequest: { kind: "approval" } as never },
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(ThreadSettlementService.isSnoozed(completed, NOW_MS + DAY_MS)).toBe(false);
+  });
   it("keeps a run requested and completed after snoozing parked until the timer", () => {
     const thread = shell({
       ...snoozed,
@@ -1083,4 +1110,22 @@ describe("isSnoozed", () => {
       }),
     ).toBeNull();
   });
+
+  it.each([false, true])(
+    "keeps idle and interrupted threads snoozed with quiet=%s",
+    (snoozeQuiet) => {
+      expect(ThreadSettlementService.isSnoozed(shell(snoozed), NOW_MS)).toBe(true);
+      const interrupted = shell({
+        ...snoozed,
+        snoozeQuiet,
+        status: "interrupted",
+        latestRunCompletedAt: at(-DAY_MS),
+      });
+      expect(ThreadSettlementService.isSnoozed(interrupted, NOW_MS)).toBe(true);
+      expect(ThreadSettlementService.isAutoSettlementCandidate(interrupted, NOW_MS)).toBe(false);
+      expect(
+        ThreadSettlementService.isSnoozed(shell({ ...snoozed, snoozedUntil: at(-1) }), NOW_MS),
+      ).toBe(false);
+    },
+  );
 });

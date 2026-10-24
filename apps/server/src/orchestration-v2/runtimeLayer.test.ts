@@ -1,6 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
+import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import { isSnoozed } from "./ThreadSettlementService.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -12,6 +15,7 @@ import {
   CommandId,
   ContextTransferId,
   EventId,
+  EnvironmentId,
   MessageId,
   NodeId,
   RuntimeRequestId,
@@ -5343,6 +5347,123 @@ it.layer(layerTest)("snooze queued runs", (it) => {
   );
 });
 
+it.layer(layerTest)("quiet snooze automatic dispatch", (it) => {
+  it.effect.each([
+    { origin: "server", outcome: "completed", quiet: true, staysSnoozed: true },
+    { origin: "provider", outcome: "completed", quiet: true, staysSnoozed: true },
+    { origin: "server", outcome: "failed", quiet: true, staysSnoozed: false },
+    { origin: "provider", outcome: "failed", quiet: true, staysSnoozed: false },
+    { origin: "server", outcome: "updated", quiet: true, staysSnoozed: false },
+    { origin: "web", outcome: "completed", quiet: true, staysSnoozed: false },
+    { origin: "server", outcome: "completed", quiet: false, staysSnoozed: true },
+  ] as const)(
+    "preserves background completion snoozes: $origin $outcome quiet=$quiet",
+    ({ origin, outcome, quiet, staysSnoozed }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`quiet-dispatch:${origin}:${outcome}:${quiet}`);
+        const snoozedUntil = "2099-07-25T09:00:00.000Z";
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create:${threadId}`),
+          threadId,
+          projectId: ProjectId.make("quiet-dispatch-project"),
+          title: "Quiet automatic dispatch",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/quiet-dispatch",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`snooze:${threadId}`),
+          threadId,
+          snoozedUntil,
+          quiet,
+        });
+        const snoozed = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        // This is the notification shape produced by provider background-work
+        // reports and forwarded by ProviderContinuationService, including its
+        // server-created message_text delivery route.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`dispatch:${threadId}`),
+          threadId,
+          messageId: MessageId.make(`message:${threadId}`),
+          text: "Background work finished",
+          attachments: [],
+          createdBy: origin === "web" ? "user" : "agent",
+          creationSource: origin,
+          dispatchMode: { type: "queue_after_active" },
+          ...(origin === "web"
+            ? {}
+            : {
+                notification:
+                  outcome === "updated"
+                    ? {
+                        source: {
+                          kind: "delegated_task" as const,
+                          taskIds: [NodeId.make("question-task")],
+                        },
+                        outcome,
+                        summary: "Delegated task has a question",
+                      }
+                    : backgroundWorkNotification([{ kind: "command", outcome }]),
+              }),
+        });
+        const dispatched = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(dispatched.thread.snoozeQuiet, quiet && staysSnoozed);
+        assert.deepEqual(
+          dispatched.thread.snoozedUntil,
+          staysSnoozed ? snoozed.snoozedUntil : null,
+        );
+        assert.deepEqual(dispatched.thread.snoozedAt, staysSnoozed ? snoozed.snoozedAt : null);
+        // Queued automatic delivery to an idle thread really starts a turn.
+        // Its eventual completion must still retain the original quiet deadline.
+        const run = dispatched.runs[0]!;
+        assert.equal(run.status, "starting");
+        yield* TestClock.adjust("1 second");
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`complete:${threadId}`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const [candidate] = yield* projections.getSettlementCandidates(threadId);
+        assert.isDefined(candidate);
+        assert.equal(isSnoozed(candidate!, DateTime.toEpochMillis(now)), staysSnoozed);
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (t) => t.id === threadId,
+        )!;
+        const awareness = projectThreadAwarenessV2({
+          environmentId: EnvironmentId.make("quiet-dispatch-environment"),
+          project: { title: "Quiet dispatch" },
+          thread: shell,
+        });
+        assert.equal(awareness?.phase, "completed");
+        assert.equal(
+          awareness?.completionQuietUntil,
+          quiet && staysSnoozed ? snoozedUntil : undefined,
+        );
+        if (staysSnoozed) {
+          assert.isFalse(isSnoozed(candidate!, Date.parse(snoozedUntil)));
+        }
+      }),
+  );
+});
+
 it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
   it.effect("carries snooze state through the V2 shell projection", () =>
     Effect.gen(function* () {
@@ -5377,9 +5498,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze"),
         threadId,
         snoozedUntil,
+        quiet: true,
       });
 
       const firstProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(firstProjection.thread.snoozeQuiet, true);
       const firstSnoozedAt = firstProjection.thread.snoozedAt;
       assert.isNotNull(firstSnoozedAt);
 
@@ -5391,11 +5514,15 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-again"),
         threadId,
         snoozedUntil,
+        quiet: true,
       });
 
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* maintenance.rebuild;
       const shell = yield* orchestrator.getShellSnapshot();
       const thread = shell.threads.find((candidate) => candidate.id === threadId);
       assert.isDefined(thread);
+      assert.equal(thread.snoozeQuiet, true);
       assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
       assert.equal(
         DateTime.toEpochMillis(thread.snoozedAt!),
@@ -5413,12 +5540,30 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         Effect.provide(ProjectionStore.layer),
       );
       const [candidate] = yield* projections.getSettlementCandidates(threadId);
+      assert.equal(candidate?.snoozeQuiet, false);
       assert.deepEqual(candidate?.lastSnoozeWakeAt, yield* DateTime.now);
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-before-settle"),
+        threadId,
+        snoozedUntil,
+        quiet: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-settle"),
+        threadId,
+      });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(settled.thread.snoozedUntil);
+      assert.isNull(settled.thread.snoozedAt);
+      assert.equal(settled.thread.snoozeQuiet, false);
       yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-after-wake"),
         threadId,
         snoozedUntil,
+        quiet: true,
       });
 
       yield* orchestrator.dispatch({
@@ -5437,6 +5582,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const awakened = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(awakened.thread.snoozedUntil);
       assert.isNull(awakened.thread.snoozedAt);
+      assert.equal(awakened.thread.snoozeQuiet, false);
     }),
   );
 });

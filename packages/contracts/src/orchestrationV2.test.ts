@@ -2,9 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
+import { NodeId, ProviderInstanceId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2AppThreadJson,
+  OrchestrationV2DomainEvent,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -12,11 +14,53 @@ import {
   OrchestrationV2Subagent,
   OrchestrationV2SubagentJson,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
+function emptyThreadProjection() {
+  return {
+    thread: {
+      createdBy: "user",
+      creationSource: "web",
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: null,
+    },
+    runs: [],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    plans: [],
+    turnItems: [],
+    checkpointScopes: [],
+    checkpoints: [],
+    contextHandoffs: [],
+    contextTransfers: [],
+    visibleTurnItems: [],
+    updatedAt: now,
+  };
+}
 
 const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
@@ -33,7 +77,34 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
 
+const encodeAppThreadJson = Schema.encodeSync(OrchestrationV2AppThreadJson);
+const decodeAppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+const decodeOrchestrationV2ThreadProjection = Schema.decodeUnknownSync(
+  OrchestrationV2ThreadProjection,
+);
+const decodeQuietSnoozeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
+
 describe("orchestration V2 contracts", () => {
+  it("defaults old thread snapshots and snooze events to ordinary snooze and preserves quiet JSON", () => {
+    const oldThread = decodeOrchestrationV2ThreadProjection(emptyThreadProjection()).thread;
+    expect(oldThread.snoozeQuiet).toBe(false);
+    const quietThread = { ...oldThread, snoozeQuiet: true };
+    const encoded = encodeAppThreadJson(quietThread);
+    expect(decodeAppThreadJson(encoded).snoozeQuiet).toBe(true);
+    for (const snoozeQuiet of [undefined, true]) {
+      const event = decodeQuietSnoozeEvent({
+        id: "snooze-event",
+        type: "thread.snoozed",
+        sequence: 1,
+        threadId: oldThread.id,
+        providerInstanceId: oldThread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...oldThread, snoozeQuiet },
+      });
+      expect(event.payload).toMatchObject({ snoozeQuiet: snoozeQuiet ?? false });
+    }
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

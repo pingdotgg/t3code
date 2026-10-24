@@ -1177,6 +1177,7 @@ export const make = Effect.gen(function* () {
             ? null
             : alertForTerminalAggregate({
                 aggregate: delivery.aggregate,
+                nowMs: (yield* DateTime.now).epochMilliseconds,
                 preferences: parsePreferences(input.target.preferences_json),
               })
           : delivery.alert;

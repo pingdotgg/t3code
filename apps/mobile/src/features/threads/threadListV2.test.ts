@@ -212,6 +212,36 @@ describe("getThreadListV2OrderedSection", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("keeps completed quiet threads on the snoozed shelf until wake", () => {
+    const thread = makeThread({
+      id: ThreadId.make("quiet"),
+      title: "Quiet",
+      snoozeQuiet: true,
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("quiet-run"),
+        assistantMessageId: null,
+        status: "completed",
+        requestedAt: NOW,
+        startedAt: NOW,
+        completedAt: NOW,
+      },
+    });
+    const input = { threads: [thread], environmentId: null, searchQuery: "", now: NOW };
+    expect(buildThreadListV2Items(input).snoozedCount).toBe(1);
+    expect(buildThreadListV2Items(input).items).toEqual([]);
+    expect(buildThreadListV2Items({ ...input, now: thread.snoozedUntil! }).snoozedCount).toBe(0);
+    expect(
+      buildThreadListV2Items({ ...input, threads: [{ ...thread, snoozeQuiet: false }] })
+        .snoozedCount,
+    ).toBe(1);
+    expect(
+      buildThreadListV2Items({ ...input, threads: [{ ...thread, hasPendingApprovals: true }] })
+        .snoozedCount,
+    ).toBe(0);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [
