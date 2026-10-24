@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -51,28 +52,15 @@ import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/serv
 import { previewBridge } from "./previewBridge";
 import { showPreviewPopup } from "./showPreviewPopup";
 import {
-  clampPreviewMiniPlayerPosition,
-  NO_PREVIEW_MINI_PLAYER_OBSTACLES,
   PREVIEW_MINI_PLAYER_CORNER_RADIUS,
   PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
   type PreviewMiniPlayerFrame,
-  resizePreviewMiniPlayer,
   resolveDeviceMiniPlayerCornerRadius,
   resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
 
-interface PointerGesture {
-  readonly pointerId: number;
-  readonly pointerType: string;
-  readonly pointerX: number;
-  readonly pointerY: number;
-  readonly frame: PreviewMiniPlayerFrame;
-  readonly direction: BrowserViewportResizeDirection | null;
-  moved: boolean;
-}
-
-const HANDLE_TAP_SLOP_PX = 6;
+import { createPreviewMiniPlayerGesture } from "./previewMiniPlayerGesture";
 
 interface Props {
   readonly threadRef: ScopedThreadRef;
@@ -342,7 +330,7 @@ function MiniPlayerShell({
   readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
 }) {
   const canvas = useChatCanvas();
-  const gestureRef = useRef<PointerGesture | null>(null);
+  const [gesture] = useState(createPreviewMiniPlayerGesture);
   // Touch has no hover, so tapping the handle toggles the pill instead. The
   // toggle waits for the tap's click, which would otherwise land on the pill.
   const [pillOpen, setPillOpen] = useState(false);
@@ -358,7 +346,6 @@ function MiniPlayerShell({
     return () => document.removeEventListener("pointerdown", dismiss, true);
   }, [pillOpen]);
   const container = canvas?.container ?? null;
-  const obstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES;
   const sourceKey = previewMiniPlayerSourceKey(miniPlayer.source);
   const frame = canvas?.previewKey === sourceKey ? canvas.layout.frame : null;
   const { width: sourceWidth, height: sourceHeight } = sourceSize;
@@ -390,68 +377,42 @@ function MiniPlayerShell({
     usePreviewMiniPlayerStore.getState().close(threadRef);
   };
 
+  const commitGesture = (
+    next: PreviewMiniPlayerFrame,
+    direction: BrowserViewportResizeDirection | null,
+  ) => {
+    const store = usePreviewMiniPlayerStore.getState();
+    const position = { x: next.x, y: next.y };
+    if (direction === null) store.move(threadRef, sourceKey, position);
+    else store.resize(threadRef, sourceKey, next.width, position);
+  };
+  const finishGesture = () => {
+    handleTappedRef.current = false;
+    gesture.finish(container, commitGesture);
+  };
+  const handleBlur = useEffectEvent(finishGesture);
+  useEffect(() => {
+    window.addEventListener("blur", handleBlur);
+    return () => window.removeEventListener("blur", handleBlur);
+  }, []);
+
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
     direction: BrowserViewportResizeDirection | null,
   ) => {
-    if (event.button !== 0 || !frame) return;
-    gestureRef.current = {
-      pointerId: event.pointerId,
-      pointerType: event.pointerType,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      frame,
-      direction,
-      moved: false,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-    event.stopPropagation();
+    if (!frame) return;
+    handleTappedRef.current = false;
+    if (gesture.begin(event, direction)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   };
-
   const handlePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId || !container) return;
-    const delta = { x: event.clientX - gesture.pointerX, y: event.clientY - gesture.pointerY };
-    if (!gesture.moved && Math.hypot(delta.x, delta.y) < HANDLE_TAP_SLOP_PX) return;
-    gesture.moved = true;
-    const store = usePreviewMiniPlayerStore.getState();
-    if (gesture.direction === null) {
-      store.move(
-        threadRef,
-        sourceKey,
-        clampPreviewMiniPlayerPosition(
-          { x: gesture.frame.x + delta.x, y: gesture.frame.y + delta.y },
-          container,
-          gesture.frame,
-          obstacles,
-        ),
-      );
-      return;
-    }
-    const next = resizePreviewMiniPlayer({
-      start: gesture.frame,
-      direction: gesture.direction,
-      delta,
-      source: sourceSize,
-      container,
-      obstacles,
-    });
-    store.resize(threadRef, sourceKey, next.width, { x: next.x, y: next.y });
+    gesture.move(event, container, commitGesture);
   };
-
   const endGesture = (event: ReactPointerEvent<HTMLElement>) => {
-    const gesture = gestureRef.current;
-    if (gesture?.pointerId !== event.pointerId) return;
-    gestureRef.current = null;
-    handleTappedRef.current =
-      event.type === "pointerup" &&
-      gesture.direction === null &&
-      gesture.pointerType === "touch" &&
-      !gesture.moved;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    const tapped = gesture.end(event, container, commitGesture);
+    if (tapped !== null) handleTappedRef.current = tapped;
   };
 
   return (
@@ -478,6 +439,7 @@ function MiniPlayerShell({
             onPointerMove={handlePointerMove}
             onPointerUp={endGesture}
             onPointerCancel={endGesture}
+            onLostPointerCapture={endGesture}
             onClick={() => {
               if (!handleTappedRef.current) return;
               handleTappedRef.current = false;
@@ -554,6 +516,7 @@ function MiniPlayerShell({
               onPointerMove={handlePointerMove}
               onPointerUp={endGesture}
               onPointerCancel={endGesture}
+              onLostPointerCapture={endGesture}
             />
           ))}
         </section>
