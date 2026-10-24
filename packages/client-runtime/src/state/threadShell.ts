@@ -6,7 +6,8 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { isProviderNativeSubagentThread, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import { OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import { subagentPendingRequest } from "@t3tools/shared/agentAwareness";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
@@ -31,43 +32,13 @@ const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ReadonlyArray<ScopedThreadRef>
 > = new Map();
 
-// An async question outlives the subagent's run, but once that run ends the
-// parent is no longer waiting on the answer, so it stops counting as input.
-// The activity run stays set when a follow-up is queued behind a blocked run;
-// older servers omit it, so fall back to the latest run's status.
-const isChildRunLive = (
-  thread: Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status">,
-) =>
-  thread.activityRunStatus !== undefined
-    ? thread.activityRunStatus !== null
-    : thread.status === "preparing" ||
-      thread.status === "starting" ||
-      thread.status === "running" ||
-      thread.status === "waiting";
-
-/** Provider-native
-    subagents ask on their parent, so they are skipped. */
-function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
-  const kind = thread.pendingRuntimeRequest?.kind;
-  if (
-    kind === undefined ||
-    kind === "auth_refresh" ||
-    thread.lineage.relationshipToParent !== "subagent" ||
-    isProviderNativeSubagentThread(thread) ||
-    !isChildRunLive(thread)
-  ) {
-    return null;
-  }
-  return kind === "user_input" ? "user_input" : "approval";
-}
-
 export function pendingSubagentRequestsByThread(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyMap<ThreadId, PendingSubagentRequest> {
   const requests = new Map<ThreadId, PendingSubagentRequest>();
   let byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> | undefined;
   for (const child of threads) {
-    const request = subagentRequest(child);
+    const request = subagentPendingRequest(child);
     if (request === null) continue;
     byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
     const seen = new Set<ThreadId>([child.id]);
@@ -302,7 +273,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           if (seen.has(child.id)) continue;
           seen.add(child.id);
           pending.push(child.id);
-          if (subagentRequest(child) !== null) {
+          if (subagentPendingRequest(child) !== null) {
             next.push(scopedThread(ref.environmentId, child, subagentRequests));
           }
         }
