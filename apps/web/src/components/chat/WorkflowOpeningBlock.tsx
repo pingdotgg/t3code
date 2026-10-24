@@ -184,6 +184,7 @@ function WorkflowMemberRow(props: {
           <SubagentTooltipContent
             title={member.title}
             model={member.model}
+            turnTokenUsage={member.turnTokenUsage}
             providerInstanceId={props.providerInstanceId}
             origin="provider_native"
             provider={props.providers.find(

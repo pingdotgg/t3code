@@ -502,6 +502,7 @@ export function ThreadRelationshipsPanel(props: {
                   providerInstanceId={agent.providerInstanceId}
                   origin={agent.origin}
                   modelSelection={agent.modelSelection}
+                  turnTokenUsage={agent.turnTokenUsage}
                   provider={provider}
                   providers={providers}
                   driver={providerDriver}

@@ -14,6 +14,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
+  type TurnTokenUsage,
   RunId,
   ThreadId,
   TurnItemId,
@@ -1711,6 +1714,397 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
     );
   },
 );
+
+it.layer(layerTest)("delegated task consumption", (it) => {
+  const setup = Effect.fnUntraced(function* (name: string) {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make(`thread:consumption-parent:${name}`);
+    const projectId = ProjectId.make(`project:consumption:${name}`);
+    const runId = RunId.make(`run:consumption-parent:${name}`);
+    const rootNodeId = NodeId.make(`node:consumption-parent:${name}`);
+    yield* seedParentWithTerminalTask({
+      threadId,
+      projectId,
+      runId,
+      rootNodeId,
+      taskId: NodeId.make(`node:consumption-seed:${name}`),
+      deliveryState: "acknowledged",
+      now,
+    });
+    const child = yield* seedRestartCancelledChild({
+      parentThreadId: threadId,
+      projectId,
+      parentRunId: runId,
+      rootNodeId,
+      name: `consumption-child:${name}`,
+      completionWake: "settled_only",
+      continuationPending: false,
+      runStatus: "completed",
+      now,
+    });
+    const parent = yield* orchestrator.getThreadProjection(threadId);
+    const providerThreadId = ProviderThreadId.make(`provider-thread:consumption-child:${name}`);
+    const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
+    yield* sink.write({
+      commandId: reconcileCommandId(`consumption-provider:${name}`),
+      events: [
+        {
+          id: EventId.make(`event:consumption-provider-run:${name}`),
+          type: "run.updated",
+          threadId: child.childThreadId,
+          runId: child.childRunId,
+          occurredAt: now,
+          payload: { ...childProjection.runs[0]!, providerThreadId, delegatedTaskId: child.taskId },
+        },
+        {
+          id: EventId.make(`event:consumption-provider-thread:${name}`),
+          type: "provider-thread.updated",
+          threadId: child.childThreadId,
+          occurredAt: now,
+          payload: {
+            ...parent.providerThreads[0]!,
+            id: providerThreadId,
+            appThreadId: child.childThreadId,
+          },
+        },
+      ],
+    });
+    const turnEvents = (input: {
+      name: string;
+      runId: RunId;
+      ordinal: number;
+      attemptOrdinal?: number;
+      usage?: TurnTokenUsage;
+    }) => {
+      const attemptId = RunAttemptId.make(`attempt:consumption:${name}:${input.name}`);
+      const providerTurnId = ProviderTurnId.make(`turn:consumption:${name}:${input.name}`);
+      const nodeId = NodeId.make(`node:consumption:${name}:${input.name}`);
+      const scope = { threadId: child.childThreadId, runId: input.runId, occurredAt: now };
+      return [
+        {
+          ...scope,
+          id: EventId.make(`event:consumption:${name}:${input.name}:attempt`),
+          type: "run-attempt.created" as const,
+          payload: {
+            id: attemptId,
+            runId: input.runId,
+            attemptOrdinal: input.attemptOrdinal ?? 1,
+            rootNodeId: nodeId,
+            providerInstanceId: modelSelection.instanceId,
+            providerThreadId,
+            providerTurnId,
+            reason: "initial" as const,
+            status: "completed" as const,
+            startedAt: now,
+            completedAt: now,
+          },
+        },
+        {
+          ...scope,
+          id: EventId.make(`event:consumption:${name}:${input.name}:turn`),
+          type: "provider-turn.updated" as const,
+          payload: {
+            id: providerTurnId,
+            providerThreadId,
+            nodeId,
+            runAttemptId: attemptId,
+            nativeTurnRef: null,
+            ordinal: input.ordinal,
+            status: "completed" as const,
+            startedAt: now,
+            completedAt: now,
+            tokenUsage: {
+              usedTokens: 900,
+              inputTokens: 800,
+              outputTokens: 100,
+              updatedAt: DateTime.formatIso(now),
+            },
+            ...(input.usage === undefined ? {} : { turnTokenUsage: input.usage }),
+          },
+        },
+      ] as const;
+    };
+    return { orchestrator, sink, now, threadId, child, parent, providerThreadId, turnEvents };
+  });
+
+  const consumption = {
+    usageStatus: "complete",
+    usageScope: "main_agent",
+    hasSubagents: false,
+    inputTokens: 83738,
+    cachedInputTokens: 80000,
+    outputTokens: 44,
+  } satisfies TurnTokenUsage;
+
+  it.effect.each(["available", "absent", "unavailable", "zero", "partial"] as const)(
+    "attributes %s child consumption on completion without substituting context occupancy",
+    (availability) =>
+      Effect.gen(function* () {
+        const { orchestrator, sink, threadId, child, turnEvents } = yield* setup(availability);
+        const usage =
+          availability === "available"
+            ? consumption
+            : availability === "zero"
+              ? { ...consumption, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }
+              : availability === "partial"
+                ? {
+                    usageStatus: "partial" as const,
+                    usageScope: "main_agent" as const,
+                    hasSubagents: true,
+                    outputTokens: 0,
+                  }
+                : availability === "unavailable"
+                  ? {
+                      usageStatus: "unavailable" as const,
+                      usageScope: "main_agent" as const,
+                      hasSubagents: false,
+                    }
+                  : undefined;
+        const events = turnEvents({
+          name: "completed",
+          runId: child.childRunId,
+          ordinal: 1,
+          ...(usage === undefined ? {} : { usage }),
+        });
+        if (availability === "available") {
+          const turn = events[1];
+          yield* sink.write({
+            events: [
+              events[0],
+              {
+                ...turn,
+                id: EventId.make("event:consumption:completed:intermediate"),
+                payload: {
+                  ...turn.payload,
+                  status: "running",
+                  completedAt: null,
+                  turnTokenUsage: { ...consumption, inputTokens: 40000, outputTokens: 20 },
+                },
+              },
+            ],
+          });
+          yield* sink.write({ events: [turn] });
+          yield* sink.write({
+            events: [{ ...turn, id: EventId.make("event:consumption:completed:repeated") }],
+          });
+        } else {
+          yield* sink.write({ events });
+        }
+        yield* orchestrator.recoverDelegatedTasks;
+        const completed = yield* orchestrator.getThreadProjection(threadId);
+        const task = completed.subagents.find((row) => row.id === child.taskId)!;
+        assert.equal(task.status, "completed");
+        if (usage !== undefined && usage.usageStatus !== "unavailable") {
+          const expected = { ...task, turnTokenUsage: usage };
+          assert.deepEqual(task, expected);
+        } else {
+          assert.notProperty(task, "turnTokenUsage");
+        }
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).subagents,
+          completed.subagents,
+        );
+      }),
+  );
+
+  it.effect.each(["absent", "unavailable"] as const)(
+    "marks recorded consumption partial when another task turn has %s usage",
+    (availability) =>
+      Effect.gen(function* () {
+        const { orchestrator, sink, threadId, child, turnEvents } = yield* setup(
+          `mixed:${availability}`,
+        );
+        yield* sink.write({
+          events: [
+            ...turnEvents({
+              name: "known",
+              runId: child.childRunId,
+              ordinal: 1,
+              usage: consumption,
+            }),
+            ...turnEvents({
+              name: "unknown",
+              runId: child.childRunId,
+              ordinal: 2,
+              attemptOrdinal: 2,
+              ...(availability === "unavailable"
+                ? {
+                    usage: {
+                      usageStatus: "unavailable" as const,
+                      usageScope: "main_agent" as const,
+                      hasSubagents: true,
+                    },
+                  }
+                : {}),
+            }),
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const completed = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          completed.subagents.find((row) => row.id === child.taskId)?.turnTokenUsage,
+          {
+            ...consumption,
+            usageStatus: "partial",
+            hasSubagents: availability === "unavailable",
+          },
+        );
+      }),
+  );
+
+  it.effect("attributes an older untagged result without including an unrelated earlier run", () =>
+    Effect.gen(function* () {
+      const { orchestrator, sink, now, threadId, child, providerThreadId, turnEvents } =
+        yield* setup("legacy");
+      const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
+      const { delegatedTaskId: _taskId, ...legacyRun } = childProjection.runs[0]!;
+      const unrelatedRunId = RunId.make("run:consumption-legacy-unrelated");
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:consumption-legacy-run"),
+            type: "run.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            occurredAt: now,
+            payload: { ...legacyRun, ordinal: 2 },
+          },
+          runEvent({
+            threadId: child.childThreadId,
+            runId: unrelatedRunId,
+            ordinal: 1,
+            status: "completed",
+            now,
+            providerThreadId,
+          }),
+          ...turnEvents({
+            name: "unrelated",
+            runId: unrelatedRunId,
+            ordinal: 1,
+            usage: consumption,
+          }),
+          ...turnEvents({
+            name: "result",
+            runId: child.childRunId,
+            ordinal: 2,
+            usage: consumption,
+          }),
+        ],
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      const completed = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        completed.subagents.find((row) => row.id === child.taskId)?.turnTokenUsage,
+        consumption,
+      );
+    }),
+  );
+
+  it.effect(
+    "scopes consumption to each task's restart chain and provider attempts in a reused child",
+    () =>
+      Effect.gen(function* () {
+        const { orchestrator, sink, now, threadId, child, parent, providerThreadId, turnEvents } =
+          yield* setup("scoped");
+        const continuationId = RunId.make("run:consumption-continuation");
+        const followupId = RunId.make("run:consumption-followup");
+        const followupTaskId = NodeId.make("node:consumption-followup");
+        const originalTask = parent.subagents.find((row) => row.id === child.taskId)!;
+        const originalRun = runEvent({
+          threadId: child.childThreadId,
+          runId: child.childRunId,
+          ordinal: 1,
+          status: "cancelled",
+          now,
+          providerThreadId,
+        });
+        const continuation = runEvent({
+          threadId: child.childThreadId,
+          runId: continuationId,
+          ordinal: 2,
+          status: "completed",
+          now,
+          providerThreadId,
+        });
+        const followup = runEvent({
+          threadId: child.childThreadId,
+          runId: followupId,
+          ordinal: 3,
+          status: "completed",
+          now,
+          providerThreadId,
+        });
+        const usage = (inputTokens: number, cachedInputTokens: number, outputTokens: number) => ({
+          ...consumption,
+          inputTokens,
+          cachedInputTokens,
+          outputTokens,
+        });
+        yield* sink.write({
+          commandId: reconcileCommandId("consumption-runs"),
+          events: [
+            { ...originalRun, payload: { ...originalRun.payload, delegatedTaskId: child.taskId } },
+            {
+              ...continuation,
+              payload: {
+                ...continuation.payload,
+                delegatedTaskId: child.taskId,
+                restartContinuationOfRunId: child.childRunId,
+              },
+            },
+            { ...followup, payload: { ...followup.payload, delegatedTaskId: followupTaskId } },
+            {
+              id: EventId.make("event:consumption-followup-task"),
+              type: "subagent.updated",
+              threadId,
+              runId: originalTask.runId!,
+              occurredAt: now,
+              payload: { ...originalTask, id: followupTaskId },
+            },
+            ...turnEvents({
+              name: "before-restart",
+              runId: child.childRunId,
+              ordinal: 1,
+              usage: usage(100, 60, 10),
+            }),
+            ...turnEvents({
+              name: "retry",
+              runId: continuationId,
+              ordinal: 2,
+              usage: usage(200, 120, 20),
+            }),
+            ...turnEvents({
+              name: "after-retry",
+              runId: continuationId,
+              ordinal: 3,
+              attemptOrdinal: 2,
+              usage: usage(300, 180, 30),
+            }),
+            ...turnEvents({
+              name: "followup",
+              runId: followupId,
+              ordinal: 4,
+              usage: usage(700, 400, 70),
+            }),
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const completed = yield* orchestrator.getThreadProjection(threadId);
+        for (const [id, expected] of [
+          [child.taskId, usage(600, 360, 60)],
+          [followupTaskId, usage(700, 400, 70)],
+        ] as const) {
+          const task = completed.subagents.find((row) => row.id === id)!;
+          assert.equal(task.status, "completed");
+          const expectedTask = { ...task, turnTokenUsage: expected };
+          assert.deepEqual(task, expectedTask);
+        }
+      }),
+  );
+});
 
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   it.effect("queues a child result without creating a provider history handoff", () =>

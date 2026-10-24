@@ -55,6 +55,7 @@ export interface RuntimeSubagent {
   readonly status: RuntimeSubagentStatus;
   readonly activationCount: number;
   readonly usage: SubagentUsage | null;
+  readonly turnTokenUsage?: OrchestrationV2Subagent["turnTokenUsage"];
   readonly progress: string | null;
   readonly lastToolName: string | null;
   readonly result: string | null;
@@ -153,6 +154,7 @@ function workflowMembersToRuntime(
       status,
       activationCount: agent.attempt ?? 1,
       usage: workflowUsage(agent),
+      turnTokenUsage: undefined,
       progress: agent.prompt ?? null,
       result: failed ? null : (agent.result ?? null),
       error: failed ? (agent.result ?? null) : null,
@@ -182,6 +184,7 @@ export function projectedSubagentsToRuntime(
     readonly progress?: string | undefined;
     readonly childThreadId?: string | null | undefined;
     readonly workflow?: OrchestrationV2SubagentWorkflow | undefined;
+    readonly turnTokenUsage?: OrchestrationV2Subagent["turnTokenUsage"];
     readonly result: string | null;
     readonly startedAt: DateTime.Utc | null;
     readonly completedAt: DateTime.Utc | null;
@@ -206,6 +209,7 @@ export function projectedSubagentsToRuntime(
       status: subagent.status,
       activationCount: 1,
       usage: workflow === undefined ? null : workflowUsage(workflow),
+      turnTokenUsage: subagent.turnTokenUsage,
       progress: subagent.progress ?? null,
       lastToolName: null,
       result: subagent.result,

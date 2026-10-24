@@ -62,6 +62,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadId,
   type TurnItemId,
+  type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
@@ -661,6 +662,67 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
     status === "cancelled" ||
     status === "interrupted"
   );
+}
+
+function delegatedTaskTokenUsage(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">,
+  taskRuns: ReadonlyArray<OrchestrationV2Run>,
+  resultRun: OrchestrationV2Run,
+): TurnTokenUsage | undefined {
+  const runIds = new Set(taskRuns.map((run) => run.id));
+  if (runIds.size === 0) {
+    // Older runs have no delegatedTaskId. Only their restart chain belongs to this result.
+    const runsById = new Map(projection.runs.map((run) => [run.id, run]));
+    let run: OrchestrationV2Run | undefined = resultRun;
+    while (run !== undefined && !runIds.has(run.id)) {
+      runIds.add(run.id);
+      run = run.restartContinuationOfRunId
+        ? runsById.get(run.restartContinuationOfRunId)
+        : undefined;
+    }
+  }
+  const attemptIds = new Set(
+    projection.attempts.filter((attempt) => runIds.has(attempt.runId)).map((attempt) => attempt.id),
+  );
+  const totals: {
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    cacheCreationTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+  } = {};
+  let complete = true;
+  let hasSubagents = false;
+  // Projections keep the latest cumulative snapshot per provider turn, not every usage event.
+  for (const turn of projection.providerTurns) {
+    if (turn.runAttemptId === null || !attemptIds.has(turn.runAttemptId)) continue;
+    const usage = turn.turnTokenUsage;
+    hasSubagents ||= usage?.hasSubagents === true;
+    if (usage === undefined || usage.usageStatus === "unavailable") {
+      complete = false;
+      continue;
+    }
+    complete &&= usage.usageStatus === "complete";
+    for (const key of [
+      "inputTokens",
+      "cachedInputTokens",
+      "cacheCreationTokens",
+      "outputTokens",
+      "reasoningTokens",
+    ] as const) {
+      if (usage[key] !== undefined) totals[key] = (totals[key] ?? 0) + usage[key];
+    }
+  }
+  if (Object.keys(totals).length === 0) return undefined;
+  const common = { ...totals, usageScope: "main_agent" as const, hasSubagents };
+  return complete && totals.inputTokens !== undefined && totals.outputTokens !== undefined
+    ? {
+        ...common,
+        usageStatus: "complete",
+        inputTokens: totals.inputTokens,
+        outputTokens: totals.outputTokens,
+      }
+    : { ...common, usageStatus: "partial" };
 }
 
 function delegatedTaskTerminalStatus(
@@ -10856,8 +10918,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
+      const turnTokenUsage = delegatedTaskTokenUsage(childControls, taskRuns, childRun);
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
+        ...(turnTokenUsage === undefined ? {} : { turnTokenUsage }),
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,

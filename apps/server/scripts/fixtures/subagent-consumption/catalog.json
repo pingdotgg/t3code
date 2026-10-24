@@ -1,0 +1,40 @@
+{
+  "visual15429": {
+    "driver": "codex",
+    "displayName": "Synthetic usage catalog",
+    "accentColor": "#a855f7",
+    "enabled": false,
+    "config": {
+      "enabled": false,
+      "customModels": [
+        {
+          "slug": "synthetic-long-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-",
+          "name": "Synthetic long model for truncation sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-sample-model-",
+          "capabilities": {
+            "optionDescriptors": [
+              {
+                "id": "effort",
+                "label": "Reasoning effort",
+                "type": "select",
+                "options": [{ "id": "high", "label": "High" }]
+              },
+              {
+                "id": "serviceTier",
+                "label": "Speed",
+                "type": "select",
+                "options": [{ "id": "priority", "label": "Fast" }]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "visual15429Secondary": {
+    "driver": "codex",
+    "displayName": "Synthetic secondary catalog",
+    "accentColor": "#0891b2",
+    "enabled": false,
+    "config": { "enabled": false }
+  }
+}

@@ -1,0 +1,139 @@
+[
+  {
+    "id": "V01",
+    "title": "Completed exact three counts",
+    "usage": {
+      "usageStatus": "complete",
+      "inputTokens": 83709,
+      "cachedInputTokens": 67757,
+      "outputTokens": 25
+    }
+  },
+  {
+    "id": "V02",
+    "title": "Completed lineage",
+    "caller": "lineage",
+    "usage": {
+      "usageStatus": "complete",
+      "inputTokens": 83709,
+      "cachedInputTokens": 67757,
+      "outputTokens": 25
+    }
+  },
+  {
+    "id": "V03",
+    "title": "Completion notification",
+    "caller": "notification",
+    "usage": {
+      "usageStatus": "complete",
+      "inputTokens": 83709,
+      "cachedInputTokens": 67757,
+      "outputTokens": 25
+    }
+  },
+  {
+    "id": "V04",
+    "title": "All zeros",
+    "result": "",
+    "usage": {
+      "usageStatus": "complete",
+      "inputTokens": 0,
+      "cachedInputTokens": 0,
+      "outputTokens": 0
+    }
+  },
+  {
+    "id": "V05",
+    "title": "Sparse metadata",
+    "child": false,
+    "model": null,
+    "timing": false,
+    "usage": { "usageStatus": "complete", "inputTokens": 100, "outputTokens": 10 }
+  },
+  {
+    "id": "V06",
+    "title": "Partial output only with nested agents",
+    "usage": { "usageStatus": "partial", "outputTokens": 0, "hasSubagents": true }
+  },
+  {
+    "id": "V07",
+    "title": "Partial input and cached input",
+    "usage": { "usageStatus": "partial", "inputTokens": 1000, "cachedInputTokens": 900 }
+  },
+  {
+    "id": "V08",
+    "title": "Long nested card",
+    "caller": "lineage",
+    "long": true,
+    "usage": {
+      "usageStatus": "partial",
+      "inputTokens": 1234567890,
+      "cachedInputTokens": 987654321,
+      "outputTokens": 123456789,
+      "hasSubagents": true
+    }
+  },
+  {
+    "id": "V09",
+    "title": "Cached-only partial",
+    "usage": { "usageStatus": "partial", "cachedInputTokens": 12345 }
+  },
+  {
+    "id": "V10",
+    "title": "Unavailable suppresses counts",
+    "usage": {
+      "usageStatus": "unavailable",
+      "inputTokens": 123,
+      "cachedInputTokens": 100,
+      "outputTokens": 4,
+      "hasSubagents": true
+    }
+  },
+  {
+    "id": "V11",
+    "title": "No displayed counts",
+    "usage": {
+      "usageStatus": "partial",
+      "cacheCreationTokens": 99,
+      "reasoningTokens": 7,
+      "hasSubagents": true
+    }
+  },
+  {
+    "id": "V12",
+    "title": "Native unknown with workflow context",
+    "caller": "lineage",
+    "native": true
+  },
+  {
+    "id": "V13",
+    "title": "Active unknown",
+    "status": "running",
+    "result": null,
+    "progress": "Inspecting the synthetic sample; no provider is running."
+  },
+  {
+    "id": "V14",
+    "title": "Failed terminal",
+    "status": "failed",
+    "result": "Synthetic failure: sample check did not pass.",
+    "usage": { "usageStatus": "partial", "inputTokens": 100, "outputTokens": 10 }
+  },
+  {
+    "id": "V15",
+    "title": "Stopped terminal",
+    "caller": "lineage",
+    "status": "cancelled",
+    "result": null,
+    "progress": "Stopped after inspecting the synthetic sample.",
+    "usage": { "usageStatus": "complete", "inputTokens": 100, "outputTokens": 10 }
+  },
+  {
+    "id": "V16",
+    "title": "Projection lookup missing",
+    "child": false,
+    "model": null,
+    "timing": false,
+    "missing": true
+  }
+]

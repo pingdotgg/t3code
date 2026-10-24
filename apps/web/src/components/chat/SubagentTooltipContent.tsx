@@ -50,9 +50,16 @@ export function SubagentTooltipContent(props: {
   status: OrchestrationV2TurnItemStatus;
   result?: string | null | undefined;
   progress?: string | null | undefined;
+  turnTokenUsage?: OrchestrationV2Subagent["turnTokenUsage"];
 }) {
   const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
   const preview = subagentDetailPreview(props);
+  const usage = props.turnTokenUsage;
+  const tokenCounts = [
+    { label: "Input", value: usage?.inputTokens },
+    { label: "Cached input (included)", value: usage?.cachedInputTokens },
+    { label: "Output", value: usage?.outputTokens },
+  ].filter((count) => count.value !== undefined);
   const model = props.model?.trim();
   const modelSlug = props.provider
     ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
@@ -169,6 +176,22 @@ export function SubagentTooltipContent(props: {
         </span>
         {props.elapsed}
       </div>
+      {usage && usage.usageStatus !== "unavailable" && tokenCounts.length > 0 ? (
+        <div>
+          <div className="text-foreground/75">
+            Tokens consumed{usage.usageStatus === "partial" ? " (partial)" : ""}
+          </div>
+          <dl className="grid grid-cols-[1fr_auto] gap-x-4 tabular-nums">
+            {tokenCounts.map(({ label, value }) => (
+              <div key={label} className="contents">
+                <dt>{label}</dt>
+                <dd className="text-right">{value?.toLocaleString()}</dd>
+              </div>
+            ))}
+          </dl>
+          {usage.hasSubagents ? <div>Excludes nested subagents</div> : null}
+        </div>
+      ) : null}
       {metadata.map(({ label, value }) => {
         const Icon = label === "Branch" ? GitBranchIcon : FolderIcon;
         return (

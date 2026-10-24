@@ -92,6 +92,7 @@ function WorkflowMemberRow({
           <SubagentTooltipContent
             title={member.title}
             model={member.model}
+            turnTokenUsage={member.turnTokenUsage}
             providerInstanceId={providerInstanceId}
             origin="provider_native"
             provider={provider}

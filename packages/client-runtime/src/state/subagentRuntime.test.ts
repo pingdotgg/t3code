@@ -48,6 +48,31 @@ const member = (
 const groupsOf = (subagents: ReadonlyArray<ProjectedSubagent>) =>
   deriveWorkflowGroups(projectedSubagentsToRuntime(subagents));
 
+it("preserves recorded consumption separately from workflow context snapshots", () => {
+  const consumption = {
+    usageStatus: "partial",
+    usageScope: "main_agent",
+    hasSubagents: false,
+    inputTokens: 0,
+    outputTokens: 44,
+  } as const;
+  const [recorded, unknown, workflow, workflowMember] = projectedSubagentsToRuntime([
+    subagent({ id: "recorded", turnTokenUsage: consumption }),
+    subagent({ id: "unknown" }),
+    subagent({
+      id: "workflow",
+      workflow: { totalTokens: 70876, phases: [], agents: [member({ totalTokens: 123 })] },
+    }),
+  ]);
+  expect(recorded?.turnTokenUsage).toEqual(consumption);
+  expect(recorded?.usage).toBeNull();
+  expect(unknown?.turnTokenUsage).toBeUndefined();
+  expect(workflow?.turnTokenUsage).toBeUndefined();
+  expect(workflowMember?.turnTokenUsage).toBeUndefined();
+  expect(workflow?.usage?.totalTokens).toBe(70876);
+  expect(workflowMember?.usage?.totalTokens).toBe(123);
+});
+
 describe("projectedSubagentsToRuntime workflow expansion", () => {
   it("uses a settled member's wall-clock completion separately from its execution duration", () => {
     const [, settled] = projectedSubagentsToRuntime([
