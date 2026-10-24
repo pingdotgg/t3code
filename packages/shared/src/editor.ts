@@ -19,6 +19,12 @@ const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   rider: ["Rider", "JetBrains Rider"],
 };
 
+// Native bundles keep their executable in `Contents/MacOS`, not VS Code's `Resources/app/bin`.
+const macBundleExecutables: Partial<Record<Editor["id"], string>> = {
+  zed: "cli",
+  qtcreator: "Qt Creator",
+};
+
 /**
  * A plain prefix match would let one editor steal another's bundle, e.g. stable VS Code resolving to
  * `Visual Studio Code - Insiders.app`. */
@@ -52,7 +58,12 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const candidates: string[] = [];
 
   if (platform === "darwin") {
-    const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
+    const macExecutable = jetbrains ? command : macBundleExecutables[editor.id];
+    const roots = [
+      ...(home ? [path.join(home, "Applications")] : []),
+      "/Applications",
+      ...(editor.id === "qtcreator" && home ? [path.join(home, "Qt")] : []),
+    ];
     for (const root of roots) {
       // JetBrains Toolbox installs bundles named after the app and its version
       // (`IntelliJ IDEA 2026.1.4.app`), so list the directory and accept
@@ -67,8 +78,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       for (const bundle of bundles) {
         const contents = path.join(root, bundle, "Contents");
         candidates.push(
-          ...(jetbrains || editor.id === "zed"
-            ? [path.join(contents, "MacOS", editor.id === "zed" ? "cli" : command)]
+          ...(macExecutable !== undefined
+            ? [path.join(contents, "MacOS", macExecutable)]
             : [
                 path.join(contents, "Resources/app/bin", command),
                 path.join(contents, "Resources/app/bin/code"),
@@ -123,6 +134,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         }
       }
     }
+    if (editor.id === "qtcreator") {
+      candidates.push("C:\\Qt\\Tools\\QtCreator\\bin\\qtcreator.exe");
+    }
   } else if (platform === "linux") {
     const dirs = [
       ...(home ? [path.join(home, ".local/bin")] : []),
@@ -136,6 +150,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     }
     for (const dir of dirs) {
       for (const name of editor.commands) candidates.push(path.join(dir, name));
+    }
+    // The Qt online installer defaults to `~/Qt` and does not add Qt Creator to PATH.
+    if (editor.id === "qtcreator" && home) {
+      candidates.push(path.join(home, "Qt/Tools/QtCreator/bin/qtcreator"));
     }
   }
 
