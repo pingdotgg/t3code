@@ -226,6 +226,8 @@ export class PairingGrantStore extends Context.Service<
       input?: {
         readonly proofKeyThumbprint?: string;
         readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
+        /** All scopes must be granted; requestedScopes only requires an overlap for OAuth. */
+        readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
   }
@@ -487,8 +489,10 @@ const make = Effect.gen(function* () {
           }
 
           if (
-            input?.requestedScopes !== undefined &&
-            !input.requestedScopes.some((scope) => grant.scopes.includes(scope))
+            (input?.requestedScopes !== undefined &&
+              !input.requestedScopes.some((scope) => grant.scopes.includes(scope))) ||
+            (input?.requiredScopes !== undefined &&
+              !input.requiredScopes.every((scope) => grant.scopes.includes(scope)))
           ) {
             return [
               {
@@ -538,9 +542,8 @@ const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
-      // The scope check is part of the UPDATE's WHERE clause so a rejected
-      // request cannot consume a one-time link. The re-check below only
-      // explains why nothing matched.
+      // Scope validation belongs in the atomic UPDATE to preserve rejected links.
+      // The lookup below only explains why the UPDATE did not match.
       const consumed = yield* pairingLinks
         .consumeAvailable({
           credential,
@@ -548,6 +551,7 @@ const make = Effect.gen(function* () {
           ...(input?.requestedScopes !== undefined
             ? { requestedScopes: input.requestedScopes }
             : {}),
+          ...(input?.requiredScopes !== undefined ? { requiredScopes: input.requiredScopes } : {}),
           consumedAt: now,
           now,
         })
@@ -594,8 +598,10 @@ const make = Effect.gen(function* () {
       }
 
       if (
-        input?.requestedScopes !== undefined &&
-        !input.requestedScopes.some((scope) => matching.value.scopes.includes(scope))
+        (input?.requestedScopes !== undefined &&
+          !input.requestedScopes.some((scope) => matching.value.scopes.includes(scope))) ||
+        (input?.requiredScopes !== undefined &&
+          !input.requiredScopes.every((scope) => matching.value.scopes.includes(scope)))
       ) {
         return yield* new BootstrapCredentialScopeNotGrantedError({});
       }
