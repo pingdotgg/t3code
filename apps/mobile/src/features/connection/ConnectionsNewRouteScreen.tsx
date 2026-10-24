@@ -174,7 +174,12 @@ export function ConnectionsNewRouteScreen({
   };
 
   const handleSubmit = async () => {
-    await connectAndClose(buildPairingUrl(hostInput, codeInput));
+    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    // Show the submitted code even when the stored URL is unchanged and its effect won't rerun.
+    const { host, code } = parsePairingUrl(pairingUrl);
+    setHostInput(host);
+    setCodeInput(code);
+    await connectAndClose(pairingUrl);
   };
 
   useEffect(() => {

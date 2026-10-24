@@ -1,4 +1,4 @@
-import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { getPairingTokenFromUrl, readHostedPairingRequest } from "@t3tools/shared/remote";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
@@ -35,7 +35,10 @@ export function buildPairingUrl(host: string, code: string): string {
 
   try {
     const url = new URL(h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`);
-    url.hash = new URLSearchParams([["token", c]]).toString();
+    // A code in the address comes from a newly pasted link, so it replaces the Code field.
+    if (!getPairingTokenFromUrl(url)) {
+      url.hash = new URLSearchParams([["token", c]]).toString();
+    }
     return url.toString();
   } catch {
     return `${h}#token=${c}`;
@@ -56,10 +59,7 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
       };
     }
 
-    const hashParams = new URLSearchParams(parsed.hash.slice(1));
-    const hashToken = hashParams.get("token");
-    const queryToken = parsed.searchParams.get("token");
-    const code = hashToken || queryToken || "";
+    const code = getPairingTokenFromUrl(parsed) ?? "";
 
     parsed.hash = "";
     parsed.search = "";

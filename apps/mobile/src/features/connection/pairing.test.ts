@@ -20,6 +20,18 @@ describe("buildPairingUrl", () => {
       "https://192.168.1.100:3773/#token=pairing-token",
     );
   });
+
+  it("prefers a code embedded in the address over the Code field", () => {
+    expect(buildPairingUrl("http://192.168.1.100:3773/#token=new-token", "old-token")).toBe(
+      "http://192.168.1.100:3773/#token=new-token",
+    );
+  });
+
+  it("ignores a blank token in the address", () => {
+    expect(buildPairingUrl("http://192.168.1.100:3773/#token=%20", "pairing-token")).toBe(
+      "http://192.168.1.100:3773/#token=pairing-token",
+    );
+  });
 });
 
 describe("extractPairingUrlFromQrPayload", () => {
