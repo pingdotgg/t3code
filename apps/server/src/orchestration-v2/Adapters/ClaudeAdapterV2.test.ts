@@ -3520,6 +3520,69 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("completes a turn after the resume dialog without a failed tool row", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-resume-dialog"),
+            text: "continue",
+            attachments: [],
+          }),
+        );
+        const dialog = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.onUserDialog!(
+            {
+              dialogKind: "resume_return",
+              payload: { sessionAgeMinutes: 90, estimatedTokens: 120000 },
+            },
+            { signal: new AbortController().signal, requestId: "dialog-resume" },
+          ),
+        ).pipe(Effect.forkScoped);
+        const request = yield* Queue.take(harness.runtimeRequestReceipts);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "node.updated" && event.node.id === request.runtimeRequest.nodeId
+              ? [event.node.parentNodeId]
+              : [],
+          ),
+          [NodeId.make("node-attempt-resume-dialog")],
+        );
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.runtimeRequest.id,
+          answers: {
+            [formatClaudeResumeCompactionQuestion({ ageMinutes: 90, estimatedTokens: 120000 })]:
+              "Keep full history",
+          },
+        });
+        assert.deepEqual(yield* Fiber.join(dialog), { behavior: "completed", result: "continue" });
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "result-resume-dialog", result: "Done" }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === "dialog-resume"
+              ? [event.turnItem.status]
+              : [],
+          ),
+          [],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(
     (["aborted_tools", "aborted_streaming"] as const).flatMap((terminalReason) =>
       [true, false].map((steered) => ({ terminalReason, steered })),
