@@ -397,7 +397,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
-        className="h-dvh! min-h-0!"
+        className="h-dvh! min-h-0! has-data-[composer-maximized=true]:**:data-sidebar-control:invisible has-data-[composer-maximized=true]:**:data-workspace-titlebar-controls:invisible"
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         defaultOpen
         style={sidebarProviderStyle}

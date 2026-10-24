@@ -1,4 +1,6 @@
+/** Coordinates editor commands before ProseMirror applies its own key handling. */
 import type { ChatComposerProps } from "./ChatComposer";
+import { useComposerViewport } from "./ComposerViewport";
 import { type ComposerCommandItem } from "./ComposerCommandMenu";
 import {
   type ComposerDispatchMode,
@@ -79,6 +81,7 @@ export function useComposerCommandKey(input: {
     submissionIntent: ComposerSubmissionIntent,
   ) => void;
 }) {
+  const { restoreOnEscape } = useComposerViewport();
   const {
     keybindings,
     sendShortcut,
@@ -195,7 +198,8 @@ export function useComposerCommandKey(input: {
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
-      if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
+      if (event.isComposing || event.keyCode === 229) return false;
+      if (!menuIsActive) return restoreOnEscape(event);
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;

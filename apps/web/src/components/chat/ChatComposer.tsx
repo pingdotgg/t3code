@@ -120,6 +120,8 @@ import {
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
+import { ComposerExpandButton } from "./ComposerExpandButton";
+import { useComposerViewport } from "./ComposerViewport";
 import {
   ComposerBannerStack,
   type ComposerBannerStackContent,
@@ -643,6 +645,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
+  const { maximized: isComposerMaximized, setMaximized: setComposerMaximized } =
+    useComposerViewport();
   const {
     heldRequestIds,
     onDraftChange: onTypingGuardDraftChange,
@@ -1106,6 +1110,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // A pending question stays expanded: its card moves into the banner dock,
   // so collapsing would leave the surface empty and squashed beneath it.
   const isComposerCollapsedMobile =
+    !isComposerMaximized &&
     isMobileViewport &&
     !forceExpandedOnMobile &&
     !isComposerFocused &&
@@ -2166,6 +2171,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     setComposerSubmissionError(submission.validationMessage);
     if (!submission.didDispatch) return;
+    setComposerMaximized(false);
     onTypingGuardSend();
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
@@ -2353,6 +2359,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return nonPersistedComposerImageIdSet.has(image.id) && !failedInCurrentEnvironment;
   });
   const composerHasExpandedChrome =
+    isComposerMaximized ||
     showComposerTopDrawer ||
     isTasksDrawerOpen ||
     composerMenuOpen ||
@@ -2425,7 +2432,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerResting,
     restingComposerControlsRef,
     onComposerOverlayHeightChange,
-    panelAnimationsActive,
+    panelAnimationsActive && !isComposerMaximized,
     panelAnimationDurationMs,
   );
   const canTrackComposerScrollGesture =
@@ -3483,8 +3490,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDrop(event);
       }}
-      className="mx-auto w-full min-w-0 max-w-(--chat-content-max-width)"
+      className={cn(
+        "mx-auto w-full min-w-0 max-w-(--chat-content-max-width)",
+        isComposerMaximized && "flex min-h-0 max-w-none flex-1 flex-col",
+      )}
       data-chat-composer-form="true"
+      data-composer-maximized={isComposerMaximized || undefined}
       {...threadContextDropTargetProps()}
     >
       {composerControlsCollapsed && restingControlsHost
@@ -3609,14 +3620,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           onToggleMenu={toggleStashMenuStable}
         />
       </ComposerBanner.Dock>
-      <div className="relative">
+      <div className={cn("relative", isComposerMaximized && "flex min-h-0 flex-1 flex-col")}>
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}
           data-model-only-strip={
             restingControlsHost?.closest("[data-composer-model-strip]") ? "true" : undefined
           }
-          className={composerProviderState.composerFrameClassName}
+          className={cn(
+            composerProviderState.composerFrameClassName,
+            isComposerMaximized && "flex min-h-0 flex-1 flex-col",
+          )}
         >
           <div
             ref={composerSurfaceRef}
@@ -3628,6 +3642,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               isDragOverComposer ? "bg-accent/45 ring-1 ring-inset ring-primary/70" : null,
               projectSelectionRequired ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,
+              isComposerMaximized && "flex min-h-0 flex-1 flex-col",
             )}
           >
             {showCollapsedMobilePromptRow ? (
@@ -3687,6 +3702,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 "pt-3.5 sm:pt-4",
                 isComposerCollapsedMobile && "hidden",
                 isComposerResting && "py-2 sm:py-2",
+                isComposerMaximized && "flex min-h-0 flex-1 flex-col",
               )}
             >
               {isStashMenuOpen && !composerMenuOpen && (
@@ -3748,13 +3764,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               {composerAttachmentFileList}
 
               <div
-                className={cn("relative", isComposerResting && "flex min-w-0 items-center gap-1")}
+                className={cn(
+                  "relative",
+                  isComposerResting && "flex min-w-0 items-center gap-1",
+                  isComposerMaximized && "flex min-h-0 flex-1 flex-col",
+                )}
                 style={
                   isComposerResting && restingActionsWidth !== null
                     ? { paddingRight: `calc(${restingActionsWidth}px + 1rem)` }
                     : undefined
                 }
               >
+                <ComposerExpandButton anchor={composerMenuAnchor} />
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
@@ -3785,11 +3806,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
                     importContextFragment={importContextFragmentStable}
                     skills={selectedProviderSkills}
-                    containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
+                    containerClassName={cn(
+                      isComposerResting && "min-w-0 flex-1",
+                      isComposerMaximized &&
+                        "flex min-h-0 flex-1 flex-col [&>div]:min-h-0 [&>div]:flex-1",
+                    )}
                     className={cn(
+                      !isComposerResting && "pr-9",
                       showMobilePendingAnswerActions && "max-sm:pb-12",
                       isComposerResting &&
                         "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
+                      isComposerMaximized && "h-full max-h-none min-h-0",
                     )}
                     placeholderClassName={cn(
                       isComposerResting &&

@@ -1,20 +1,23 @@
+/** Anchors composer suggestions independently of the scrolling editor surface. */
 import { type ReactNode, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { observeResize } from "~/lib/observeResize";
-
-type ComposerCommandMenuPosition = {
-  bottom: number;
-  left: number;
-  maxHeight: number;
-  width: number;
-};
+import { useComposerViewport } from "./ComposerViewport";
+import {
+  composerCommandMenuPosition,
+  type ComposerCommandMenuPosition,
+} from "./composerCommandMenuPosition";
 
 function composerCommandMenuPositionsEqual(
   a: ComposerCommandMenuPosition,
   b: ComposerCommandMenuPosition,
 ): boolean {
   return (
-    a.bottom === b.bottom && a.left === b.left && a.maxHeight === b.maxHeight && a.width === b.width
+    a.bottom === b.bottom &&
+    a.left === b.left &&
+    a.maxHeight === b.maxHeight &&
+    a.width === b.width &&
+    a.top === b.top
   );
 }
 
@@ -23,6 +26,7 @@ export function ComposerCommandMenuLayer(props: {
   children: ReactNode;
 }) {
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
+  const { maximized } = useComposerViewport();
 
   useLayoutEffect(() => {
     const anchor = props.anchor;
@@ -40,18 +44,26 @@ export function ComposerCommandMenuLayer(props: {
         window.getComputedStyle(form ?? anchor).getPropertyValue("--chat-composer-drawer-inset"),
       );
       const drawerInset = drawerInsetRem * rootFontSizePx;
-      const width = rect.width - drawerInset * 2;
-      if (width <= 0) {
+      const selection = window.getSelection();
+      const caret =
+        maximized &&
+        selection?.rangeCount &&
+        selection.anchorNode &&
+        form?.contains(selection.anchorNode)
+          ? selection.getRangeAt(0).getBoundingClientRect()
+          : null;
+      const next = composerCommandMenuPosition({
+        rect,
+        caret,
+        maximized,
+        viewportHeight: window.innerHeight,
+        rootFontSize: rootFontSizePx,
+        drawerInset,
+      });
+      if (!next) {
         setPosition(null);
         return;
       }
-      const composerOverlap = rootFontSizePx + 1;
-      const next = {
-        bottom: window.innerHeight - rect.top - composerOverlap,
-        left: rect.left + drawerInset,
-        maxHeight: Math.max(96, rect.top - 24 + composerOverlap),
-        width,
-      };
       setPosition((current) =>
         current && composerCommandMenuPositionsEqual(current, next) ? current : next,
       );
@@ -60,6 +72,7 @@ export function ComposerCommandMenuLayer(props: {
     updatePosition();
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
+    if (maximized) document.addEventListener("selectionchange", updatePosition);
 
     const observed: Element[] = [anchor];
     for (let element = anchor.parentElement; element; element = element.parentElement) {
@@ -71,8 +84,9 @@ export function ComposerCommandMenuLayer(props: {
       stopObserving();
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("selectionchange", updatePosition);
     };
-  }, [props.anchor]);
+  }, [props.anchor, maximized]);
 
   if (!props.anchor || !position) return null;
 
@@ -82,6 +96,7 @@ export function ComposerCommandMenuLayer(props: {
       data-composer-drawer-layer="true"
       style={{
         bottom: position.bottom,
+        top: position.top,
         left: position.left,
         maxHeight: position.maxHeight,
         width: position.width,
