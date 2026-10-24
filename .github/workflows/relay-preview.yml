@@ -1,0 +1,81 @@
+name: Deploy relay preview
+
+# Labeling a same-repository PR `relay:preview` deploys Alchemy stage `pr-<n>`.
+# This job runs the PR's own code with account credentials, so it waits for an
+# approval in the `relay-preview` environment on every run. Teardown is in
+# relay-preview-cleanup.yml and never runs PR code.
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: relay-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  deploy_preview:
+    name: Deploy relay preview
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'relay:preview')
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    environment:
+      name: relay-preview
+    env:
+      STAGE: pr-${{ github.event.pull_request.number }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PLANETSCALE_ORGANIZATION: ${{ vars.PLANETSCALE_ORGANIZATION }}
+      AXIOM_ORG_ID: ${{ vars.AXIOM_ORG_ID }}
+      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
+      RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
+      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      # Previews take no alert notifier, no tunnel cleanup, and no custom
+      # domain, so they stay silent and reap nothing outside their own stage.
+      APNS_ENABLED: "false"
+      ALCHEMY_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Confirm the PR is still open and labeled
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          state=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state,labels \
+            --jq 'if .state == "OPEN" and any(.labels[]; .name == "relay:preview") then "ok" else "stale" end')
+          if [ "$state" != "ok" ]; then
+            echo "PR #$PR_NUMBER is no longer open with relay:preview; not deploying." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3code-relay...
+
+      - name: Deploy preview stage
+        run: vp run --filter t3code-relay deploy --stage "$STAGE" --yes --no-input
+        env:
+          T3CODE_RELAY_CLIENT_CONFIG_ENV: ${{ runner.temp }}/relay-client-config.env
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
+          PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
+          AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}

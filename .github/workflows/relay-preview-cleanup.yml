@@ -1,0 +1,203 @@
+name: Clean up relay preview
+
+# Tears down stage `pr-<n>` when `relay:preview` is removed or the PR closes,
+# and retries teardown for closed labeled PRs on a schedule. A label stays on a
+# PR only while its teardown is outstanding, so the scheduled retry lists
+# exactly the failures.
+#
+# This runs under pull_request_target, so the workflow and the Alchemy program
+# come from the default branch. No PR code runs here, which is why it needs no
+# reviewer approval and why a PR cannot edit its own teardown to reach secrets.
+on:
+  pull_request_target:
+    types: [unlabeled, closed]
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  cleanup_pr:
+    name: Tear down relay preview
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'pull_request_target' &&
+      (
+        (github.event.action == 'unlabeled' && github.event.label.name == 'relay:preview') ||
+        (github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'relay:preview'))
+      )
+    # Job-level so that events which skip this job, such as a closed PR without
+    # the label, never take the group's pending slot. GitHub replaces a pending
+    # run in a group with a newer one, which would drop a queued teardown.
+    concurrency:
+      group: relay-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    environment:
+      name: relay-preview-cleanup
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STAGE: pr-${{ github.event.pull_request.number }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PLANETSCALE_ORGANIZATION: ${{ vars.PLANETSCALE_ORGANIZATION }}
+      AXIOM_ORG_ID: ${{ vars.AXIOM_ORG_ID }}
+      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
+      RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
+      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      APNS_ENABLED: "false"
+      ALCHEMY_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3code-relay...
+
+      # Destroy also runs the preview tunnel sweep, which is part of the stack.
+      - name: Destroy preview stage
+        run: vp run --filter t3code-relay destroy --stage "$STAGE" --yes --no-input
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
+          PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
+          AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+
+      # Only reached after a successful destroy. A failed one keeps the label,
+      # so the scheduled retry picks the PR up again.
+      - name: Clear the teardown marker
+        if: github.event.action == 'closed'
+        run: gh pr edit "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --remove-label relay:preview
+
+      # An unlabeled event has already removed the label, so a failed teardown
+      # must put it back or no retry will ever see the stage. Labels added with
+      # GITHUB_TOKEN do not start new runs, so this does not redeploy.
+      - name: Restore the teardown marker after a failed destroy
+        if: failure() && github.event.action == 'unlabeled'
+        run: gh pr edit "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --add-label relay:preview
+
+  list_closed_previews:
+    name: List closed relay previews
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      numbers: ${{ steps.list.outputs.numbers }}
+    steps:
+      # The issues endpoint is paginated by gh, so there is no listing cap. Pull
+      # requests appear there with a `pull_request` key.
+      - name: List closed PRs labeled relay:preview
+        id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          numbers=$(gh api --paginate --method GET "repos/$GITHUB_REPOSITORY/issues" \
+            -f labels=relay:preview -f state=closed -f per_page=100 \
+            --jq '.[] | select(.pull_request) | .number') \
+            || { echo "Could not list closed relay:preview PRs" >&2; exit 1; }
+          json=$(printf '%s\n' "$numbers" | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)')
+          echo "Closed relay:preview PRs: $json"
+          echo "numbers=$json" >> "$GITHUB_OUTPUT"
+
+  sweep_pr:
+    name: Retry teardown for PR ${{ matrix.number }}
+    needs: list_closed_previews
+    if: github.ref == 'refs/heads/main' && needs.list_closed_previews.outputs.numbers != '[]'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        number: ${{ fromJSON(needs.list_closed_previews.outputs.numbers) }}
+    # Same group as the deploy and teardown for this PR, so a reopened PR's
+    # deploy cannot run concurrently with a teardown of its previous stage.
+    concurrency:
+      group: relay-preview-${{ matrix.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    environment:
+      name: relay-preview-cleanup
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STAGE: pr-${{ matrix.number }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PLANETSCALE_ORGANIZATION: ${{ vars.PLANETSCALE_ORGANIZATION }}
+      AXIOM_ORG_ID: ${{ vars.AXIOM_ORG_ID }}
+      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
+      RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
+      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      APNS_ENABLED: "false"
+      ALCHEMY_TELEMETRY_DISABLED: "1"
+    steps:
+      # The lock above is taken before this runs, so the state read here is
+      # current. An open PR, including one reopened since the listing, is left
+      # alone. GitHub reports merged PRs as MERGED, so anything not OPEN counts.
+      - name: Confirm the PR is not open
+        id: eligible
+        run: |
+          state=$(gh pr view "${{ matrix.number }}" --repo "$GITHUB_REPOSITORY" \
+            --json state --jq 'if .state == "OPEN" then "no" else "yes" end') \
+            || { echo "Could not read PR ${{ matrix.number }}" >&2; exit 1; }
+          echo "eligible=$state" >> "$GITHUB_OUTPUT"
+          [ "$state" = yes ] || echo "PR ${{ matrix.number }} is open again; leaving $STAGE alone."
+
+      - name: Checkout default branch
+        if: steps.eligible.outputs.eligible == 'yes'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        if: steps.eligible.outputs.eligible == 'yes'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3code-relay...
+
+      - name: Destroy preview stage
+        if: steps.eligible.outputs.eligible == 'yes'
+        run: vp run --filter t3code-relay destroy --stage "$STAGE" --yes --no-input
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
+          PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
+          AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+
+      - name: Clear the teardown marker
+        if: steps.eligible.outputs.eligible == 'yes'
+        run: gh pr edit "${{ matrix.number }}" --repo "$GITHUB_REPOSITORY" --remove-label relay:preview

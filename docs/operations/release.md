@@ -160,11 +160,17 @@ database. Local personal stages provision isolated branches from it and are neve
 Production adopts the configured relay API and tunnel DNS zones as retained Cloudflare resources.
 Personal stages reference the production-owned zones.
 
-Developers deploy personal stages locally rather than through pull-request automation:
+Developers deploy personal stages locally:
 
 ```sh
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
+
+A same-repository PR labeled `relay:preview` deploys stage `pr-<number>` through
+`.github/workflows/relay-preview.yml`, after approval in the `relay-preview` environment. Removing the
+label or closing the PR runs `.github/workflows/relay-preview-cleanup.yml`, which destroys the stage
+and sweeps its managed tunnels and DNS records. A nightly run destroys stages of closed labeled PRs
+whose teardown failed. Fork PRs get no preview.
 
 ### Managed tunnel cleanup rollout
 
