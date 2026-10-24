@@ -23,7 +23,7 @@
       // electron-builder loads the macOS signer by path.
       "entry": [
         // These fixture scripts are injected into a browser page by path.
-        "fixtures/issue-16534/*.js",
+        "fixtures/*/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",

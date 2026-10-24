@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -37,6 +38,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
@@ -112,6 +114,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
   readonly historyHttpClient?: HttpClient.HttpClient;
+  readonly getTurnItem?: (input: {
+    readonly itemId: TurnItemId;
+  }) => Effect.Effect<{ readonly item: OrchestrationV2TurnItem | null }>;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -153,6 +158,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           Effect.as(streamFrom(inputs)),
         ),
       ),
+    [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input: { readonly itemId: TurnItemId }) =>
+      options?.getTurnItem?.(input) ?? Effect.die("Unexpected getTurnItem request"),
   } as unknown as WsRpcProtocolClient;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
     Option.some(testSession(client, options)),
@@ -256,6 +263,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     threadState,
     loadEarlier: (throughEntryId?: string) =>
       historyController.loadEarlier(TARGET.environmentId, THREAD_ID, throughEntryId),
+    reconcilePendingWork: historyController.reconcilePendingWork(TARGET.environmentId, THREAD_ID),
     inputs,
     observed,
     latest,
@@ -577,6 +585,450 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
     }),
   );
+
+  describe("Stop on cached work the server already finished (#18188)", () => {
+    const at = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const parentThreadId = ThreadId.make("thread:parent");
+    const command = (
+      id: string,
+      status: "running" | "completed",
+      exitCode?: number,
+      ordinal = id === "older-command" ? 1 : 2,
+    ): OrchestrationV2TurnItem => ({
+      id: TurnItemId.make(id),
+      threadId: THREAD_ID,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status,
+      title: null,
+      startedAt: at,
+      completedAt: status === "completed" ? at : null,
+      updatedAt: at,
+      type: "command_execution",
+      input: `run ${id}`,
+      output: "",
+      ...(exitCode === undefined ? {} : { exitCode }),
+    });
+    const localRow = (item: OrchestrationV2TurnItem, position: number) => ({
+      position,
+      visibility: "local" as const,
+      sourceThreadId: THREAD_ID,
+      sourceItemId: item.id,
+      item,
+    });
+    // A fork's parent row keeps its own source; the child's Stop must not touch it.
+    const inheritedRow = {
+      position: 0,
+      visibility: "inherited" as const,
+      sourceThreadId: parentThreadId,
+      sourceItemId: TurnItemId.make("cached-command"),
+      item: { ...command("cached-command", "running"), threadId: parentThreadId },
+    };
+    const cachedProjection = (items: ReadonlyArray<OrchestrationV2TurnItem>) => ({
+      ...BASE_PROJECTION,
+      turnItems: items,
+      visibleTurnItems: [inheritedRow, ...items.map((item, index) => localRow(item, index + 1))],
+    });
+    // Loaded older history the bounded window would drop, next to the stale item.
+    const cached: OrchestrationV2ThreadProjection = cachedProjection([
+      command("older-command", "completed", 0),
+      command("cached-command", "running"),
+    ]);
+    const cachedHistory = { historyCursor: "older", hasMoreHistory: true };
+    const projectionStatuses = (projection: OrchestrationV2ThreadProjection) => ({
+      items: projection.turnItems.map((item) => [String(item.id), item.status]),
+      rows: projection.visibleTurnItems.map((row) => [
+        row.visibility,
+        String(row.sourceItemId),
+        row.item.status,
+      ]),
+      pending: pendingBackgroundTurnItems(projection).map((item) => String(item.id)),
+    });
+    const statuses = (state: EnvironmentThreadState) =>
+      projectionStatuses(Option.getOrThrow(state.data));
+    const settledStatuses = {
+      items: [
+        ["older-command", "completed"],
+        ["cached-command", "completed"],
+      ],
+      rows: [
+        ["inherited", "cached-command", "running"],
+        ["local", "older-command", "completed"],
+        ["local", "cached-command", "completed"],
+      ],
+      pending: [],
+    };
+    const serverItems = (items: Record<string, OrchestrationV2TurnItem | null>) => ({
+      getTurnItem: ({ itemId }: { readonly itemId: TurnItemId }) =>
+        Effect.succeed({ item: items[itemId] ?? null }),
+    });
+
+    it.effect("settles an item the server finished without any new event, keeping history", () =>
+      Effect.gen(function* () {
+        const written = yield* Deferred.make<OrchestrationV2ThreadDetailSnapshot>();
+        const harness = yield* makeHarness({
+          cached,
+          cachedHistory,
+          saveThread: (_environmentId, thread) => Deferred.succeed(written, thread),
+          ...serverItems({ "cached-command": command("cached-command", "completed", 0) }),
+        });
+        const before = yield* SubscriptionRef.get(harness.threadState);
+
+        yield* harness.reconcilePendingWork;
+
+        const after = yield* SubscriptionRef.get(harness.threadState);
+        expect(statuses(after)).toEqual(settledStatuses);
+        const settled = Option.getOrThrow(after.data);
+        expect(settled.visibleTurnItems[0]).toBe(inheritedRow);
+        expect(settled.visibleTurnItems[2]!.item).toBe(settled.turnItems[1]);
+        expect(after.history).toEqual(before.history);
+        yield* TestClock.adjust("500 millis");
+        const saved = yield* Deferred.await(written);
+        expect(projectionStatuses(saved.projection)).toEqual(settledStatuses);
+        expect(saved).toMatchObject({ historyCursor: "older", hasMoreHistory: true });
+      }),
+    );
+
+    it.effect("saves the repair after older history was loaded, without the expansion", () =>
+      Effect.gen(function* () {
+        const evenOlder = command("even-older-command", "completed", 0, 0);
+        const scope = yield* Scope.make();
+        const harness = yield* makeHarness({
+          cached,
+          cachedHistory,
+          historyHttpClient: HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+                  items: [localRow(evenOlder, 0)],
+                  nextCursor: null,
+                  hasMoreHistory: false,
+                }),
+              ),
+            ),
+          ),
+          ...serverItems({ "cached-command": command("cached-command", "completed", 0) }),
+        }).pipe(Scope.provide(scope));
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        expect((yield* SubscriptionRef.get(harness.threadState)).history.expanded).toBe(true);
+
+        yield* harness.reconcilePendingWork;
+        const after = yield* SubscriptionRef.get(harness.threadState);
+        expect(after.history).toMatchObject({ expanded: true, historyCursor: null });
+        expect(statuses(after).pending).toEqual([]);
+        yield* TestClock.adjust("500 millis");
+        yield* Scope.close(scope, Exit.void);
+
+        const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+        expect(saved).toMatchObject({
+          snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+          historyCursor: "older",
+          hasMoreHistory: true,
+        });
+        expect(projectionStatuses(saved!.projection)).toEqual(settledStatuses);
+
+        const reloaded = yield* makeHarness({
+          cached: saved!.projection,
+          cachedHistory: { historyCursor: saved!.historyCursor!, hasMoreHistory: true },
+        });
+        expect(statuses(yield* SubscriptionRef.get(reloaded.threadState))).toEqual(settledStatuses);
+      }),
+    );
+
+    const expandedHarness = Effect.fn("expandedHarness")(function* (
+      scope: Scope.Closeable,
+      options?: Pick<NonNullable<Parameters<typeof makeHarness>[0]>, "getTurnItem">,
+    ) {
+      const harness = yield* makeHarness({
+        cached,
+        cachedHistory,
+        historyHttpClient: HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+                items: [localRow(command("even-older-command", "completed", 0, 0), 0)],
+                nextCursor: null,
+                hasMoreHistory: false,
+              }),
+            ),
+          ),
+        ),
+        ...serverItems({ "cached-command": command("cached-command", "completed", 0) }),
+        ...options,
+      }).pipe(Scope.provide(scope));
+      return harness;
+    });
+    const expand = (harness: Effect.Success<ReturnType<typeof expandedHarness>>) =>
+      Effect.gen(function* () {
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        expect((yield* SubscriptionRef.get(harness.threadState)).history.expanded).toBe(true);
+      });
+    const lastSaved = (harness: Effect.Success<ReturnType<typeof expandedHarness>>) =>
+      Ref.get(harness.savedThreads).pipe(Effect.map((saved) => saved.at(-1)));
+
+    it.effect("saves an expanded thread's repair when its scope closes before the save runs", () =>
+      Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        const harness = yield* expandedHarness(scope);
+        yield* expand(harness);
+
+        yield* harness.reconcilePendingWork;
+        yield* Scope.close(scope, Exit.void);
+
+        const saved = yield* lastSaved(harness);
+        expect(saved).toMatchObject({ historyCursor: "older", hasMoreHistory: true });
+        expect(projectionStatuses(saved!.projection)).toEqual(settledStatuses);
+      }),
+    );
+
+    it.effect(
+      "saves an expanded thread's repair when its scope closes during the save cooldown",
+      () =>
+        Effect.gen(function* () {
+          const scope = yield* Scope.make();
+          const harness = yield* expandedHarness(scope);
+          yield* Queue.offer(harness.inputs, titleUpdated("Renamed", CACHED_SNAPSHOT_SEQUENCE + 1));
+          yield* awaitThreadState(
+            harness.observed,
+            (value) => Option.getOrThrow(value.data).thread.title === "Renamed",
+          );
+          yield* TestClock.adjust("500 millis");
+          expect((yield* lastSaved(harness))?.projection.thread.title).toBe("Renamed");
+          yield* expand(harness);
+
+          yield* harness.reconcilePendingWork;
+          yield* Scope.close(scope, Exit.void);
+
+          const saved = yield* lastSaved(harness);
+          expect(saved).toMatchObject({
+            snapshotSequence: CACHED_SNAPSHOT_SEQUENCE + 1,
+            historyCursor: "older",
+            hasMoreHistory: true,
+          });
+          expect(saved!.projection.thread.title).toBe("Renamed");
+          expect(projectionStatuses(saved!.projection)).toEqual(settledStatuses);
+        }),
+    );
+
+    it.effect("saves a completion event that lands while the server is asked", () =>
+      Effect.gen(function* () {
+        const asked = yield* Deferred.make<void>();
+        const answer = yield* Deferred.make<OrchestrationV2TurnItem>();
+        const scope = yield* Scope.make();
+        const harness = yield* expandedHarness(scope, {
+          getTurnItem: () =>
+            Deferred.succeed(asked, undefined).pipe(
+              Effect.andThen(Deferred.await(answer)),
+              Effect.map((item) => ({ item })),
+            ),
+        });
+        yield* expand(harness);
+        const reconciling = yield* harness.reconcilePendingWork.pipe(Effect.forkChild);
+        yield* Deferred.await(asked);
+        const fromEvent = command("cached-command", "completed", 1);
+        yield* Queue.offer(harness.inputs, {
+          kind: "event",
+          sequence: CACHED_SNAPSHOT_SEQUENCE + 1,
+          event: {
+            id: EventId.make("event-cached-command-completed"),
+            type: "turn-item.updated",
+            threadId: THREAD_ID,
+            occurredAt: at,
+            payload: fromEvent,
+          },
+        });
+        yield* awaitThreadState(harness.observed, (value) =>
+          Option.getOrThrow(value.data).turnItems.some(
+            (item) => item.id === fromEvent.id && item.status === "completed",
+          ),
+        );
+
+        yield* Deferred.succeed(answer, command("cached-command", "completed", 0));
+        yield* Fiber.join(reconciling);
+        yield* Scope.close(scope, Exit.void);
+
+        const live = Option.getOrThrow((yield* SubscriptionRef.get(harness.threadState)).data);
+        expect(live.turnItems.find((item) => item.id === fromEvent.id)).toEqual(fromEvent);
+        const saved = yield* lastSaved(harness);
+        expect(saved).toMatchObject({ historyCursor: "older", hasMoreHistory: true });
+        expect(projectionStatuses(saved!.projection)).toEqual(settledStatuses);
+        expect(saved!.projection.turnItems.find((item) => item.id === fromEvent.id)).toEqual(
+          fromEvent,
+        );
+      }),
+    );
+
+    // The event is newer than any reply, so the saved copy follows it however the lookup ends.
+    it.effect.each(["running", "missing", "timed out"] as const)(
+      "saves a completion event that overtakes a %s lookup reply",
+      (reply) =>
+        Effect.gen(function* () {
+          const asked = yield* Deferred.make<void>();
+          const answer = yield* Deferred.make<void>();
+          const scope = yield* Scope.make();
+          const harness = yield* expandedHarness(scope, {
+            getTurnItem: () =>
+              Deferred.succeed(asked, undefined).pipe(
+                Effect.andThen(reply === "timed out" ? Effect.never : Deferred.await(answer)),
+                Effect.as({
+                  item: reply === "running" ? command("cached-command", "running") : null,
+                }),
+              ),
+          });
+          yield* expand(harness);
+          const reconciling = yield* harness.reconcilePendingWork.pipe(Effect.forkChild);
+          yield* Deferred.await(asked);
+          const fromEvent = command("cached-command", "completed", 1);
+          yield* Queue.offer(harness.inputs, {
+            kind: "event",
+            sequence: CACHED_SNAPSHOT_SEQUENCE + 1,
+            event: {
+              id: EventId.make("event-cached-command-completed"),
+              type: "turn-item.updated",
+              threadId: THREAD_ID,
+              occurredAt: at,
+              payload: fromEvent,
+            },
+          });
+          yield* awaitThreadState(harness.observed, (value) =>
+            Option.getOrThrow(value.data).turnItems.some(
+              (item) => item.id === fromEvent.id && item.status === "completed",
+            ),
+          );
+
+          if (reply === "timed out") yield* TestClock.adjust("10 seconds");
+          else yield* Deferred.succeed(answer, undefined);
+          yield* Fiber.join(reconciling);
+          yield* Scope.close(scope, Exit.void);
+
+          const saved = yield* lastSaved(harness);
+          expect(saved).toMatchObject({ historyCursor: "older", hasMoreHistory: true });
+          expect(projectionStatuses(saved!.projection)).toEqual(settledStatuses);
+          expect(saved!.projection.turnItems.find((item) => item.id === fromEvent.id)).toEqual(
+            fromEvent,
+          );
+        }),
+    );
+
+    it.effect("saves the repair for an expanded thread resumed in the same session", () =>
+      Effect.gen(function* () {
+        const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+          snapshot: {
+            state: {
+              data: Option.some(cached),
+              status: "cached",
+              error: Option.none(),
+              history: { ...EMPTY_THREAD_HISTORY_META, historyCursor: null, expanded: true },
+            },
+            sequence: CACHED_SNAPSHOT_SEQUENCE,
+            persisted: true,
+          },
+          owner: undefined,
+        };
+        const scope = yield* Scope.make();
+        const harness = yield* makeHarness({
+          cached,
+          cachedHistory,
+          resumeCache,
+          ...serverItems({ "cached-command": command("cached-command", "completed", 0) }),
+        }).pipe(Scope.provide(scope));
+
+        yield* harness.reconcilePendingWork;
+        yield* TestClock.adjust("500 millis");
+        yield* Scope.close(scope, Exit.void);
+
+        const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+        expect(saved).toMatchObject({ historyCursor: "older", hasMoreHistory: true });
+        expect(projectionStatuses(saved!.projection)).toEqual(settledStatuses);
+      }),
+    );
+
+    it.effect("gives up on a lookup the server never answers, settling the rest", () =>
+      Effect.gen(function* () {
+        const askedCached = yield* Deferred.make<void>();
+        const askedSilent = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          cached: cachedProjection([...cached.turnItems, command("silent-command", "running")]),
+          cachedHistory,
+          getTurnItem: ({ itemId }) =>
+            itemId === "silent-command"
+              ? Deferred.succeed(askedSilent, undefined).pipe(Effect.andThen(Effect.never))
+              : Deferred.succeed(askedCached, undefined).pipe(
+                  Effect.as({ item: command("cached-command", "completed", 0) }),
+                ),
+        });
+        const reconciling = yield* harness.reconcilePendingWork.pipe(Effect.forkChild);
+        yield* Deferred.await(askedCached);
+        yield* Deferred.await(askedSilent);
+
+        yield* TestClock.adjust("10 seconds");
+
+        expect(reconciling.pollUnsafe()).toEqual(Exit.void);
+        expect(statuses(yield* SubscriptionRef.get(harness.threadState)).items).toEqual([
+          ["older-command", "completed"],
+          ["cached-command", "completed"],
+          ["silent-command", "running"],
+        ]);
+      }),
+    );
+
+    it.effect("keeps items the server still runs or does not return", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          cached: cachedProjection([...cached.turnItems, command("missing-command", "running")]),
+          cachedHistory,
+          ...serverItems({ "cached-command": command("cached-command", "running") }),
+        });
+
+        yield* harness.reconcilePendingWork;
+
+        expect(statuses(yield* SubscriptionRef.get(harness.threadState)).items).toEqual([
+          ["older-command", "completed"],
+          ["cached-command", "running"],
+          ["missing-command", "running"],
+        ]);
+      }),
+    );
+
+    it.effect("keeps events that land while the server is asked", () =>
+      Effect.gen(function* () {
+        const asked = yield* Deferred.make<void>();
+        const answer = yield* Deferred.make<OrchestrationV2TurnItem>();
+        const harness = yield* makeHarness({
+          cached,
+          cachedHistory,
+          getTurnItem: () =>
+            Deferred.succeed(asked, undefined).pipe(
+              Effect.andThen(Deferred.await(answer)),
+              Effect.map((item) => ({ item })),
+            ),
+        });
+        const reconciling = yield* harness.reconcilePendingWork.pipe(Effect.forkChild);
+        yield* Deferred.await(asked);
+        yield* Queue.offer(harness.inputs, titleUpdated("Renamed", CACHED_SNAPSHOT_SEQUENCE + 1));
+        yield* awaitThreadState(
+          harness.observed,
+          (value) => Option.getOrThrow(value.data).thread.title === "Renamed",
+        );
+
+        yield* Deferred.succeed(answer, command("cached-command", "completed", 0));
+        yield* Fiber.join(reconciling);
+
+        const after = yield* SubscriptionRef.get(harness.threadState);
+        expect(Option.getOrThrow(after.data).thread.title).toBe("Renamed");
+        expect(statuses(after)).toEqual(settledStatuses);
+      }),
+    );
+  });
 
   it.effect("keeps progressive history metadata from a bounded socket fallback", () =>
     Effect.gen(function* () {
