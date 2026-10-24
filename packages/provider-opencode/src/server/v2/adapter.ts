@@ -276,6 +276,7 @@ interface OpenBlock {
 interface ThreadState {
   readonly sessionId: string;
   providerThread: OrchestrationV2ProviderThread;
+  publishedBackgroundWork?: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
@@ -851,6 +852,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const hasBackground = (thread: ThreadState) => sessionsOf(thread).some(owesWork);
 
+    const emitProviderThread = Effect.fnUntraced(function* (state: ThreadState) {
+      const pendingBackgroundWork = hasBackground(state);
+      state.publishedBackgroundWork = pendingBackgroundWork;
+      yield* emit({
+        type: "provider_thread.updated",
+        driver,
+        providerThread: state.providerThread,
+        pendingBackgroundWork,
+      });
+    });
+
     const setSessionStatus =
       /* Provider events include streaming deltas; avoid a span for each update. */
       Effect.fnUntraced(function* (
@@ -1247,7 +1259,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           result: call.result,
         },
       });
-      yield* syncRoster(rootOf(call.state));
+      yield* syncRosterAncestors(call.state);
     });
 
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
@@ -1263,6 +1275,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }));
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
+        state.publishedBackgroundWork === hasBackground(state) &&
         current.length === roster.length &&
         current.every(
           (task, index) =>
@@ -1279,11 +1292,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         pendingBackgroundTasks: roster,
         updatedAt: yield* DateTime.now,
       };
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: state.providerThread,
-      });
+      yield* emitProviderThread(state);
+    });
+
+    const syncRosterAncestors = Effect.fnUntraced(function* (state: ThreadState) {
+      let current: ThreadState | undefined = state;
+      while (current !== undefined) {
+        yield* syncRoster(current);
+        current = current.subagent?.call.state;
+      }
     });
 
     const withReportedModel = (
@@ -1394,11 +1411,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       childOwners.set(childId, rootOf(call.state));
       call.child = child;
       yield* emit({ type: "app_thread.created", driver, appThread });
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: child.providerThread,
-      });
+      yield* emitProviderThread(child);
       yield* emitSubagent(call);
       // A session called again was not made now, so it may hold the rules of
       // a mode the thread has left. OpenCode applies a rules change to the
@@ -1435,11 +1448,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           status: "idle",
           updatedAt: call.completedAt,
         };
-        yield* emit({
-          type: "provider_thread.updated",
-          driver,
-          providerThread: child.providerThread,
-        });
+        yield* emitProviderThread(child);
       }
       yield* emitSubagent(call);
     });
@@ -1657,11 +1666,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         status: threadDisposition === "broken" ? "error" : "idle",
         updatedAt: completedAt,
       };
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: state.providerThread,
-      });
+      yield* emitProviderThread(state);
       const anyActive = [...threads.values()].some(
         (candidate) => candidate.subagent === undefined && candidate.active !== undefined,
       );
@@ -2444,11 +2449,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const providerThread = withReportedModel(state.providerThread, event.data.model);
         if (providerThread !== state.providerThread) {
           state.providerThread = { ...providerThread, updatedAt: yield* DateTime.now };
-          yield* emit({
-            type: "provider_thread.updated",
-            driver,
-            providerThread: state.providerThread,
-          });
+          yield* emitProviderThread(state);
         }
       }
       if (
@@ -2654,10 +2655,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(call, "interrupted", LOST_BACKGROUND);
           }
         }
-        for (const session of sessionsOf(state)) {
+        const sessions = sessionsOf(state);
+        for (const session of sessions) {
           discardWakes(session, session.wakes.splice(0));
           session.reports.clear();
         }
+        for (const session of sessions.toReversed()) yield* syncRoster(session);
       }
       // Stopped off the lock this reconcile holds; one still running waits for a Stop.
       for (const thread of new Set([...strays.values()].map(rootOf))) {
@@ -2714,7 +2717,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       stream: Stream.Stream<OpenCode2Client.OpenCode2StreamEvent, unknown>,
     ): Effect.Effect<void> =>
       stream.pipe(
-        Stream.runForEach((event) => lock.withPermit(handleEvent(event))),
+        Stream.runForEach((event) =>
+          lock.withPermit(
+            Effect.gen(function* () {
+              yield* handleEvent(event);
+              if (
+                event.type === "session.execution.started" ||
+                event.type === "unreadable.execution.started" ||
+                executionEnd(event.type) ||
+                event.type === "unreadable.execution.ended" ||
+                event.type === "session.inbox.enqueued" ||
+                event.type === "session.inbox.delivered" ||
+                event.type === "session.inbox.cancelled"
+              ) {
+                const sessionId = sessionOfEvent(event);
+                const state = sessionId === undefined ? undefined : threads.get(sessionId);
+                if (state !== undefined) yield* syncRosterAncestors(state);
+              }
+            }),
+          ),
+        ),
         Effect.exit,
         Effect.flatMap(() =>
           Effect.gen(function* () {
@@ -3198,11 +3220,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         lastRunOrdinal: turnInput.runOrdinal,
         updatedAt: startedAt,
       };
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: state.providerThread,
-      });
+      yield* emitProviderThread(state);
       yield* setSessionStatus("running", null);
       return turn;
     });
@@ -3265,6 +3283,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (wake?.running !== true) return;
       state.wakes.pop();
       yield* replay(wake);
+      for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
+      yield* syncRosterAncestors(state);
     });
 
     const runWake = Effect.fnUntraced(function* (
@@ -3292,6 +3312,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           if (wake.running) state.unsettled = false;
           yield* replay(wake);
+          for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
+          yield* syncRosterAncestors(state);
         }),
       );
     });
@@ -3357,6 +3379,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const running = state.wakes.some((wake) => wake.running);
           discardWakes(state, state.wakes.splice(0));
+          yield* syncRosterAncestors(state);
           if (running) {
             markUnsettled(state);
             yield* client.session
