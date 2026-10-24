@@ -25,6 +25,7 @@ import {
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 export interface UsageChartWindow {
+  readonly chartType: "area" | "bar";
   readonly days: readonly string[];
   readonly hours: readonly string[];
   readonly resolution: "day" | "hour";
@@ -99,6 +100,7 @@ export function UsageModelDialog({
 
             {/* Unpriced cost is unknown, not zero, so its trend shows tokens. */}
             <UsageProviderChart
+              chartType={chartWindow.chartType}
               providers={providers}
               days={chartWindow.days}
               daily={usage.daily}

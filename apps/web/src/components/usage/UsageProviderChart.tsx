@@ -5,6 +5,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
   formatDayShort,
+  formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
   formatTokens,
@@ -23,6 +24,7 @@ const NONE_LOADING: ReadonlySet<UsageProviderKind> = new Set();
 export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
+  readonly chartType: "area" | "bar";
   readonly providers: readonly UsageProviderKind[];
   readonly loadingProviders?: ReadonlySet<UsageProviderKind>;
   readonly days: readonly string[];
@@ -174,11 +176,14 @@ const PLACEHOLDER_TICKS = Array.from({ length: TICK_COUNT + 1 }, (_, index) => i
 function chartScale(
   columns: readonly DayColumn[],
   loadingProviders: ReadonlySet<UsageProviderKind>,
+  chartType: "area" | "bar",
 ) {
-  // Not the sum: layered series each measure from zero, so a combined peak
-  // would leave the plot permanently half empty.
+  // Area series measure from zero; stacked bars need room for the combined total.
   const peak = columns.reduce(
-    (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
+    (max, column) =>
+      chartType === "bar"
+        ? Math.max(max, column.total)
+        : column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
     0,
   );
   return peak === 0 && loadingProviders.size > 0
@@ -192,18 +197,51 @@ function valueToY(value: number, max: number) {
   return max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 }
 
-function buildChart(
+export function buildChart(
   periods: readonly string[],
   byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
   metric: UsageChartMetric,
   providers: readonly UsageProviderKind[],
   loadingProviders: ReadonlySet<UsageProviderKind>,
+  chartType: "area" | "bar",
 ) {
-  const columns = buildPeriodColumns(periods, byPeriod, metric);
-  const scale = chartScale(columns, loadingProviders);
-  const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
-  const paths = providers.map((provider) => {
-    const slot = PROVIDER_ORDER.indexOf(provider);
+  const columns = buildPeriodColumns(periods, byPeriod, metric).map((column) => {
+    const bands = column.bands.filter((band) => providers.includes(band.provider));
+    return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
+  });
+  const scale = chartScale(columns, loadingProviders, chartType);
+  const stepX =
+    chartType === "bar"
+      ? VIEW_WIDTH / Math.max(1, periods.length)
+      : periods.length < 2
+        ? 0
+        : VIEW_WIDTH / (periods.length - 1);
+  const offsetX = chartType === "bar" ? stepX / 2 : 0;
+  const bars =
+    chartType === "bar"
+      ? columns.flatMap((column, index) => {
+          let base = 0;
+          return column.bands.flatMap(({ provider, value }) => {
+            const y = valueToY(base + value, scale.max);
+            const height = valueToY(base, scale.max) - y;
+            base += value;
+            return value <= 0
+              ? []
+              : [
+                  {
+                    provider,
+                    period: periods[index],
+                    x: index * stepX + stepX * 0.1,
+                    y,
+                    width: stepX * 0.8,
+                    height,
+                  },
+                ];
+          });
+        })
+      : [];
+  const paths = (chartType === "area" ? providers : []).map((provider) => {
+    const slot = columns[0]?.bands.findIndex((band) => band.provider === provider) ?? -1;
     const line = curvePath(
       smoothCurve(
         columns.map((column, periodIndex) => ({
@@ -221,7 +259,14 @@ function buildChart(
     };
   });
 
-  return { columns, scale, stepX, paths: paths.toSorted((a, b) => b.total - a.total) };
+  return {
+    columns,
+    scale,
+    stepX,
+    offsetX,
+    bars,
+    paths: paths.toSorted((a, b) => b.total - a.total),
+  };
 }
 
 function UsageChartTooltip({
@@ -287,6 +332,7 @@ function UsageChartPlot({
   periods,
   columns,
   stepX,
+  offsetX,
   providers,
   loadingProviders,
   format,
@@ -297,6 +343,7 @@ function UsageChartPlot({
   readonly periods: readonly string[];
   readonly columns: readonly DayColumn[];
   readonly stepX: number;
+  readonly offsetX: number;
   readonly providers: readonly UsageProviderKind[];
   readonly loadingProviders: ReadonlySet<UsageProviderKind>;
   readonly format: (value: number) => string;
@@ -353,7 +400,7 @@ function UsageChartPlot({
     const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
     const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
     const fraction = localX / bounds.width;
-    const index = Math.round(fraction * (periods.length - 1));
+    const index = stepX === 0 ? 0 : Math.round((fraction * VIEW_WIDTH - offsetX) / stepX);
     hoverPositionRef.current = { x: localX, y: localY };
     positionTooltip();
     setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
@@ -381,8 +428,8 @@ function UsageChartPlot({
         {children}
         {hoverIndex === null ? null : (
           <line
-            x1={hoverIndex * stepX}
-            x2={hoverIndex * stepX}
+            x1={hoverIndex * stepX + offsetX}
+            x2={hoverIndex * stepX + offsetX}
             y1={PLOT_TOP}
             y2={VIEW_HEIGHT}
             stroke="currentColor"
@@ -408,6 +455,7 @@ function UsageChartPlot({
 }
 
 export function UsageProviderChart({
+  chartType,
   providers,
   loadingProviders = NONE_LOADING,
   days,
@@ -425,12 +473,13 @@ export function UsageProviderChart({
   const byPeriod = new Map(
     totals.map((entry) => ["hourStart" in entry ? entry.hourStart : entry.day, entry]),
   );
-  const { columns, scale, paths, stepX } = buildChart(
+  const { columns, scale, paths, stepX, offsetX, bars } = buildChart(
     periods,
     byPeriod,
     metric,
     providers,
     loadingProviders,
+    chartType,
   );
 
   const toY = (value: number) => valueToY(value, scale.max);
@@ -438,7 +487,11 @@ export function UsageProviderChart({
     cn("transition-opacity", loading && "opacity-40 delay-150");
   const format = metric === "tokens" ? formatTokens : formatUsd;
   const formatPeriod = (period: string) =>
-    resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);
+    resolution === "hour"
+      ? periods.length > 24
+        ? formatDateTimeShort(period, timeZone, hour12)
+        : formatHourShort(period, timeZone, hour12)
+      : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
       ? formatRelativeHourShort(period, referenceTime, timeZone, hour12)
@@ -465,6 +518,7 @@ export function UsageProviderChart({
           periods={periods}
           columns={columns}
           stepX={stepX}
+          offsetX={offsetX}
           providers={providers}
           loadingProviders={loadingProviders}
           format={format}
@@ -488,6 +542,14 @@ export function UsageProviderChart({
             );
           })}
 
+          {bars.map(({ provider, period, ...rect }) => (
+            <rect
+              key={`${period}:${provider}`}
+              {...rect}
+              className={seriesClassName(loadingProviders.has(provider))}
+              fill={PROVIDER_PRESENTATION[provider].color}
+            />
+          ))}
           {paths.map(({ provider, loading, area }) => (
             <path
               key={provider}

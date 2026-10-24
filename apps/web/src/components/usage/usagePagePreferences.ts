@@ -7,6 +7,8 @@ const STORAGE_KEY = "t3code:usage-page-preferences:v1";
 const UsagePagePreferencesSchema = Schema.Struct({
   metric: Schema.Literals(["cost", "tokens", "limits"]),
   windowDays: Schema.Literals([1, 7, 30, 90]),
+  weekResolution: Schema.optional(Schema.Literals(["day", "hour"])),
+  chartType: Schema.optional(Schema.Literals(["area", "bar"])),
   hiddenProviders: Schema.optional(Schema.Array(UsageProviderKind)),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
@@ -28,4 +30,8 @@ export function saveUsagePagePreferences(preferences: UsagePagePreferences): voi
   } catch (error) {
     console.error("Could not save Usage page preferences.", error);
   }
+}
+
+export function usageResolution(days: number, weekResolution: "day" | "hour" = "day") {
+  return days === 1 || (days === 7 && weekResolution === "hour") ? "hour" : "day";
 }

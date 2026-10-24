@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { readUsagePagePreferences, saveUsagePagePreferences } from "./usagePagePreferences";
+import {
+  readUsagePagePreferences,
+  saveUsagePagePreferences,
+  usageResolution,
+} from "./usagePagePreferences";
 
 const key = "t3code:usage-page-preferences:v1";
 let values: Map<string, string>;
@@ -30,6 +34,33 @@ describe("Usage page preferences", () => {
 
     values.set(key, '{"metric":"tokens","windowDays":30}');
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 30 });
+  });
+
+  it("remembers week resolution and chart style without changing older preferences", () => {
+    saveUsagePagePreferences({
+      metric: "cost",
+      windowDays: 7,
+      weekResolution: "hour",
+      chartType: "bar",
+    });
+    expect(readUsagePagePreferences()).toEqual({
+      metric: "cost",
+      windowDays: 7,
+      weekResolution: "hour",
+      chartType: "bar",
+    });
+    values.set(key, '{"metric":"tokens","windowDays":7}');
+    const saved = readUsagePagePreferences();
+    expect(usageResolution(saved.windowDays, saved.weekResolution)).toBe("day");
+    expect(saved.chartType ?? "area").toBe("area");
+  });
+
+  it("limits optional hourly resolution to seven days", () => {
+    expect(usageResolution(1)).toBe("hour");
+    expect(usageResolution(7, "hour")).toBe("hour");
+    expect(usageResolution(7, "day")).toBe("day");
+    expect(usageResolution(30, "hour")).toBe("day");
+    expect(usageResolution(90, "hour")).toBe("day");
   });
 
   // regression: #10189 an invalid saved usage selection was never replaced

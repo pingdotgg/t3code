@@ -164,13 +164,12 @@ export function formatHourShort(hourStart: string, timeZone?: string, hour12 = t
 export function formatDateTimeShort(instant: string, timeZone?: string, hour12 = true): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
-  const dateHourFormat = dateTimeFormatter("en-US", {
+  const dateFormat = dateTimeFormatter("en-US", {
     ...(timeZone === undefined ? {} : { timeZone }),
     month: "short",
     day: "numeric",
-    ...hourOptions(hour12),
   });
-  return formatHour(dateHourFormat, date, hour12);
+  return `${dateFormat.format(date)}, ${formatHourShort(instant, timeZone, hour12)}`;
 }
 
 export function formatRelativeHourShort(
@@ -227,7 +226,7 @@ export function makeWindow(
   const untilDay = format.format(now);
   if (resolution === "hour") {
     const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
-    const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
+    const sinceTimeMs = untilTimeMs - days * 24 * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {

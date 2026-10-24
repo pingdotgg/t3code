@@ -1,7 +1,12 @@
 // @effect-diagnostics globalDate:off -- A fixed instant keeps calendar-window assertions deterministic.
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { formatHourShort, makeWindow } from "./usageFormat.ts";
+import {
+  enumerateHourStarts,
+  formatDateTimeShort,
+  formatHourShort,
+  makeWindow,
+} from "./usageFormat.ts";
 
 describe("hourly usage formatting", () => {
   it("keeps requested zones separate when formatting repeated calls", () => {
@@ -28,12 +33,32 @@ describe("hourly usage formatting", () => {
     );
   });
 
+  it("includes the zone in dated labels for repeated fall-back hours", () => {
+    expect(formatDateTimeShort("2026-11-01T05:37:00.000Z", "America/New_York")).toBe(
+      "Nov 1, 1 AM EDT",
+    );
+    expect(formatDateTimeShort("2026-11-01T06:37:00.000Z", "America/New_York")).toBe(
+      "Nov 1, 1 AM EST",
+    );
+    expect(formatDateTimeShort("2026-11-01T06:37:00.000Z", "America/New_York", false)).toBe(
+      "Nov 1, 01:00 EST",
+    );
+  });
+
   it("builds an exact minute-aligned 24-hour request", () => {
     const window = makeWindow(1, new Date("2026-08-11T12:37:42.123Z"), "hour");
 
     expect(window.resolution).toBe("hour");
     expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
     expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+  });
+
+  it("builds a seven-day hourly request across a daylight-saving transition", () => {
+    const window = makeWindow(7, new Date("2026-11-04T12:37:42.123Z"), "hour");
+
+    expect(window.sinceTime).toBe("2026-10-28T12:37:00.000Z");
+    expect(window.untilTime).toBe("2026-11-04T12:37:00.000Z");
+    expect(enumerateHourStarts(window.sinceTime!, window.untilTime!)).toHaveLength(168);
   });
 
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {

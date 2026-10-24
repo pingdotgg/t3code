@@ -15,6 +15,10 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
+On web and desktop, the seven-day view can use daily buckets or a rolling 168-hour
+window. Switching to hourly includes the same time of day seven days ago, so its totals
+can differ from the calendar-day view.
+
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 
