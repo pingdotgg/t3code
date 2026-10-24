@@ -1,6 +1,10 @@
+import * as NodeVM from "node:vm";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HTML_RENDER_WEBVIEW_APP_NAME,
+  htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
@@ -8,6 +12,63 @@ import {
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
+
+const bootstrap = injectHtmlRenderBootstrap("<p>x</p>").match(/<script>([\s\S]*)<\/script>/)![1]!;
+const themed = htmlRenderThemeFragment({
+  appearance: "dark",
+  variables: { "--background": "#000" },
+});
+
+// Loads the bootstrap the way a browser runs it, top-level unless framed.
+function openPage(options: {
+  readonly framed?: boolean;
+  readonly hash?: string;
+  readonly userAgent?: string;
+  readonly name?: string;
+  readonly state?: unknown;
+}) {
+  const style = { textContent: "" };
+  const history: { state: unknown; replaceState: (state: unknown) => void } = {
+    state: options.state ?? null,
+    replaceState(state: unknown) {
+      history.state = state;
+    },
+  };
+  const window = { name: options.name ?? "", parent: {}, addEventListener() {} };
+  if (!options.framed) window.parent = window;
+  NodeVM.runInNewContext(bootstrap, {
+    window,
+    history,
+    navigator: { userAgent: options.userAgent ?? "Mozilla/5.0" },
+    location: { hash: options.hash ?? "", pathname: "/page.html", search: "" },
+    document: { getElementById: () => style, addEventListener() {}, documentElement: {} },
+  });
+  return { window, history, padded: () => style.textContent.includes("padding:16px") };
+}
+
+describe("html render bootstrap", () => {
+  it.each([
+    { page: "standalone", options: {}, padded: true },
+    { page: "framed", options: { framed: true }, padded: false },
+    { page: "top-level themed", options: { hash: themed }, padded: false },
+    {
+      page: "reloaded in the mobile WebView",
+      options: { userAgent: `Mozilla/5.0 Mobile/15E148 ${HTML_RENDER_WEBVIEW_APP_NAME}` },
+      padded: false,
+    },
+  ])("gives only a page opened on its own the gutter: $page", ({ options, padded }) => {
+    expect(openPage(options).padded()).toBe(padded);
+  });
+
+  it.each([
+    { page: "standalone", options: {} },
+    { page: "top-level themed", options: { hash: themed } },
+  ])("leaves a $page page's window.name and history.state alone", ({ options }) => {
+    const page = openPage({ ...options, name: '{"key":"t3-hosted:"}', state: "tab2" });
+    expect(page.window.name).toBe('{"key":"t3-hosted:"}');
+    expect(page.history.state).toBe("tab2");
+  });
+});
 
 describe("injectHtmlRenderBootstrap", () => {
   it("puts the theme ahead of the page's own head content", () => {
