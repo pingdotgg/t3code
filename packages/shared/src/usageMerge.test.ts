@@ -515,10 +515,16 @@ describe("mergeUsage", () => {
       unsplit: 5,
     });
     expect(merged.speedCost).toEqual({ standard: 9, fast: 6, ultrafast: 0, premium: 3 });
-    expect(merged.models.map(({ model, unpricedTokens }) => [model, unpricedTokens])).toEqual([
-      ["claude-fable-5", 0],
-      ["unknown-model", 1160],
-      ["partly-reported", 928],
+    expect(
+      merged.models.map(({ model, unpricedTokens, unpricedTokensEstimated }) => [
+        model,
+        unpricedTokens,
+        unpricedTokensEstimated,
+      ]),
+    ).toEqual([
+      ["claude-fable-5", 0, false],
+      ["unknown-model", 1160, false],
+      ["partly-reported", 928, true],
     ]);
   });
 
