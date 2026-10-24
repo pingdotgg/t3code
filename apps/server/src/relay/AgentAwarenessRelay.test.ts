@@ -16,8 +16,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
-import { RelayClientTracer } from "@t3tools/shared/relayTracing";
-import { BackgroundRelayConfig } from "./BackgroundRelayConfig.ts";
+import * as BackgroundRelayConfig from "./BackgroundRelayConfig.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -458,7 +457,7 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       assert.equal(publications.length, 1);
     }).pipe(
-      Effect.provideService(BackgroundRelayConfig, {
+      Effect.provideService(BackgroundRelayConfig.BackgroundRelayConfig, {
         url: "https://background.example.test",
         issuer: "https://background.example.test",
         environmentCredential: Redacted.make("background-credential"),

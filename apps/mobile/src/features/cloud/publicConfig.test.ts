@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  BackgroundRelayUrlInvalidError,
-  resolveCloudPublicConfig,
-} from "./publicConfig";
+import { resolveCloudPublicConfig } from "./publicConfig";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -34,11 +31,12 @@ describe("resolveCloudPublicConfig", () => {
     "https://background.example.test/path",
     "not a URL",
   ])(
-    "rejects invalid background configuration instead of silently using the primary relay: %s",
+    "preserves an invalid background override for isolated rejection without disabling the primary relay: %s",
     (backgroundUrl) => {
-      expect(() => resolveCloudPublicConfig({ relay: { backgroundUrl } })).toThrow(
-        BackgroundRelayUrlInvalidError,
-      );
+      expect(
+        resolveCloudPublicConfig({ relay: { url: "https://relay.example.test", backgroundUrl } })
+          .relay,
+      ).toEqual({ url: "https://relay.example.test", backgroundUrl });
     },
   );
   it("rejects an insecure relay URL", () => {
