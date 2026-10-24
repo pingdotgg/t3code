@@ -52,6 +52,7 @@ import {
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
 } from "./ClaudeModelCatalog.ts";
+import { applyClaudeModelPicker, readClaudeModelPicker } from "./ClaudeModelPicker.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -582,8 +583,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const modelPicker = yield* readClaudeModelPicker(claudeSettings, resolvedEnvironment);
   const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+    applyClaudeModelPicker(resolveClaudeModelsForVersion(modelCatalog, parsedVersion), modelPicker),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );

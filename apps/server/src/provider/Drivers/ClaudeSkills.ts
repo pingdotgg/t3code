@@ -109,7 +109,7 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
-function claudeManagedSettingsPath(
+export function claudeManagedSettingsPath(
   path: Path.Path,
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,

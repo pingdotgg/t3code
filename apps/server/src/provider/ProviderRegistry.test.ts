@@ -4,6 +4,8 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { describe, it, assert, expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -40,6 +42,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -2290,6 +2293,47 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("offers the models from Claude Code's modelPicker ahead of the catalog", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-status-" });
+        yield* fs.writeFileString(
+          path.join(configDir, "settings.json"),
+          JSON.stringify({
+            modelPicker: {
+              options: [
+                { model: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+                { model: "kimi/kimi-k2.6", label: "Kimi K2.6" },
+              ],
+            },
+          }),
+        );
+
+        const status = yield* checkClaudeProviderStatus(
+          { ...defaultClaudeSettings, homePath: configDir },
+          claudeCapabilities(),
+        );
+        assert.deepStrictEqual(
+          status.models.slice(0, 2).map((model) => [model.slug, model.name]),
+          [
+            ["deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"],
+            ["kimi/kimi-k2.6", "Kimi K2.6"],
+          ],
+        );
+        assert.strictEqual(status.models[2]?.slug, "claude-opus-5-5");
+        assert.strictEqual(status.models.length, BUNDLED_CLAUDE_MODEL_CATALOG.models.length + 2);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "2.1.296\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
