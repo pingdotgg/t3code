@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
@@ -284,6 +293,26 @@ describe("server browser drag", () => {
       expect(unobserved).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("server browser capture", () => {
+  it("fails a capture the page never answers instead of waiting for it", async () => {
+    vi.useFakeTimers();
+    try {
+      const cdp = { send: () => new Promise(() => {}) } as unknown as CDPSession;
+      const capture = ServerBrowserPage.captureViewport({} as Page, cdp, {
+        format: "jpeg",
+        scale: 1,
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await capture).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

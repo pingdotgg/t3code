@@ -202,6 +202,8 @@ const withoutTreeDataPayloads = (tree: string) =>
 const SNAPSHOT_TIMEOUT_MS = 10_000;
 // How long a frame in another process gets to answer; one that crashed never does.
 const FRAME_ANSWER_MS = 1_000;
+// A tab that draws no frames never answers a screenshot, and callers hold the tab's queue while waiting.
+const CAPTURE_TIMEOUT_MS = 5_000;
 
 // Values the page draws as dots (password fields, and text fields whose CSS
 // draws dots), normalized like accessible text. Open shadow roots included.
@@ -233,6 +235,12 @@ const tooBusy = () =>
   new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
     "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
+  );
+
+const noFrame = () =>
+  new ServerBrowserOperationError(
+    "PreviewAutomationTimeoutError",
+    "The page drew no frame to capture in time. Try again once the tab is showing or has settled.",
   );
 
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
@@ -470,18 +478,15 @@ const readPageMetrics = async (cdp: CDPSession) => {
   );
 };
 
-// Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
-export const captureViewport = async (
-  page: Page,
-  cdp: CDPSession,
-  options: {
-    readonly format: "png" | "jpeg";
-    readonly quality?: number;
-    readonly scale: number;
-    readonly viewport?: Viewport;
-    readonly offset?: { readonly x: number; readonly y: number } | undefined;
-  },
-) => {
+type CaptureOptions = {
+  readonly format: "png" | "jpeg";
+  readonly quality?: number;
+  readonly scale: number;
+  readonly viewport?: Viewport;
+  readonly offset?: { readonly x: number; readonly y: number } | undefined;
+};
+
+const readViewport = async (page: Page, cdp: CDPSession, options: CaptureOptions) => {
   let clip;
   if (options.scale < 1) {
     const viewport = options.viewport ?? page.viewportSize() ?? { width: 1280, height: 800 };
@@ -503,6 +508,19 @@ export const captureViewport = async (
     ...(clip ? { clip } : {}),
   });
   return data;
+};
+
+// Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
+export const captureViewport = async (page: Page, cdp: CDPSession, options: CaptureOptions) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(noFrame()), CAPTURE_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([readViewport(page, cdp, options), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 type SnapshotInput = {
