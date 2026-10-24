@@ -4395,6 +4395,199 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("promotes a handoff continuation after its detached session fails", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-handoff-queue");
+      const worktreeA = process.cwd();
+      const worktreeB = `${worktreeA}/..`;
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Handoff queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: worktreeA,
+      });
+      for (const index of [0, 1]) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text: index === 0 ? "Active" : "Queued",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      }
+
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs.find((run) => run.status === "starting");
+      const queuedRun = before.runs.find((run) => run.status === "queued");
+      assert.isDefined(activeRun);
+      assert.isDefined(queuedRun);
+      assert.isNotNull(activeRun.rootNodeId);
+      const activeProviderThread = before.providerThreads.find(
+        (thread) => thread.id === activeRun.providerThreadId,
+      );
+      assert.isDefined(activeProviderThread);
+
+      const sessionId = ProviderSessionId.make(`${threadId}:session`);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:session`),
+            type: "provider-session.attached",
+            threadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: sessionId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "running",
+              cwd: worktreeA,
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:session-updated`),
+            type: "provider-session.updated",
+            threadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: sessionId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "running",
+              cwd: worktreeA,
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:provider-thread`),
+            type: "provider-thread.updated",
+            threadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: { ...activeProviderThread, providerSessionId: sessionId, updatedAt: now },
+          },
+        ],
+      });
+      const bound = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        bound.providerSessions.find((session) => session.id === sessionId)?.cwd,
+        worktreeA,
+      );
+
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:handoff`),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...bound.thread, worktreePath: worktreeB, updatedAt: now },
+          },
+        ],
+      });
+      const moved = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(moved.thread.worktreePath, worktreeB);
+
+      const heldRunIds = yield* Queue.unbounded<RunId>();
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.runForEach((stored) =>
+          stored.event.type !== "run.updated"
+            ? Effect.void
+            : stored.event.payload.queueHeld === true
+              ? Queue.offer(heldRunIds, stored.event.payload.id)
+              : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: activeRun.id,
+              nodeId: activeRun.rootNodeId,
+              providerThreadId: activeRun.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Provider failure",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "provider_error",
+                message: "Provider failed.",
+                code: "provider_failed",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...activeRun, status: "failed", completedAt: now },
+          },
+        ],
+      });
+
+      yield* Effect.yieldNow;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const promoted = after.runs.find((run) => run.id === queuedRun.id);
+      assert.equal(promoted?.status, "starting");
+      assert.notEqual(promoted?.queueHeld, true);
+      assert.equal(yield* Queue.size(heldRunIds), 0);
+    }),
+  );
+
   it.effect("keeps queued user selections and pauses only the limited provider", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
