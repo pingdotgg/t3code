@@ -9,6 +9,7 @@ import {
   TrimmedNonEmptyString,
   type PullRequestActor,
   type PullRequestCheck,
+  type PullRequestChecksState,
   type PullRequestComment,
   type PullRequestReaction,
   type PullRequestReactionContent,
@@ -258,6 +259,7 @@ export const GitCafeDiff = Schema.Struct({
 export const GitCafeChecks = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
+      id: Schema.optional(Schema.NullOr(Schema.String)),
       name: TrimmedNonEmptyString,
       status: Schema.Literals(["queued", "in_progress", "completed"]),
       conclusion: Schema.NullOr(Schema.String),
@@ -638,13 +640,39 @@ function checkStatus(check: (typeof GitCafeChecks.Type.items)[number]): PullRequ
   }
 }
 
+type GitCafeCheck = (typeof GitCafeChecks.Type.items)[number];
+
+// GitCafe's ids are the host's check run ids, which grow with each run.
+function isNewerRun(candidate: GitCafeCheck, kept: GitCafeCheck): boolean {
+  const [a, b] = [candidate.id, kept.id];
+  return a != null && b != null && /^\d+$/u.test(a) && /^\d+$/u.test(b) && BigInt(a) > BigInt(b);
+}
+
+/**
+ * GitCafe lists every run of a commit's checks, so a re-run arrives beside the run it replaced.
+ * The newest run is the check's state; an older failure is history, not a failing check.
+ */
 export function toChecks(checks: typeof GitCafeChecks.Type): ReadonlyArray<PullRequestCheck> {
+  const newestByName = new Map<string, GitCafeCheck>();
+  for (const check of checks.items) {
+    const kept = newestByName.get(check.name);
+    if (kept === undefined || isNewerRun(check, kept)) newestByName.set(check.name, check);
+  }
   return sortChecks(
-    checks.items.map((check) => ({
+    [...newestByName.values()].map((check) => ({
       name: check.name,
       status: checkStatus(check),
       description: check.summary,
       url: check.detailsUrl,
     })),
   );
+}
+
+export function checksStateOf(
+  checks: ReadonlyArray<PullRequestCheck>,
+): PullRequestChecksState | null {
+  const statuses = checks.map((check) => check.status);
+  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
+  if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
+  return statuses.includes("success") ? "passing" : null;
 }

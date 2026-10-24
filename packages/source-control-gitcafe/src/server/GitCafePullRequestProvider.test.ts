@@ -648,6 +648,47 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("reads the checks state from each check's newest run", () => {
+    const run = (id: string, conclusion: string) => ({
+      id,
+      name: "Check",
+      status: "completed",
+      conclusion,
+      summary: null,
+      detailsUrl: null,
+    });
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": pull,
+      "GET /repos/owner/repo/pulls/7/reviewers": { items: [], next: null },
+      "GET /repos/owner/repo/pulls/7/labels": { items: [], next: null },
+      "GET /repos/owner/repo/pulls/7/status": {
+        merge: { conflicts: "none", fastForward: null, strategies: [] },
+        // GitCafe counts the cancelled run's failure beside the re-run that passed.
+        checks: { pending: 0, failing: 1, total: 2 },
+      },
+      [`GET /repos/owner/repo/commits/${headOid}/checks`]: {
+        items: [run("120859457782", "success"), run("120857059247", "failure")],
+        next: null,
+      },
+      "GET /repos/owner/repo/pulls/7/changes": {
+        version: 4,
+        headOid,
+        comparisonBaseOid: baseOid,
+        items: [],
+        next: null,
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest(target);
+      assert.deepStrictEqual(
+        detail.checks.map((check) => [check.name, check.status]),
+        [["Check", "success"]],
+      );
+      assert.strictEqual(detail.checksState, "passing");
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect("still reads a pull request whose reviewers the token may not see", () => {
     const server = fakeGitCafe({
       "GET /repos/owner/repo/pulls/7": { ...pull, headOid: null },

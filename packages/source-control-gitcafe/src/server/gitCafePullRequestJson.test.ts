@@ -429,7 +429,7 @@ describe("toChecks", () => {
           check("completed", "success", "Build"),
           check("completed", "cancelled"),
           check("completed", "action_required"),
-          check("completed", "timed_out", "Build"),
+          check("completed", "timed_out", "Lint"),
         ],
         next: null,
       }),
@@ -438,12 +438,30 @@ describe("toChecks", () => {
       checks.map((item) => [item.name, item.status]),
       [
         ["completed-cancelled", "cancelled"],
-        ["Build", "failure"],
+        ["Lint", "failure"],
         ["queued-null", "pending"],
         ["in_progress-null", "pending"],
         ["Build", "success"],
         ["completed-action_required", "action-required"],
       ],
     );
+  });
+
+  it("keeps only the newest run of a re-run check", () => {
+    const run = (id: string, conclusion: string) => ({
+      id,
+      name: "Check",
+      status: "completed",
+      conclusion,
+      summary: null,
+      detailsUrl: null,
+    });
+    const statusOf = (items: ReadonlyArray<ReturnType<typeof run>>) =>
+      GitCafePullRequestJson.toChecks(decodeChecks({ items, next: null })).map(
+        (check) => check.status,
+      );
+    assert.deepStrictEqual(statusOf([run("99", "failure"), run("100", "success")]), ["success"]);
+    assert.deepStrictEqual(statusOf([run("100", "success"), run("99", "failure")]), ["success"]);
+    assert.deepStrictEqual(statusOf([run("100", "success"), run("101", "failure")]), ["failure"]);
   });
 });
