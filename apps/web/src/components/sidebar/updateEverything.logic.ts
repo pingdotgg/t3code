@@ -1,5 +1,18 @@
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
+import {
+  PROVIDER_DISPLAY_NAMES,
+  type EnvironmentId,
+  type ServerConfig,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import { APP_VERSION } from "~/branding";
+import {
+  canOneClickUpdateProviderCandidate,
+  collectProviderUpdateCandidates,
+} from "../ProviderUpdateLaunchNotification.logic";
+import type { UpdatePlanItem } from "./updateEverythingPlan";
+import { exactUpdateVersion } from "./updateEverythingPlan";
 import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
 
 import {
@@ -8,7 +21,39 @@ import {
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
 } from "~/versionSkew";
-import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
+import type { ServerUpdateTarget } from "../ServerUpdateAction";
+
+export type UpdateItemKey = string;
+
+export interface UpdatePickerItem {
+  readonly key: UpdateItemKey;
+  readonly kind: "app" | "server" | "provider";
+  readonly label: string;
+  readonly context: string | null;
+  readonly fromVersion: string | null;
+  readonly toVersion: string | null;
+  readonly note: string | null;
+  readonly disabledReason: string | null;
+  readonly restarts: readonly RestartingMachine[];
+  readonly canDisableAutoResume?: boolean;
+}
+
+export interface UpdatePickerDevice {
+  readonly id: string;
+  readonly label: string;
+  readonly unavailableReason: string | null;
+  readonly items: readonly UpdatePickerItem[];
+}
+
+export type UpdatePlanPausedReason =
+  | "later"
+  | "download-failed"
+  | "install-refused"
+  | "wrong-version"
+  | "not-applied"
+  | "expired"
+  | "storage"
+  | "unknown";
 
 export interface UpdateEverythingMachine {
   readonly environmentId: EnvironmentId;
@@ -69,6 +114,7 @@ export interface SkippedMachine {
 export function collectServerUpdateTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   targetVersion: string,
+  retryCurrent = false,
 ): { readonly targets: ServerUpdateTarget[]; readonly skipped: SkippedMachine[] } {
   const targets: ServerUpdateTarget[] = [];
   const skipped: SkippedMachine[] = [];
@@ -77,7 +123,8 @@ export function collectServerUpdateTargets(
     if (machine.hostedByThisApp) continue;
     if (
       config !== null &&
-      resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null
+      resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null &&
+      !(retryCurrent && exactUpdateVersion(config.environment.serverVersion, targetVersion))
     ) {
       continue;
     }
@@ -127,35 +174,10 @@ export function collectServerUpdateTargets(
   return { targets, skipped };
 }
 
-export interface UpdateEverythingSteps<Providers, Servers> {
-  readonly downloadLocal?: () => Promise<boolean>;
-  readonly updateProviders: () => Promise<Providers>;
-  readonly updateServers: () => Promise<Servers>;
-}
-
-/**
- * Providers finish before any server restarts, so no install is cut off. The caller installs this app afterwards when `localReady`, because
- * the relaunch ends the run; a failed download skips only that install.
- */
-export async function runUpdateEverything<Providers, Servers>(
-  steps: UpdateEverythingSteps<Providers, Servers>,
-): Promise<{
-  readonly localReady: boolean;
-  readonly providers: Providers;
-  readonly servers: Servers;
-}> {
-  const [localReady, remote] = await Promise.all([
-    steps.downloadLocal?.() ?? Promise.resolve(true),
-    steps
-      .updateProviders()
-      .then(async (providers) => ({ providers, servers: await steps.updateServers() })),
-  ]);
-  return { localReady, ...remote };
-}
-
 export type UpdateRunMachineStatus =
   | "providers"
   | "waiting"
+  | "waiting-dependency"
   | "downloading"
   | "restarting"
   | "done"
@@ -170,12 +192,19 @@ export interface UpdateRunMachine {
   readonly startedAt: number;
   readonly result: "done" | "failed" | null;
   readonly failure: string | null;
-  readonly providerFailure: string | null;
 }
 
 export interface UpdateEverythingRun {
   readonly localVersion: string | null;
-  readonly phase: "providers" | "servers" | "countdown" | "installing";
+  readonly phase:
+    | "local"
+    | "providers"
+    | "servers"
+    | "countdown"
+    | "installing"
+    | "paused"
+    | "complete";
+  readonly pausedReason?: UpdatePlanPausedReason | null;
   readonly restartAt: number | null;
   readonly machines: ReadonlyArray<UpdateRunMachine>;
 }
@@ -187,15 +216,17 @@ export function resolveUpdateRunMachineStatus(
 ): UpdateRunMachineStatus {
   if (machine.result !== null) return machine.result;
   if (machine.handedOffVersion !== null) return "restarting";
+  if (
+    (phase === "local" || phase === "countdown" || phase === "installing" || phase === "servers") &&
+    machine.server === null &&
+    machine.updatesProviders
+  )
+    return "waiting-dependency";
   if (phase === "providers" && machine.updatesProviders) return "providers";
   if (machine.server !== null && serverState.status === "running") {
     return serverState.stage === "resuming" ? "restarting" : "downloading";
   }
   return "waiting";
-}
-
-export function isServerUpdateHandedOff(state: ServerUpdateState): boolean {
-  return state.status === "running" && state.stage === "resuming";
 }
 
 export function closeFinishedUpdateRun(run: UpdateEverythingRun): UpdateEverythingRun | null {
@@ -229,7 +260,7 @@ export interface UpdateCapsuleView {
   readonly tone: "default" | "slow" | "failed";
   readonly label: string;
   readonly slow?: { readonly status: string; readonly elapsed: string };
-  readonly action: "later" | "retry" | "dismiss" | null;
+  readonly action: "later" | "retry" | "dismiss" | "restart" | "continue-without-app" | null;
 }
 
 const isActive = (status: UpdateRunMachineStatus) => status !== "done" && status !== "failed";
@@ -240,6 +271,41 @@ export function describeUpdateCapsule(
   local: UpdateRunLocalState,
   now: number,
 ): UpdateCapsuleView {
+  if (run.phase === "paused") {
+    const reason = run.pausedReason;
+    if (reason === "later" || reason === "install-refused")
+      return { tone: "default", label: "Restart to continue", action: "restart" };
+    if (reason === "wrong-version" || reason === "not-applied")
+      return { tone: "failed", label: "App update did not apply", action: "continue-without-app" };
+    if (reason === "download-failed")
+      return { tone: "failed", label: "App download failed", action: "retry" };
+    if (reason === "expired")
+      return {
+        tone: "failed",
+        label: "Update plan expired. Review updates again.",
+        action: "dismiss",
+      };
+    if (reason === "storage")
+      return { tone: "failed", label: "Could not save update plan", action: "dismiss" };
+    return { tone: "failed", label: "Check update results before retry", action: "retry" };
+  }
+  if (run.phase === "local")
+    return {
+      tone: "default",
+      label:
+        local?.status === "downloading"
+          ? `Downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`
+          : "Preparing this device",
+      action: null,
+    };
+  if (run.phase === "complete")
+    return {
+      tone: machines.some((machine) => machine.status === "failed") ? "failed" : "default",
+      label: machines.some((machine) => machine.status === "failed")
+        ? "Some updates need attention"
+        : "Selected updates finished",
+      action: machines.some((machine) => machine.status === "failed") ? "retry" : "dismiss",
+    };
   if (run.phase === "countdown" && run.restartAt !== null) {
     const seconds = Math.max(0, Math.ceil((run.restartAt - now) / 1000));
     return { tone: "default", label: `Restart in ${seconds}s`, action: "later" };
@@ -285,6 +351,7 @@ export function describeUpdateCapsule(
 export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
   providers: "updating providers",
   waiting: "waiting",
+  "waiting-dependency": "waiting for T3",
   downloading: "downloading",
   restarting: "restarting",
   done: "done",
@@ -297,33 +364,6 @@ export interface UpdateEverythingResult {
   readonly updatedProviders: number;
   readonly failures: ReadonlyArray<string>;
   readonly restarting: ReadonlyArray<string>;
-}
-
-export function collectUpdateEverythingResult(input: {
-  readonly localVersion: string | null;
-  readonly localFailures: ReadonlyArray<string>;
-  readonly servers: ReadonlyArray<{
-    readonly label: string;
-    readonly outcome: ServerUpdateOutcome;
-  }>;
-  readonly providers: ReadonlyArray<
-    | { readonly status: "interrupted" | "updated" }
-    | { readonly status: "failed"; readonly line: string }
-  >;
-}): UpdateEverythingResult {
-  return {
-    localVersion: input.localVersion,
-    updatedServers: input.servers.filter(({ outcome }) => outcome.status === "updated").length,
-    updatedProviders: input.providers.filter((outcome) => outcome.status === "updated").length,
-    restarting: [],
-    failures: [
-      ...input.localFailures.map((failure) => `This app: ${failure}`),
-      ...input.servers.flatMap(({ label, outcome }) =>
-        outcome.status === "failed" ? [`${label}: ${outcome.message}`] : [],
-      ),
-      ...input.providers.flatMap((outcome) => (outcome.status === "failed" ? [outcome.line] : [])),
-    ],
-  };
 }
 
 export function getUpdateEverythingToastView(
@@ -360,18 +400,6 @@ export function getUpdateEverythingToastView(
   };
 }
 
-export interface UpdateEverythingPlan {
-  readonly localVersion: string | null;
-  readonly servers: ReadonlyArray<
-    Pick<ServerUpdateTarget, "environmentId" | "serverLabel" | "selfUpdate" | "targetVersion">
-  >;
-  readonly providerMachines: ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly label: string;
-    readonly providers: ReadonlyArray<string>;
-  }>;
-}
-
 function countLabel(count: number, noun: string): string | null {
   return count === 0 ? null : `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -381,46 +409,198 @@ function joinList(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
-export function describeUpdateEverything(plan: UpdateEverythingPlan): {
-  readonly summary: string;
-  readonly lines: ReadonlyArray<string>;
-} {
-  const providerCount = plan.providerMachines.reduce(
-    (count, machine) => count + machine.providers.length,
-    0,
-  );
-  const summary = `Update ${joinList(
-    [
-      plan.localVersion ? "this app" : null,
-      countLabel(plan.servers.length, "server"),
-      countLabel(providerCount, "provider"),
-    ].filter((part) => part !== null),
-  )}`;
+export interface UpdateOptionMachine extends UpdateEverythingMachine {
+  readonly connectionPhase: EnvironmentPresentation["connection"]["phase"];
+  readonly enabled: boolean;
+  readonly sessionReady: boolean;
+  readonly sessionInitialized: boolean;
+  readonly providers: readonly ServerProvider[];
+  readonly canManageProviders: boolean;
+}
 
-  const machines = new Map<EnvironmentId, { label: string; items: string[] }>();
-  const itemsFor = (environmentId: EnvironmentId, label: string) => {
-    const existing = machines.get(environmentId);
-    if (existing) return existing.items;
-    const items: string[] = [];
-    machines.set(environmentId, { label, items });
-    return items;
+export const updateItemKey = (
+  kind: UpdatePlanItem["kind"],
+  environmentId: EnvironmentId,
+  driver?: string,
+  instanceId?: string,
+) => JSON.stringify([kind, environmentId, ...(kind === "provider" ? [driver, instanceId] : [])]);
+
+export function collectUpdateOptions(input: {
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly machines: readonly UpdateOptionMachine[];
+  readonly localVersion: string | null;
+  readonly npmPublished: boolean;
+  readonly autoResume?: boolean | undefined;
+  readonly canDisableLocalAutoResume?: boolean;
+}) {
+  const { machines, primaryEnvironmentId, localVersion, npmPublished } = input;
+  const autoResume = input.autoResume !== false;
+  const targetVersion = localVersion ?? APP_VERSION;
+  const serverTargets = collectServerUpdateTargets(machines, targetVersion);
+  const targets = new Map(serverTargets.targets.map((target) => [target.environmentId, target]));
+  const skips = new Map(serverTargets.skipped.map((skip) => [skip.environmentId, skip.reason]));
+  const devices: UpdatePickerDevice[] = [];
+  const operations = new Map<string, UpdatePlanItem>();
+  const hosted = machines.filter((machine) => machine.hostedByThisApp);
+  const currentItems: UpdatePickerItem[] = [];
+  const add = (items: UpdatePickerItem[], item: UpdatePickerItem, operation: UpdatePlanItem) => {
+    items.push(item);
+    if (item.disabledReason === null) operations.set(item.key, operation);
   };
-  for (const server of plan.servers) {
-    itemsFor(server.environmentId, server.serverLabel).push(
-      server.selfUpdate === "desktop-managed"
-        ? "desktop app update"
-        : `server to ${server.targetVersion}`,
+  const operation = (
+    key: string,
+    kind: UpdatePlanItem["kind"],
+    machine: UpdateOptionMachine,
+    version: string,
+  ): UpdatePlanItem => ({
+    key,
+    kind,
+    environmentId: machine.environmentId,
+    label: machine.label,
+    fromVersion: machine.serverConfig?.environment.serverVersion ?? null,
+    targetVersion: version,
+    driver: null,
+    instanceId: null,
+    continueThreads: false,
+    autoResume,
+    status: "pending",
+    claimId: null,
+    message: null,
+  });
+  const primary = hosted.find((machine) => machine.environmentId === primaryEnvironmentId);
+  if (localVersion && primary) {
+    const key = updateItemKey("app", primary.environmentId);
+    const canDisableAutoResume =
+      input.canDisableLocalAutoResume === true &&
+      hosted.every(
+        (machine) =>
+          machine.serverConfig?.environment.capabilities.threadRestartContinuationControl === true,
+      );
+    add(
+      currentItems,
+      {
+        key,
+        kind: "app",
+        label: "T3 Code",
+        context: null,
+        fromVersion: APP_VERSION,
+        toVersion: localVersion,
+        note: "Updates and restarts this device first",
+        disabledReason:
+          primary.enabled &&
+          primary.connected &&
+          primary.sessionReady &&
+          primary.serverConfig?.environment.environmentId === primary.environmentId
+            ? !autoResume && !canDisableAutoResume
+              ? "This app cannot disable thread resume for an update"
+              : null
+            : "Local connection is not ready",
+        restarts: collectRestartingMachines(machines, [], true),
+        canDisableAutoResume,
+      },
+      { ...operation(key, "app", primary, localVersion), fromVersion: APP_VERSION },
     );
   }
-  for (const machine of plan.providerMachines) {
-    itemsFor(machine.environmentId, machine.label).push(...machine.providers);
+  for (const machine of machines) {
+    const items = machine.hostedByThisApp ? currentItems : [];
+    const unavailableReason =
+      machine.serverConfig !== null &&
+      machine.serverConfig.environment.environmentId !== machine.environmentId
+        ? "Environment identity changed"
+        : !machine.enabled
+          ? "Connection disabled"
+          : !machine.connected
+            ? "Not connected"
+            : null;
+    const target = targets.get(machine.environmentId);
+    const skip = skips.get(machine.environmentId);
+    if (!machine.hostedByThisApp && (target || skip)) {
+      const key = updateItemKey("server", machine.environmentId);
+      const disabledReason =
+        unavailableReason ??
+        skip ??
+        (!autoResume &&
+        machine.serverConfig?.environment.capabilities.threadRestartContinuationControl !== true
+          ? "This version cannot disable thread resume for an update"
+          : null) ??
+        (target?.selfUpdate !== "desktop-managed" && !npmPublished ? "Not on npm yet" : null);
+      add(
+        items,
+        {
+          key,
+          kind: "server",
+          label: "T3 Code",
+          context: null,
+          fromVersion: machine.serverConfig?.environment.serverVersion ?? null,
+          toVersion: target?.selfUpdate === "desktop-managed" ? null : targetVersion,
+          note: target?.selfUpdate === "desktop-managed" ? "Uses that device's update feed" : null,
+          canDisableAutoResume:
+            machine.serverConfig?.environment.capabilities.threadRestartContinuationControl ===
+            true,
+          disabledReason,
+          restarts: collectRestartingMachines(
+            machines,
+            [{ environmentId: machine.environmentId }],
+            false,
+          ),
+        },
+        {
+          ...operation(key, "server", machine, targetVersion),
+          ...(target?.selfUpdate ? { selfUpdate: target.selfUpdate } : {}),
+          continueThreads:
+            target?.threadContinuation === true && target.continueThreadsAfterServerUpdate === true,
+        },
+      );
+    }
+    for (const candidate of collectProviderUpdateCandidates(machine.providers)) {
+      const key = updateItemKey(
+        "provider",
+        machine.environmentId,
+        candidate.driver,
+        candidate.instanceId,
+      );
+      const disabledReason =
+        unavailableReason ??
+        (!machine.canManageProviders
+          ? "No permission"
+          : !canOneClickUpdateProviderCandidate(candidate, machine.providers)
+            ? "Needs a manual update or is already updating"
+            : null);
+      add(
+        items,
+        {
+          key,
+          kind: "provider",
+          label: PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+          context: machine.hostedByThisApp && hosted.length > 1 ? machine.label : null,
+          fromVersion: candidate.version,
+          toVersion: null,
+          note: "Installer chooses the latest version",
+          disabledReason,
+          restarts: [],
+        },
+        {
+          ...operation(key, "provider", machine, "latest"),
+          fromVersion: candidate.version,
+          driver: candidate.driver,
+          instanceId: candidate.instanceId,
+        },
+      );
+    }
+    if (!machine.hostedByThisApp && (items.length > 0 || unavailableReason))
+      devices.push({
+        id: machine.environmentId,
+        label: machine.label,
+        unavailableReason,
+        items,
+      });
   }
-
-  return {
-    summary,
-    lines: [
-      ...(plan.localVersion ? [`This app: ${plan.localVersion}, restarts last`] : []),
-      ...Array.from(machines.values(), ({ label, items }) => `${label}: ${items.join(", ")}`),
-    ],
-  };
+  if (currentItems.length > 0 && primaryEnvironmentId)
+    devices.unshift({
+      id: updateItemKey("app", primaryEnvironmentId),
+      label: "This device",
+      unavailableReason: null,
+      items: currentItems,
+    });
+  return { devices, operations };
 }

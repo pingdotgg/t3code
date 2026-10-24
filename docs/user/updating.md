@@ -7,34 +7,38 @@ notice.
 
 ## Update everything at once
 
-The update button at the bottom of the sidebar updates every connected machine
-in one step. It updates outdated providers, then servers that are behind, then
-the desktop app you are using. Servers move to the
-version your desktop app is installing, or to your web app's version. A
-background service stays on its current release channel. A remote desktop app
-installs the latest release from its own channel. Hover the button to see what
-it will update.
+The update button at the bottom of the sidebar lets you choose updates for each
+connected device. Expand a device to select its T3 Code app and provider tools separately. You can
+leave T3 Code unchanged on a device and still update its providers.
 
-While it runs, the button widens to show progress. It names a machine that is
-taking longer than usual, and offers **Retry** for a server that failed. Click
-it to see every machine. The desktop app restarts once each server has started
-its own restart, after a short countdown. Choose **Later** to keep working and
-restart from the update button when you are ready. A server still restarting
-finishes on its own, and the button keeps showing it after the desktop app
-restarts.
+If you select the desktop app you are using, it updates and restarts first.
+It waits for local provider updates already running before it restarts. After
+the app reopens, selected T3 Code updates on other devices run together. Selected
+provider updates start after those T3 Code updates finish. Keep the app open
+while the remaining updates run. If you leave this app unchecked, the other
+selected devices update first, followed by providers.
 
-Server updates appear only after that version is published to npm. Remote
-desktop apps do not wait for npm. The confirmation lists each machine it skips
-and why, such as a machine that is offline or needs a manual update. Use the
-notice or **Settings → Connections** for those.
+Choose **Later** during the restart countdown to pause the remaining updates.
+Restart from the update button when you are ready. If an update fails, use
+**Retry**, or **Dismiss** to review a new selection. Providers on a device whose
+T3 Code update failed are skipped until you retry that device.
 
-If a desktop app restarts on its old version, T3 Code tells you the update did
-not apply. It does not install that version again on its own, even when another
-device asks. Use the update button on that machine to retry.
+Servers move to the version offered by your desktop app, or to your web app's
+version. A background service stays on its current release channel. A remote
+desktop app installs the latest release from its own channel. Server updates
+appear only after that version is published to npm; remote desktop apps do not
+wait for npm. Unavailable updates show a reason, such as an offline device or a
+required manual update. Use the notice or **Settings → Connections** for those.
 
-The confirmation counts the running threads that the restarts will interrupt,
-and how many can resume afterwards. See **Continue threads after restarts**
-below.
+If the selected desktop app restarts on its old version, the remaining updates
+pause. T3 Code does not install that version again on its own. Retry the app
+update, or choose to continue without it.
+
+The picker counts the running threads that your selected restarts will interrupt.
+**Resume interrupted threads** is on by default and follows device and project
+continuation settings. Turn it off to keep affected threads stopped for this
+update without changing those settings. This requires support from every affected
+host. Desktop app updates with running WSL backends cannot use resume OFF.
 
 ## Before you update
 

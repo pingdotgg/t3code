@@ -1133,7 +1133,11 @@ export interface DesktopBridge {
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
-  installUpdate: () => Promise<DesktopUpdateActionResult>;
+  supportsUpdateThreadContinuationControl?: true;
+  installUpdate: (
+    expectedVersion?: string,
+    continueRunningThreads?: boolean,
+  ) => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   cliCommand?: {
     getState: () => Promise<DesktopCliCommandState>;

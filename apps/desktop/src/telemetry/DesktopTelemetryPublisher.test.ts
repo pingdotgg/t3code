@@ -3,9 +3,13 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
@@ -56,7 +60,217 @@ function layerElectronApp(
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
+const layerPolicyPublisher = DesktopTelemetryPublisher.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerElectronApp([]),
+      layerHistory,
+      Layer.succeed(ElectronPowerMonitor.ElectronPowerMonitor, {
+        isOnBatteryPower: Effect.succeed(false),
+        getSystemIdleTime: Effect.succeed(0),
+        getSystemIdleState: () => Effect.succeed("active"),
+        getCurrentThermalState: Effect.succeed("nominal" as const),
+        onSimpleEvent: () => Effect.void,
+        onThermalStateChange: () => Effect.void,
+        onSpeedLimitChange: () => Effect.void,
+      }),
+    ),
+  ),
+);
+
 describe("DesktopTelemetryPublisher", () => {
+  it.effect("requires matching policy ACKs from every targeted backend and targets rollback", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+        const primaryMessages = yield* Queue.unbounded<Record<string, unknown>>();
+        const wslMessages = yield* Queue.unbounded<Record<string, unknown>>();
+        for (const [sourceId, messages] of [
+          ["primary", primaryMessages],
+          ["wsl:Ubuntu", wslMessages],
+        ] as const) {
+          yield* Stream.runForEach(publisher.encoded(sourceId), (bytes) =>
+            Queue.offer(messages, JSON.parse(new TextDecoder().decode(bytes))),
+          ).pipe(Effect.forkScoped);
+          assert.equal((yield* Queue.take(messages)).type, "desktopTelemetryHello");
+        }
+        const policy = {
+          version: 1,
+          type: "desktopUpdateRestartPolicy",
+          requestId: "install-1",
+          continueRunningThreads: false,
+        } as const;
+        const preparing = yield* publisher
+          .requestUpdateRestartPolicy(["primary", "wsl:Ubuntu"], policy)
+          .pipe(Effect.forkScoped);
+        for (const messages of [primaryMessages, wslMessages]) {
+          const command = yield* Stream.fromQueue(messages).pipe(
+            Stream.filter((message) => message.type === policy.type),
+            Stream.runHead,
+          );
+          assert.deepEqual(Option.getOrThrow(command), policy);
+        }
+        const result = {
+          ...policy,
+          type: "desktopUpdateRestartPolicyResult",
+          accepted: true,
+        } as const;
+        yield* publisher.handleControlForSource("unrelated", result);
+        yield* publisher.handleControlForSource("primary", {
+          ...result,
+          continueRunningThreads: true,
+        });
+        assert.isUndefined(preparing.pollUnsafe());
+        yield* publisher.handleControlForSource("primary", result);
+        assert.isUndefined(preparing.pollUnsafe());
+        yield* publisher.handleControlForSource("wsl:Ubuntu", result);
+        assert.isTrue(yield* Fiber.join(preparing));
+        const rollback = yield* publisher
+          .requestUpdateRestartPolicy(["wsl:Ubuntu"], { ...policy, continueRunningThreads: true })
+          .pipe(Effect.forkScoped);
+        const rollbackMessage = yield* Stream.fromQueue(wslMessages).pipe(
+          Stream.filter((message) => message.type === policy.type),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrThrow(rollbackMessage).continueRunningThreads, true);
+        yield* publisher.handleControlForSource("wsl:Ubuntu", {
+          ...result,
+          continueRunningThreads: true,
+        });
+        assert.isTrue(yield* Fiber.join(rollback));
+        const pendingPrimary = yield* Queue.takeBetween(
+          primaryMessages,
+          0,
+          Number.POSITIVE_INFINITY,
+        );
+        assert.isFalse(
+          Array.from(pendingPrimary).some(
+            (message) => message.type === policy.type && message.continueRunningThreads === true,
+          ),
+        );
+        yield* publisher.clearUpdateRestartPolicy(policy.requestId);
+      }),
+    ).pipe(Effect.provide(layerPolicyPublisher)),
+  );
+
+  it.effect.each(["queued", "initial", "cleared initial"] as const)(
+    "drops %s restart policies replaced while a source consumer is paused",
+    (policyState) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+          const subscribe = yield* Deferred.make<void>();
+          const helloRead = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          const observerReady = yield* Deferred.make<void>();
+          const observedPolicies = yield* Queue.unbounded<Record<string, unknown>>();
+          yield* Stream.runForEach(publisher.encoded("observer"), (bytes) => {
+            const message = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+            return message.type === "desktopTelemetryHello"
+              ? Deferred.succeed(observerReady, undefined)
+              : message.type === "desktopUpdateRestartPolicy"
+                ? Queue.offer(observedPolicies, message)
+                : Effect.void;
+          }).pipe(Effect.forkScoped);
+          yield* Deferred.await(observerReady);
+          const nextPolicy = yield* publisher.encoded("paused").pipe(
+            Stream.map(
+              (bytes) => JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>,
+            ),
+            Stream.tap((message) =>
+              message.type === "desktopTelemetryHello"
+                ? Deferred.succeed(helloRead, undefined).pipe(
+                    Effect.andThen(Deferred.await(resume)),
+                  )
+                : Effect.void,
+            ),
+            Stream.filter((message) => message.type === "desktopUpdateRestartPolicy"),
+            Stream.runHead,
+            (consume) => Deferred.await(subscribe).pipe(Effect.andThen(consume)),
+            Effect.forkScoped,
+          );
+          if (policyState === "queued") {
+            yield* Deferred.succeed(subscribe, undefined);
+            yield* Deferred.await(helloRead);
+          }
+          for (const requestId of ["install-A", "install-B"]) {
+            const policy = {
+              version: 1,
+              type: "desktopUpdateRestartPolicy",
+              requestId,
+              continueRunningThreads: false,
+            } as const;
+            const preparing = yield* publisher
+              .requestUpdateRestartPolicy(["paused", "observer"], policy)
+              .pipe(Effect.forkScoped);
+            assert.deepEqual(yield* Queue.take(observedPolicies), policy);
+            for (const sourceId of ["paused", "observer"]) {
+              yield* publisher.handleControlForSource(sourceId, {
+                ...policy,
+                type: "desktopUpdateRestartPolicyResult",
+                accepted: true,
+              });
+            }
+            assert.isTrue(yield* Fiber.join(preparing));
+            if (requestId === "install-A" && policyState !== "queued") {
+              yield* Deferred.succeed(subscribe, undefined);
+              yield* Deferred.await(helloRead);
+              if (policyState === "cleared initial")
+                yield* publisher.clearUpdateRestartPolicy(requestId);
+            }
+          }
+          yield* Deferred.succeed(resume, undefined);
+          assert.equal(Option.getOrThrow(yield* Fiber.join(nextPolicy)).requestId, "install-B");
+        }),
+      ).pipe(Effect.provide(layerPolicyPublisher)),
+  );
+
+  it.effect.each(["refused", "disconnected", "missing"] as const)(
+    "refuses an update when a backend policy ACK is %s",
+    (failure) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+          const policy = {
+            version: 1,
+            type: "desktopUpdateRestartPolicy",
+            requestId: "failed-1",
+            continueRunningThreads: false,
+          } as const;
+          const pending = yield* publisher
+            .requestUpdateRestartPolicy(["primary", "wsl:Ubuntu"], policy)
+            .pipe(Effect.forkScoped);
+          const command = yield* publisher.encoded("primary").pipe(
+            Stream.map(
+              (bytes) => JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>,
+            ),
+            Stream.filter((message) => message.type === policy.type),
+            Stream.runHead,
+          );
+          assert.deepEqual(Option.getOrThrow(command), policy);
+          const result = {
+            ...policy,
+            type: "desktopUpdateRestartPolicyResult",
+            accepted: true,
+          } as const;
+          yield* publisher.handleControlForSource("primary", result);
+          if (failure === "refused")
+            yield* publisher.handleControlForSource("wsl:Ubuntu", { ...result, accepted: false });
+          else if (failure === "disconnected") yield* publisher.removeControlSource("primary");
+          else yield* TestClock.adjust("15 seconds");
+          assert.isFalse(yield* Fiber.join(pending));
+          yield* publisher.clearUpdateRestartPolicy(policy.requestId);
+          const hello = Option.getOrThrow(yield* publisher.encoded("primary").pipe(Stream.runHead));
+          assert.deepEqual(JSON.parse(new TextDecoder().decode(hello)), {
+            version: 1,
+            type: "desktopTelemetryHello",
+            electronPid: process.pid,
+            supportsUpdateThreadContinuationControl: true,
+          });
+        }),
+      ).pipe(Effect.provide(layerPolicyPublisher)),
+  );
+
   it.effect("stops when its scope closes during an Electron telemetry sample", () =>
     Effect.gen(function* () {
       const pollStarted = yield* Deferred.make<void>();

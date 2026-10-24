@@ -6,6 +6,8 @@ import {
   type DesktopTelemetryCommitDesktopUpdate,
   type DesktopTelemetryRequestDesktopUpdate,
   type DesktopUpdateStatusReport,
+  type DesktopUpdateRestartPolicy,
+  type DesktopUpdateRestartPolicyResult,
   type HostPowerSnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -63,7 +65,12 @@ export class DesktopTelemetryPublisher extends Context.Service<
   {
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
-    readonly encoded: Stream.Stream<Uint8Array>;
+    readonly encoded: (sourceId: string) => Stream.Stream<Uint8Array>;
+    readonly requestUpdateRestartPolicy: (
+      sourceIds: readonly string[],
+      policy: DesktopUpdateRestartPolicy,
+    ) => Effect.Effect<boolean>;
+    readonly clearUpdateRestartPolicy: (requestId: string) => Effect.Effect<void>;
     readonly handleControlForSource: (
       sourceId: string,
       message: DesktopTelemetryControlMessage,
@@ -175,6 +182,58 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const updateRequestQueue = yield* Queue.unbounded<DesktopTelemetryRequestDesktopUpdate>();
   const updateCommitQueue = yield* Queue.unbounded<DesktopTelemetryCommitDesktopUpdate>();
   const updateCancellationQueue = yield* Queue.unbounded<DesktopTelemetryCancelDesktopUpdate>();
+
+  const restartPolicies = yield* Ref.make<ReadonlyMap<string, DesktopUpdateRestartPolicy>>(
+    new Map(),
+  );
+  const restartPolicyChanges = yield* PubSub.unbounded<{
+    readonly sourceIds: readonly string[];
+    readonly policy: DesktopUpdateRestartPolicy;
+  }>();
+  const restartPolicyResults = yield* PubSub.unbounded<{
+    readonly sourceId: string;
+    readonly result: DesktopUpdateRestartPolicyResult;
+  }>();
+
+  const requestUpdateRestartPolicy = Effect.fn("desktop.telemetry.requestUpdateRestartPolicy")(
+    function* (sourceIds: readonly string[], policy: DesktopUpdateRestartPolicy) {
+      if (sourceIds.length === 0) return true;
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const results = yield* PubSub.subscribe(restartPolicyResults);
+          yield* Ref.update(restartPolicies, (current) => {
+            const next = new Map(current);
+            for (const sourceId of sourceIds) next.set(sourceId, policy);
+            return next;
+          });
+          yield* PubSub.publish(restartPolicyChanges, { sourceIds, policy });
+          const pending = new Set(sourceIds);
+          while (pending.size > 0) {
+            const { sourceId, result } = yield* PubSub.take(results);
+            if (
+              !sourceIds.includes(sourceId) ||
+              result.requestId !== policy.requestId ||
+              result.continueRunningThreads !== policy.continueRunningThreads
+            )
+              continue;
+            if (!result.accepted) return false;
+            pending.delete(sourceId);
+          }
+          return true;
+        }),
+      ).pipe(Effect.timeoutOption(Duration.seconds(15)), Effect.map(Option.getOrElse(() => false)));
+    },
+  );
+
+  const clearUpdateRestartPolicy = Effect.fn("desktop.telemetry.clearUpdateRestartPolicy")(
+    function* (requestId: string) {
+      yield* Ref.update(
+        restartPolicies,
+        (current) =>
+          new Map(Array.from(current).filter(([, policy]) => policy.requestId !== requestId)),
+      );
+    },
+  );
 
   const offer = (event: PowerEvent): void => {
     Queue.offerUnsafe(powerEvents, event);
@@ -322,6 +381,10 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     message,
   ) => {
     switch (message.type) {
+      case "desktopUpdateRestartPolicyResult":
+        return PubSub.publish(restartPolicyResults, { sourceId, result: message }).pipe(
+          Effect.asVoid,
+        );
       case "setDiagnosticsDemand":
         return Ref.modify(diagnosticsDemandSources, (sources) => {
           const previous = sources.size > 0;
@@ -352,10 +415,21 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         return Queue.offer(updateCancellationQueue, message).pipe(Effect.asVoid);
     }
   };
-  const removeControlSource: DesktopTelemetryPublisher["Service"]["removeControlSource"] = (
-    sourceId,
-  ) =>
-    Ref.modify(diagnosticsDemandSources, (sources) => {
+  const removeControlSource = Effect.fn("desktop.telemetry.removeControlSource")(function* (
+    sourceId: string,
+  ) {
+    const policy = (yield* Ref.get(restartPolicies)).get(sourceId);
+    if (policy !== undefined)
+      yield* PubSub.publish(restartPolicyResults, {
+        sourceId,
+        result: {
+          ...policy,
+          type: "desktopUpdateRestartPolicyResult",
+          accepted: false,
+          reason: "The backend disconnected while preparing the update.",
+        },
+      });
+    yield* Ref.modify(diagnosticsDemandSources, (sources) => {
       const previous = sources.size > 0;
       const next = new Set(sources);
       next.delete(sourceId);
@@ -367,6 +441,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
       ),
     );
+  });
 
   const snapshots = Stream.unwrap(
     Effect.gen(function* () {
@@ -394,14 +469,38 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       );
     }),
   );
-  const encoded = Stream.concat(
-    Stream.make({
-      version: 1,
-      type: "desktopTelemetryHello",
-      electronPid: process.pid,
-    } as const),
-    Stream.merge(snapshots, updateReports),
-  ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
+  const encoded = (sourceId: string) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(restartPolicyChanges);
+        const initialPolicy = (yield* Ref.get(restartPolicies)).get(sourceId);
+        const policies = Stream.fromSubscription(subscription).pipe(
+          Stream.filter((change) => change.sourceIds.includes(sourceId)),
+          Stream.map((change) => change.policy),
+        );
+        return Stream.concat(
+          Stream.make({
+            version: 1,
+            type: "desktopTelemetryHello",
+            electronPid: process.pid,
+            supportsUpdateThreadContinuationControl: true,
+          } as const),
+          Stream.concat(
+            initialPolicy === undefined ? Stream.empty : Stream.make(initialPolicy),
+            Stream.merge(Stream.merge(snapshots, updateReports), policies),
+          ),
+        );
+      }),
+    ).pipe(
+      Stream.filterEffect((message) =>
+        message.type === "desktopUpdateRestartPolicy"
+          ? Ref.get(restartPolicies).pipe(
+              Effect.map((current) => current.get(sourceId) === message),
+            )
+          : Effect.succeed(true),
+      ),
+      Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)),
+    );
 
   const publishUpdateReport: DesktopTelemetryPublisher["Service"]["publishUpdateReport"] = (
     report,
@@ -415,6 +514,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     encoded,
+    requestUpdateRestartPolicy,
+    clearUpdateRestartPolicy,
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,

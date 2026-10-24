@@ -29,7 +29,6 @@ import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
-  enrichProviderSnapshotWithVersionAdvisory,
   invalidateLatestProviderVersion,
   makeTargetedProviderUpdateAction,
   resolveLatestProviderUpdateAction,
@@ -37,7 +36,6 @@ import {
   type ProviderMaintenanceCommandAction,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
-import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
@@ -80,11 +78,6 @@ class ProviderMaintenanceCommandError extends Data.TaggedError("ProviderMaintena
   readonly message: string;
   readonly cause?: unknown;
 }> {}
-
-interface VerifiedProviderRefresh {
-  readonly providers: ReadonlyArray<ServerProvider>;
-  readonly verifiedProviders: ReadonlyArray<ServerProvider>;
-}
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -318,55 +311,6 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
   });
 
-  const verifyRefreshedProvider = (
-    provider: ProviderDriverKind,
-    maintenanceCapabilities: ProviderMaintenanceCapabilities,
-    instanceId: ProviderInstanceId,
-  ): Effect.Effect<VerifiedProviderRefresh> =>
-    providerRegistry.refreshAfterUpdate(provider, instanceId).pipe(
-      Effect.flatMap((providers) => {
-        const refreshedProviders = providers.filter(
-          (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
-        );
-        if (refreshedProviders.length === 0) {
-          return Effect.succeed<VerifiedProviderRefresh>({
-            providers,
-            verifiedProviders: [],
-          });
-        }
-        return Effect.forEach(
-          refreshedProviders,
-          (refreshedProvider) =>
-            enrichProviderSnapshotWithVersionAdvisory(
-              refreshedProvider,
-              maintenanceCapabilities,
-            ).pipe(
-              Effect.provideService(HttpClient.HttpClient, httpClient),
-              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-            ),
-          {
-            concurrency: "unbounded",
-          },
-        ).pipe(
-          Effect.map((verifiedProviders): VerifiedProviderRefresh => ({
-            providers,
-            verifiedProviders,
-          })),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Provider post-update version verification failed", {
-              provider,
-              cause: Cause.pretty(cause),
-            }).pipe(
-              Effect.as<VerifiedProviderRefresh>({
-                providers,
-                verifiedProviders: refreshedProviders,
-              }),
-            ),
-          ),
-        );
-      }),
-    );
-
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
@@ -509,18 +453,11 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             }
 
             yield* setRunningMessage("Verifying the installed version");
-            const verified = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
-              instanceId,
+            const verifiedProviders = (yield* providerRegistry.refreshAfterUpdate(
               provider,
-              { fresh: true },
-            );
-            yield* invalidateLatestProviderVersion(verified).pipe(
-              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-            );
-            const { verifiedProviders } = yield* verifyRefreshedProvider(
-              provider,
-              verified,
               instanceId,
+            )).filter(
+              (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
             );
             // A missing version alone is not held against it, since Cursor's `about` probe can
             // fail transiently on a healthy binary.

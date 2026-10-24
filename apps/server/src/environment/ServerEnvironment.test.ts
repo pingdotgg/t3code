@@ -18,6 +18,8 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const layerServerEnvironment = (baseDir: string) =>
@@ -74,6 +76,36 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
 });
 
 it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
+  it.effect("advertises desktop resume control only after native host proof", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const config = yield* makeServerConfig(baseDir);
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      let supported = false;
+      const environment = yield* ServerEnvironment.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ProcessRunner.layer,
+            layerEmptySecretStore,
+            ServerConfig.layer({ ...config, mode: "desktop" }),
+            ServerEnvironment.layerIdentity.pipe(Layer.provide(ServerConfig.layer(config))),
+            DesktopTelemetryReceiver.layerTest({
+              supportsUpdateThreadContinuationControl: Effect.sync(() => supported),
+            }),
+          ),
+        ),
+      );
+      expect((yield* environment.getDescriptor).capabilities.threadRestartContinuationControl).toBe(
+        false,
+      );
+      supported = true;
+      expect((yield* environment.getDescriptor).capabilities.threadRestartContinuationControl).toBe(
+        true,
+      );
+    }),
+  );
+
   it.effect("publishes proven install ownership only for manually updated servers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -118,6 +150,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           projectWorktreeCleanup: true,
           worktreesDirectory: true,
           threadAutoSettlementScope: true,
+          threadRestartContinuationControl: mode === "web",
         });
       }
     }),

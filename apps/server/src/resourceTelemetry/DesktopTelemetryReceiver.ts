@@ -9,6 +9,7 @@ import {
   type DesktopHostTelemetrySnapshot,
   DesktopTelemetryControlMessage,
   type DesktopUpdateStatusReport,
+  type DesktopUpdateRestartPolicy,
   type ResourceTelemetrySourceStatus,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -28,7 +29,27 @@ import * as Ndjson from "effect/encoding/Ndjson";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { UpdateRestartPolicy } from "../updateRestartPolicy.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
+
+export const applyUpdateRestartPolicy = Effect.fn(
+  "DesktopTelemetryReceiver.applyUpdateRestartPolicy",
+)(function* (message: DesktopUpdateRestartPolicy) {
+  const policy = yield* UpdateRestartPolicy;
+  const result = yield* policy.set(message.requestId, message.continueRunningThreads).pipe(
+    Effect.match({
+      onFailure: () => ({ accepted: false, reason: "Could not persist the update resume choice." }),
+      onSuccess: () => ({ accepted: true }),
+    }),
+  );
+  return {
+    version: 1 as const,
+    type: "desktopUpdateRestartPolicyResult" as const,
+    requestId: message.requestId,
+    continueRunningThreads: message.continueRunningThreads,
+    ...result,
+  };
+});
 
 const INITIAL_SAMPLE_DEADLINE_MS = 90_000;
 const MIN_SNAPSHOT_STALE_AFTER_MS = 90_000;
@@ -178,7 +199,9 @@ export class DesktopTelemetryReceiver extends Context.Service<
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
     readonly commitDesktopUpdate: (
       requestId: string,
+      continueRunningThreads?: boolean,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
+    readonly supportsUpdateThreadContinuationControl: Effect.Effect<boolean>;
     readonly cancelDesktopUpdate: (
       requestId: string,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
@@ -343,6 +366,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const healthChanges = yield* PubSub.sliding<DesktopTelemetryReceiverHealth>(4);
   const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
+  const supportsUpdateThreadContinuationControl = yield* Ref.make(false);
   const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
   const controlMutex = yield* Semaphore.make(1);
   const snapshotMutex = yield* Semaphore.make(1);
@@ -512,11 +536,29 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         if (message.type === "desktopTelemetryHello") {
           return recordContact.pipe(
             Effect.andThen(
+              Ref.set(
+                supportsUpdateThreadContinuationControl,
+                message.supportsUpdateThreadContinuationControl === true,
+              ),
+            ),
+            Effect.andThen(
               updateHealth((current): DesktopTelemetryReceiverHealth => ({
                 ...current,
                 status: "healthy",
                 lastError: Option.none(),
               })),
+            ),
+          );
+        }
+
+        if (message.type === "desktopUpdateRestartPolicy") {
+          return recordContact.pipe(
+            Effect.andThen(applyUpdateRestartPolicy(message)),
+            Effect.flatMap(sendControlMessage),
+            Effect.catch((error) =>
+              Effect.logWarning("Failed to acknowledge desktop update restart policy", {
+                error: error.message,
+              }),
             ),
           );
         }
@@ -644,8 +686,14 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         type: "requestDesktopUpdate",
         requestId,
       }),
-    commitDesktopUpdate: (requestId) =>
-      sendControlMessage({ version: 1, type: "commitDesktopUpdate", requestId }),
+    commitDesktopUpdate: (requestId, continueRunningThreads) =>
+      sendControlMessage({
+        version: 1,
+        type: "commitDesktopUpdate",
+        requestId,
+        ...(continueRunningThreads === undefined ? {} : { continueRunningThreads }),
+      }),
+    supportsUpdateThreadContinuationControl: Ref.get(supportsUpdateThreadContinuationControl),
     cancelDesktopUpdate: (requestId) =>
       sendControlMessage({ version: 1, type: "cancelDesktopUpdate", requestId }),
     desktopUpdates: Effect.gen(function* () {
@@ -698,6 +746,7 @@ export const layerTest = (
       setDiagnosticsDemand: () => Effect.void,
       requestDesktopUpdate: () => Effect.void,
       commitDesktopUpdate: () => Effect.void,
+      supportsUpdateThreadContinuationControl: Effect.succeed(false),
       cancelDesktopUpdate: () => Effect.void,
       desktopUpdates:
         overrides.desktopUpdates ??

@@ -54,6 +54,8 @@ function report(
 }
 
 interface HarnessOptions {
+  readonly support?: boolean;
+  readonly commitDesktopUpdate?: DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]["commitDesktopUpdate"];
   readonly mode?: "web" | "desktop";
   readonly controlFd?: number | undefined;
   readonly reports?: (requestId: string) => readonly DesktopUpdateStatusReport[];
@@ -90,6 +92,10 @@ const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* 
     Effect.provide(
       Layer.mergeAll(
         DesktopTelemetryReceiver.layerTest({
+          supportsUpdateThreadContinuationControl: Effect.succeed(options.support ?? false),
+          ...(options.commitDesktopUpdate
+            ? { commitDesktopUpdate: options.commitDesktopUpdate }
+            : {}),
           requestDesktopUpdate: (requestId) =>
             Deferred.succeed(requestIdDeferred, requestId).pipe(Effect.asVoid),
           desktopUpdates: Effect.succeed({
@@ -105,6 +111,47 @@ const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* 
 });
 
 it.layer(NodeServices.layer)("desktop app update", (it) => {
+  it.effect("refuses a commit whose saved resume choice was lost", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({
+        commitDesktopUpdate: () => Effect.die("an unprepared update must not install"),
+      });
+      const error = yield* service.commit("previous-backend-token").pipe(Effect.flip);
+      expect(error.reason).toBe(
+        "This desktop update is no longer prepared. Check for updates again.",
+      );
+    }),
+  );
+
+  it.effect("refuses OFF when the desktop host did not advertise support", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const error = yield* service.run(() => Effect.void, false).pipe(Effect.flip);
+      expect(error.reason).toBe("This desktop app cannot disable thread resume for an update.");
+    }),
+  );
+
+  it.effect("carries OFF from preparation to the matching native commit", () =>
+    Effect.gen(function* () {
+      const committed = yield* Deferred.make<readonly [string, boolean | undefined]>();
+      const { service } = yield* makeHarness({
+        support: true,
+        keepOpen: true,
+        reports: (requestId) => [
+          report(requestId, makeState({ status: "downloaded", downloadedVersion: "1.2.4" }), {
+            outcome: "ready-to-install",
+          }),
+        ],
+        commitDesktopUpdate: (id, enabled) =>
+          Deferred.succeed(committed, [id, enabled]).pipe(Effect.asVoid),
+      });
+      const prepared = yield* service.run(() => Effect.void, false);
+      const fiber = yield* service.commit(prepared.desktopUpdateToken!).pipe(Effect.forkChild);
+      expect(yield* Deferred.await(committed)).toEqual([prepared.desktopUpdateToken, false]);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
   it.effect("collapses state reports into progress stages and succeeds on installing", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness({

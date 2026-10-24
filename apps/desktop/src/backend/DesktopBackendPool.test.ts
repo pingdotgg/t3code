@@ -46,7 +46,9 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
         Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
           latest: Effect.succeedNone,
           changes: Stream.empty,
-          encoded: Stream.empty,
+          encoded: () => Stream.empty,
+          requestUpdateRestartPolicy: () => Effect.succeed(true),
+          clearUpdateRestartPolicy: () => Effect.void,
           handleControlForSource: () => Effect.void,
           removeControlSource: () => Effect.void,
           publishUpdateReport: () => Effect.void,

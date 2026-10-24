@@ -25,6 +25,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
+  createProviderVersionAdvisory,
   enrichProviderSnapshotWithVersionAdvisory,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
@@ -365,7 +366,7 @@ describe("providerMaintenanceRunner", () => {
       });
 
       yield* updater.updateProvider(CODEX_DRIVER);
-      assert.deepStrictEqual(fresh, [false, true, true]);
+      assert.deepStrictEqual(fresh, [false, true]);
       assert.deepStrictEqual(calls, [
         { command: "/opt/homebrew/bin/brew", args: ["upgrade", "--cask", "codex"] },
       ]);
@@ -504,6 +505,13 @@ describe("providerMaintenanceRunner", () => {
           ...baseProvider,
           installed: true,
           version: "0.1.0",
+          versionAdvisory: createProviderVersionAdvisory({
+            driver: CODEX_DRIVER,
+            currentVersion: "0.1.0",
+            latestVersion: "9.9.9",
+            checkedAt: baseProvider.checkedAt,
+            maintenanceCapabilities: lifecycleFor(CODEX_DRIVER),
+          }),
         });
         const updater = yield* makeTestRunner(registry);
 
@@ -785,7 +793,7 @@ it.effect.each([
 );
 
 it.effect(
-  "uses fresh installer versions for post-update verification and compatibility checks",
+  "checks fresh installer versions for compatibility before running the provider update command",
   () => {
     const calls: string[] = [];
     let latest = "1.0.0";
@@ -818,6 +826,21 @@ it.effect(
         {
           ...registry,
           getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(capabilities),
+          refreshAfterUpdate: () =>
+            registry.getProviders.pipe(
+              Effect.map((providers) =>
+                providers.map((provider) => ({
+                  ...provider,
+                  versionAdvisory: createProviderVersionAdvisory({
+                    driver: CODEX_DRIVER,
+                    currentVersion: provider.version,
+                    latestVersion: "2.0.0",
+                    checkedAt: provider.checkedAt,
+                    maintenanceCapabilities: capabilities,
+                  }),
+                })),
+              ),
+            ),
         },
         manifest,
       );

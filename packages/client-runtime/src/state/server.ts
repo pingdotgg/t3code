@@ -1,4 +1,5 @@
 import {
+  defaultInstanceIdForDriver,
   type EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -1196,8 +1197,14 @@ export function createServerEnvironmentAtoms<R, E>(
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([
+            environmentId,
+            input.instanceId ?? defaultInstanceIdForDriver(input.provider),
+          ]),
+      },
     }),
     updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {

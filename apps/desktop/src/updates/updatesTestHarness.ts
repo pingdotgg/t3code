@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateState, DesktopUpdateRestartPolicy } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
@@ -14,6 +14,8 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
+import * as Stream from "effect/Stream";
+import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 
 export const flushCallbacks = Effect.yieldNow;
 
@@ -28,9 +30,14 @@ export interface UpdatesHarnessOptions {
   readonly downloadUpdate?: Effect.Effect<void>;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
+  readonly requestUpdateRestartPolicy?: (
+    sourceIds: readonly string[],
+    policy: DesktopUpdateRestartPolicy,
+  ) => Effect.Effect<boolean>;
   readonly startBackend?: Effect.Effect<void>;
   readonly backendDesiredRunning?: boolean;
   readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
+  readonly backendList?: Effect.Effect<readonly DesktopBackendPool.DesktopBackendInstance[]>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
   readonly packageType?: string | undefined;
@@ -142,15 +149,26 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     snapshot: Effect.sync(() => ({
       desiredRunning: backendDesiredRunning,
       ready: false,
-      activePid: Option.none(),
+      activePid: backendDesiredRunning ? Option.some(123) : Option.none(),
       restartAttempt: 0,
       restartScheduled: false,
     })),
     waitForReady: () => Effect.succeed(true),
   };
-  const layerBackend = DesktopBackendPool.layerTest(
+  const layerBackendBase = DesktopBackendPool.layerTest(
     options.backendInstances ?? [stubBackendInstance],
   );
+  const backendList = options.backendList;
+  const layerBackend =
+    backendList === undefined
+      ? layerBackendBase
+      : Layer.effect(
+          DesktopBackendPool.DesktopBackendPool,
+          Effect.map(DesktopBackendPool.DesktopBackendPool, (pool) => ({
+            ...pool,
+            list: backendList,
+          })),
+        ).pipe(Layer.provide(layerBackendBase));
 
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -249,7 +267,37 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
   });
 
+  const restartPolicies: Array<{
+    sourceIds: readonly string[];
+    policy: DesktopUpdateRestartPolicy;
+  }> = [];
+  const clearedRestartPolicies: string[] = [];
+  const layerPublisher = Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
+    latest: Effect.succeedNone,
+    changes: Stream.empty,
+    encoded: () => Stream.empty,
+    handleControlForSource: () => Effect.void,
+    removeControlSource: () => Effect.void,
+    publishUpdateReport: () => Effect.void,
+    updateRequests: Stream.empty,
+    updateCommits: Stream.empty,
+    updateCancellations: Stream.empty,
+    requestUpdateRestartPolicy: (sourceIds, policy) =>
+      Effect.sync(() => {
+        restartPolicies.push({ sourceIds, policy });
+      }).pipe(
+        Effect.andThen(
+          options.requestUpdateRestartPolicy?.(sourceIds, policy) ?? Effect.succeed(true),
+        ),
+      ),
+    clearUpdateRestartPolicy: (requestId) =>
+      Effect.sync(() => {
+        clearedRestartPolicies.push(requestId);
+      }),
+  });
+
   const layer = DesktopUpdates.layer.pipe(
+    Layer.provideMerge(layerPublisher),
     Layer.provide(layerFileSystem),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
@@ -273,6 +321,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
+    restartPolicies,
+    clearedRestartPolicies,
     updateRestartMarkers,
     installRecords,
     previousInstallRecord: () => previousInstallRecord,

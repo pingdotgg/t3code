@@ -1,5 +1,7 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -12,6 +14,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -19,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -26,11 +30,13 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
+  createServerEnvironmentAtoms,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
@@ -83,6 +89,105 @@ function session(client: WsRpcProtocolClient): RpcSession {
     closed: Effect.never,
   };
 }
+
+describe("provider update command lanes", () => {
+  it.each([
+    ["independent instances overlap", "first", "second", "codex", "environment-1", true],
+    ["duplicate instances serialize", "first", "first", "codex", "environment-1", false],
+    [
+      "implicit defaults serialize with explicit defaults",
+      undefined,
+      "codex",
+      "codex",
+      "environment-1",
+      false,
+    ],
+    [
+      "different driver defaults overlap",
+      undefined,
+      undefined,
+      "claudeAgent",
+      "environment-1",
+      true,
+    ],
+    [
+      "the same instance on different environments overlaps",
+      "first",
+      "first",
+      "codex",
+      "environment-2",
+      true,
+    ],
+  ] as const)(
+    "%s",
+    async (_name, firstInstance, secondInstance, secondDriver, secondEnvironment, concurrent) => {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const calls: string[] = [];
+      const registry = AtomRegistry.make();
+      const runtime = Atom.runtime(
+        Layer.mergeAll(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (environmentId: EnvironmentId) =>
+              Effect.promise(async () => {
+                calls.push(environmentId);
+                if (calls.length === 1) {
+                  started.resolve();
+                  await release.promise;
+                }
+                return { providers: [] };
+              }),
+          } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.mock(Persistence.EnvironmentCacheStore)({}),
+        ),
+      );
+      const { updateProvider } = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make<ServerConfig | null>(null),
+      });
+      try {
+        const first = updateProvider.run(registry, {
+          environmentId: EnvironmentId.make("environment-1"),
+          input: {
+            provider: ProviderDriverKind.make("codex"),
+            ...(firstInstance === undefined
+              ? {}
+              : { instanceId: ProviderInstanceId.make(firstInstance) }),
+          },
+        });
+        await started.promise;
+        const second = updateProvider.run(registry, {
+          environmentId: EnvironmentId.make(secondEnvironment),
+          input: {
+            provider: ProviderDriverKind.make(secondDriver),
+            ...(secondInstance === undefined
+              ? {}
+              : { instanceId: ProviderInstanceId.make(secondInstance) }),
+          },
+        });
+        const probe = await updateProvider.run(registry, {
+          environmentId: EnvironmentId.make("probe-environment"),
+          input: {
+            provider: ProviderDriverKind.make("codex"),
+            instanceId: ProviderInstanceId.make("probe"),
+          },
+        });
+        expect(probe._tag).toBe("Success");
+        expect(calls).toEqual([
+          "environment-1",
+          ...(concurrent ? [secondEnvironment] : []),
+          "probe-environment",
+        ]);
+        release.resolve();
+        const results = await Promise.all([first, second]);
+        expect(results.map((result) => result._tag)).toEqual(["Success", "Success"]);
+        expect(calls).toHaveLength(3);
+      } finally {
+        release.resolve();
+        registry.dispose();
+      }
+    },
+  );
+});
 
 describe("update restart reconnect nudges", () => {
   it.effect("retries a desktop commit that was lost before delivery", () =>

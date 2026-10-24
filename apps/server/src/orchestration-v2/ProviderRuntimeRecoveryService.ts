@@ -22,6 +22,8 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { UpdateRestartPolicy, UpdateRestartPolicyError } from "../updateRestartPolicy.ts";
+import * as Option from "effect/Option";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import {
@@ -174,6 +176,7 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const updateRestartPolicy = yield* UpdateRestartPolicy;
   type RecoverySession = ProjectionStore.ProjectionRuntimeRecoveryState["providerSessions"][number];
   /**
    * A session shared by several threads (one Codex app server) is stopped by the
@@ -628,16 +631,17 @@ export const make = Effect.gen(function* () {
               now,
             )
           : undefined;
-      const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
-        ? [
-            {
-              id: `effect:restart-continuation:${continuationRun.id}`,
-              commandId,
-              threadId: projection.thread.id,
-              request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
-            },
-          ]
-        : [];
+      const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> =
+        continuationRun && !(yield* updateRestartPolicy.isVetoed(continuationRun.id))
+          ? [
+              {
+                id: `effect:restart-continuation:${continuationRun.id}`,
+                commandId,
+                threadId: projection.thread.id,
+                request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
+              },
+            ]
+          : [];
       const stoppedSessions = projection.providerSessions.filter(
         (candidate) => candidate.status !== "stopped" && candidate.status !== "error",
       ).length;
@@ -712,6 +716,7 @@ export const make = Effect.gen(function* () {
     let closedRequests = 0;
     let retiredEffects = 0;
     const stoppedThisPass = new Map<string, RecoverySession>();
+    const recoveryProjections = new Map<ThreadId, ProjectionStore.ProjectionRuntimeRecoveryState>();
     for (const threadId of threadIds) {
       const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
         Effect.mapError(
@@ -723,6 +728,28 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+      recoveryProjections.set(threadId, projection);
+    }
+    yield* updateRestartPolicy
+      .capture(
+        [...recoveryProjections.values()].flatMap((projection) =>
+          projection.runs.filter((run) => run.status !== "queued").map((run) => run.id),
+        ),
+        trigger,
+        (runId) =>
+          outbox.get(`effect:restart-continuation:${runId}`).pipe(
+            Effect.map(
+              Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
+            ),
+            Effect.mapError((cause) => new UpdateRestartPolicyError({ cause })),
+          ),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause }),
+        ),
+      );
+    for (const projection of recoveryProjections.values()) {
       const enabled =
         continueAfterRestart !== null &&
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
@@ -766,6 +793,8 @@ export const make = Effect.gen(function* () {
           return;
         const run = restartContinuationRun(projection, yield* DateTime.now);
         if (!run) return;
+        yield* updateRestartPolicy.capture([run.id], "shutdown");
+        if (yield* updateRestartPolicy.isVetoed(run.id)) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({
           commandId,

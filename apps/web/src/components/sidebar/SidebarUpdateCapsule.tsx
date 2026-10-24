@@ -4,7 +4,6 @@ import { type ReactNode, useSyncExternalStore } from "react";
 import { cn } from "~/lib/utils";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
-import { useServerUpdate } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -14,13 +13,59 @@ import {
   resolveUpdateRunMachineStatus,
   type UpdateEverythingRun,
   type UpdateRunLocalState,
+  type UpdateCapsuleView,
+  type UpdatePlanPausedReason,
+  type UpdateRunMachineStatus,
   type UpdateRunMachineView,
 } from "./updateEverything.logic";
 import {
+  continueWithoutLocalApp,
   dismissSettledUpdateRunMachines,
+  dismissUpdatePlan,
   postponeUpdateRestart,
-  retryFailedUpdateRunServers,
+  retryUpdatePlan,
 } from "./updateEverythingRun";
+
+type UpdateCapsuleAction = NonNullable<UpdateCapsuleView["action"]>;
+
+const ACTION_LABELS: Record<UpdateCapsuleAction, string> = {
+  later: "Later",
+  retry: "Retry",
+  dismiss: "Dismiss",
+  restart: "Restart",
+  "continue-without-app": "Skip app",
+};
+
+const PAUSED_LABELS: Record<UpdatePlanPausedReason, string> = {
+  later: "waiting for restart",
+  "download-failed": "download failed",
+  "install-refused": "restart did not start",
+  "wrong-version": "wrong version installed",
+  "not-applied": "update did not apply",
+  expired: "plan expired",
+  storage: "plan not saved",
+  unknown: "needs review",
+};
+
+const isTimed = (status: UpdateRunMachineStatus) =>
+  status !== "done" &&
+  status !== "failed" &&
+  status !== "waiting" &&
+  status !== "waiting-dependency";
+
+function secondaryActions(run: UpdateEverythingRun): UpdateCapsuleAction[] {
+  if (run.phase === "complete") return ["dismiss"];
+  if (run.phase !== "paused") return [];
+  switch (run.pausedReason) {
+    case "download-failed":
+      return ["continue-without-app", "dismiss"];
+    case "wrong-version":
+    case "not-applied":
+      return ["retry", "dismiss"];
+    default:
+      return ["dismiss"];
+  }
+}
 
 function useNow(intervalMs: number | null): number {
   const step = intervalMs ?? 60_000;
@@ -49,10 +94,12 @@ function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, 
     return `restarts in ${Math.max(0, Math.ceil((run.restartAt - now) / 1000))}s`;
   }
   if (run.phase === "installing") return "restarting";
+  if (run.phase === "paused") return PAUSED_LABELS[run.pausedReason ?? "unknown"];
+  if (run.phase !== "local") return "updated";
   if (local?.status === "downloading") {
     return `downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`;
   }
-  return "restarts after the servers";
+  return "updates first";
 }
 
 export function SidebarUpdateCapsule({
@@ -67,20 +114,19 @@ export function SidebarUpdateCapsule({
   readonly onRestart?: () => Promise<void>;
 }) {
   const machines = useUpdateRunMachineViews(run);
-  const hasActiveMachine = machines.some(
-    ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
-  );
+  const hasActiveMachine = machines.some(({ status }) => isTimed(status));
   const now = useNow(run.phase === "countdown" ? 1_000 : hasActiveMachine ? 30_000 : null);
   const view = describeUpdateCapsule(run, machines, local, now);
-  const updateServer = useServerUpdate();
-  const failed = machines.some(({ status }) => status === "failed");
-  const settled = !hasActiveMachine && run.localVersion === null;
-
-  const actionLabel =
-    view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
-  const runAction = () => {
-    if (view.action === "later") postponeUpdateRestart();
-    else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
+  const isPlan = run.phase === "paused" || run.phase === "complete";
+  const actions = [
+    ...(view.action === null ? [] : [view.action]),
+    ...secondaryActions(run).filter((action) => action !== view.action),
+  ];
+  const runAction = (action: UpdateCapsuleAction) => {
+    if (action === "later") postponeUpdateRestart();
+    else if (action === "continue-without-app") void continueWithoutLocalApp();
+    else if (action === "restart" || action === "retry") void retryUpdatePlan();
+    else if (isPlan) void dismissUpdatePlan();
     else dismissSettledUpdateRunMachines();
   };
 
@@ -114,9 +160,9 @@ export function SidebarUpdateCapsule({
           <button
             type="button"
             className="relative shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
-            onClick={runAction}
+            onClick={() => runAction(view.action!)}
           >
-            {actionLabel}
+            {ACTION_LABELS[view.action]}
           </button>
         ) : (
           <span className="pointer-events-none relative grid size-8 shrink-0 place-items-center">
@@ -128,8 +174,15 @@ export function SidebarUpdateCapsule({
         <div className="flex flex-col gap-1 text-xs">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
-              <span className="text-muted-foreground tabular-nums">
+              <span>This device</span>
+              <span
+                className={cn(
+                  "shrink-0 tabular-nums",
+                  run.phase === "paused" && run.pausedReason !== "later"
+                    ? "text-destructive"
+                    : "text-muted-foreground",
+                )}
+              >
                 {localStatusLabel(run, local, now)}
               </span>
             </div>
@@ -152,9 +205,7 @@ export function SidebarUpdateCapsule({
                   )}
                 >
                   {RUN_STATUS_LABELS[status]}
-                  {status !== "done" && status !== "failed" && status !== "waiting"
-                    ? ` ${formatUpdateElapsed(now - machine.startedAt)}`
-                    : ""}
+                  {isTimed(status) ? ` ${formatUpdateElapsed(now - machine.startedAt)}` : ""}
                 </span>
               </div>
               {machine.failure !== null ? (
@@ -162,16 +213,20 @@ export function SidebarUpdateCapsule({
               ) : null}
             </div>
           ))}
-          {settled && failed ? (
+          {actions.length > 0 && view.action !== "later" ? (
             <div className="mt-1 flex justify-end gap-1">
-              {view.action === "retry" ? (
-                <Button size="xs" variant="outline" onClick={runAction}>
-                  Retry
+              {actions.map((action, index) => (
+                <Button
+                  key={action}
+                  size="xs"
+                  variant={index === 0 ? "outline" : "ghost"}
+                  onClick={() => runAction(action)}
+                >
+                  {action === "continue-without-app"
+                    ? "Continue without app update"
+                    : ACTION_LABELS[action]}
                 </Button>
-              ) : null}
-              <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-                Dismiss
-              </Button>
+              ))}
             </div>
           ) : null}
         </div>

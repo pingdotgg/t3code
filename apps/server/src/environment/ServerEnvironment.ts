@@ -21,6 +21,8 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as Option from "effect/Option";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -182,6 +184,9 @@ const makeIdentity = Effect.gen(function* () {
 
 /** @public */
 export const make = Effect.gen(function* () {
+  const desktopTelemetry = yield* Effect.serviceOption(
+    DesktopTelemetryReceiver.DesktopTelemetryReceiver,
+  );
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -275,10 +280,23 @@ export const make = Effect.gen(function* () {
     // publish`, the client settings toggle), so the capability is read per
     // descriptor request rather than baked in at startup.
     getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
+      Effect.flatMap((agentActivityPublishing) =>
+        (serverConfig.mode !== "desktop"
+          ? Effect.succeed(true)
+          : Option.isSome(desktopTelemetry)
+            ? desktopTelemetry.value.supportsUpdateThreadContinuationControl
+            : Effect.succeed(false)
+        ).pipe(
+          Effect.map((threadRestartContinuationControl) => ({
+            ...descriptor,
+            capabilities: {
+              ...descriptor.capabilities,
+              agentActivityPublishing,
+              threadRestartContinuationControl,
+            },
+          })),
+        ),
+      ),
     ),
   });
 });

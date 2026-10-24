@@ -56,7 +56,9 @@ function runRemoteUpdatesTest(
       const publisher = DesktopTelemetryPublisher.DesktopTelemetryPublisher.of({
         latest: Effect.succeedNone,
         changes: Stream.empty,
-        encoded: Stream.empty,
+        encoded: () => Stream.empty,
+        requestUpdateRestartPolicy: () => Effect.succeed(true),
+        clearUpdateRestartPolicy: () => Effect.void,
         handleControlForSource: () => Effect.void,
         removeControlSource: () => Effect.void,
         publishUpdateReport: (report) =>
@@ -84,42 +86,50 @@ function terminalReports(reports: DesktopUpdateStatusReport[]): DesktopUpdateSta
 }
 
 describe("DesktopRemoteUpdates", () => {
-  it.effect("drives check, download, and install with no local confirmation", () => {
-    const harness = makeHarness();
+  it.effect.each([false, true, undefined])(
+    "retains the remote resume choice %s through install",
+    (continueRunningThreads) => {
+      const harness = makeHarness();
 
-    return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
-      Effect.gen(function* () {
-        yield* Queue.offer(requests, request("req-1"));
-        yield* settle;
-        assert.equal(harness.checkCount(), 1);
+      return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(requests, request("req-1"));
+          yield* settle;
+          assert.equal(harness.checkCount(), 1);
 
-        harness.emit("update-available", { version: "1.2.4" });
-        yield* settle;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* settle;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* settle;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* settle;
 
-        const terminals = terminalReports(reports);
-        assert.equal(terminals.length, 1);
-        assert.equal(terminals[0]?.outcome, "ready-to-install");
-        assert.equal(terminals[0]?.requestId, "req-1");
-        assert.equal(harness.quitAndInstalls(), 0);
+          const terminals = terminalReports(reports);
+          assert.equal(terminals.length, 1);
+          assert.equal(terminals[0]?.outcome, "ready-to-install");
+          assert.equal(terminals[0]?.requestId, "req-1");
+          assert.equal(harness.quitAndInstalls(), 0);
 
-        yield* Queue.offer(commits, {
-          version: 1,
-          type: "commitDesktopUpdate",
-          requestId: "req-1",
-        });
-        yield* settle;
-        assert.equal(harness.quitAndInstalls(), 1);
+          yield* Queue.offer(commits, {
+            version: 1,
+            type: "commitDesktopUpdate",
+            requestId: "req-1",
+            ...(continueRunningThreads === undefined ? {} : { continueRunningThreads }),
+          });
+          yield* settle;
+          assert.equal(harness.quitAndInstalls(), 1);
+          assert.deepEqual(
+            harness.restartPolicies.map(({ policy }) => policy.continueRunningThreads),
+            continueRunningThreads === false ? [false] : [],
+          );
 
-        const statuses = reports
-          .filter((report) => report.requestId === "req-1")
-          .map((report) => report.state.status);
-        assert.include(statuses, "available");
-        assert.include(statuses, "downloaded");
-      }),
-    );
-  });
+          const statuses = reports
+            .filter((report) => report.requestId === "req-1")
+            .map((report) => report.state.status);
+          assert.include(statuses, "available");
+          assert.include(statuses, "downloaded");
+        }),
+      );
+    },
+  );
 
   it.effect("reports a failed outcome when quitAndInstall fails", () => {
     const harness = makeHarness({
@@ -159,49 +169,55 @@ describe("DesktopRemoteUpdates", () => {
     );
   });
 
-  it.effect("joins an in-progress install on commit instead of failing the token", () => {
-    const installStarted = Deferred.makeUnsafe<void>();
-    const releaseInstall = Deferred.makeUnsafe<void>();
-    const harness = makeHarness({
-      stopBackend: Deferred.succeed(installStarted, undefined).pipe(
-        Effect.andThen(Deferred.await(releaseInstall)),
-      ),
-    });
+  it.effect.each([undefined, false])(
+    "joins an active install only when the resume choice allows it: %s",
+    (continueRunningThreads) => {
+      const installStarted = Deferred.makeUnsafe<void>();
+      const releaseInstall = Deferred.makeUnsafe<void>();
+      const harness = makeHarness({
+        stopBackend: Deferred.succeed(installStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseInstall)),
+        ),
+      });
 
-    return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* Queue.offer(requests, request("req-join-commit"));
-        yield* settle;
-        harness.emit("update-available", { version: "1.2.4" });
-        yield* settle;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* settle;
-        assert.deepEqual(
-          terminalReports(reports).map((report) => report.outcome),
-          ["ready-to-install"],
-        );
+      return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* Queue.offer(requests, request("req-join-commit"));
+          yield* settle;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* settle;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* settle;
+          assert.deepEqual(
+            terminalReports(reports).map((report) => report.outcome),
+            ["ready-to-install"],
+          );
 
-        const localInstall = yield* updates.install.pipe(Effect.forkChild);
-        yield* Deferred.await(installStarted);
-        yield* Queue.offer(commits, {
-          version: 1,
-          type: "commitDesktopUpdate",
-          requestId: "req-join-commit",
-        });
-        yield* settle;
+          const localInstall = yield* updates.install.pipe(Effect.forkChild);
+          yield* Deferred.await(installStarted);
+          yield* Queue.offer(commits, {
+            version: 1,
+            type: "commitDesktopUpdate",
+            requestId: "req-join-commit",
+            ...(continueRunningThreads === undefined ? {} : { continueRunningThreads }),
+          });
+          yield* settle;
 
-        assert.deepEqual(
-          terminalReports(reports).map((report) => report.outcome),
-          ["ready-to-install"],
-        );
-        assert.equal(harness.quitAndInstalls(), 0);
+          assert.deepEqual(
+            terminalReports(reports).map((report) => report.outcome),
+            continueRunningThreads === false
+              ? ["ready-to-install", "failed"]
+              : ["ready-to-install"],
+          );
+          assert.equal(harness.quitAndInstalls(), 0);
 
-        yield* Deferred.succeed(releaseInstall, undefined);
-        yield* Fiber.join(localInstall);
-      }),
-    );
-  });
+          yield* Deferred.succeed(releaseInstall, undefined);
+          yield* Fiber.join(localInstall);
+        }),
+      );
+    },
+  );
 
   it.effect("does not join a normal app quit as an update install", () => {
     const harness = makeHarness();

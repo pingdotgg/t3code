@@ -275,6 +275,7 @@ export const DesktopHostTelemetryHello = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("desktopTelemetryHello"),
   electronPid: PositiveInt,
+  supportsUpdateThreadContinuationControl: Schema.optionalKey(Schema.Literal(true)),
 });
 export type DesktopHostTelemetryHello = typeof DesktopHostTelemetryHello.Type;
 
@@ -295,10 +296,29 @@ export const DesktopUpdateStatusReport = Schema.Struct({
 });
 export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
 
+export const DesktopUpdateRestartPolicy = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("desktopUpdateRestartPolicy"),
+  requestId: TrimmedNonEmptyString,
+  continueRunningThreads: Schema.Boolean,
+});
+export type DesktopUpdateRestartPolicy = typeof DesktopUpdateRestartPolicy.Type;
+
+export const DesktopUpdateRestartPolicyResult = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("desktopUpdateRestartPolicyResult"),
+  requestId: TrimmedNonEmptyString,
+  continueRunningThreads: Schema.Boolean,
+  accepted: Schema.Boolean,
+  reason: Schema.optionalKey(Schema.String),
+});
+export type DesktopUpdateRestartPolicyResult = typeof DesktopUpdateRestartPolicyResult.Type;
+
 export const DesktopHostTelemetryMessage = Schema.Union([
   DesktopHostTelemetryHello,
   DesktopHostTelemetrySnapshot,
   DesktopUpdateStatusReport,
+  DesktopUpdateRestartPolicy,
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
 
@@ -334,6 +354,7 @@ export const DesktopTelemetryCommitDesktopUpdate = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("commitDesktopUpdate"),
   requestId: TrimmedNonEmptyString,
+  continueRunningThreads: Schema.optionalKey(Schema.Boolean),
 });
 export type DesktopTelemetryCommitDesktopUpdate = typeof DesktopTelemetryCommitDesktopUpdate.Type;
 
@@ -350,6 +371,7 @@ export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryRequestDesktopUpdate,
   DesktopTelemetryCommitDesktopUpdate,
   DesktopTelemetryCancelDesktopUpdate,
+  DesktopUpdateRestartPolicyResult,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

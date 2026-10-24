@@ -44,6 +44,7 @@ export class DesktopAppUpdate extends Context.Service<
       reportProgress: (
         stage: ServerSelfUpdateProgressStage,
       ) => Effect.Effect<void, ServerSelfUpdateError>,
+      continueRunningThreads?: boolean,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
     /** Success stops this server, so this effect
         returns only when installation fails or times out. */
@@ -59,6 +60,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   const crypto = yield* Crypto.Crypto;
   const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const inFlight = yield* Ref.make(false);
+  const resumeChoices = yield* Ref.make(new Map<string, boolean | undefined>());
 
   const available = config.mode === "desktop" && config.desktopTelemetryControlFd !== undefined;
   const failWith = (reason: string, cause?: unknown) =>
@@ -133,11 +135,17 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   });
 
   const run: DesktopAppUpdate["Service"]["run"] = Effect.fn("desktopUpdate.desktopAppUpdate.run")(
-    function* (reportProgress) {
+    function* (reportProgress, continueRunningThreads) {
       if (!available) {
         return yield* failWith(
           "This server was not started by the T3 Code desktop app, so it cannot drive a desktop update.",
         );
+      }
+      if (
+        continueRunningThreads === false &&
+        !(yield* receiver.supportsUpdateThreadContinuationControl)
+      ) {
+        return yield* failWith("This desktop app cannot disable thread resume for an update.");
       }
       if (yield* Ref.getAndSet(inFlight, true)) {
         return yield* failWith("A desktop app update is already in progress.");
@@ -163,6 +171,11 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
               ),
             );
           return yield* consumeReports(requestId, changes, reportProgress).pipe(
+            Effect.tap(() =>
+              Ref.update(resumeChoices, (choices) =>
+                new Map(choices).set(requestId, continueRunningThreads),
+              ),
+            ),
             Effect.onInterrupt(() => receiver.cancelDesktopUpdate(requestId).pipe(Effect.ignore)),
           );
         }),
@@ -182,6 +195,17 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
     if (!available) {
       return yield* failWith("This server cannot commit a desktop app update.");
     }
+    const choices = yield* Ref.get(resumeChoices);
+    if (!choices.has(requestId)) {
+      return yield* failWith("This desktop update is no longer prepared. Check for updates again.");
+    }
+    const continueRunningThreads = choices.get(requestId);
+    if (
+      continueRunningThreads === false &&
+      !(yield* receiver.supportsUpdateThreadContinuationControl)
+    ) {
+      return yield* failWith("This desktop app cannot disable thread resume for an update.");
+    }
     const terminal = yield* Effect.scoped(
       Effect.gen(function* () {
         const { latest, changes } = yield* receiver.desktopUpdates;
@@ -190,7 +214,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
           onSome: (report) => Stream.concat(Stream.make(report), changes),
         });
         yield* Effect.uninterruptible(
-          receiver.commitDesktopUpdate(requestId).pipe(
+          receiver.commitDesktopUpdate(requestId, continueRunningThreads).pipe(
             Effect.mapError((error) => failWith("Could not reach the T3 Code desktop app.", error)),
             Effect.tap(() => onHandoffAccepted()),
           ),

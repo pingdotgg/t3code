@@ -516,7 +516,7 @@ describe("DesktopBackendConfiguration", () => {
     );
   });
 
-  it.effect("resolveWsl retires a staged runtime whose executable does not start", () => {
+  it.effect("resolveWsl retires a staged runtime when its probe fails", () => {
     const archiveHash = "c".repeat(64);
     const stagedAppRoot = `/home/test/.t3/wsl-runtime/sha256-${archiveHash}`;
     const observedProbeRoots: string[] = [];
@@ -533,7 +533,7 @@ describe("DesktopBackendConfiguration", () => {
             }),
           probeRuntime: (_distro, root) => {
             observedProbeRoots.push(root);
-            return { ok: false, reason: `${root}/t3 --version failed (exit 127)` };
+            return { ok: false, reason: "t3 is not executable" };
           },
           ensureNodePty: (_distro, root) => {
             observedNodePtyRoots.push(root);

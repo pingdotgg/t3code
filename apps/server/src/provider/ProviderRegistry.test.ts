@@ -66,7 +66,17 @@ import type {
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+  resolveLatestProviderVersion,
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeServerProvider = Schema.decodeSync(ServerProvider);
@@ -323,6 +333,352 @@ const layerTestNodeServices = Layer.mergeAll(
 it.layer(
   Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
 )("ProviderRegistry", (it) => {
+  it.effect.each([
+    { mode: "npm", replaceAt: "never", status: "succeeded" },
+    { mode: "homebrew", replaceAt: "never", status: "unchanged" },
+    { mode: "homebrew", replaceAt: "direct", status: "unchanged" },
+    { mode: "npm", replaceAt: "health", status: "unchanged" },
+    { mode: "npm", replaceAt: "warm", status: "unchanged" },
+    { mode: "npm", replaceAt: "verification", status: "unchanged" },
+    { mode: "npm", replaceAt: "return", status: "succeeded" },
+  ] as const)(
+    "keeps post-update verification bound to the original instance ($mode, $replaceAt)",
+    ({ mode, replaceAt, status }) =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex");
+        const provider: ServerProvider = {
+          instanceId,
+          driver,
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready",
+          auth: { status: "authenticated", email: "original@example.com" },
+          checkedAt: "2026-10-23T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        };
+        let commandRan = false;
+        let postHealth = false;
+        let postScans = 0;
+        let warmReads = 0;
+        let versionReads = 0;
+        let httpReads = 0;
+        let cacheInvalidations = 0;
+        let forcedManifests = 0;
+        const initialEnrichment = yield* Deferred.make<void>();
+        const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+        const httpClient = HttpClient.make((request) =>
+          Effect.sync(() => {
+            httpReads += 1;
+            if (commandRan && replaceAt === "verification") currentInstance = replacement;
+            return HttpClientResponse.fromWeb(request, Response.json({ version: "2.0.0" }));
+          }),
+        );
+        const ownership = yield* makeCachedProviderMaintenanceResolution(
+          Effect.sync(() => {
+            if (commandRan) postScans += 1;
+            return capabilities;
+          }),
+        );
+        const capabilities = makeProviderMaintenanceCapabilities({
+          provider: driver,
+          packageName: "@openai/codex",
+          updateExecutable: mode === "homebrew" ? "brew" : "npm",
+          updateArgs:
+            mode === "homebrew"
+              ? ["upgrade", "--cask", "codex"]
+              : ["install", "-g", "@openai/codex@latest"],
+          updateLockKey: mode === "homebrew" ? "homebrew" : "npm-global",
+          env: { CODEX_HOME: "/fixture/original", PATH: "/fixture/bin" },
+          ...(mode === "homebrew"
+            ? {
+                lookupLatestVersion: Effect.sync(() => {
+                  versionReads += 1;
+                  return commandRan ? "3.0.0" : "2.0.0";
+                }),
+              }
+            : {}),
+        });
+        const snapshot = yield* makeManagedServerProvider({
+          resolveMaintenance: (options) =>
+            Effect.gen(function* () {
+              if (commandRan && postHealth && !options?.fresh) {
+                warmReads += 1;
+                if (replaceAt === "warm") currentInstance = replacement;
+              }
+              return yield* ownership(options);
+            }),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(provider),
+          checkProvider: Effect.sync(() => {
+            if (commandRan) {
+              postHealth = true;
+              if (replaceAt === "health") currentInstance = replacement;
+            }
+            return { ...provider, version: commandRan ? "2.0.0" : "1.0.0" };
+          }),
+          enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+            Effect.gen(function* () {
+              const capabilities = yield* ownership();
+              const enriched = yield* enrichProviderSnapshotWithVersionAdvisory(
+                snapshot,
+                capabilities,
+                {
+                  enableProviderUpdateChecks:
+                    mode !== "homebrew" && replaceAt !== "verification" && replaceAt !== "warm",
+                },
+              ).pipe(
+                Effect.provideService(HttpClient.HttpClient, httpClient),
+                Effect.provideService(
+                  ProviderLatestVersions.ProviderLatestVersions,
+                  latestVersions,
+                ),
+              );
+              yield* publishSnapshot(enriched);
+              yield* Deferred.succeed(initialEnrichment, undefined);
+            }),
+          refreshOnInterval: false,
+          refreshInterval: "1 hour",
+        }).pipe(
+          Effect.provide(
+            Layer.mock(ProviderHost.ProviderHost)({
+              paths: {
+                cwd: "/fixture",
+                baseDir: "/fixture",
+                stateDir: "/fixture/state",
+                providerStatusCacheDir: "/fixture/cache",
+                attachmentsDir: "/fixture/attachments",
+              },
+              settings: {
+                get: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+                withSnapshot: (use) => use(DEFAULT_SERVER_SETTINGS),
+                changes: Stream.empty,
+                subscribe: Effect.succeed(Stream.empty),
+              },
+              shouldRunBackgroundWork: () => Effect.succeed(false),
+              resolveAttachmentPath: () => null,
+            }),
+          ),
+        );
+        yield* Deferred.await(initialEnrichment);
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "original" },
+          displayName: undefined,
+          enabled: true,
+          snapshot,
+          invalidateCaches: Effect.sync(() => {
+            cacheInvalidations += 1;
+          }),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const replacement: ProviderInstance = {
+          ...instance,
+          continuationIdentity: { driverKind: driver, continuationKey: "new-settings" },
+          snapshot: {
+            ...snapshot,
+            resolveMaintenance: () =>
+              Effect.die("Read replacement capabilities while verifying the original installation"),
+          },
+        };
+        let currentInstance = instance;
+        const manifest = {
+          version: 1,
+          currentModels: {},
+          compatibility: [],
+        } satisfies ModelManifest.ModelManifestData;
+        const dependencies = Layer.mergeAll(
+          Layer.succeed(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+          Layer.succeed(HostProcess.Platform, "linux"),
+          Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+            getInstance: () => Effect.sync(() => currentInstance),
+            listInstances: Effect.sync(() => [currentInstance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          }),
+          Layer.succeed(ModelManifest.ModelManifest, {
+            current: Effect.succeed(manifest),
+            refresh: Effect.succeed(manifest),
+            refreshInBackground: Effect.void,
+            forceRefresh: Effect.sync(() => {
+              forcedManifests += 1;
+              return manifest;
+            }),
+          }),
+          Layer.succeed(HttpClient.HttpClient, httpClient),
+          layerMockSpawner((args) => {
+            assert.deepStrictEqual(
+              args,
+              mode === "homebrew"
+                ? ["upgrade", "--cask", "codex"]
+                : ["install", "-g", "@openai/codex@latest"],
+            );
+            commandRan = true;
+            return { stdout: "updated", stderr: "", code: 0 };
+          }),
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-post-update-verification-" }),
+        );
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* resolveLatestProviderVersion(capabilities);
+          httpReads = 0;
+          versionReads = 0;
+          if (replaceAt === "direct") {
+            commandRan = true;
+            const refreshed = yield* registry.refreshAfterUpdate(driver, instanceId);
+            assert.strictEqual(refreshed[0]?.versionAdvisory?.status, "behind_latest");
+            assert.strictEqual(versionReads, 1);
+            assert.strictEqual(httpReads, 0);
+            return;
+          }
+          const runner = yield* ProviderMaintenanceRunner.make().pipe(
+            Effect.provideService(ProviderRegistry.ProviderRegistry, {
+              ...registry,
+              refreshAfterUpdate: (driver, selected) =>
+                registry.refreshAfterUpdate(driver, selected).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (replaceAt === "return") currentInstance = replacement;
+                    }),
+                  ),
+                ),
+            }),
+          );
+          const result = yield* runner.updateProvider(driver);
+          assert.strictEqual(result.providers[0]?.updateState?.status, status);
+          assert.strictEqual(forcedManifests, 1);
+          assert.strictEqual(cacheInvalidations, 1);
+          assert.strictEqual(postScans, 2);
+          if (replaceAt === "warm") assert.strictEqual(httpReads, 1);
+          if (replaceAt === "never" || replaceAt === "return") {
+            assert.strictEqual(warmReads, 1);
+            assert.strictEqual(httpReads, mode === "homebrew" ? 0 : 2);
+            assert.strictEqual(versionReads, mode === "homebrew" ? 2 : 0);
+          }
+        }).pipe(Effect.provide(ProviderRegistry.layer.pipe(Layer.provideMerge(dependencies))));
+      }),
+  );
+
+  it.effect.each(["manifest", "ownership"] as const)(
+    "starts post-update checks together and waits for both when $0 finishes first",
+    (first) =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex");
+        const provider: ServerProvider = {
+          instanceId,
+          driver,
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-23T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        };
+        const releaseManifest = yield* Deferred.make<void>();
+        const releaseOwnership = yield* Deferred.make<void>();
+        const manifestFinished = yield* Deferred.make<void>();
+        const ownershipFinished = yield* Deferred.make<void>();
+        let manifestStarted = false;
+        let ownershipStarted = false;
+        const healthChecks: Array<readonly [boolean, boolean]> = [];
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.gen(function* () {
+                ownershipStarted = true;
+                yield* Deferred.await(releaseOwnership);
+                yield* Deferred.succeed(ownershipFinished, undefined);
+                return makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                });
+              }),
+            getSnapshot: Effect.succeed(provider),
+            refresh: Effect.gen(function* () {
+              healthChecks.push([
+                yield* Deferred.isDone(manifestFinished),
+                yield* Deferred.isDone(ownershipFinished),
+              ]);
+              return provider;
+            }),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const running = yield* registry
+            .refreshAfterUpdate(driver, instanceId)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          assert.strictEqual(manifestStarted, true);
+          assert.strictEqual(ownershipStarted, true);
+          assert.deepStrictEqual(healthChecks, []);
+          yield* Deferred.succeed(
+            first === "manifest" ? releaseManifest : releaseOwnership,
+            undefined,
+          );
+          yield* Deferred.await(first === "manifest" ? manifestFinished : ownershipFinished);
+          assert.deepStrictEqual(healthChecks, []);
+          yield* Deferred.succeed(
+            first === "manifest" ? releaseOwnership : releaseManifest,
+            undefined,
+          );
+          assert.strictEqual((yield* Fiber.join(running))[0]?.instanceId, instanceId);
+          assert.deepStrictEqual(healthChecks, [[true, true]]);
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: () => Effect.succeed(instance),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.empty,
+                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+                }),
+              ),
+              Layer.provide(
+                Layer.succeed(ModelManifest.ModelManifest, {
+                  current: Effect.succeed(manifest),
+                  refresh: Effect.succeed(manifest),
+                  refreshInBackground: Effect.void,
+                  forceRefresh: Effect.gen(function* () {
+                    manifestStarted = true;
+                    yield* Deferred.await(releaseManifest);
+                    yield* Deferred.succeed(manifestFinished, undefined);
+                    return manifest;
+                  }),
+                }),
+              ),
+              Layer.provide(
+                ServerConfig.layerTest(process.cwd(), { prefix: "t3-post-update-parallel-" }),
+              ),
+            ),
+          ),
+        );
+      }),
+  );
+
   describe("checkCodexProviderStatus", () => {
     it.effect("uses the app-server account and model list for provider status", () =>
       Effect.gen(function* () {

@@ -163,6 +163,65 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       ].join("\n"),
     );
 
+  it("checks the final executable once on each cold and warm startup", () => {
+    const fixture = createFixture(
+      '#!/bin/sh\n[ "$1" = "--version" ] || exit 1\nprintf "%s\\n" "$0" >> "$HOME/runtime-executions"\n',
+    );
+
+    for (const expected of [1, 2]) {
+      const installed = fixture.install();
+      expect(installed.status, installed.stderr).toBe(0);
+      const probe = probeFixture(fixture);
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(runShell(`cat ${sh(`${fixture.work}/home/runtime-executions`)}`).stdout).toBe(
+        `${fixture.serverEntry}\n`.repeat(expected),
+      );
+    }
+  });
+
+  it("never marks a runtime ready when its executable fails at the final path", () => {
+    const fixture = createFixture(
+      '#!/bin/sh\ncase "$0" in *.tmp.*) exit 0 ;; esac\nprintf "final-path loader failure\\n" >&2\nexit 42\n',
+    );
+
+    const failed = fixture.install();
+
+    expect(failed.status).not.toBe(0);
+    expect(failed.stderr).toContain("final-path loader failure");
+    expect(parseWslRuntimeRoot(failed.stdout)).toBeNull();
+    expect(runShell(`[ ! -e ${sh(fixture.runtimeRoot)} ]`).status).toBe(0);
+  });
+
+  it("rejects an executable removed after runtime preparation", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    expect(runShell(`rm ${sh(fixture.serverEntry)}`).status).toBe(0);
+
+    expect(probeFixture(fixture).status).not.toBe(0);
+  });
+
+  it("retains a colliding cache when the install did not promote it", () => {
+    const fixture = createFixture(
+      '#!/bin/sh\n[ ! -e "$HOME/checked" ] || exit 42\ntouch "$HOME/checked"\n',
+    );
+    const failed = runShell(
+      [
+        "mv() {",
+        '  mkdir "$3"',
+        '  cp -R "$2/." "$3"',
+        '  printf borrowed > "$3/owner"',
+        '  sha256sum "$3/t3" | cut -d " " -f 1 > "$3/.t3code-wsl-runtime-ready"',
+        "  return 1",
+        "}",
+        fixture.installScript(),
+      ].join("\n"),
+    );
+
+    expect(failed.status).not.toBe(0);
+    expect(parseWslRuntimeRoot(failed.stdout)).toBeNull();
+    expect(runShell(`cat ${sh(`${fixture.runtimeRoot}/owner`)}`).stdout).toBe("borrowed");
+  });
+
   it("discovers version-managed Node for providers with a standalone runtime", () => {
     const fixture = createFixture();
     expect(fixture.install().status).toBe(0);

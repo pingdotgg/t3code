@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
+import { UpdateRestartPolicy } from "../updateRestartPolicy.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
@@ -188,6 +189,8 @@ export function restartContinuationRun(
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
+    const policy = yield* UpdateRestartPolicy;
+    if (yield* policy.isVetoed(input.sourceRunId)) return;
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
@@ -322,12 +325,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
   // A delegated child this declined to continue still owes its parent a
   // result. Once a continuation run exists this is a no-op; that run settles it.
   (effect, input) =>
-    effect.pipe(
-      Effect.andThen(
-        Effect.gen(function* () {
-          const threads = yield* ThreadManagementService.ThreadManagementService;
-          yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
-        }),
-      ),
-    ),
+    Effect.gen(function* () {
+      yield* effect;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
+    }),
 );

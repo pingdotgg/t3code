@@ -20,8 +20,10 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
+import { UpdateRestartPolicy } from "../updateRestartPolicy.ts";
 
 interface HarnessOptions {
+  readonly policy?: Effect.Success<ReturnType<typeof import("../updateRestartPolicy.ts").make>>;
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
@@ -111,7 +113,9 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
+  const policy = yield* UpdateRestartPolicy;
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
+    Effect.provideService(UpdateRestartPolicy, options.policy ?? policy),
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
     Effect.provideService(
@@ -130,6 +134,44 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
+  it.effect("persists OFF before handoff and clears a refused handoff", () =>
+    Effect.gen(function* () {
+      const events: boolean[] = [];
+      const { selfUpdate } = yield* makeHarness({
+        policy: {
+          set: (_id, enabled) => Effect.sync(() => void events.push(enabled)),
+          capture: () => Effect.void,
+          isVetoed: () => Effect.succeed(false),
+        },
+        requestUpdate: () =>
+          Effect.sync(() => {
+            expect(events).toEqual([false]);
+            return "accepted";
+          }),
+      });
+      yield* selfUpdate.update({ targetVersion: "1.1.0", continueRunningThreads: false });
+      expect(events).toEqual([false]);
+      const refused = yield* makeHarness({
+        policy: {
+          set: (_id, enabled) => Effect.sync(() => void events.push(enabled)),
+          capture: () => Effect.void,
+          isVetoed: () => Effect.succeed(false),
+        },
+        requestUpdate: () =>
+          Effect.fail(
+            new ServiceLauncherClient.ServiceLauncherRejectedError({
+              targetVersion: "1.1.0",
+              reason: "refused",
+            }),
+          ),
+      });
+      yield* refused.selfUpdate
+        .update({ targetVersion: "1.1.0", continueRunningThreads: false })
+        .pipe(Effect.flip);
+      expect(events).toEqual([false, false, true]);
+    }),
+  );
+
   it.effect("marks running threads at the boot-service handoff", () =>
     Effect.gen(function* () {
       const events: string[] = [];

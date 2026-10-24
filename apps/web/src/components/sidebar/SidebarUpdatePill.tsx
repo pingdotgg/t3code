@@ -41,8 +41,9 @@ import {
   clearSavedUpdateEverythingResult,
   saveUpdateEverythingResult,
   useUpdateEverythingRun,
+  waitForHostedProviderWork,
 } from "./updateEverythingRun";
-import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
+import { useUpdateEverything } from "./useUpdateEverything";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
@@ -130,29 +131,23 @@ function SidebarUpdateArchitectureWarningContent() {
   );
 }
 
-const toastUpdateError: ReportLocalUpdateError = (title, description) => {
+const toastUpdateError = (title: string, description: string) => {
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 };
 
-async function downloadLocalUpdate(
-  bridge: DesktopBridge,
-  {
-    notifyDownloaded,
-    reportError = toastUpdateError,
-  }: { readonly notifyDownloaded: boolean; readonly reportError?: ReportLocalUpdateError },
-): Promise<boolean> {
+async function downloadLocalUpdate(bridge: DesktopBridge): Promise<boolean> {
   try {
     const result = await bridge.downloadUpdate();
-    if (result.completed && notifyDownloaded) {
+    if (result.completed) {
       showDesktopUpdateDownloadedToast(bridge, result.state);
     }
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) reportError("Could not download update", actionError);
+    if (actionError) toastUpdateError("Could not download update", actionError);
     return result.completed;
   } catch (error) {
-    reportError(
+    toastUpdateError(
       "Could not start update download",
       error instanceof Error ? error.message : "An unexpected error occurred.",
     );
@@ -160,11 +155,9 @@ async function downloadLocalUpdate(
   }
 }
 
-async function installLocalUpdate(
-  bridge: DesktopBridge,
-  reportError: ReportLocalUpdateError = toastUpdateError,
-): Promise<boolean> {
+async function installLocalUpdate(bridge: DesktopBridge): Promise<boolean> {
   try {
+    await waitForHostedProviderWork();
     const result = await bridge.installUpdate();
     if (!result.accepted) {
       showDesktopUpdateDownloadedToast(bridge, result.state);
@@ -174,10 +167,10 @@ async function installLocalUpdate(
       ? getDesktopUpdateActionError(result)
       : null;
     if (!actionError) return true;
-    reportError("Could not install update", actionError);
+    toastUpdateError("Could not install update", actionError);
     return false;
   } catch (error) {
-    reportError(
+    toastUpdateError(
       "Could not install update",
       error instanceof Error ? error.message : "An unexpected error occurred.",
     );
@@ -284,9 +277,7 @@ function SidebarUpdateControl() {
     setIsActionPending(true);
 
     if (action === "download") {
-      void downloadLocalUpdate(bridge, { notifyDownloaded: true }).finally(() =>
-        setIsActionPending(false),
-      );
+      void downloadLocalUpdate(bridge).finally(() => setIsActionPending(false));
       return;
     }
 
@@ -344,34 +335,30 @@ function SidebarUpdateControl() {
       .finally(() => setIsActionPending(false));
   };
 
-  const runEverything = async () => {
-    const bridge = window.desktopBridge;
+  const runEverything = async (selection: ReadonlySet<string>, autoResume: boolean) => {
     setIsConfirmingEverything(false);
     setIsActionPending(true);
-    const result = await settlePromise(() =>
-      everything.run({
-        ...(bridge && action === "download"
-          ? {
-              downloadLocal: (reportError) =>
-                downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
-            }
-          : {}),
-        ...(bridge && action !== "none"
-          ? { installLocal: (reportError) => installLocalUpdate(bridge, reportError) }
-          : {}),
+    const result = await settlePromise(() => everything.run(selection, autoResume));
+    setIsActionPending(false);
+    if (result._tag === "Success") {
+      if (result.value.status === "busy") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Updates are already running in another window.",
+          }),
+        );
+      }
+      return;
+    }
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not start updates",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
       }),
     );
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        }),
-      );
-    }
-    setIsActionPending(false);
   };
 
   const handleCheckAnimationIteration = () => {
@@ -398,11 +385,8 @@ function SidebarUpdateControl() {
     <UpdateEverythingDialog
       open={isConfirmingEverything}
       onOpenChange={setIsConfirmingEverything}
-      summary={everything.summary}
-      lines={everything.lines}
-      restarts={everything.restarts}
-      skipped={everything.skipped}
-      onConfirm={() => void runEverything()}
+      devices={everything.devices}
+      onConfirm={(selection, autoResume) => void runEverything(selection, autoResume)}
     />
   );
 

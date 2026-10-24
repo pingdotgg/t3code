@@ -159,7 +159,9 @@ function makeTestInstance(input: MakeInstanceInput) {
     Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
       latest: Effect.succeedNone,
       changes: Stream.empty,
-      encoded: input.desktopTelemetryStream ?? Stream.empty,
+      encoded: () => input.desktopTelemetryStream ?? Stream.empty,
+      requestUpdateRestartPolicy: () => Effect.succeed(true),
+      clearUpdateRestartPolicy: () => Effect.void,
       handleControlForSource: () => Effect.void,
       removeControlSource: () => Effect.void,
       publishUpdateReport: () => Effect.void,
@@ -360,6 +362,8 @@ describe("DesktopBackendManager", () => {
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
           desktopTelemetryPublisher: {
+            requestUpdateRestartPolicy: () => Effect.succeed(true),
+            clearUpdateRestartPolicy: () => Effect.void,
             handleControlForSource: (_sourceId, message) =>
               message.type === "setDiagnosticsDemand"
                 ? Deferred.succeed(handled, message.enabled).pipe(Effect.asVoid)

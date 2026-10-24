@@ -9,6 +9,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -911,6 +912,155 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       prefix: "/srv",
     });
   });
+
+  it.effect("shares eight pending latest-version reads and caches their result", () =>
+    Effect.gen(function* () {
+      const latest = yield* ProviderLatestVersions.make();
+      const release = yield* Deferred.make<void>();
+      let lookups = 0;
+      const lookup = Effect.sync(() => {
+        lookups += 1;
+      }).pipe(Effect.andThen(Deferred.await(release)), Effect.as("2.0.0"));
+      const readers = yield* Effect.forEach(Array.from({ length: 8 }), () =>
+        latest.cached("package", lookup).pipe(Effect.forkChild({ startImmediately: true })),
+      );
+      expect(lookups).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Effect.forEach(readers, Fiber.join)).toEqual(Array(8).fill("2.0.0"));
+      expect(yield* latest.cached("package", lookup)).toBe("2.0.0");
+      expect(lookups).toBe(1);
+    }),
+  );
+
+  it.effect.each(["fresh", "invalidate"] as const)(
+    "retires a pending latest-version read with $0 without publishing its stale result",
+    (mode) =>
+      Effect.gen(function* () {
+        const latest = yield* ProviderLatestVersions.make();
+        const release = yield* Deferred.make<void>();
+        let lookups = 0;
+        const lookup = Effect.suspend(() =>
+          ++lookups === 1
+            ? Deferred.await(release).pipe(Effect.as("1.0.0"))
+            : Effect.succeed("2.0.0"),
+        );
+        const old = yield* latest
+          .cached("package", lookup)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        if (mode === "invalidate") yield* latest.invalidate("package");
+        expect(yield* latest.cached("package", lookup, { fresh: mode === "fresh" })).toBe("2.0.0");
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(old)).toBe("1.0.0");
+        expect(yield* latest.cached("package", lookup)).toBe("2.0.0");
+        expect(lookups).toBe(2);
+      }),
+  );
+
+  it.effect.each(["failure", "interrupt"] as const)(
+    "wakes latest-version waiters after owner $0 so they can retry",
+    (mode) =>
+      Effect.gen(function* () {
+        const latest = yield* ProviderLatestVersions.make();
+        const release = yield* Deferred.make<void>();
+        let lookups = 0;
+        const lookup = Effect.suspend(() =>
+          ++lookups === 1
+            ? Deferred.await(release).pipe(Effect.andThen(Effect.fail("lookup failed")))
+            : Effect.succeed("2.0.0"),
+        );
+        const owner = yield* latest
+          .cached("package", lookup)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const waiter = yield* latest
+          .cached("package", lookup)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(lookups).toBe(1);
+        if (mode === "interrupt") {
+          yield* Fiber.interrupt(owner);
+        } else {
+          yield* Deferred.succeed(release, undefined);
+          expect(Exit.isFailure(yield* Fiber.await(owner))).toBe(true);
+        }
+        expect(yield* Fiber.join(waiter)).toBe("2.0.0");
+        expect(yield* latest.cached("package", lookup)).toBe("2.0.0");
+        expect(lookups).toBe(2);
+      }),
+  );
+
+  it.effect("does not cancel the latest-version owner when a waiter is interrupted", () =>
+    Effect.gen(function* () {
+      const latest = yield* ProviderLatestVersions.make();
+      const release = yield* Deferred.make<void>();
+      let lookups = 0;
+      let interrupted = false;
+      const lookup = Effect.sync(() => {
+        lookups += 1;
+      }).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.as("2.0.0"),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interrupted = true;
+          }),
+        ),
+      );
+      const owner = yield* latest
+        .cached("package", lookup)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const waiter = yield* latest
+        .cached("package", lookup)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Fiber.interrupt(waiter);
+      expect(interrupted).toBe(false);
+      expect(lookups).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(owner)).toBe("2.0.0");
+      expect(yield* latest.cached("package", lookup)).toBe("2.0.0");
+      expect(lookups).toBe(1);
+    }),
+  );
+
+  it.effect("keeps a replacement lookup shared when the invalidated owner is interrupted", () =>
+    Effect.gen(function* () {
+      const latest = yield* ProviderLatestVersions.make();
+      const old = yield* latest
+        .cached("package", Effect.never)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* latest.invalidate("package");
+      const release = yield* Deferred.make<void>();
+      let lookups = 0;
+      const lookup = Effect.sync(() => {
+        lookups += 1;
+      }).pipe(Effect.andThen(Deferred.await(release)), Effect.as("2.0.0"));
+      const replacement = yield* latest
+        .cached("package", lookup)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Fiber.interrupt(old);
+      const waiter = yield* latest
+        .cached("package", lookup)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      expect(lookups).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(replacement)).toBe("2.0.0");
+      expect(yield* Fiber.join(waiter)).toBe("2.0.0");
+      expect(yield* latest.cached("package", lookup)).toBe("2.0.0");
+      expect(lookups).toBe(1);
+    }),
+  );
+
+  it.effect("caches missing latest versions and lets a fresh read replace a completed entry", () =>
+    Effect.gen(function* () {
+      const latest = yield* ProviderLatestVersions.make();
+      let lookups = 0;
+      const lookup = Effect.sync(() => (++lookups === 1 ? null : "2.0.0"));
+      expect(yield* latest.cached("package", lookup)).toBeNull();
+      expect(yield* latest.cached("package", lookup)).toBeNull();
+      expect(lookups).toBe(1);
+      expect(yield* latest.cached("package", lookup, { fresh: true })).toBe("2.0.0");
+      expect(yield* latest.cached("package", lookup)).toBe("2.0.0");
+      expect(lookups).toBe(2);
+    }),
+  );
 
   it.effect("shares installer lookups only for the same executable and update target", () =>
     Effect.gen(function* () {

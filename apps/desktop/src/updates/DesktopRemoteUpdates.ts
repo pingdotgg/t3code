@@ -410,9 +410,13 @@ export const listen: Effect.Effect<
         }
         return;
       }
-      const result = yield* updates.installPrepared(claim.prepared.downloadedVersion);
+      const result = yield* updates.installPrepared(
+        claim.prepared.downloadedVersion,
+        commit.continueRunningThreads,
+      );
       if (
         !result.accepted &&
+        commit.continueRunningThreads !== false &&
         result.state.downloadedVersion === claim.prepared.downloadedVersion &&
         (yield* updates.isInstallActive)
       ) {

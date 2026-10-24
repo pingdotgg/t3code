@@ -27,6 +27,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import { UpdateRestartPolicy } from "../updateRestartPolicy.ts";
 
 const threadId = ThreadId.make("thread:restart");
 const runId = RunId.make("run:restart");
@@ -1144,4 +1145,84 @@ it.effect.each(["completed", "failed", "interrupted"] as const)(
         [],
       );
     }),
+);
+
+it.effect("does not dispatch a queued continuation vetoed by this update", () => {
+  let recovered = false;
+  return continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(UpdateRestartPolicy, {
+          set: () => Effect.void,
+          capture: () => Effect.void,
+          isVetoed: (source) => Effect.succeed(source === runId),
+        }),
+        ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.die("a vetoed run must not resume"),
+          recoverDelegatedTask: () =>
+            Effect.sync(() => {
+              recovered = true;
+            }),
+        }),
+      ),
+    ),
+    Effect.tap(() => Effect.sync(() => assert.isTrue(recovered))),
+  );
+});
+
+it.effect("allows a distinct later run on the same thread after an update veto", () =>
+  Effect.gen(function* () {
+    const policy = {
+      set: () => Effect.void,
+      capture: () => Effect.void,
+      isVetoed: (source: RunId) => Effect.succeed(source === RunId.make("earlier-update-run")),
+    };
+    assert.deepEqual(
+      yield* continuationTexts(cutMidTurn()).pipe(
+        Effect.provideService(UpdateRestartPolicy, policy),
+      ),
+      ["Continue where you left off."],
+    );
+  }),
+);
+
+it.effect("seals the startup veto before creating recovery continuations", () =>
+  Effect.gen(function* () {
+    let captured: ReadonlyArray<RunId> = [];
+    let effects = 0;
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.succeed(UpdateRestartPolicy, {
+            set: () => Effect.void,
+            capture: (ids, trigger) =>
+              Effect.sync(() => {
+                assert.equal(trigger, "startup");
+                captured = ids;
+              }),
+            isVetoed: (id) => Effect.succeed(captured.includes(id)),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(makeProjection()),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              effects += input.effects.length;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    yield* recovery.recover;
+    assert.deepEqual(captured, [runId]);
+    assert.equal(effects, 0);
+  }),
 );

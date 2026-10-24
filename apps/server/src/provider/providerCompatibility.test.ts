@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -257,6 +258,10 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
     );
     const layerDependencies = Layer.mergeAll(
       ProviderLatestVersions.layer,
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Unexpected HTTP request")),
+      ),
       Layer.succeed(ModelManifest.ModelManifest, {
         current: Ref.get(manifest),
         refresh,

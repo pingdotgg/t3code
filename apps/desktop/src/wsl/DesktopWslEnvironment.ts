@@ -334,29 +334,36 @@ export const buildWslRuntimeInstallScript = (
     "  fi",
     "fi",
     `runtime_tmp=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.tmp.XXXXXX")`,
-    'cleanup_runtime_install() { rm -rf "$runtime_tmp"; }',
+    "runtime_promoted=0",
+    "cleanup_runtime_install() {",
+    '  rm -rf "$runtime_tmp"',
+    '  if [ "$runtime_promoted" = 1 ]; then',
+    '    rm -rf "$runtime_root"',
+    "  fi",
+    "}",
     "trap cleanup_runtime_install EXIT",
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp" --strip-components=1`,
-    'if ! runtime_entry_runs "$runtime_tmp"; then',
-    "  printf 'WSL runtime archive does not contain a working t3 executable\\n' >&2",
-    "  exit 1",
-    "fi",
-    'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
-    'if [ -z "$installed_entry_digest" ]; then',
-    "  printf 'Could not hash the WSL runtime server entry\\n' >&2",
-    "  exit 1",
-    "fi",
-    `printf '%s\\n' "$installed_entry_digest" > "$runtime_tmp/${WSL_RUNTIME_READY_MARKER}"`,
     'if mv -T "$runtime_tmp" "$runtime_root" 2>/dev/null; then',
-    "  :",
+    "  runtime_promoted=1",
     "elif runtime_is_ready; then",
     '  rm -rf "$runtime_tmp"',
     "else",
     `  printf 'Could not promote WSL runtime cache at %s\\n' "$runtime_root" >&2`,
     "  exit 1",
     "fi",
+    'if ! runtime_entry_runs "$runtime_root"; then',
+    "  printf 'WSL runtime archive does not contain a working t3 executable\\n' >&2",
+    "  exit 1",
+    "fi",
+    'installed_entry_digest=$(runtime_server_entry_digest "$runtime_root")',
+    'if [ -z "$installed_entry_digest" ]; then',
+    "  printf 'Could not hash the WSL runtime server entry\\n' >&2",
+    "  exit 1",
+    "fi",
+    `printf '%s\\n' "$installed_entry_digest" > "$ready_marker"`,
     `touch "$runtime_root/${WSL_RUNTIME_SELECTED_MARKER}"`,
     `printf 'runtimeRoot:%s\\n' "$runtime_root"`,
+    "runtime_promoted=0",
   ].join("\n");
 };
 
@@ -485,7 +492,7 @@ NODE`;
 export const buildWslRuntimeProbeScript = (linuxAppRoot: string) =>
   [
     `bash -lc ${shellQuote(`${buildWslNodeEnvPreamble()}${RESOLVED_PATH_LINE}`)} 2>/dev/null || ${RESOLVED_PATH_LINE}`,
-    `${shellQuote(`${linuxAppRoot}/t3`)} --version >/dev/null 2>&1`,
+    `[ -x ${shellQuote(`${linuxAppRoot}/t3`)} ]`,
   ].join("\n");
 
 const TOOLCHAIN_CHECK_SCRIPT = [
@@ -622,7 +629,7 @@ const probeWslRuntimeImpl = Effect.fn("DesktopWslEnvironment.probeWslRuntimeImpl
     const trimmedTail = probe.stderr.trim().slice(-500);
     return {
       ok: false,
-      reason: `${linuxAppRoot}/t3 --version failed (exit ${probe.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
+      reason: `${linuxAppRoot}/t3 is not executable (exit ${probe.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
     } as const;
   }
   const resolvedPath = parseResolvedPath(probe.stdout);

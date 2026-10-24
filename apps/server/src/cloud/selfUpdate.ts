@@ -11,6 +11,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
@@ -29,6 +30,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { UpdateRestartPolicy } from "../updateRestartPolicy.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
@@ -216,6 +218,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
   );
   const inFlight = yield* Ref.make(false);
+  const restartPolicy = yield* UpdateRestartPolicy;
+  const crypto = yield* Crypto.Crypto;
 
   yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
     Effect.forkScoped,
@@ -233,7 +237,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   )(function* (input, reportProgress = () => Effect.void, onHandoffAccepted = () => Effect.void) {
     if (capability === "desktop-managed") {
       if (desktopAppUpdate.available) {
-        return yield* desktopAppUpdate.run(reportProgress);
+        return yield* desktopAppUpdate.run(reportProgress, input.continueRunningThreads);
       }
       return yield* failWith(
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
@@ -253,6 +257,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       return yield* failWith("A server update is already in progress.");
     }
 
+    let policyRequestId: string | undefined;
+    let handoffAccepted = false;
     return yield* Effect.gen(function* () {
       yield* reportProgress("downloading");
       const paths = yield* ensurePinnedRuntimeInstalled({
@@ -344,7 +350,25 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
 
       yield* reportProgress("installing");
       const updateId = yield* Effect.uninterruptible(
-        launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
+        Effect.gen(function* () {
+          if (input.continueRunningThreads === false) {
+            policyRequestId = yield* crypto
+              .randomUUIDv4()
+              .pipe(
+                Effect.mapError((cause) =>
+                  failWith("Could not prepare the update resume choice.", cause),
+                ),
+              );
+            yield* restartPolicy
+              .set(policyRequestId, false)
+              .pipe(
+                Effect.mapError((cause) =>
+                  failWith("Could not persist the update resume choice.", cause),
+                ),
+              );
+          }
+          return yield* launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath });
+        }).pipe(
           Effect.mapError((error) =>
             failWith(
               error._tag === "ServiceLauncherRejectedError"
@@ -353,7 +377,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
               error,
             ),
           ),
-          Effect.tap(() => onHandoffAccepted()),
+          Effect.tap(() => {
+            handoffAccepted = true;
+            return onHandoffAccepted();
+          }),
         ),
       );
 
@@ -363,7 +390,22 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         runtimePath: paths.entryPath,
       });
       return { targetVersion, method: "boot-service" as const, updateId };
-    }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          if (policyRequestId !== undefined && !handoffAccepted) {
+            yield* restartPolicy
+              .set(policyRequestId, true)
+              .pipe(
+                Effect.mapError((cause) =>
+                  failWith("Could not clear the update resume choice.", cause),
+                ),
+              );
+          }
+          return yield* Effect.failCause(cause);
+        }).pipe(Effect.ensuring(Ref.set(inFlight, false))),
+      ),
+    );
   });
 
   return ServerSelfUpdate.of({

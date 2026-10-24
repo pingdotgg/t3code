@@ -99,6 +99,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
+import { waitForHostedProviderWork } from "../sidebar/updateEverythingRun";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -224,8 +225,8 @@ function AboutVersionSection() {
         setIsUpdateActionPending(false);
         return;
       }
-      void bridge
-        .installUpdate()
+      void waitForHostedProviderWork()
+        .then(() => bridge.installUpdate())
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({

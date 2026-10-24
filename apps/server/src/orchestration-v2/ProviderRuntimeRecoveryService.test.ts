@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   MessageId,
@@ -16,6 +17,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import { make as makeUpdateRestartPolicy, UpdateRestartPolicy } from "../updateRestartPolicy.ts";
 
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -1367,4 +1372,62 @@ it.effect("leaves delegated tasks to their own child threads after process loss"
     );
     assert.deepEqual(noted, [`subagent ${nativeSubagentId}`]);
   }).pipe(Effect.provide(layer));
+});
+
+it.layer(NodeServices.layer)("update policy retention", (it) => {
+  it.effect("protects pending and running outbox sources outside runtime recovery candidates", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const file = path.join(directory, "policy.json");
+      const pending = RunId.make("pending");
+      const running = RunId.make("running");
+      const completed = RunId.make("completed");
+      const missing = RunId.make("missing");
+      const before = yield* makeUpdateRestartPolicy(file);
+      yield* before.set("update", false);
+      yield* before.capture([pending, running, completed, missing], "shutdown");
+      const policy = yield* makeUpdateRestartPolicy(file);
+      const checked: string[] = [];
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            Layer.succeed(UpdateRestartPolicy, policy),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () => Effect.succeed([]),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({}),
+            IdAllocator.layer,
+            Layer.mock(EffectOutbox.EffectOutboxV2)({
+              get: (id) =>
+                Effect.sync(() => {
+                  checked.push(id);
+                  if (id === `effect:restart-continuation:${missing}`) return Option.none();
+                  return Option.some({
+                    status:
+                      id === `effect:restart-continuation:${pending}`
+                        ? "pending"
+                        : id === `effect:restart-continuation:${running}`
+                          ? "running"
+                          : "succeeded",
+                  } as EffectOutbox.OrchestrationEffectV2);
+                }),
+              reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+            }),
+          ),
+        ),
+      );
+      yield* recovery.recover;
+      assert.deepEqual(
+        checked,
+        [pending, running, completed, missing].map((id) => `effect:restart-continuation:${id}`),
+      );
+      assert.isTrue(yield* policy.isVetoed(pending));
+      assert.isTrue(yield* policy.isVetoed(running));
+      assert.isFalse(yield* policy.isVetoed(completed));
+      assert.isFalse(yield* policy.isVetoed(missing));
+    }),
+  );
 });

@@ -10,6 +10,7 @@ import {
 import { errorTag } from "@t3tools/shared/observability";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -33,6 +34,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -158,6 +160,11 @@ export class DesktopUpdateUnexpectedActionError extends Schema.TaggedError<Deskt
   }
 }
 
+class DesktopUpdatePreparationError extends Schema.TaggedError<DesktopUpdatePreparationError>()(
+  "DesktopUpdatePreparationError",
+  { message: Schema.String },
+) {}
+
 export type DesktopUpdateConfigureError = never;
 
 export const DesktopUpdateSetChannelError = Schema.Union([
@@ -190,7 +197,8 @@ export class DesktopUpdates extends Context.Service<
     readonly download: Effect.Effect<DesktopUpdateActionResult>;
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
     readonly installPrepared: (
-      expectedVersion: string,
+      expectedVersion?: string,
+      continueRunningThreads?: boolean,
     ) => Effect.Effect<DesktopPreparedUpdateInstallResult>;
   }
 >()("@t3tools/desktop/updates/DesktopUpdates") {}
@@ -345,12 +353,21 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const telemetry = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+  const crypto = yield* Crypto.Crypto;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
   >([]);
+  const installRestartPolicyRef = yield* Ref.make<
+    Option.Option<{
+      readonly requestId: string;
+      readonly instances: readonly DesktopBackendPool.DesktopBackendInstance[];
+      readonly stopped: ReadonlySet<DesktopBackendPool.DesktopBackendInstance>;
+    }>
+  >(Option.none());
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
@@ -642,6 +659,38 @@ export const make = Effect.gen(function* () {
       })),
     );
 
+  const releaseInstallRestartPolicy = Effect.fn("desktop.updates.releaseInstallRestartPolicy")(
+    function* (disarmUntouched: boolean) {
+      const policy = yield* Ref.get(installRestartPolicyRef);
+      if (Option.isNone(policy)) return true;
+      const { requestId, instances, stopped } = policy.value;
+      const currentInstances = yield* pool.list;
+      const untouched = instances.filter(
+        (instance) => !stopped.has(instance) && currentInstances.includes(instance),
+      );
+      if (disarmUntouched && untouched.length > 0) {
+        const accepted = yield* telemetry.requestUpdateRestartPolicy(
+          untouched.map((instance) => instance.id),
+          {
+            version: 1,
+            type: "desktopUpdateRestartPolicy",
+            requestId,
+            continueRunningThreads: true,
+          },
+        );
+        if (!accepted) {
+          yield* logUpdaterError(
+            "Desktop update could not clear the restart policy on every untouched backend.",
+          );
+          return false;
+        }
+      }
+      yield* telemetry.clearUpdateRestartPolicy(requestId);
+      yield* Ref.set(installRestartPolicyRef, Option.none());
+      return true;
+    },
+  );
+
   const resetInstallAction = Effect.all(
     [
       finishUpdateAction("install"),
@@ -663,6 +712,7 @@ export const make = Effect.gen(function* () {
     );
     if (!ownsRecovery) return;
 
+    yield* releaseInstallRestartPolicy(true);
     yield* Ref.set(desktopState.quitting, false);
     yield* removeUpdateRestartMarker;
     yield* removeInstallRecord;
@@ -687,7 +737,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const installDownloadedUpdate = (expectedVersion?: string) =>
+  const installDownloadedUpdate = (expectedVersion?: string, continueRunningThreads?: boolean) =>
     Effect.scoped(
       Effect.gen(function* () {
         const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
@@ -739,6 +789,16 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(installRunningBackendsRef, []);
 
         return yield* Effect.gen(function* () {
+          if (!(yield* releaseInstallRestartPolicy(true))) {
+            yield* updateState((current) =>
+              reduceDesktopUpdateStateOnInstallFailure(
+                current,
+                "Could not clear the previous desktop update restart policy. Try again.",
+              ),
+            );
+            yield* resetInstallAction;
+            return { accepted: true, completed: false, failed: true };
+          }
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
@@ -749,22 +809,100 @@ export const make = Effect.gen(function* () {
           // hard-killed by the OS instead of receiving SIGTERM + grace.
           const instances = yield* pool.list;
           // stop clears desiredRunning, so retain the recovery set beforehand.
-          const runningInstances = yield* Effect.filter(instances, (instance) =>
-            instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
+          const backendSnapshots = yield* Effect.forEach(instances, (instance) =>
+            instance.snapshot.pipe(Effect.map((snapshot) => ({ instance, snapshot }))),
           );
+          const runningInstances = backendSnapshots
+            .filter(({ snapshot }) => snapshot.desiredRunning)
+            .map(({ instance }) => instance);
+          if (continueRunningThreads === false) {
+            const affected = backendSnapshots.filter(
+              ({ snapshot }) => snapshot.desiredRunning || Option.isSome(snapshot.activePid),
+            );
+            if (affected.some(({ snapshot }) => Option.isNone(snapshot.activePid))) {
+              return yield* new DesktopUpdatePreparationError({
+                message:
+                  "Wait for every desktop backend to start before disabling thread continuation.",
+              });
+            }
+            if (affected.length > 0) {
+              const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+              yield* Ref.set(
+                installRestartPolicyRef,
+                Option.some({
+                  requestId,
+                  instances: affected.map(({ instance }) => instance),
+                  stopped: new Set(),
+                }),
+              );
+              const accepted = yield* telemetry.requestUpdateRestartPolicy(
+                affected.map(({ instance }) => instance.id),
+                {
+                  version: 1,
+                  type: "desktopUpdateRestartPolicy",
+                  requestId,
+                  continueRunningThreads: false,
+                },
+              );
+              if (!accepted)
+                return yield* new DesktopUpdatePreparationError({
+                  message:
+                    "Every running backend must accept the desktop update restart policy before installing.",
+                });
+            }
+            const currentInstances = yield* pool.list;
+            if (
+              currentInstances.length !== instances.length ||
+              currentInstances.some((instance) => !instances.includes(instance))
+            ) {
+              return yield* new DesktopUpdatePreparationError({
+                message: "Desktop backends changed while preparing the update. Try again.",
+              });
+            }
+            for (const { instance, snapshot: before } of backendSnapshots) {
+              const after = yield* instance.snapshot;
+              if (
+                Option.getOrUndefined(before.activePid) !==
+                  Option.getOrUndefined(after.activePid) ||
+                before.desiredRunning !== after.desiredRunning
+              ) {
+                return yield* new DesktopUpdatePreparationError({
+                  message: "A desktop backend restarted while preparing the update. Try again.",
+                });
+              }
+            }
+          }
+          const activeAction = yield* Ref.get(activeUpdateActionRef);
+          if (Option.isNone(activeAction) || activeAction.value !== "install")
+            return { accepted: true, completed: false, failed: true };
           yield* Ref.set(installRunningBackendsRef, runningInstances);
           yield* Effect.forEach(
             instances,
-            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+            (instance) =>
+              Ref.update(
+                installRestartPolicyRef,
+                Option.map((policy) => ({
+                  ...policy,
+                  stopped: new Set([...policy.stopped, instance]),
+                })),
+              ).pipe(Effect.andThen(instance.stop({ timeout: Duration.seconds(5) }))),
             { concurrency: "unbounded" },
           );
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
           });
+          yield* releaseInstallRestartPolicy(false);
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
+            DesktopUpdatePreparationError: Effect.fn("desktop.updates.handlePreparationFailure")(
+              function* (error) {
+                yield* recoverFailedInstall(error.message);
+                yield* logUpdaterError(error.message, { errorTag: error._tag });
+                return { accepted: true, completed: false, failed: true };
+              },
+            ),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);
@@ -779,7 +917,9 @@ export const make = Effect.gen(function* () {
               },
             ),
           }),
-          Effect.onInterrupt(() => resetInstallAction),
+          Effect.onInterrupt(() =>
+            releaseInstallRestartPolicy(true).pipe(Effect.andThen(resetInstallAction)),
+          ),
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
               if (Cause.hasInterruptsOnly(cause)) {
@@ -801,6 +941,7 @@ export const make = Effect.gen(function* () {
 
   const installWithExpectedVersion = Effect.fn("desktop.updates.install")(function* (
     expectedVersion?: string,
+    continueRunningThreads?: boolean,
   ) {
     if (yield* Ref.get(desktopState.quitting)) {
       return {
@@ -810,7 +951,7 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
-    const result = yield* installDownloadedUpdate(expectedVersion);
+    const result = yield* installDownloadedUpdate(expectedVersion, continueRunningThreads);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1168,7 +1309,8 @@ export const make = Effect.gen(function* () {
     install: installWithExpectedVersion().pipe(
       Effect.map(({ accepted, completed, state }) => ({ accepted, completed, state })),
     ),
-    installPrepared: (expectedVersion) => installWithExpectedVersion(expectedVersion),
+    installPrepared: (expectedVersion, continueRunningThreads) =>
+      installWithExpectedVersion(expectedVersion, continueRunningThreads),
   });
 });
 

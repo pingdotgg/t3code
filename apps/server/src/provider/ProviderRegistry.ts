@@ -20,6 +20,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
+import { HttpClient } from "effect/http";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -39,6 +40,8 @@ import type {
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  invalidateLatestProviderVersion,
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -343,6 +346,7 @@ export const layer = Layer.effect(
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const httpClient = yield* HttpClient.HttpClient;
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -676,7 +680,6 @@ export const layer = Layer.effect(
       provider: ProviderDriverKind,
       selectedInstanceId: ProviderInstanceId,
     ) {
-      yield* manifestService.forceRefresh;
       const instances = (yield* instanceRegistry.listInstances).filter(
         (instance) =>
           instance.driverKind === provider &&
@@ -706,16 +709,27 @@ export const layer = Layer.effect(
       });
       // Accounts can share an installation, but discovery must use each
       // instance's own executable, environment, and credentials.
-      yield* Effect.forEach(
-        instances,
-        (instance) =>
-          Effect.gen(function* () {
-            yield* instance.invalidateCaches ?? Effect.void;
-            const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
-            if (maintenance.packageName) {
-              yield* latestVersions.invalidate(maintenance.packageName);
-            }
-          }).pipe(Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause))),
+      yield* Effect.all(
+        [
+          manifestService.forceRefresh,
+          Effect.forEach(
+            instances,
+            (instance) =>
+              Effect.gen(function* () {
+                yield* instance.invalidateCaches ?? Effect.void;
+                const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+                yield* invalidateLatestProviderVersion(maintenance).pipe(
+                  Effect.provideService(
+                    ProviderLatestVersions.ProviderLatestVersions,
+                    latestVersions,
+                  ),
+                );
+              }).pipe(
+                Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause)),
+              ),
+            { concurrency: "unbounded", discard: true },
+          ),
+        ],
         { concurrency: "unbounded", discard: true },
       );
       yield* Effect.forEach(
@@ -726,14 +740,40 @@ export const layer = Layer.effect(
           ),
         { concurrency: "unbounded", discard: true },
       );
-      const refreshedInstanceIds = new Set(
-        instances
-          .filter((instance) => !failedInstances.has(instance.instanceId))
-          .map((instance) => instance.instanceId),
+      const refreshedProviders = yield* Effect.forEach(
+        instances.filter((instance) => !failedInstances.has(instance.instanceId)),
+        (instance) =>
+          Effect.gen(function* () {
+            if ((yield* instanceRegistry.getInstance(instance.instanceId)) !== instance) return;
+            const refreshed = (yield* Ref.get(providersRef)).find(
+              (candidate) => candidate.instanceId === instance.instanceId,
+            );
+            if (!refreshed) return;
+            if (instance.instanceId !== selectedInstanceId) return refreshed;
+            const maintenance = yield* instance.snapshot.resolveMaintenance();
+            if ((yield* instanceRegistry.getInstance(instance.instanceId)) !== instance) return;
+            const verified = yield* enrichProviderSnapshotWithVersionAdvisory(
+              refreshed,
+              maintenance,
+            ).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.interrupt
+                  : Effect.logWarning("Provider post-update version verification failed", {
+                      provider,
+                      cause: Cause.pretty(cause),
+                    }).pipe(Effect.as(refreshed)),
+              ),
+            );
+            return (yield* instanceRegistry.getInstance(instance.instanceId)) === instance
+              ? verified
+              : undefined;
+          }),
+        { concurrency: "unbounded" },
       );
-      return (yield* Ref.get(providersRef)).filter((candidate) =>
-        refreshedInstanceIds.has(candidate.instanceId),
-      );
+      return refreshedProviders.filter((candidate) => candidate !== undefined);
     });
 
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
