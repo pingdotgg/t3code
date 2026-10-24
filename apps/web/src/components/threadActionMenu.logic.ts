@@ -92,6 +92,7 @@ export interface ThreadActionMenuState {
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "new-thread-on-branch",
+    "filter-by-project",
     "project-settings",
     "mark-unread",
     "copy",

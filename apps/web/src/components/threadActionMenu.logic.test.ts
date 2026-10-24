@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  threadActionRequiresOperate,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -62,6 +66,26 @@ describe("buildThreadActionMenuItems", () => {
         items.find((item) => item.id === "snooze")?.children?.every((child) => child.disabled) ??
           true,
       ).toBe(true);
+    },
+  );
+
+  it.each([false, true])(
+    "allows read-only project filtering without enabling mutations (active: %s)",
+    (isActive) => {
+      const items = buildThreadActionMenuItems({
+        ...baseState,
+        canOperate: false,
+        projectFilter: { label: "Example project", isActive },
+      });
+      expect(items.find((item) => item.id === "filter-by-project")).toMatchObject({
+        label: isActive ? "Show all projects" : "Filter by Example project",
+      });
+      expect(items.find((item) => item.id === "filter-by-project")?.disabled).not.toBe(true);
+      expect(threadActionRequiresOperate("filter-by-project")).toBe(false);
+      for (const action of ["rename", "archive", "delete"] as const) {
+        expect(items.find((item) => item.id === action)?.disabled).toBe(true);
+        expect(threadActionRequiresOperate(action)).toBe(true);
+      }
     },
   );
 
