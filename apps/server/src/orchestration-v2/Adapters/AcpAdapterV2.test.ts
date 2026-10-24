@@ -142,6 +142,7 @@ function makeMockRuntime(input: {
     | ((runtimeOrdinal: number) => Readonly<Record<string, string>>);
   readonly protocolEvents?: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>;
   readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
+  readonly sessionLoadReplayIdleGap?: AcpSessionRuntime.AcpSessionRuntimeOptions["sessionLoadReplayIdleGap"];
   readonly ownDescendantProcessGroups?: boolean;
   readonly ownDetachedProcessGroup?: boolean;
   readonly processGroupPlatform?: NodeJS.Platform;
@@ -180,6 +181,9 @@ function makeMockRuntime(input: {
         AcpSessionRuntime.layer({
           ...runtimeInput,
           ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
+          ...(input.sessionLoadReplayIdleGap === undefined
+            ? {}
+            : { sessionLoadReplayIdleGap: input.sessionLoadReplayIdleGap }),
           ...(input.ownDetachedProcessGroup === undefined
             ? {}
             : { ownDetachedProcessGroup: input.ownDetachedProcessGroup }),
@@ -2352,6 +2356,115 @@ describe("AcpAdapterV2", () => {
       assert.lengthOf(runtimeInputs, 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+
+  describe("model switch capability follows live config options", () => {
+    const openModelSwitchSession = Effect.fnUntraced(function* (input: {
+      readonly name: string;
+      readonly environment: Readonly<Record<string, string>>;
+    }) {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      let agentRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+      const instanceId = ProviderInstanceId.make(`acp-test-${input.name}`);
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: input.environment,
+            sessionLoadReplayIdleGap: "50 millis",
+            wrapRuntime: (runtime) => {
+              agentRuntime = runtime;
+              return runtime;
+            },
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make(`thread-acp-${input.name}`);
+      const modelSelection = { instanceId, model: "composer-2" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`provider-session-acp-${input.name}`),
+        modelSelection,
+        runtimePolicy,
+        initialNativeThreadId: "mock-session-1",
+      });
+      const runTurn = Effect.gen(function* () {
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            modelSelection,
+            now: yield* DateTime.now,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+      });
+      const nextSessionUpdate = runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_session.updated"),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+        Effect.timeout("5 seconds"),
+      );
+      return { runtime, nextSessionUpdate, runTurn, agentRuntime: () => agentRuntime };
+    });
+
+    it.live("model switch support follows late and later config options", () =>
+      Effect.gen(function* () {
+        const { runtime, nextSessionUpdate, runTurn, agentRuntime } = yield* openModelSwitchSession(
+          {
+            name: "model-switch-late-load",
+            environment: {
+              T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
+              T3_ACP_LOAD_SESSION_DELAY_MS: "600",
+            },
+          },
+        );
+        assert.isFalse(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
+
+        const updated = yield* nextSessionUpdate;
+        assert.isTrue(
+          updated.type === "provider_session.updated" &&
+            updated.providerSession.capabilities.sessions.supportsModelSwitchInSession,
+        );
+        assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
+
+        // The open-time selection was applied before the model option existed.
+        yield* runTurn;
+        const model = (yield* agentRuntime()!.getConfigOptions).find(
+          (option) => option.category === "model",
+        );
+        assert.equal(model?.currentValue, "composer-2");
+
+        yield* agentRuntime()!.request("_test/model-config-update", { omit: true });
+        yield* nextSessionUpdate;
+        assert.isFalse(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+  });
 
   it.effect("negotiates and executes optional native session forks through the ACP runtime", () =>
     Effect.gen(function* () {

@@ -99,7 +99,7 @@ const compactionPromptOrdinals = new Set(
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
-const omitModelConfigOption = process.env.T3_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
+let omitModelConfigOption = process.env.T3_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
@@ -2481,6 +2481,16 @@ const program = Effect.gen(function* () {
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/model-config-update") {
+      return Effect.gen(function* () {
+        omitModelConfigOption = (params as { readonly omit?: boolean } | undefined)?.omit === true;
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: { sessionUpdate: "config_option_update", configOptions: configOptions() },
+        });
+        return {};
+      });
     }
     if (method === "_test/startup-metadata") {
       return Effect.gen(function* () {

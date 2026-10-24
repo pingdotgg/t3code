@@ -1313,6 +1313,12 @@ export function sessionModelStateFromInitialize(
   return isSessionModelState(modelState) ? modelState : undefined;
 }
 
+export function isReplayIdleLoadResponse(response: {
+  readonly _meta?: { readonly [key: string]: unknown } | null;
+}): boolean {
+  return isRecord(response._meta) && response._meta.t3SessionLoadReady === "replay_idle";
+}
+
 export function syntheticLoadSessionResponseFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,
 ): EffectAcpSchema.LoadSessionResponse {
