@@ -17,6 +17,8 @@ import {
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -32,6 +34,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
+import * as ServerConfig from "../config.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -40,7 +43,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CodexAdapterV2 from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -159,7 +162,8 @@ const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
-const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
+const CodexCapabilities: OrchestrationV2ProviderCapabilities =
+  CodexAdapterV2.CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   ...CodexCapabilities,
   sessions: {
@@ -487,6 +491,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly registry?: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -553,7 +558,7 @@ function layerTest(input: {
     }).pipe(
       Layer.provide(
         Layer.mergeAll(
-          layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
+          (input.registry ?? layerRegistry).pipe(Layer.provideMerge(McpProviderSessions.layer)),
           CommandOutputHub.layer.pipe(
             Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
           ),
@@ -2502,6 +2507,183 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
           idleTimeoutMs: 1000,
           failEventStream: true,
         }),
+      ),
+    );
+  }),
+);
+
+const codexAppServerLifetime = (
+  nativeThreadId: string,
+): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+  {
+    type: "expect_outbound",
+    frame: {
+      id: 1,
+      method: "initialize",
+      params: {
+        clientInfo: { name: "T3 Code", title: "T3 Code", version: "ignored" },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: ["turn/diff/updated"],
+          extensions: {
+            "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "emit_inbound",
+    frame: {
+      id: 1,
+      result: {
+        userAgent: "T3 Code/0.156.1",
+        codexHome: "/tmp/codex-home",
+        platformFamily: "unix",
+        platformOs: "linux",
+      },
+    },
+  },
+  { type: "expect_outbound", frame: { method: "initialized" } },
+  {
+    type: "expect_outbound",
+    frame: {
+      id: 2,
+      method: "thread/start",
+      params: { config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+    },
+  },
+  {
+    type: "emit_inbound",
+    frame: {
+      id: 2,
+      result: {
+        thread: {
+          id: nativeThreadId,
+          sessionId: nativeThreadId,
+          forkedFromId: null,
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 1782622440,
+          updatedAt: 1782622440,
+          status: { type: "idle" },
+          path: `/tmp/${nativeThreadId}.jsonl`,
+          cwd: "/workspace",
+          cliVersion: "0.144.0",
+          source: "vscode",
+          threadSource: null,
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: [],
+        },
+        model: "gpt-5.4",
+        modelProvider: "openai",
+        serviceTier: null,
+        cwd: "/workspace",
+        instructionSources: [],
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        sandbox: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
+        reasoningEffort: "medium",
+      },
+    },
+  },
+];
+
+it.effect("ProviderSessionManagerV2 starts a new Codex app-server after the old one exits", () =>
+  Effect.gen(function* () {
+    const driver = yield* CodexReplay.makeReplayDriver({
+      provider: "codex",
+      protocol: "codex.app-server",
+      version: "0.144.0",
+      scenario: "app-server-exit",
+      entries: [
+        ...codexAppServerLifetime("native-before-exit"),
+        { type: "runtime_exit", status: "success" },
+        ...codexAppServerLifetime("native-after-exit"),
+      ],
+    });
+    const appServerStarts = yield* Ref.make(0);
+    const firstSessionClosed = yield* Deferred.make<void>();
+    const clientFactory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
+      open: (openInput) =>
+        Effect.gen(function* () {
+          yield* Ref.update(appServerStarts, (count) => count + 1);
+          yield* Effect.addFinalizer(() => Deferred.succeed(firstSessionClosed, undefined));
+          const context = yield* Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: CODEX_DRIVER,
+                  providerSessionId: openInput.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+          return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+            Effect.provide(context),
+          );
+        }),
+    });
+    const registry = ProviderAdapterRegistry.layerFromDrivers({
+      drivers: [CodexAdapterV2.CodexAdapterV2Driver],
+      configMap: { [modelSelection.instanceId]: { driver: CODEX_DRIVER } },
+    }).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          clientFactory,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-app-server-exit-" }),
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Layer.orDie,
+    );
+
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-codex-exit",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-codex-exit",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const ensureThread = Effect.gen(function* () {
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        return yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      });
+
+      const before = yield* ensureThread;
+      yield* Deferred.await(firstSessionClosed);
+      const after = yield* ensureThread;
+
+      assert.equal(before.nativeThreadRef?.nativeId, "native-before-exit");
+      assert.equal(after.nativeThreadRef?.nativeId, "native-after-exit");
+      assert.equal(yield* Ref.get(appServerStarts), 2);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({ state: yield* Ref.make(emptyState), idleTimeoutMs: 60_000, registry }),
       ),
     );
   }),
