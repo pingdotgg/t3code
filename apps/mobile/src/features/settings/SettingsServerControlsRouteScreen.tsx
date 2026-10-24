@@ -279,6 +279,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const modelCatalogUpdates = catalogUpdates.every((value) => value === catalogUpdates[0])
     ? (catalogUpdates[0] ?? null)
     : null;
+  // The switch only writes true or false, so following provider updates again needs its own action.
+  const modelCatalogUpdatesOverridden = displayTargets.some(
+    (target) => target.settings.enableModelCatalogUpdates !== null,
+  );
   const disabledFor = (key: string) =>
     disabled ||
     managed(key) !== undefined ||
@@ -557,13 +561,25 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         "enableModelCatalogUpdates",
                         projectSelected
                           ? "Environment-wide setting. Select All projects to change it."
-                          : "Download the latest model catalog so new models appear between releases.",
+                          : modelCatalogUpdatesOverridden
+                            ? "Download the latest model catalog so new models appear between releases."
+                            : "Download the latest model catalog so new models appear between releases. Follows Check provider updates until you change it.",
                       )}
                       value={modelCatalogUpdates}
                       disabled={disabledFor("enableModelCatalogUpdates")}
                       onValueChange={(value) => write({ enableModelCatalogUpdates: value })}
                     />
                   </View>
+                  {modelCatalogUpdatesOverridden && !projectSelected ? (
+                    <View className="border-t border-border-subtle">
+                      <SettingsRow
+                        icon="arrow.uturn.backward"
+                        label="Follow Check provider updates"
+                        disabled={disabledFor("enableModelCatalogUpdates")}
+                        onPress={() => write({ enableModelCatalogUpdates: null })}
+                      />
+                    </View>
+                  ) : null}
                   <View className="border-t border-border-subtle">
                     <SettingsSwitchRow
                       icon="arrow.uturn.forward"
