@@ -962,6 +962,30 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+      const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
+      if (harnessFailure === "1" || harnessFailure === "after-end-turn") {
+        const writeHarnessFailure = Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              process.stderr.write(
+                "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2\n",
+                () => resolve(),
+              );
+            }),
+        );
+        // The native ACP parent can report success after its local harness has
+        // failed. Its stderr and stdout are separate pipes, so the failure record
+        // can reach the client before or after the successful response.
+        if (harnessFailure === "after-end-turn") {
+          yield* Effect.sleep("200 millis").pipe(
+            Effect.andThen(writeHarnessFailure),
+            Effect.forkDetach,
+          );
+          return yield* finishPrompt(requestedSessionId, "end_turn");
+        }
+        yield* writeHarnessFailure;
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")

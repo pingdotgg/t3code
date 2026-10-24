@@ -1356,6 +1356,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }
     yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
     yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error: enriched });
+    yield* options.onTermination?.(enriched) ?? Effect.void;
   });
 
   const logRequest = (event: AcpSessionRequestLogEvent) =>
@@ -1662,8 +1663,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ),
         Effect.catch((error) =>
           Effect.gen(function* () {
-            yield* Deferred.fail(stderrFailure, error);
             yield* recordTermination(error);
+            yield* Deferred.fail(stderrFailure, error);
             yield* child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore);
           }),
         ),
@@ -1690,7 +1691,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...(options.onIncomingRequest ? { onIncomingRequest: options.onIncomingRequest } : {}),
       onTermination: (error) =>
         recordTermination(error).pipe(
-          Effect.andThen(options.onTermination?.(error) ?? Effect.void),
           Effect.ensuring(
             Scope.close(runtimeScope, Exit.fail(error)).pipe(Effect.forkDetach, Effect.asVoid),
           ),

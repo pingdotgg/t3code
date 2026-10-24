@@ -445,7 +445,9 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    args: input.profile.platform === "linux" ? ["--uid="] : [],
+    // The ACP process can survive a failed local harness and return end_turn.
+    // Its native logs are the failure signal; the transport must receive them.
+    args: [...(input.profile.platform === "linux" ? ["--uid="] : []), "--alsologtostderr"],
     cwd: input.cwd,
     env: {
       ...antigravityEnvironment(
@@ -575,6 +577,20 @@ export function makeAntigravityStderrHandler(
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
     if (message.length > maxBrowserHelperLineLength) {
       return Effect.void;
+    }
+    if (
+      /^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ (?:local_connection\.py:\d+\] harness stderr: Agent run failed:|server\.py:\d+\] (?:Failed to rebuild agent for session |Agent connection lost for session ))/.test(
+        message,
+      )
+    ) {
+      return Effect.fail(
+        new AcpErrors.AcpTransportError({
+          method: "session/prompt",
+          detail:
+            "Antigravity's local agent connection failed. Send a follow-up to resume with a fresh process.",
+          cause: undefined,
+        }),
+      );
     }
     const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
       ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
