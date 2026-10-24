@@ -83,6 +83,12 @@ export const PreviewAutomationProfile = Schema.Struct({
 export type PreviewAutomationProfile = typeof PreviewAutomationProfile.Type;
 
 export const PreviewAutomationStatus = Schema.Struct({
+  desktopFallback: Schema.optional(
+    Schema.Literals(["attach-timeout", "late-attach"]).annotate({
+      description:
+        "Automation uses a headless page with a cookie store distinct from the desktop browser. attach-timeout means the desktop did not attach in time; late-attach means the desktop attached at some point after the timeout, but automation still uses the headless page. To retry desktop attachment, first close the fallback tab using t3_preview_close, then call preview_open with open:true and reuseExistingTab:false while the desktop is showing the thread.",
+    }),
+  ),
   available: Schema.Boolean,
   visible: Schema.Boolean,
   tabId: Schema.NullOr(PreviewTabId),
@@ -715,6 +721,7 @@ export const PreviewAutomationActionEvent = Schema.Struct({
 export type PreviewAutomationActionEvent = typeof PreviewAutomationActionEvent.Type;
 
 export const PreviewAutomationSnapshot = Schema.Struct({
+  desktopFallback: PreviewAutomationStatus.fields.desktopFallback,
   url: Schema.String,
   title: Schema.String,
   loading: Schema.Boolean,

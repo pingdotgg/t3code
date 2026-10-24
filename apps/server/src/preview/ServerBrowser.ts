@@ -293,6 +293,7 @@ interface ServerTab {
   readonly isolatedContext: boolean;
 
   readonly desktop: { readonly close: () => Promise<void> } | null;
+  desktopFallback: PreviewAutomationStatus["desktopFallback"];
   readonly profileId: string | undefined;
   readonly openerTabId: string | undefined;
 
@@ -471,7 +472,14 @@ const make = Effect.gen(function* () {
   const pendingTabs = new Map<string, Promise<ServerTab>>();
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    {
+      readonly page: Page;
+      readonly openerTabId: string;
+      readonly desktopFallback: ServerTab["desktopFallback"];
+    }
+  >();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -766,6 +774,9 @@ const make = Effect.gen(function* () {
       onFileChooser: (chooser) => void offerFileChooser(tab, chooser),
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
+      desktopFallback:
+        adopted?.desktopFallback ??
+        (desktopChannel.available && !adopted && !desktop ? "attach-timeout" : undefined),
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
       downloads: [],
@@ -1210,6 +1221,7 @@ const make = Effect.gen(function* () {
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
+            desktopFallback: opener.desktopFallback,
           }),
       }),
     ).then(
@@ -1381,6 +1393,7 @@ const make = Effect.gen(function* () {
       url: url === "about:blank" ? null : url,
       title: null,
       loading: tab.loading,
+      ...(tab.desktopFallback === undefined ? {} : { desktopFallback: tab.desktopFallback }),
       control: {
         owner: tabOwner(tab),
         ownedByCaller: tab.control.agentId === agentSessionId,
@@ -1973,12 +1986,16 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
+        const snapshot = await withScreencastsPaused(tab, () =>
           ServerBrowserPage.snapshot({
             ...tab,
             renderScale: tab.desktop ? "display" : RENDER_SCALE,
           }),
         );
+        return {
+          ...snapshot,
+          ...(tab.desktopFallback === undefined ? {} : { desktopFallback: tab.desktopFallback }),
+        };
       }
       case "click": {
         const clickInput = input as PreviewAutomationClickInput;
@@ -2481,7 +2498,21 @@ const make = Effect.gen(function* () {
   yield* desktopChannel.attached.pipe(
     Stream.runForEach((key) =>
       Effect.gen(function* () {
-        if (tabs.has(tabKey(key.threadId, key.tabId))) return;
+        const id = tabKey(key.threadId, key.tabId);
+        // An attach can arrive while the fallback page is still being created.
+        const pending = pendingTabs.get(id);
+        if (pending) yield* Effect.promise(() => pending.catch(constVoid));
+        const tab = tabs.get(id);
+        if (tab) {
+          if (tab.desktopFallback === "attach-timeout") {
+            tab.desktopFallback = "late-attach";
+            yield* Effect.logWarning(
+              "desktop preview attached after timeout; automation remains on the headless page with a separate cookie store",
+              key,
+            );
+          }
+          return;
+        }
         const { sessions } = yield* manager.list({ threadId: ThreadId.make(key.threadId) });
         const snapshot = sessions.find(
           (session) => session.tabId === key.tabId && session.runtime === "server",
