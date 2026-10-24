@@ -7,7 +7,6 @@ import {
   GuestMessageId,
   type GuestRedeemRequest,
   type GuestShareView,
-  type GuestSubmitRequest,
   type GuestThreadModel,
   type ThreadGuestMessage,
   type ThreadGuestMessageStatus,
@@ -15,13 +14,15 @@ import {
 import type { LegendListRef } from "@legendapp/list/react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ArrowUpIcon } from "lucide-react";
+import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react";
 import {
   createRef,
   useEffect,
   useReducer,
   useRef,
   useState,
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
@@ -32,7 +33,10 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import type { ChatComposerHandle } from "../chat/ChatComposer";
-import { ComposerControl } from "../chat/ComposerControl";
+import { ComposerControl, ComposerControlIcon } from "../chat/ComposerControl";
+import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
+import { GuestMessageAttachments } from "../chat/GuestMessageAttachments";
+import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -48,6 +52,9 @@ import {
   applyGuestStreamEvent,
   deriveGuestActivity,
   formatGuestExpiry,
+  guestAttachmentUrl,
+  guestAttachmentUrlsById,
+  guestFilesProblem,
   initialGuestStreamState,
   inviteShareId,
   type GuestStreamState,
@@ -120,14 +127,19 @@ const decodeErrorBody = Schema.decodeUnknownOption(Schema.Struct({ message: Sche
 /** Resolves to null on success, or to a message the guest can read. */
 async function postGuest(
   path: "redeem" | "messages",
-  body: typeof GuestRedeemRequest.Encoded | typeof GuestSubmitRequest.Encoded,
+  body: typeof GuestRedeemRequest.Encoded | FormData,
 ): Promise<string | null> {
   try {
-    const response = await fetch(`${GUEST_ROUTE_PREFIX}/${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const response = await fetch(
+      `${GUEST_ROUTE_PREFIX}/${path}`,
+      body instanceof FormData
+        ? { method: "POST", body }
+        : {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+    );
     if (response.ok) return null;
     const json: unknown = await response.json().catch(() => null);
     return Option.match(decodeErrorBody(json), {
@@ -346,10 +358,17 @@ function GuestThread({
   const threadKey = `guest-${shareId}`;
   const listRef = useRef<LegendListRef | null>(null);
   const { resolvedTheme } = useTheme();
+  // The guest's own sent files load from the guest route; the owner's never reach this page.
+  // The compiler keeps the map until the items change, so entries are not rebuilt every render.
+  const attachmentUrlById = guestAttachmentUrlsById(shareId, items);
   const entries = useIncrementalTimelineEntries(threadKey, {
     visibleTurnItems: items,
     optimisticMessages: NO_OPTIMISTIC_MESSAGES,
+    attachmentUrlById,
   });
+  const openFile = useStableCallback((file: { readonly id: string }) =>
+    openInNewTab(guestAttachmentUrl(shareId, file.id)),
+  );
   const activity = deriveGuestActivity(runs);
   const runningRunId = activity.isWorking ? (activity.run?.runId ?? null) : null;
   const follow = useTimelineFollow({
@@ -399,7 +418,9 @@ function GuestThread({
           supportsConversationRollback={false}
           onRevertToTurnCount={ignore}
           isRevertingCheckpoint={false}
-          onImageExpand={ignore}
+          onImageExpand={openExpandedImage}
+          onFileOpen={openFile}
+          onFileDownload={openFile}
           renderHtmlRender={renderHtmlRender}
           turnItemSource={guestTurnItemSource(shareId)}
           activeThreadEnvironmentId={GUEST_ENVIRONMENT_ID}
@@ -421,7 +442,7 @@ function GuestThread({
               <ol className="chat-content-lane flex flex-col gap-4 pb-4">
                 {unplaced.map((message) => (
                   <li key={message.id}>
-                    <UnplacedGuestMessage message={message} />
+                    <UnplacedGuestMessage shareId={shareId} message={message} />
                   </li>
                 ))}
               </ol>
@@ -449,10 +470,26 @@ function ExpiryLabel({ expiresAt }: { readonly expiresAt: string }) {
 }
 
 const BUBBLE =
-  "min-w-0 max-w-[80%] rounded-2xl p-3 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]";
+  "flex min-w-0 max-w-[80%] flex-col gap-2 rounded-2xl p-3 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]";
+
+const openInNewTab = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
+/** Guests have no image viewer; the browser shows the picture in its own tab. */
+const openExpandedImage = (preview: ExpandedImagePreview) => {
+  const src = preview.images[preview.index]?.src;
+  if (src) openInNewTab(src);
+};
 
 /** A guest message the owner has not sent yet, or chose not to send. */
-function UnplacedGuestMessage({ message }: { readonly message: ThreadGuestMessage }) {
+function UnplacedGuestMessage({
+  shareId,
+  message,
+}: {
+  readonly shareId: GuestShareView["shareId"];
+  readonly message: ThreadGuestMessage;
+}) {
+  // A dismissed message's files are deleted, so only their names remain.
+  const served = message.status !== "dismissed";
+  const url = (attachment: { readonly id: string }) => guestAttachmentUrl(shareId, attachment.id);
   return (
     <div className="flex flex-col items-end gap-1">
       <GuestMessageName name="You" />
@@ -463,7 +500,13 @@ function UnplacedGuestMessage({ message }: { readonly message: ThreadGuestMessag
           message.status === "dismissed" ? "text-muted-foreground" : "text-message-foreground",
         )}
       >
-        {message.text}
+        <GuestMessageAttachments
+          attachments={message.attachments ?? []}
+          imageUrl={(attachment) => (served ? url(attachment) : undefined)}
+          onOpenImage={(attachment) => openInNewTab(url(attachment))}
+          {...(served ? { fileHref: url } : {})}
+        />
+        {message.text ? <span>{message.text}</span> : null}
       </div>
       <p className="me-1 text-2xs text-muted-foreground">{STATUS_LABEL[message.status]}</p>
     </div>
@@ -494,6 +537,29 @@ function GuestModelLabel({ model }: { readonly model: GuestThreadModel }) {
   );
 }
 
+interface StagedFile {
+  readonly key: string;
+  readonly file: File;
+}
+
+let nextStagedFileKey = 0;
+
+/** A staged image's thumbnail; its object URL lives as long as the element. */
+function StagedImage({ file }: { readonly file: File }) {
+  return (
+    <img
+      alt={file.name}
+      className="size-full object-cover"
+      ref={(image) => {
+        if (!image) return;
+        const url = URL.createObjectURL(file);
+        image.src = url;
+        return () => URL.revokeObjectURL(url);
+      }}
+    />
+  );
+}
+
 function GuestComposer({
   shareId,
   model,
@@ -502,17 +568,38 @@ function GuestComposer({
   readonly model: GuestThreadModel;
 }) {
   const [text, setText] = useState("");
+  const [files, setFiles] = useState<ReadonlyArray<StagedFile>>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { resolvedTheme } = useTheme();
+  const addFiles = (added: ReadonlyArray<File>) => {
+    if (added.length === 0) return;
+    const next = [
+      ...files,
+      ...added.map((file) => ({ key: `staged-${nextStagedFileKey++}`, file })),
+    ];
+    const problem = guestFilesProblem(next.map((staged) => staged.file));
+    setError(problem);
+    if (problem === null) setFiles(next);
+  };
   const send = async () => {
     const trimmed = text.trim();
-    if (trimmed === "" || sending) return;
+    if ((trimmed === "" && files.length === 0) || sending) return;
     setSending(true);
-    const failure = await postGuest("messages", { shareId, text: trimmed });
+    const sentFiles = files;
+    const form = new FormData();
+    form.append("shareId", shareId);
+    form.append("text", trimmed);
+    for (const staged of sentFiles) form.append("file", staged.file, staged.file.name);
+    const failure = await postGuest("messages", form);
     setSending(false);
     setError(failure);
-    // Keep anything typed while the request was in flight.
-    if (failure === null) setText((current) => (current.trim() === trimmed ? "" : current));
+    // Keep anything typed or attached while the request was in flight.
+    if (failure === null) {
+      setText((current) => (current.trim() === trimmed ? "" : current));
+      setFiles((current) => current.filter((staged) => !sentFiles.includes(staged)));
+    }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // Same as the app composer: Enter sends, Shift+Enter adds a line, IME composition is left alone.
@@ -521,6 +608,16 @@ function GuestComposer({
       void send();
     }
   };
+  // As in the app composer: pasted images attach, and other files attach when no text came along.
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = Array.from(event.clipboardData.files);
+    const hasImage = pasted.some((file) => file.type.startsWith("image/"));
+    if (pasted.length === 0 || (!hasImage && event.clipboardData.getData("text/plain") !== "")) {
+      return;
+    }
+    event.preventDefault();
+    addFiles(pasted);
+  };
   return (
     <form
       className="flex flex-col gap-2 rounded-3xl border border-border bg-card px-4 pt-3 pb-2.5 shadow-composer dark:shadow-composer-dark"
@@ -528,7 +625,50 @@ function GuestComposer({
         event.preventDefault();
         void send();
       }}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (event.dataTransfer.files.length === 0) return;
+        event.preventDefault();
+        addFiles(Array.from(event.dataTransfer.files));
+      }}
     >
+      {files.length > 0 ? (
+        <ul className="flex flex-wrap gap-2" aria-label="Attached files">
+          {files.map((staged) => (
+            <li
+              key={staged.key}
+              className="flex h-14 min-w-0 items-center gap-2 overflow-hidden rounded-lg border border-border/80 bg-background/70 pe-1"
+            >
+              {staged.file.type.startsWith("image/") ? (
+                <span className="size-14 shrink-0">
+                  <StagedImage file={staged.file} />
+                </span>
+              ) : (
+                <span className="flex min-w-0 items-center gap-2 ps-2 text-sm">
+                  <PierreEntryIcon pathValue={staged.file.name} kind="file" theme={resolvedTheme} />
+                  <span className="max-w-40 truncate">{staged.file.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatAttachmentSize(staged.file.size)}
+                  </span>
+                </span>
+              )}
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={`Remove ${staged.file.name}`}
+                onClick={() => {
+                  setError(null);
+                  setFiles((current) => current.filter((candidate) => candidate !== staged));
+                }}
+              >
+                <XIcon />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <textarea
         aria-label="Message"
         placeholder="Message"
@@ -537,9 +677,25 @@ function GuestComposer({
         value={text}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
         className="max-h-60 min-h-12 w-full resize-none bg-transparent text-sm outline-none field-sizing-content placeholder:text-placeholder"
       />
       <div className="flex items-center gap-3">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          aria-label="Files to attach"
+          onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? []));
+            // The same file can be picked again after it is removed.
+            event.target.value = "";
+          }}
+        />
+        <ComposerControl aria-label="Attach files" onClick={() => fileInputRef.current?.click()}>
+          <ComposerControlIcon icon={PaperclipIcon} />
+        </ComposerControl>
         <GuestModelLabel model={model} />
         {error !== null ? (
           <p role="alert" className="min-w-0 flex-1 text-xs text-destructive">
@@ -553,7 +709,7 @@ function GuestComposer({
         <button
           type="submit"
           aria-label="Send"
-          disabled={sending || text.trim() === ""}
+          disabled={sending || (text.trim() === "" && files.length === 0)}
           className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-message-action text-message-action-foreground shadow-xs hover:bg-message-action-hover focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64"
         >
           <ArrowUpIcon aria-hidden className="size-4" />

@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 
+import { ChatAttachmentId } from "./chatAttachment.ts";
 import {
   GuestShareId,
   IsoDateTime,
@@ -55,6 +56,18 @@ const GuestTurnItemBaseFields = {
   updatedAt: Schema.DateTimeUtcFromString,
 } as const;
 
+/** A file a guest attached to their own message. It loads from `GUEST_ATTACHMENT_ROUTE`. */
+const GuestAttachmentFields = {
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString,
+  mimeType: TrimmedNonEmptyString,
+  sizeBytes: NonNegativeInt,
+} as const;
+const GuestAttachment = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("image"), ...GuestAttachmentFields }),
+  Schema.Struct({ type: Schema.Literal("file"), ...GuestAttachmentFields }),
+]);
+
 /** The only tool output a guest gets: a published visual, which it loads from `GUEST_RENDER_ROUTE`. */
 const GuestHtmlRenderOutput = Schema.Struct({
   htmlRender: Schema.Struct({
@@ -96,7 +109,8 @@ const GuestTurnItemMembers = [
         records: Schema.Tuple([]),
       }),
     ),
-    attachments: Schema.Tuple([]),
+    // Only a guest's own message keeps its files; the owner's stay with the owner.
+    attachments: Schema.Array(GuestAttachment),
   }),
   Schema.Struct({
     ...GuestTurnItemBaseFields,

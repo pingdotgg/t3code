@@ -1,4 +1,6 @@
 import {
+  type ChatAttachment,
+  ChatAttachmentId,
   CommandId,
   GUEST_SHARE_TTL_MS,
   GuestMessageId,
@@ -15,6 +17,9 @@ import {
   type RunId,
   ThreadId,
   type OrchestrationV2Run,
+  type GuestTurnItem,
+  type ThreadGuestShare,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -22,6 +27,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -35,7 +41,14 @@ import {
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { resolveAttachmentPathById, threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import {
+  attachmentFileExtension,
+  createPendingAttachmentId,
+  resolveAttachmentPath,
+  resolveAttachmentPathById,
+  threadHtmlRenderAttachmentIds,
+} from "../attachmentStore.ts";
+import { sweepPendingAttachmentsOccasionally } from "../assets/AttachmentUpload.ts";
 import * as ServerConfig from "../config.ts";
 import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import { GUEST_FAILURE } from "../orchestration-v2/GuestShareDecider.ts";
@@ -56,6 +69,11 @@ import {
   projectTurnItemForGuest,
   projectTurnItemForGuestDetail,
 } from "./guestProjection.ts";
+import {
+  classifyGuestUploads,
+  GUEST_UPLOAD_HEADER_BYTES,
+  type GuestUpload,
+} from "./guestAttachments.ts";
 
 const SIGNING_SECRET_NAME = "guest-share-signing-key";
 const SHARE_ID_BYTES = 16;
@@ -75,6 +93,11 @@ const GUEST_ACCESS_MESSAGES = {
   stale_page: "This page is for an older guest link. Reload it to continue.",
   unavailable: "This item is not available.",
   rejected: "The owner's server rejected this request.",
+  empty: "Write a message or attach a file.",
+  too_many_files: "Attach up to 4 files to a message.",
+  too_large: "Attached files can total up to 10 MB per message.",
+  unsupported_file: "This file cannot be attached. Images must be PNG, JPEG, GIF, or WebP.",
+  files_busy: GUEST_FAILURE.filesBusy,
 } as const;
 
 /** What a guest is told. The message comes from `reason`, never from a cause. */
@@ -89,6 +112,11 @@ export class GuestShareAccessError extends Schema.TaggedError<GuestShareAccessEr
       "stale_page",
       "unavailable",
       "rejected",
+      "empty",
+      "too_many_files",
+      "too_large",
+      "unsupported_file",
+      "files_busy",
     ]),
   },
 ) {
@@ -104,7 +132,9 @@ const guestFailureReason = (cause: unknown): GuestShareAccessError["reason"] =>
       ? "used"
       : cause === GUEST_FAILURE.busy
         ? "busy"
-        : "rejected";
+        : cause === GUEST_FAILURE.filesBusy
+          ? "files_busy"
+          : "rejected";
 
 const SessionClaims = Schema.Struct({
   kind: Schema.Literal("session"),
@@ -140,9 +170,11 @@ export class GuestShareService extends Context.Service<
     >;
     /** Succeeds while the session can still open its share. */
     readonly check: (session: string) => Effect.Effect<void, GuestShareAccessError>;
+    /** Stores the guest's files as pending uploads and records the message with them. */
     readonly submit: (
       session: string,
       request: GuestSubmitRequest,
+      uploads: ReadonlyArray<GuestUpload>,
     ) => Effect.Effect<void, GuestShareAccessError>;
     readonly stream: (
       session: string,
@@ -165,8 +197,38 @@ export class GuestShareService extends Context.Service<
       session: string,
       itemId: string,
     ) => Effect.Effect<Stream.Stream<OrchestrationV2CommandOutputFrame>, GuestShareAccessError>;
+    /**
+     * A file the guest attached, while its message waits or after it was sent. Never another
+     * share's files or the owner's.
+     */
+    readonly attachment: (
+      session: string,
+      attachmentId: string,
+    ) => Effect.Effect<
+      { readonly path: string; readonly attachment: ChatAttachment },
+      GuestShareAccessError
+    >;
   }
 >()("t3/guest/GuestShareService") {}
+
+/**
+ * A guest's files show only on messages sent through their own link, as recorded when the owner
+ * sent it. A replacement link can still show an earlier guest's messages from the history window,
+ * but never their files, in the stream, the item detail, or the file route.
+ */
+const isOwnGuestMessage = (domain: OrchestrationV2TurnItem, shareId: GuestShareId) =>
+  domain.type === "user_message" && domain.context?.guest?.shareId === shareId;
+
+const withOwnGuestFiles = <T extends GuestTurnItem | GuestTurnItemDetail>(
+  projected: T,
+  domain: OrchestrationV2TurnItem,
+  shareId: GuestShareId,
+): T =>
+  projected.type === "user_message" &&
+  projected.attachments.length > 0 &&
+  !isOwnGuestMessage(domain, shareId)
+    ? { ...projected, attachments: [] }
+    : projected;
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -175,7 +237,9 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const home = yield* HostProcess.HomeDirectory;
   const managedEndpoint = yield* CloudManagedEndpointRuntime;
-  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const { attachmentsDir } = serverConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const signingKey = yield* Effect.cached(
@@ -319,14 +383,82 @@ const make = Effect.gen(function* () {
     yield* authorize(session, "session");
   });
 
+  const uploadFailed = new GuestShareAccessError({ reason: "rejected" });
+  const removeStored = (attachments: ReadonlyArray<ChatAttachment>) =>
+    Effect.forEach(
+      attachments,
+      (attachment) => {
+        const path = resolveAttachmentPath({ attachmentsDir, attachment });
+        return path === null
+          ? Effect.void
+          : fileSystem.remove(path, { force: true }).pipe(Effect.ignore);
+      },
+      { discard: true },
+    );
+
+  /**
+   * Checks the files and copies them into the attachment store as pending uploads, which the
+   * owner's Send copies into the thread and the pending sweep removes after a day.
+   */
+  const storeUploads = Effect.fn("GuestShareService.storeUploads")(function* (
+    uploads: ReadonlyArray<GuestUpload>,
+  ) {
+    const inspected = yield* Effect.forEach(uploads, (upload) =>
+      Effect.gen(function* () {
+        const info = yield* fileSystem.stat(upload.path);
+        const file = yield* fileSystem.open(upload.path, { flag: "r" });
+        const header = Option.getOrElse(
+          yield* file.readAlloc(GUEST_UPLOAD_HEADER_BYTES),
+          () => new Uint8Array(),
+        );
+        return { ...upload, sizeBytes: Number(info.size), header };
+      }).pipe(
+        Effect.scoped,
+        Effect.mapError(() => uploadFailed),
+      ),
+    );
+    const classified = classifyGuestUploads(inspected);
+    if (!classified.ok) return yield* new GuestShareAccessError({ reason: classified.reason });
+    yield* sweepPendingAttachmentsOccasionally.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, serverConfig),
+    );
+    const stored: Array<ChatAttachment> = [];
+    yield* Effect.forEach(
+      classified.attachments,
+      (draft, index) =>
+        Effect.gen(function* () {
+          const attachment: ChatAttachment = {
+            ...draft,
+            id: ChatAttachmentId.make(
+              createPendingAttachmentId(
+                draft.type === "file" ? attachmentFileExtension(draft.name) : undefined,
+              ),
+            ),
+          };
+          const path = resolveAttachmentPath({ attachmentsDir, attachment });
+          if (path === null) return yield* uploadFailed;
+          yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+          yield* fileSystem.copyFile(uploads[index]!.path, path);
+          stored.push(attachment);
+        }).pipe(Effect.mapError(() => uploadFailed)),
+      { discard: true },
+    ).pipe(Effect.onError(() => removeStored(stored)));
+    return stored;
+  });
+
   const submit = Effect.fn("GuestShareService.submit")(function* (
     session: string,
     request: GuestSubmitRequest,
+    uploads: ReadonlyArray<GuestUpload>,
   ) {
     const { thread, share } = yield* authorize(session, "session");
     if (request.shareId !== share.id) {
       return yield* new GuestShareAccessError({ reason: "stale_page" });
     }
+    if (request.text === "" && uploads.length === 0) {
+      return yield* new GuestShareAccessError({ reason: "empty" });
+    }
+    const attachments = yield* storeUploads(uploads);
     yield* dispatchGuestCommand({
       type: "thread.guest-message.submit",
       commandId: yield* commandId("submit"),
@@ -334,7 +466,8 @@ const make = Effect.gen(function* () {
       shareId: share.id,
       guestMessageId: GuestMessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
       text: request.text,
-    });
+      ...(attachments.length === 0 ? {} : { attachments }),
+    }).pipe(Effect.onError(() => removeStored(attachments)));
   });
 
   // Guests get paths relative to the workspace; absolute ones name the owner's home folder.
@@ -386,6 +519,9 @@ const make = Effect.gen(function* () {
     const providers = yield* providerRegistry.getProviders;
     const viewOf = (current: OrchestrationV2AppThread) =>
       guestShareView(current, guestThreadModel(current.modelSelection, providers));
+    const domainItems = new Map(
+      projection.visibleTurnItems.map((entry) => [entry.item.id, entry.item] as const),
+    );
     const guestSnapshot = projectSnapshotForGuest(projection, share.historyStartRunOrdinal, roots);
     const visibleRunIds = new Set<RunId>(guestSnapshot.runs.map((run) => run.id));
     // Kept to re-send a run when its provider turn ends, which arrives as its own event.
@@ -429,7 +565,9 @@ const make = Effect.gen(function* () {
               const runId = event.payload.runId;
               if (runId === null || !visibleRunIds.has(runId)) return [];
               const item = projectTurnItemForGuest(event.payload, roots);
-              return item === null ? [] : [{ type: "item", item }];
+              return item === null
+                ? []
+                : [{ type: "item", item: withOwnGuestFiles(item, event.payload, share.id) }];
             }
             case "thread.archived":
             case "thread.deleted":
@@ -458,7 +596,10 @@ const make = Effect.gen(function* () {
       type: "snapshot",
       view: initialView,
       runs: guestSnapshot.runs,
-      items: guestSnapshot.items,
+      items: guestSnapshot.items.map((item) => {
+        const domain = domainItems.get(item.id);
+        return domain === undefined ? item : withOwnGuestFiles(item, domain, share.id);
+      }),
     };
     return Stream.concat(
       Stream.make(snapshotEvent),
@@ -475,10 +616,7 @@ const make = Effect.gen(function* () {
    * An item the guest's transcript shows right now: the same snapshot window and visibility rules
    * as the stream, so a rolled-back or out-of-window item is not served.
    */
-  const visibleItem = Effect.fn("GuestShareService.visibleItem")(function* (
-    session: string,
-    itemId: string,
-  ) {
+  const guestSnapshot = Effect.fn("GuestShareService.guestSnapshot")(function* (session: string) {
     const { thread, share } = yield* authorize(session, "session");
     const { projection, snapshotSequence } = yield* orchestrator
       .getThreadSnapshotWindow(thread.id, {
@@ -494,13 +632,32 @@ const make = Effect.gen(function* () {
     ) {
       return yield* inactive;
     }
-    const item = projection.visibleTurnItems.find(
-      (entry) => entry.visibility === "local" && entry.item.id === itemId,
-    )?.item;
-    const run = item?.runId == null ? undefined : projection.runs.find((r) => r.id === item.runId);
-    if (item === undefined || run === undefined) return yield* unavailable;
-    if (!isGuestVisibleRun(run, share.historyStartRunOrdinal)) return yield* unavailable;
-    return { thread: projection.thread, share, item, snapshotSequence };
+    const visibleRunIds = new Set(
+      projection.runs
+        .filter((run) => isGuestVisibleRun(run, share.historyStartRunOrdinal))
+        .map((run) => run.id),
+    );
+    return {
+      thread: projection.thread,
+      share,
+      snapshotSequence,
+      visibleItems: projection.visibleTurnItems.flatMap((entry) =>
+        entry.visibility === "local" &&
+        entry.item.runId !== null &&
+        visibleRunIds.has(entry.item.runId)
+          ? [entry.item]
+          : [],
+      ),
+    };
+  });
+
+  const visibleItem = Effect.fn("GuestShareService.visibleItem")(function* (
+    session: string,
+    itemId: string,
+  ) {
+    const { visibleItems, ...snapshot } = yield* guestSnapshot(session);
+    const item = visibleItems.find((candidate) => candidate.id === itemId);
+    return item === undefined ? yield* unavailable : { ...snapshot, item };
   });
 
   const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
@@ -524,10 +681,10 @@ const make = Effect.gen(function* () {
   });
 
   const item = Effect.fn("GuestShareService.item")(function* (session: string, itemId: string) {
-    const { thread, item } = yield* visibleItem(session, itemId);
+    const { thread, share, item } = yield* visibleItem(session, itemId);
     const roots = guestPathRoots([thread.worktreePath, yield* projectRootOf(thread)], home);
     const detail = projectTurnItemForGuestDetail(item, roots);
-    return detail === null ? yield* unavailable : detail;
+    return detail === null ? yield* unavailable : withOwnGuestFiles(detail, item, share.id);
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (
@@ -574,6 +731,30 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const attachment = Effect.fn("GuestShareService.attachment")(function* (
+    session: string,
+    attachmentId: string,
+  ) {
+    const { share } = yield* authorize(session, "session");
+    // A dismissed message's files are released; the guest's own waiting and sent ones show.
+    const fromMessage = share.messages
+      .flatMap((message) => (message.status === "dismissed" ? [] : (message.attachments ?? [])))
+      .find((candidate) => candidate.id === attachmentId);
+    // Once sent, the files are the thread's copies on the guest's own message row.
+    const found =
+      fromMessage ??
+      (yield* guestSnapshot(session)).visibleItems
+        .flatMap((item) =>
+          item.type === "user_message" && isOwnGuestMessage(item, share.id) ? item.attachments : [],
+        )
+        .find((candidate) => candidate.id === attachmentId);
+    const path =
+      found === undefined ? null : resolveAttachmentPath({ attachmentsDir, attachment: found });
+    if (found === undefined || path === null) return yield* unavailable;
+    const exists = yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+    return exists ? { path, attachment: found } : yield* unavailable;
+  });
+
   return GuestShareService.of({
     create,
     redeem,
@@ -583,6 +764,7 @@ const make = Effect.gen(function* () {
     render,
     item,
     commandOutput,
+    attachment,
   });
 });
 

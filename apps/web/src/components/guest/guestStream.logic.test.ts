@@ -18,6 +18,7 @@ import {
   applyGuestStreamEvent,
   deriveGuestActivity,
   formatGuestExpiry,
+  guestFilesProblem,
   initialGuestStreamState,
   inviteShareId,
   parseGuestStreamEvent,
@@ -278,5 +279,16 @@ describe("inviteShareId", () => {
     expect(inviteShareId("no-signature")).toBeNull();
     expect(inviteShareId(".sig")).toBeNull();
     expect(inviteShareId("")).toBeNull();
+  });
+});
+
+describe("guestFilesProblem", () => {
+  const file = (type: string, size = 1) => ({ type, size });
+  it("takes up to four files and 10 MB, with images in the types the owner's composer takes", () => {
+    expect(guestFilesProblem([file("image/png"), file("application/pdf"), file("")])).toBeNull();
+    expect(guestFilesProblem([1, 2, 3, 4, 5].map(() => file("image/png")))).toMatch(/up to 4/);
+    expect(guestFilesProblem([file("image/png", 10 * 1024 * 1024 + 1)])).toMatch(/10 MB/);
+    expect(guestFilesProblem([file("image/svg+xml")])).toMatch(/PNG, JPEG, GIF, or WebP/);
+    expect(guestFilesProblem([file("text/plain", 0)])).toMatch(/cannot be attached/);
   });
 });

@@ -1,4 +1,5 @@
 import {
+  GUEST_PENDING_ATTACHMENT_BYTES_LIMIT,
   GUEST_PENDING_MESSAGE_LIMIT,
   GUEST_RESOLVED_MESSAGE_LIMIT,
   GUEST_SHARE_HISTORY_RUNS,
@@ -30,10 +31,32 @@ export const GUEST_FAILURE = {
   inactive: "This guest link is no longer active.",
   used: "This guest link was already used.",
   busy: "Wait for the owner to answer your earlier messages.",
+  filesBusy: "Wait for the owner to answer your earlier messages before you attach more files.",
 } as const;
 
 const isExpired = (share: ThreadGuestShare, now: DateTime.Utc) =>
   DateTime.toEpochMillis(now) >= Date.parse(share.expiresAt);
+
+const pendingAttachments = (share: ThreadGuestShare | null) =>
+  share?.messages.flatMap((message) =>
+    message.status === "pending" ? (message.attachments ?? []) : [],
+  ) ?? [];
+
+/**
+ * Stored files a share change leaves behind: those of waiting messages that were sent, dismissed,
+ * or dropped with the share. A sent message's files were copied into the thread first.
+ */
+export function releasedGuestAttachmentIds(
+  before: ThreadGuestShare | null,
+  after: ThreadGuestShare | null,
+): ReadonlyArray<string> {
+  const kept = new Set(
+    after?.id === before?.id ? pendingAttachments(after).map((attachment) => attachment.id) : [],
+  );
+  return pendingAttachments(before)
+    .map((attachment) => attachment.id)
+    .filter((id) => !kept.has(id));
+}
 
 /** Keeps every pending message and only the newest resolved ones. */
 function trimResolved(messages: ReadonlyArray<ThreadGuestMessage>): Array<ThreadGuestMessage> {
@@ -123,6 +146,14 @@ export function decideGuestShareCommand(input: {
       ) {
         return Result.fail(GUEST_FAILURE.busy);
       }
+      const attachments = command.attachments ?? [];
+      const pendingBytes = [...pendingAttachments(share), ...attachments].reduce(
+        (total, attachment) => total + attachment.sizeBytes,
+        0,
+      );
+      if (attachments.length > 0 && pendingBytes > GUEST_PENDING_ATTACHMENT_BYTES_LIMIT) {
+        return Result.fail(GUEST_FAILURE.filesBusy);
+      }
       return withShare({
         ...share,
         messages: trimResolved([
@@ -132,6 +163,7 @@ export function decideGuestShareCommand(input: {
             text: command.text,
             status: "pending",
             submittedAt: DateTime.formatIso(now),
+            ...(attachments.length === 0 ? {} : { attachments }),
           },
         ]),
       });
@@ -172,7 +204,7 @@ export function decideGuestMessageSend(input: {
   return Result.map(resolveMessage(share, input.guestMessageId, "sent"), (next) => ({
     thread: { ...input.thread, guestShare: next, updatedAt: input.now },
     text: `Message from guest ${name}, sent by the owner:\n\n${guestText}`,
-    guest: { guestMessageId: input.guestMessageId, name, text: guestText },
+    guest: { guestMessageId: input.guestMessageId, name, text: guestText, shareId: share.id },
   }));
 }
 

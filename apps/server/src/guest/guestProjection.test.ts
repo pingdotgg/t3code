@@ -96,7 +96,7 @@ const SHOWN: ReadonlyArray<readonly [string, Record<string, unknown>, Record<str
     },
   ],
   [
-    "a guest's message, with its attribution",
+    "a guest's message, with its attribution and the guest's files",
     {
       type: "user_message",
       createdBy: "user",
@@ -109,7 +109,16 @@ const SHOWN: ReadonlyArray<readonly [string, Record<string, unknown>, Record<str
         records: [],
         guest: { guestMessageId: "guest-message:one", name: "Sam", text: "Why?" },
       },
-      attachments: [],
+      attachments: [
+        {
+          type: "image",
+          id: "thread-a",
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+          source: { kind: "snap-shot", windowTitle: `${ROOT} - Editor` },
+        },
+      ],
     },
     {
       type: "user_message",
@@ -123,7 +132,9 @@ const SHOWN: ReadonlyArray<readonly [string, Record<string, unknown>, Record<str
         records: [],
         guest: { guestMessageId: "guest-message:one", name: "Sam", text: "Why?" },
       },
-      attachments: [],
+      attachments: [
+        { type: "image", id: "thread-a", name: "screen.png", mimeType: "image/png", sizeBytes: 1 },
+      ],
     },
   ],
   [

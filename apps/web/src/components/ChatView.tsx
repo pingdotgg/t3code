@@ -3357,6 +3357,8 @@ export default function ChatView(props: ChatViewProps) {
                       {pendingGuestMessageCount > 0 && isServerThread && activeThread ? (
                         <GuestPendingMessages
                           threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
+                          onImageExpand={onExpandTimelineImageStable}
+                          onFileOpen={openFileAttachmentStable}
                         />
                       ) : null}
                       {threadStatusLine}

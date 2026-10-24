@@ -6,13 +6,14 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  type ChatAttachment,
   isGuestShareExpired,
   type GuestMessageId,
   type ScopedThreadRef,
   type ThreadGuestShare,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 
 import { Button } from "../../components/ui/Button";
@@ -125,6 +126,8 @@ export function ThreadGuestShareBar(props: {
 export function ThreadGuestPendingMessages(props: {
   readonly threadRef: ScopedThreadRef;
   readonly bubbleMaxWidth: number | `${number}%`;
+  /** The feed's own attachment rendering, so the owner sees the files before Send. */
+  readonly renderAttachments: (attachments: ReadonlyArray<ChatAttachment>) => ReactNode;
 }) {
   const { threadRef } = props;
   const share = useThreadGuestShare(threadRef);
@@ -173,9 +176,12 @@ export function ThreadGuestPendingMessages(props: {
               className={GUEST_PENDING_BUBBLE_CLASS_NAME}
               style={{ maxWidth: props.bubbleMaxWidth }}
             >
-              <Text selectable className="text-base text-foreground">
-                {message.text}
-              </Text>
+              {message.text ? (
+                <Text selectable className="text-base text-foreground">
+                  {message.text}
+                </Text>
+              ) : null}
+              {props.renderAttachments(message.attachments ?? [])}
             </View>
             {canOperate ? (
               <View className="mt-1.5 flex-row gap-2">

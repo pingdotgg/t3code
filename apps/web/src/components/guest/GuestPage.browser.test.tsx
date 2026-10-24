@@ -165,4 +165,33 @@ describe("GuestPage", () => {
     // The composer names the thread's model, as the owner's does, with nothing to pick.
     await expect.element(screen.getByLabelText("Model: 5.4")).toBeVisible();
   });
+
+  it("sends attached files with the message, as form data", async () => {
+    using _page = visit(`/guest?share=${SHARE_ID}`);
+    using fetchSpy = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    using _stream = vi.spyOn(window, "EventSource").mockImplementation(FakeEventSource as never);
+    await using screen = await render(<GuestPage />);
+
+    await expect.element(screen.getByLabelText("Attach files")).toBeVisible();
+    const notes = new File(["hello"], "notes.txt", { type: "text/plain" });
+    await userEvent.upload(screen.getByLabelText("Files to attach"), notes);
+    await expect.element(screen.getByText("notes.txt")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await vi.waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/guest/messages",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    const body = fetchSpy.mock.calls.find(([url]) => url === "/api/guest/messages")?.[1]?.body;
+    expect(body).toBeInstanceOf(FormData);
+    const form = body as FormData;
+    expect(form.get("shareId")).toBe(SHARE_ID);
+    expect(form.get("text")).toBe("");
+    expect((form.get("file") as File).name).toBe("notes.txt");
+    // Sent files leave the composer.
+    await expect.element(screen.getByText("notes.txt")).not.toBeInTheDocument();
+  });
 });

@@ -109,6 +109,7 @@ import {
 import { EventSinkV2 } from "./EventSink.ts";
 import {
   decideGuestMessageSend,
+  releasedGuestAttachmentIds,
   withoutGuestAttribution,
   decideGuestShareCommand,
   type GuestShareCommand,
@@ -2653,9 +2654,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  // Deleted after the share change commits; a waiting message's files are pending uploads.
+  const releaseGuestAttachments = (
+    command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    before: OrchestrationV2AppThread["guestShare"],
+    after: OrchestrationV2AppThread["guestShare"],
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) => {
+    const attachmentIds = releasedGuestAttachmentIds(before ?? null, after ?? null);
+    return attachmentIds.length === 0
+      ? Effect.void
+      : Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:guest-attachment.cleanup`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: { type: "attachment.cleanup", attachmentIds: [...attachmentIds] },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+  };
+
   const dispatchGuestShare = Effect.fn("orchestrationV2.dispatch.guestShare")(function* (
     command: GuestShareCommand,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     const projection = yield* projectionStore
       .getThreadRecords(command.threadId, ["runs"])
@@ -2695,6 +2718,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: decided.success,
     });
+    yield* releaseGuestAttachments(command, thread.guestShare, decided.success.guestShare, effects);
   });
 
   // Emitted before the message so the send and the status change commit together, and so
@@ -2704,6 +2728,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     guestMessageId: GuestMessageId,
     thread: OrchestrationV2AppThread,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     const now = yield* DateTime.now;
     const decided = decideGuestMessageSend({ thread, guestMessageId, now });
@@ -2724,6 +2749,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: decided.success.thread,
     });
+    // Intake copied the files into the thread before this command; the uploads can go.
+    yield* releaseGuestAttachments(
+      command,
+      thread.guestShare,
+      decided.success.thread.guestShare,
+      effects,
+    );
     return decided.success;
   });
 
@@ -11594,7 +11626,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-share.close":
       case "thread.guest-message.submit":
       case "thread.guest-message.dismiss":
-        yield* dispatchGuestShare(command, events);
+        yield* dispatchGuestShare(command, events, effects);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
@@ -11619,7 +11651,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const guestSend =
           command.guestMessageId === undefined
             ? undefined
-            : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
+            : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events, effects);
         const dispatched =
           guestSend === undefined
             ? withoutGuestAttribution(command)

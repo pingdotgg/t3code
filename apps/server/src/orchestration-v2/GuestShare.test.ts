@@ -128,6 +128,7 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       guestMessageId,
       name: "Sam",
       text: "Why not keep the old cache?",
+      shareId,
     });
     assert.lengthOf(projection.runs, 1);
     assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 0);

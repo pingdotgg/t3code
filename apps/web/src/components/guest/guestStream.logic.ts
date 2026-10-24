@@ -1,5 +1,10 @@
 import {
+  GUEST_ATTACHMENT_ROUTE,
+  GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
+  GUEST_MESSAGE_MAX_ATTACHMENTS,
+  GUEST_SHARE_PARAM,
   GuestStreamEvent,
+  isProviderSendTurnSupportedImageMimeType,
   type GuestMessageId,
   type GuestRun,
   type GuestShareView,
@@ -219,4 +224,48 @@ export function formatGuestExpiry(expiresAt: string, nowMs: number): string {
 export function inviteShareId(credential: string): string | null {
   const [shareId, signature] = credential.split(".");
   return shareId && signature ? shareId : null;
+}
+
+/** Where the guest page loads one of the guest's own files. */
+export const guestAttachmentUrl = (shareId: string, attachmentId: string) =>
+  `${GUEST_ATTACHMENT_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&id=${encodeURIComponent(attachmentId)}`;
+
+/**
+ * Why these files cannot go with one message, or null. The server checks the same limits; this
+ * only says so before the upload.
+ */
+export function guestFilesProblem(
+  files: ReadonlyArray<Pick<File, "type" | "size">>,
+): string | null {
+  if (files.length > GUEST_MESSAGE_MAX_ATTACHMENTS) {
+    return `Attach up to ${GUEST_MESSAGE_MAX_ATTACHMENTS} files to a message.`;
+  }
+  if (files.reduce((total, file) => total + file.size, 0) > GUEST_MESSAGE_MAX_ATTACHMENT_BYTES) {
+    return "Attached files can total up to 10 MB per message.";
+  }
+  const unsupported = files.some(
+    (file) =>
+      file.size === 0 ||
+      (file.type.toLowerCase().startsWith("image/") &&
+        !isProviderSendTurnSupportedImageMimeType(file.type)),
+  );
+  return unsupported
+    ? "This file cannot be attached. Images must be PNG, JPEG, GIF, or WebP."
+    : null;
+}
+
+/** Image URLs for the guest's own sent messages, which the timeline shows as previews. */
+export function guestAttachmentUrlsById(
+  shareId: string,
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): ReadonlyMap<string, string> {
+  return new Map(
+    items.flatMap(({ item }) =>
+      item.type === "user_message" && item.context?.guest !== undefined
+        ? item.attachments.map(
+            (attachment) => [attachment.id, guestAttachmentUrl(shareId, attachment.id)] as const,
+          )
+        : [],
+    ),
+  );
 }

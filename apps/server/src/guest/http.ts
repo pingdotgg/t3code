@@ -1,15 +1,19 @@
 import {
+  GUEST_ATTACHMENT_ROUTE,
   GUEST_COMMAND_OUTPUT_ROUTE,
   GUEST_ITEM_ROUTE,
   GUEST_RENDER_ROUTE,
   GUEST_ROUTE_PREFIX,
   GUEST_SHARE_PARAM,
+  GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
+  GUEST_MESSAGE_MAX_ATTACHMENTS,
   GUEST_SHARE_TTL_MS,
   GuestItemDetail,
   GuestRedeemRequest,
   GuestStreamEvent,
   GuestSubmitRequest,
   guestSessionCookieName,
+  isProviderSendTurnSupportedImageMimeType,
   OrchestrationV2CommandOutputFrame,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -17,11 +21,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse, Multipart } from "effect/http";
 
 import { htmlRenderFileName } from "@t3tools/shared/htmlRender";
 
-import { assetFileResponse } from "../http.ts";
+import { assetFileResponse, downloadContentDisposition } from "../http.ts";
+import type { GuestUpload } from "./guestAttachments.ts";
 import { GuestShareAccessError, GuestShareService } from "./GuestShareService.ts";
 
 // Cloudflare closes idle streams after about 100 seconds.
@@ -45,7 +50,12 @@ const errorResponse = (error: GuestShareAccessError) =>
       status:
         error.reason === "invalid" || error.reason === "inactive" || error.reason === "unavailable"
           ? 403
-          : 409,
+          : error.reason === "empty" ||
+              error.reason === "too_many_files" ||
+              error.reason === "too_large" ||
+              error.reason === "unsupported_file"
+            ? 400
+            : 409,
       headers: NO_STORE,
     },
   );
@@ -109,19 +119,69 @@ const redeemRoute = HttpRouter.add(
   }),
 );
 
+// The parser stops a request with too many parts or bytes before it reaches the disk; the
+// service checks the exact limits and types.
+const UPLOAD_LIMITS = Multipart.limitsServices({
+  maxParts: GUEST_MESSAGE_MAX_ATTACHMENTS + 4,
+  maxFileSize: GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
+  maxTotalSize: GUEST_MESSAGE_MAX_ATTACHMENT_BYTES + 64 * 1024,
+});
+
+/** A message as JSON (text only), or as multipart form data with `file` parts. */
+const readSubmission = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  if (!request.headers["content-type"]?.startsWith("multipart/form-data")) {
+    const body = yield* request.json.pipe(Effect.flatMap(decodeSubmit), Effect.option);
+    return body._tag === "None" ? null : { fields: body.value, uploads: [] };
+  }
+  const parts = yield* request.multipart.pipe(
+    Effect.provideContext(UPLOAD_LIMITS),
+    Effect.mapError(
+      (error) =>
+        new GuestShareAccessError({
+          reason:
+            error.reason._tag === "TooManyParts"
+              ? "too_many_files"
+              : error.reason._tag === "Parse"
+                ? "rejected"
+                : "too_large",
+        }),
+    ),
+  );
+  const fields = yield* decodeSubmit({ shareId: parts.shareId, text: parts.text ?? "" }).pipe(
+    Effect.option,
+  );
+  if (fields._tag === "None") return null;
+  const files = parts.file;
+  const uploads: ReadonlyArray<GuestUpload> = Array.isArray(files)
+    ? files.filter(Multipart.isPersistedFile).map(({ name, contentType, path }) => ({
+        name,
+        contentType,
+        path,
+      }))
+    : [];
+  return { fields: fields.value, uploads };
+});
+
 const submitRoute = HttpRouter.add(
   "POST",
   `${GUEST_ROUTE_PREFIX}/messages`,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const body = yield* request.json.pipe(Effect.flatMap(decodeSubmit), Effect.option);
-    if (body._tag === "None") return yield* badRequest;
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.submit(sessionFor(request, body.value.shareId), body.value).pipe(
-      Effect.flatMap(() => Effect.succeed(HttpServerResponse.empty({ status: 204 }))),
-      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+    const submission = yield* readSubmission;
+    if (submission === null) return yield* badRequest;
+    yield* guestShares.submit(
+      sessionFor(request, submission.fields.shareId),
+      submission.fields,
+      submission.uploads,
     );
-  }),
+    return HttpServerResponse.empty({ status: 204, headers: NO_STORE });
+  }).pipe(
+    Effect.catchTags({ GuestShareAccessError: errorResponse }),
+    // The parser's temporary files are removed once the response is ready.
+    Effect.scoped,
+  ),
 );
 
 const streamRoute = HttpRouter.add(
@@ -228,6 +288,39 @@ const commandOutputRoute = HttpRouter.add(
   }),
 );
 
+// Images of the four checked types load inline; anything else downloads as bytes, so a guest's
+// HTML or SVG never renders as a page on this origin.
+const attachmentRoute = HttpRouter.add(
+  "GET",
+  GUEST_ATTACHMENT_ROUTE,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const attachmentId = queryParams(request).get("id");
+    if (!attachmentId) return yield* badRequest;
+    const guestShares = yield* GuestShareService;
+    return yield* guestShares.attachment(yield* sessionToken, attachmentId).pipe(
+      Effect.flatMap(({ path, attachment }) =>
+        HttpServerResponse.file(path, {
+          headers: {
+            ...NO_STORE,
+            "x-content-type-options": "nosniff",
+            "content-security-policy": "default-src 'none'; sandbox",
+            ...(attachment.type === "image" &&
+            isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
+              ? { "content-type": attachment.mimeType }
+              : {
+                  "content-type": "application/octet-stream",
+                  "content-disposition": downloadContentDisposition(attachment.name),
+                }),
+          },
+        }),
+      ),
+      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+      Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 500, headers: NO_STORE })),
+    );
+  }),
+);
+
 export const layer = Layer.mergeAll(
   redeemRoute,
   sessionRoute,
@@ -236,4 +329,5 @@ export const layer = Layer.mergeAll(
   renderRoute,
   itemRoute,
   commandOutputRoute,
+  attachmentRoute,
 );

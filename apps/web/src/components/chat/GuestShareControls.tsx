@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  type ChatAttachment,
   type GuestMessageId,
   type ScopedThreadRef,
   type ThreadGuestShare,
@@ -33,6 +34,10 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { useAssetUrls } from "~/assets/assetUrls";
+import { type ChatFileAttachment, isImageAttachment } from "../../types";
+import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import { GuestMessageAttachments } from "./GuestMessageAttachments";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { guestShareDialogThreadAtom } from "./guestShareDialogState";
 
@@ -212,7 +217,15 @@ function GuestShareStatus({ share }: { readonly share: ThreadGuestShare }) {
  * A guest's messages wait at the end of the timeline until the owner sends or dismisses each one.
  * Sent ones then show in the timeline as normal user messages with the guest's name.
  */
-export function GuestPendingMessages({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+export function GuestPendingMessages({
+  threadRef,
+  onImageExpand,
+  onFileOpen,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly onImageExpand: (preview: ExpandedImagePreview) => void;
+  readonly onFileOpen: (attachment: ChatFileAttachment) => void;
+}) {
   const share = useThreadGuestShare(threadRef);
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const resolveGuestMessage = useOrchestrationCommand(threadEnvironment.resolveGuestMessage, {
@@ -220,8 +233,27 @@ export function GuestPendingMessages({ threadRef }: { readonly threadRef: Scoped
   });
   const [busyIds, setBusyIds] = useState<ReadonlySet<GuestMessageId>>(new Set());
   const pending = share?.messages.filter((message) => message.status === "pending") ?? [];
+  // The files wait as pending uploads, which the owner's environment serves like any other.
+  const images = pending.flatMap((message) => message.attachments ?? []).filter(isImageAttachment);
+  const imageUrls = useAssetUrls(
+    threadRef.environmentId,
+    images.map((image) => ({ _tag: "attachment" as const, attachmentId: image.id })),
+  );
+  const imageUrlById = new Map(
+    images.flatMap((image, index) => {
+      const url = imageUrls[index];
+      return url ? [[image.id, url] as const] : [];
+    }),
+  );
   if (share === null || pending.length === 0) return null;
   const guestName = share.guestName ?? "Guest";
+  const openImage = (attachment: ChatAttachment) => {
+    const preview = buildExpandedImagePreview(
+      images.map((image) => ({ ...image, previewUrl: imageUrlById.get(image.id) ?? "" })),
+      attachment.id,
+    );
+    if (preview) onImageExpand(preview);
+  };
 
   const resolve = async (guestMessageId: GuestMessageId, decision: "send" | "dismiss") => {
     setBusyIds((ids) => new Set(ids).add(guestMessageId));
@@ -249,13 +281,21 @@ export function GuestPendingMessages({ threadRef }: { readonly threadRef: Scoped
             <GuestMessageName name={guestName} />
             <div
               className={cn(
-                "min-w-0 max-w-[80%] rounded-2xl p-3 text-foreground",
+                "flex min-w-0 max-w-[80%] flex-col gap-2 rounded-2xl p-3 text-foreground",
                 guestBubbleClassName(true),
               )}
             >
-              <p className="text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
-                {message.text}
-              </p>
+              <GuestMessageAttachments
+                attachments={message.attachments ?? []}
+                imageUrl={(attachment) => imageUrlById.get(attachment.id)}
+                onOpenImage={openImage}
+                onOpenFile={onFileOpen}
+              />
+              {message.text ? (
+                <p className="text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {message.text}
+                </p>
+              ) : null}
             </div>
             {canOperate ? (
               <div className="flex items-center gap-1 pe-1">

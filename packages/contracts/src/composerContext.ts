@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ForwardCompatibleArray,
   GuestMessageId,
+  GuestShareId,
   NonNegativeInt,
   PositiveInt,
   ThreadId,
@@ -268,6 +269,8 @@ export const GuestMessageAttribution = Schema.Struct({
   guestMessageId: GuestMessageId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(GUEST_NAME_MAX_LENGTH)),
   text: Schema.String.check(Schema.isMaxLength(GUEST_MESSAGE_MAX_LENGTH)),
+  /** The link the guest used. Only that link's guest may load the message's files. */
+  shareId: Schema.optional(GuestShareId),
 });
 export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
 

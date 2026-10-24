@@ -161,7 +161,23 @@ const GUEST_PROJECTORS: { readonly [T in OrchestrationV2TurnItem["type"]]: Proje
               records: [],
             },
           }),
-      attachments: [],
+      // A sent guest message carries the guest's own files; the owner's files stay private.
+      attachments:
+        guest === undefined
+          ? []
+          : item.attachments.flatMap((attachment) =>
+              attachment.type === "image" || attachment.type === "file"
+                ? [
+                    {
+                      type: attachment.type,
+                      id: attachment.id,
+                      name: attachment.name,
+                      mimeType: attachment.mimeType,
+                      sizeBytes: attachment.sizeBytes,
+                    },
+                  ]
+                : [],
+            ),
     };
   },
   assistant_message: (item, base) => ({

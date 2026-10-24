@@ -69,28 +69,29 @@ const loadSigningSecret = Effect.gen(function* () {
   return yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
 });
 
+/** Removes day-old pending uploads at most every 15 minutes, whenever new uploads arrive. */
+export const sweepPendingAttachmentsOccasionally = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const nowMs = yield* Clock.currentTimeMillis;
+  const previousSweep = lastPendingSweepByDirectory.get(config.attachmentsDir);
+  if (previousSweep !== undefined && nowMs - previousSweep < PENDING_ATTACHMENT_SWEEP_INTERVAL_MS) {
+    return;
+  }
+  lastPendingSweepByDirectory.set(config.attachmentsDir, nowMs);
+  const swept = sweepStalePendingAttachments({ attachmentsDir: config.attachmentsDir, nowMs });
+  if (swept.deleted > 0) {
+    yield* Effect.logInfo("Removed expired attachment uploads.", { deleted: swept.deleted });
+  }
+});
+
 export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(function* (
   input: AttachmentCreateUploadUrlInput,
 ) {
   const secret = yield* loadSigningSecret.pipe(
     Effect.mapError((cause) => new AttachmentUploadSigningKeyError({ cause })),
   );
-  const config = yield* ServerConfig.ServerConfig;
+  yield* sweepPendingAttachmentsOccasionally;
   const nowMs = yield* Clock.currentTimeMillis;
-  const previousSweep = lastPendingSweepByDirectory.get(config.attachmentsDir);
-  if (
-    previousSweep === undefined ||
-    nowMs - previousSweep >= PENDING_ATTACHMENT_SWEEP_INTERVAL_MS
-  ) {
-    lastPendingSweepByDirectory.set(config.attachmentsDir, nowMs);
-    const swept = sweepStalePendingAttachments({
-      attachmentsDir: config.attachmentsDir,
-      nowMs,
-    });
-    if (swept.deleted > 0) {
-      yield* Effect.logInfo("Removed expired attachment uploads.", { deleted: swept.deleted });
-    }
-  }
 
   const attachmentType = input.type ?? "image";
   const attachmentId = createPendingAttachmentId(

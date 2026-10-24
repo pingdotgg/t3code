@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 
+import { ChatAttachment } from "./chatAttachment.ts";
 import {
   GuestMessageId,
   GuestShareId,
@@ -7,6 +8,7 @@ import {
   NonNegativeInt,
   ThreadId,
   TrimmedNonEmptyString,
+  TrimmedString,
 } from "./baseSchemas.ts";
 
 /**
@@ -22,6 +24,11 @@ export const GUEST_PENDING_MESSAGE_LIMIT = 3;
 export const GUEST_RESOLVED_MESSAGE_LIMIT = 20;
 /** Completed runs before the invite that the guest can read. */
 export const GUEST_SHARE_HISTORY_RUNS = 3;
+/** Files a guest can attach to one message, and their total size. */
+export const GUEST_MESSAGE_MAX_ATTACHMENTS = 4;
+export const GUEST_MESSAGE_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** Total size of the files in a share's waiting messages, so a guest cannot fill the disk. */
+export const GUEST_PENDING_ATTACHMENT_BYTES_LIMIT = 20 * 1024 * 1024;
 
 export const ThreadGuestMessageStatus = Schema.Literals(["pending", "sent", "dismissed"]);
 export type ThreadGuestMessageStatus = typeof ThreadGuestMessageStatus.Type;
@@ -31,6 +38,8 @@ export const ThreadGuestMessage = Schema.Struct({
   text: Schema.String,
   status: ThreadGuestMessageStatus,
   submittedAt: IsoDateTime,
+  /** Stored as pending uploads until the owner sends the message; absent on older messages. */
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
 });
 export type ThreadGuestMessage = typeof ThreadGuestMessage.Type;
 
@@ -101,11 +110,15 @@ export const GuestRedeemRequest = Schema.Struct({
 });
 export type GuestRedeemRequest = typeof GuestRedeemRequest.Type;
 
+/**
+ * The fields of a guest message. The page posts them as multipart form data, with each file as a
+ * `file` part; text can be empty when files are attached.
+ */
 export const GuestSubmitRequest = Schema.Struct({
   /** The share the page shows. One cookie serves every link on a host, so a newer link redeemed
       in another tab must not receive this page's message. */
   shareId: GuestShareId,
-  text: TrimmedNonEmptyString.check(Schema.isMaxLength(GUEST_MESSAGE_MAX_LENGTH)),
+  text: TrimmedString.check(Schema.isMaxLength(GUEST_MESSAGE_MAX_LENGTH)),
 });
 export type GuestSubmitRequest = typeof GuestSubmitRequest.Type;
 
@@ -120,6 +133,11 @@ export const GUEST_SHARE_PARAM = "share";
 export const guestSessionCookieName = (shareId: string) => `t3_guest_${shareId}`;
 /** Serves one HTML render the guest can see: `?share=<share id>&item=<turn item id>`. */
 export const GUEST_RENDER_ROUTE = `${GUEST_ROUTE_PREFIX}/render`;
+/**
+ * A file the guest attached, from a waiting or sent message or a sent message's row:
+ * `?share=<share id>&id=<attachment id>`. Images load inline; other files download.
+ */
+export const GUEST_ATTACHMENT_ROUTE = `${GUEST_ROUTE_PREFIX}/attachment`;
 /** One item the guest can see, as its expanded row shows it: `?share=<share id>&item=<id>`. */
 export const GUEST_ITEM_ROUTE = `${GUEST_ROUTE_PREFIX}/item`;
 /** Server-sent output frames of one command the guest can see: `?share=<share id>&item=<id>`. */

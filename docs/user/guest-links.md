@@ -14,7 +14,8 @@ T3 Connect address. Your machine must stay online while the guest uses it.
 2. Copy the link and send it to one person. It works in one browser and expires after 24 hours.
    Opening it again in that browser takes them back to the thread.
 3. When they send a message, it appears at the end of the thread and the sidebar shows **Request**.
-   Choose **Send** to run it as a normal turn, or **Dismiss**.
+   Choose **Send** to run it as a normal turn, or **Dismiss**. Files they attached show with the
+   message, and **Send** includes them.
 
 Choose **Stop sharing** to end the link at once. Archiving the thread, creating a new link, or
 unlinking the machine from T3 Connect also ends it. You can send or dismiss guest messages from the mobile app.
@@ -30,5 +31,15 @@ than command output, or what you answer in approval prompts.
 Command output and the agent's replies can show something it read, such as a value from a file.
 Share only threads you are comfortable showing.
 
-The guest's text runs with the thread's current permission mode once you send it. Read it before you
-choose **Send**, as you would read anything pasted from a chat.
+## Guest attachments
+
+Guests can attach images and other files to a message: use the paperclip, paste, or drop them on
+the message box. A message holds up to 4 files and 10 MB in total. Images must be PNG, JPEG, GIF, or
+WebP. While messages wait for you, their files can total 20 MB; the guest can attach more once you
+send or dismiss some.
+
+Dismissing a message or ending the link deletes its files. Files of a message nobody sends or
+dismisses are deleted a day after upload.
+
+The guest's text and files run with the thread's current permission mode once you send them. Check
+them before you choose **Send**, as you would anything pasted from a chat.
