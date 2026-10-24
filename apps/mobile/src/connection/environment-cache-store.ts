@@ -100,6 +100,9 @@ function loadDecodedCache<A, B>(input: {
 export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
   const database = yield* MobileDatabase.MobileDatabase;
   attachProjectFaviconDatabase(database);
+  // Warm icons alongside the shell load so rows rarely paint a placeholder,
+  // without making cached threads wait on them.
+  void projectFaviconDatabaseCache.hydrate();
   const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder();
   return Persistence.EnvironmentCacheStore.of({
     loadShell: Effect.fn("MobileEnvironmentCache.loadShell")((environmentId) =>
@@ -112,13 +115,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         decode: decodeStoredShellSnapshot,
         select: (stored) =>
           stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
-      }).pipe(
-        Effect.zipWith(
-          Effect.promise(() => projectFaviconDatabaseCache.hydrate()),
-          (snapshot) => snapshot,
-          { concurrent: true },
-        ),
-      ),
+      }),
     ),
     saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
       const payload = yield* encodeStoredShellSnapshot({

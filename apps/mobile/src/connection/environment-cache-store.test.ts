@@ -13,12 +13,14 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 
 import * as MobileDatabase from "../persistence/mobile-database";
+import { projectFaviconDatabaseCache } from "../lib/projectFaviconDatabaseCache";
 import { make } from "./environment-cache-store";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -198,6 +200,27 @@ function makeDatabase() {
 }
 
 describe("mobile SQLite environment cache store", () => {
+  it.effect("returns cached threads without waiting for project icons to hydrate", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(
+        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+      );
+      yield* store.saveShell(ENVIRONMENT_ID, SHELL_SNAPSHOT);
+      const hydration = Promise.withResolvers<void>();
+      const spy = vi
+        .spyOn(projectFaviconDatabaseCache, "hydrate")
+        .mockReturnValue(hydration.promise);
+      try {
+        const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
+        expect(shell.threads[0]?.id).toBe(THREAD_ID);
+      } finally {
+        hydration.resolve();
+        spy.mockRestore();
+      }
+    }),
+  );
+
   it.effect("round-trips V2 shell and thread DateTime fields with the shared cache schema", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();
