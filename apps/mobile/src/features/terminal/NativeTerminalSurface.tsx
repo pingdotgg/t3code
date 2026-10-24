@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import type { TerminalGrid } from "@t3tools/client-runtime/state/terminal";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Pressable,
   ScrollView,
@@ -38,6 +39,7 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly buffer: string | null;
   readonly fontSize?: number;
+  readonly grid?: TerminalGrid | null;
   readonly isRunning: boolean;
   readonly readOnly?: boolean;
   readonly autoFocus?: boolean;
@@ -196,6 +198,12 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
+  const gridCols = props.grid?.cols;
+  const gridRows = props.grid?.rows;
+  const sharedGrid = useMemo(
+    () => (gridCols !== undefined && gridRows !== undefined ? [gridCols, gridRows] : []),
+    [gridCols, gridRows],
+  );
 
   useEffect(() => {
     terminalDebugLog("native:surface", {
@@ -242,6 +250,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
           terminalKey={props.terminalKey}
           initialBuffer={props.buffer}
           fontSize={fontSize}
+          sharedGrid={sharedGrid}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}
           onInput={handleNativeInput}

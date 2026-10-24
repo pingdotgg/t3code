@@ -1,0 +1,80 @@
+import React, { useState, useCallback } from 'react';
+import { View, Text, Pressable, ScrollView, Keyboard, KeyboardAvoidingView, StatusBar } from 'react-native';
+import { registerRootComponent } from 'expo';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { RegistryContext } from '@effect/atom-react';
+import { AppearancePreferencesProvider, useAppearancePreferences } from './src/features/settings/appearance/AppearancePreferencesProvider';
+import { appAtomRegistry } from './src/state/atom-registry';
+import { TerminalSurface } from './src/features/terminal/NativeTerminalSurface';
+import { getMobileTerminalTheme } from './src/features/terminal/terminalTheme';
+import './global.css';
+const Stack = createNativeStackNavigator();
+const steps = ['null','equal','small','stale','width','height','normal','grow'];
+function ansi(cols: number, rows: number, normal: boolean) {
+  if (normal) return '\x1b[?1049l\x1b[0m\x1b[2J\x1b[H' + Array.from({length:60},(_,i)=>`ROW ${String(i+1).padStart(3,'0')} | ${'0123456789'.repeat(12)}\r\n`).join('') + 'CURSOR> \x1b[?25h\x1b[?12l';
+  const width = Math.max(4,cols), height=Math.max(7,rows);
+  let out='\x1b[?1049h\x1b[0m\x1b[2J\x1b[H';
+  for(let row=0;row<height;row++) {
+    const inner=row===0||row===height-1?'-'.repeat(width-2):
+      (row===1?`Shared terminal ${width} columns x ${height} rows`:row===2?'Every border must be visible':row===3?'0123456789'.repeat(40):row===height-2?'BOTTOM EDGE':'').slice(0,width-2).padEnd(width-2);
+    out+=`\x1b[${row+1};1H${row===0||row===height-1?'+':'|'}${inner}${row===0||row===height-1?'+':'|'}`;
+  }
+  return out+'\x1b[6;4H\x1b[?25h\x1b[?12l';
+}
+type Grid={cols:number;rows:number};
+type Scenario={name:string;grid:Grid;buffer:string;zero:boolean};
+function inputWrap(name:string,grid:Grid){const head=`INPUTWRAP ${name} ${grid.cols}x${grid.rows}`.slice(0,grid.cols-1);return `\x1b[5;1H\x1b[2K\x1b[6;1H\x1b[2K\x1b[5;1H${head}${'.'.repeat(grid.cols-1-head.length)}#NEXTROW<\x1b[7;4H`}
+function scenarioBuffer(name:string,grid:Grid){return ansi(grid.cols,grid.rows,false)+inputWrap(name,grid)}
+function Fixture() {
+ const {themeAppearance, themeId,setThemeMode}=useAppearancePreferences();
+ const [scenario,setScenario]=useState<Scenario|null>(null); const [flipTheme,setFlipTheme]=useState(false); const [mount,setMount]=useState(0); const [seq,setSeq]=useState(0);
+ const shownAppearance=flipTheme?(themeAppearance==='light'?'dark':'light'):themeAppearance;
+ const theme=getMobileTerminalTheme(themeId,shownAppearance);
+ const [fit,setFit]=useState({cols:40,rows:24});
+ const [step,setStep]=useState('null'); const [font,setFont]=useState(13);
+ const [readOnly,setReadOnly]=useState(false); const [focus,setFocus]=useState(0);
+ const [capture,setCapture]=useState(0); const [captured,setCaptured]=useState('');
+ const [input,setInput]=useState(''); const insets=useSafeAreaInsets();
+ const resized=useCallback((size:{cols:number;rows:number})=>setFit(p=>p.cols===size.cols&&p.rows===size.rows?p:size),[]);
+ const small={cols:Math.max(20,fit.cols-10),rows:Math.max(7,fit.rows-8)};
+ const grid=step==='null'?null:step==='small'||step==='normal'?small:step==='stale'?{cols:fit.cols+20,rows:fit.rows+20}:step==='width'?{cols:small.cols,rows:fit.rows+20}:step==='height'?{cols:fit.cols+20,rows:small.rows}:fit;
+ const drawn=grid?{cols:Math.min(grid.cols,fit.cols),rows:Math.min(grid.rows,fit.rows)}:fit;
+ // Each D action is one handler, so React commits buffer, grid, and theme/font/bounds in one native props batch.
+ // Grids alternate between two sizes under the fit the next font allows, so no follow-up fit update repaints the surface.
+ const nextGrid=(nextFont:number):Grid=>{const scale=Math.min(1,font/nextFont);const big={cols:Math.max(24,Math.floor(fit.cols*0.7*scale)),rows:Math.max(10,Math.floor(fit.rows*0.7*scale))};return scenario&&scenario.grid.cols===big.cols?{cols:big.cols-5,rows:big.rows-3}:big};
+ const run=(name:string,nextFont=font,zero=false,buffer?:(grid:Grid)=>string)=>{const grid=nextGrid(nextFont);setScenario({name,grid,zero,buffer:buffer?buffer(grid):scenarioBuffer(`${name}#${seq+1}`,grid)});setSeq(seq+1);setInput('');setCaptured('')};
+ const scenarios:[string,()=>void][]=[
+  ['D2 buffer+grid+theme',()=>{run('D2');setFlipTheme(f=>!f)}],
+  ['D3 buffer+grid+font',()=>{const next=font===13?18:13;run('D3',next);setFont(next)}],
+  ['D4 mount zero',()=>{run('D4',font,true);setMount(m=>m+1)}],
+  ['D4 layout',()=>setScenario(s=>s&&{...s,zero:false})],
+  ['D5 append+grid',()=>run('D5',font,false,grid=>(scenario?.buffer??'')+inputWrap(`D5#${seq+1}`,grid))],
+  ['D6 clear',()=>run('D6',font,false,()=>'')],
+  ['D6 recover',()=>run('D6')],
+  ['Exit scenario',()=>{setScenario(null);setFlipTheme(false)}],
+ ];
+ const button=(title:string,onPress:()=>void)=><Pressable key={title} accessibilityLabel={title} onPress={onPress} style={{padding:9,borderWidth:1,borderColor:theme.border,margin:2,borderRadius:6}}><Text style={{color:theme.foreground,fontSize:12}}>{title}</Text></Pressable>;
+ return <KeyboardAvoidingView behavior="padding" style={{flex:1,backgroundColor:theme.background,paddingBottom:insets.bottom}}>
+  <StatusBar barStyle={themeAppearance==='dark'?'light-content':'dark-content'}/>
+  <Text style={{color:theme.foreground,fontSize:11,padding:6}}>Static fixture; limited integration | __PRODUCT_SHA__</Text>
+  <Text style={{color:theme.foreground,fontSize:11,paddingHorizontal:6}}>{scenario?`${scenario.name}${scenario.zero?' zero-bounds':''} | fitted ${fit.cols}x${fit.rows} shared ${scenario.grid.cols}x${scenario.grid.rows} | ${font}pt | ${shownAppearance} | expect # at row 5 right edge, NEXTROW< at row 6 col 1`:<>{step} | fitted {fit.cols}x{fit.rows} shared {grid?`${grid.cols}x${grid.rows}`:'null'} | {font}pt | {readOnly?'read-only':'editable'}</>}</Text>
+  <ScrollView horizontal style={{flexGrow:0}}>{steps.map(s=>button(s,()=>{setStep(s);setScenario(null);setFlipTheme(false);setInput('');setCaptured('')}))}</ScrollView>
+  <View style={scenario?.zero?{width:0,height:0,overflow:'hidden'}:{flex:1,margin:8}}>
+  <TerminalSurface key={mount} style={{flex:1}} terminalKey="issue14463" buffer={scenario?scenario.buffer+input:step==='null'?null:ansi(drawn.cols,drawn.rows,step==='normal')+input} grid={scenario?scenario.grid:grid} fontSize={font} isRunning autoFocus={false} readOnly={readOnly} theme={theme} keyboardFocusRequest={focus} captureRequest={capture} onCapture={setCaptured} onResize={resized} onInput={data=>setInput(p=>p+data)}/>
+  </View>
+  <ScrollView horizontal style={{flexGrow:0}}>
+   {button('Theme',()=>setThemeMode(themeAppearance==='light'?'dark':'light'))}
+   {button('Font',()=>setFont(f=>f===13?18:13))}
+   {button('Keyboard',()=>setFocus(f=>f+1))}
+   {button('Dismiss',()=>Keyboard.dismiss())}
+   {button('Read only',()=>setReadOnly(r=>!r))}
+   {button('Capture output',()=>setCapture(c=>c+1))}
+   {scenarios.map(([title,action])=>button(title,action))}
+  </ScrollView>
+  {captured?<Text numberOfLines={4} style={{color:theme.foreground,fontSize:10}}>{captured}</Text>:null}
+ </KeyboardAvoidingView>;
+}
+function App(){return <RegistryContext.Provider value={appAtomRegistry}><AppearancePreferencesProvider><SafeAreaProvider><NavigationContainer><Stack.Navigator><Stack.Screen name="Terminal" component={Fixture} options={{title:'Terminal · Shared terminal proof'}}/></Stack.Navigator></NavigationContainer></SafeAreaProvider></AppearancePreferencesProvider></RegistryContext.Provider>}
+registerRootComponent(App);

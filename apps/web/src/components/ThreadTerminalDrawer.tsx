@@ -555,6 +555,8 @@ function TerminalSessionViewport({
     });
   });
   const terminalOutput = terminalSession.output;
+  const terminalGrid = terminalSession.grid;
+  const readTerminalGrid = useEffectEvent(() => terminalGrid);
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
   const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
@@ -616,6 +618,10 @@ function TerminalSessionViewport({
   }, [resizeSessionGeneration]);
 
   useLayoutEffect(() => {
+    terminalRef.current?.setSharedGrid(terminalGrid);
+  }, [terminalGrid]);
+
+  useLayoutEffect(() => {
     visibleRef.current = visible;
     terminalRef.current?.setVisible(visible);
   }, [visible]);
@@ -667,6 +673,7 @@ function TerminalSessionViewport({
       terminal.setTheme(terminalThemeFromApp(mount));
       setupTerminal = terminal;
       terminalRef.current = terminal;
+      terminal.setSharedGrid(readTerminalGrid());
       terminal.input.readOnly = !hasTerminalWriteAccess();
       // Client settings hydrate asynchronously; a font preference that landed
       // while the surface was loading found terminalRef null, so its setFont

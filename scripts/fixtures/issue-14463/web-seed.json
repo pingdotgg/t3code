@@ -1,0 +1,9 @@
+{
+  "clock": "2026-10-20T12:00:00.000Z",
+  "projectId": "14463000-0000-4000-8000-000000000001",
+  "title": "Shared terminal proof",
+  "threads": [
+    { "id": "14463000-0000-4000-8000-000000000002", "title": "Shared terminal geometry" },
+    { "id": "14463000-0000-4000-8000-000000000003", "title": "Lifecycle control" }
+  ]
+}

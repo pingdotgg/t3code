@@ -1249,6 +1249,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   readOnly={!canOperateTerminal}
                   buffer={terminal.version === 0 ? null : terminalSurfaceBuffer}
                   fontSize={fontSize}
+                  grid={terminal.grid}
                   isRunning={isRunning}
                   keyboardFocusRequest={keyboardFocusRequest}
                   captureRequest={captureRequest}
