@@ -1,10 +1,84 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ChildProcessSpawner } from "effect/process";
+
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
+
+it.effect.each(["merge", "disable-auto-merge"] as const)(
+  "keeps reads and %s on the selected host when glab prefers another remote",
+  (action) =>
+    Effect.gen(function* () {
+      const selectedHost = "gitlab.example.test:8443";
+      const otherHost = "other.gitlab.example.test";
+      const mergedHosts: string[] = [];
+      const native = yield* GitLabCli.make.pipe(
+        Effect.provide(
+          TestSourceControlHost.layer({
+            process: {
+              run: (input) => {
+                // glab prefers a remote named `gitlab` to `origin`. The checkout's
+                // selected repository must still own every request and mutation.
+                const host = input.env?.GITLAB_HOST ?? otherHost;
+                const path = input.args[1];
+                const mutation = input.args[0] === "mr" || input.args.includes("POST");
+                if (mutation) mergedHosts.push(host);
+                const response = mutation
+                  ? {}
+                  : path?.includes("merge_requests/")
+                    ? {
+                        iid: 7,
+                        title: "Merge request 7",
+                        web_url: `https://${host}/acme/web/-/merge_requests/7`,
+                        source_branch: "feature",
+                        target_branch: "main",
+                        created_at: "2026-07-01T00:00:00Z",
+                        updated_at: "2026-07-02T00:00:00Z",
+                        user: { can_merge: true },
+                        diff_refs: {
+                          head_sha: "a".repeat(40),
+                          base_sha: "b".repeat(40),
+                          start_sha: "b".repeat(40),
+                        },
+                      }
+                    : { merge_method: "merge", squash_option: "default_off" };
+                return Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: JSON.stringify(response),
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                });
+              },
+            },
+          }),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.make.pipe(
+        Effect.provideService(GitLabCli.GitLabCli, native),
+      );
+      const provider = yield* make.pipe(
+        Effect.provideService(GitLabPullRequestCli.GitLabPullRequestCli, cli),
+      );
+      const reference = {
+        cwd: "/repo",
+        repository: "acme/web",
+        host: selectedHost,
+        number: 7,
+      };
+      const detail = yield* provider.getChangeRequest(reference);
+      yield* provider.runAction({ ...reference, action });
+
+      expect({ url: detail.url, mutatedHosts: mergedHosts }).toEqual({
+        url: `https://${selectedHost}/acme/web/-/merge_requests/7`,
+        mutatedHosts: [selectedHost],
+      });
+    }),
+);
 
 describe("gitLabViewerPermissions", () => {
   it("offers everything to a viewer GitLab says can merge", () => {
