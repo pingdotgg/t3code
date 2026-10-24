@@ -130,6 +130,10 @@ export class ProjectService extends Context.Service<
       workspaceRoot: string,
       options?: { readonly includeDeleted?: boolean },
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
+    readonly whileWorkspaceUnowned: <E, R>(
+      workspaceRoot: string,
+      effect: Effect.Effect<void, E, R>,
+    ) => Effect.Effect<void, E | ProjectOperationError, R>;
     readonly snapshot: Effect.Effect<ProjectSnapshot, ProjectOperationError>;
     readonly getShell: (
       projectId: ProjectId,
@@ -216,6 +220,8 @@ export const make = Effect.gen(function* () {
       new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
     const workspaceRoot = command.type === "project.delete" ? undefined : command.workspaceRoot;
     const planAndCommit = Effect.gen(function* () {
+      // Cleanup can remove an unowned folder while registration waits for the workspace lock.
+      if (workspaceRoot !== undefined) yield* normalizeWorkspaceRoot({ workspaceRoot });
       const project = Option.getOrUndefined(yield* readRow(projectId, { includeDeleted: true }));
       const workspaceOwner =
         workspaceRoot === undefined
@@ -323,6 +329,28 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new ProjectOperationError({ operation: "list-projects", cause })),
     );
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
+  });
+
+  const whileWorkspaceUnowned: ProjectService["Service"]["whileWorkspaceUnowned"] = Effect.fn(
+    "ProjectService.whileWorkspaceUnowned",
+  )(function* <E, R>(workspaceRoot: string, effect: Effect.Effect<void, E, R>) {
+    const normalized = yield* normalizeWorkspaceRoot({ workspaceRoot });
+    yield* workspaceLocks.withLock(
+      normalized,
+      Effect.gen(function* () {
+        const owner = yield* projects.findActiveByWorkspaceRoot(normalized).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectOperationError({
+                operation: "read-project",
+                workspaceRoot: normalized,
+                cause,
+              }),
+          ),
+        );
+        if (Option.isNone(owner)) yield* effect;
+      }),
+    );
   });
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
@@ -569,6 +597,7 @@ export const make = Effect.gen(function* () {
     delete: deleteProject,
     getById,
     getByWorkspaceRoot,
+    whileWorkspaceUnowned,
     snapshot,
     getShell,
     listShells,

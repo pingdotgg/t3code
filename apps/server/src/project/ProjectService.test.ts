@@ -669,3 +669,47 @@ it.effect("rejects an update that waited on the lock while its project was delet
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
+
+it.effect("serializes unowned-folder cleanup with a project registration already committing", () =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const firstReachedCommit = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
+    const gatedSink = EventSink.EventSinkV2.of({
+      ...eventSink,
+      commitProjectCommand: (input) =>
+        input.projectId === "project:race:first"
+          ? Deferred.succeed(firstReachedCommit, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFirst)),
+              Effect.andThen(eventSink.commitProjectCommand(input)),
+            )
+          : eventSink.commitProjectCommand(input),
+    });
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+    );
+    const claim = (name: string) =>
+      service.create({
+        commandId: CommandId.make(`command:race:${name}`),
+        projectId: ProjectId.make(`project:race:${name}`),
+        title: name,
+        workspaceRoot: "/work/race",
+      });
+    const first = yield* claim("first").pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(firstReachedCommit);
+    let removed = false;
+    const second = yield* service
+      .whileWorkspaceUnowned(
+        "/work/race/",
+        Effect.sync(() => {
+          removed = true;
+        }),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    assert.isUndefined(second.pollUnsafe());
+    yield* Deferred.succeed(releaseFirst, undefined);
+    assert.equal((yield* Fiber.join(first)).id, "project:race:first");
+    yield* Fiber.join(second);
+    assert.isFalse(removed);
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);

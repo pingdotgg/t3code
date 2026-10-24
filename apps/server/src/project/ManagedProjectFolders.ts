@@ -436,6 +436,11 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const workspaceRoot = yield* claimNamedFolder(input.name);
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
+    // Another create can register the claimed path while scaffolding runs.
+    // A failed ownership lookup keeps data rather than risking its deletion.
+    const removeFolderIfUnowned = projects
+      .whileWorkspaceUnowned(workspaceRoot, removeFolder)
+      .pipe(Effect.ignore);
     const prepared = yield* Effect.all([
       scaffoldRepository(workspaceRoot, input.name).pipe(
         Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
@@ -443,7 +448,7 @@ const make = Effect.gen(function* () {
       crypto
         .randomUUIDv4()
         .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause }))),
-    ]).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeFolder)));
+    ]).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeFolderIfUnowned)));
     const [commitError, id] = prepared;
     const project = yield* projects
       .create({
@@ -453,18 +458,8 @@ const make = Effect.gen(function* () {
         workspaceRoot,
       })
       .pipe(
-        // A rejected create leaves the folder unused, so remove it. An
-        // interrupt can land after the create is committed, and a conflict
-        // means another project owns the folder, so it stays then; the owner
-        // is checked again first, since deleting another project's files is
-        // never acceptable.
         Effect.tapError((error) =>
-          error._tag === "ProjectConflictError"
-            ? Effect.void
-            : projects.getByWorkspaceRoot(workspaceRoot).pipe(
-                Effect.flatMap((owner) => (Option.isNone(owner) ? removeFolder : Effect.void)),
-                Effect.ignore,
-              ),
+          error._tag === "ProjectConflictError" ? Effect.void : removeFolderIfUnowned,
         ),
         Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
       );
