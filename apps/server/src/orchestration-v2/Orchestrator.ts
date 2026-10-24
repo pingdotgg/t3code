@@ -4134,6 +4134,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
   }) {
+    // Archive commits before its asynchronous detach stops the run, so a steer
+    // or restart validated against the unarchived thread can still land here.
+    const thread = input.projection.thread;
+    if (thread.archivedAt !== null || thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: `Thread ${input.command.threadId} is not active.`,
+      });
+    }
     const targetRun = input.projection.runs.find((candidate) => candidate.id === input.targetRunId);
     if (targetRun === undefined) {
       return yield* new OrchestratorDispatchError({
