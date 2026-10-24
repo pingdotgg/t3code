@@ -58,6 +58,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
+  CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
@@ -66,6 +67,7 @@ import {
   ClaudeSettings,
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
+  isCompactionCommandMessage,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -6641,6 +6643,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
+            const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
@@ -6651,6 +6654,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   input.status === "completed" || input.status === "failed"
                     ? "Context compaction failed"
                     : "Context compaction stopped",
+                ...(reason === "" ? {} : { summary: reason }),
                 completedAt: input.completedAt,
                 updatedAt: input.completedAt,
               },
@@ -7767,6 +7771,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     : message.compact_result === "failed"
                       ? "Context compaction failed"
                       : "Context compaction stopped",
+                ...(message.compact_result === "failed" && message.compact_error
+                  ? { summary: message.compact_error }
+                  : {}),
                 completedAt: now,
                 updatedAt: now,
               };
@@ -8484,6 +8491,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             return;
           }
+          // Claude Code echoes /compact's stdout ("Not enough messages to compact.") as a
+          // synthetic assistant message. The compaction item reports that outcome; it is not a
+          // reply.
+          if (
+            message.type === "assistant" &&
+            "local_command_source" in message &&
+            isCompactionCommandMessage({ role: "user", ...context.input.message })
+          ) {
+            return;
+          }
           if (assistantText !== null && assistantText.text.length > 0) {
             yield* emitAssistantTextArtifacts({
               context,
@@ -8535,6 +8552,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? null
               : resultTextFromSdkMessage(message);
           if (
+            // A /compact's result text reports the compaction ("Not enough messages to
+            // compact."), which its compaction item already carries; it is not a reply.
+            !(
+              message.type === "result" &&
+              message.subtype === "success" &&
+              message.local_command === "compact"
+            ) &&
             context.assistant.emittedNativeItemIds.size === 0 &&
             context.assistant.fallbackText.length === 0 &&
             resultText !== null &&
@@ -9108,7 +9132,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       question,
                       options: [
                         {
-                          label: "Compact and continue",
+                          label: CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
                           description: "Resume with a summary and use fewer tokens.",
                         },
                         {
@@ -9142,7 +9166,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return {
                 behavior: "completed" as const,
                 result:
-                  selection === "Compact and continue"
+                  selection === CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER
                     ? ("compact" as const)
                     : selection === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
                       ? ("never" as const)

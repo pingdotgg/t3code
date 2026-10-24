@@ -473,6 +473,38 @@ export function isProviderNativeSubagentThread(
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
 }
 
+export const IDLE_COMPACTION_TEXT = "/compact";
+
+interface CompactionMessageFields {
+  readonly role: string;
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<unknown> | undefined;
+  readonly createdBy?: OrchestrationV2Actor | undefined;
+  readonly creationSource?: OrchestrationV2CreationSource | undefined;
+  readonly idleCompaction?: OrchestrationV2IdleCompaction | undefined;
+}
+
+/** A prompt that only asks the provider to compact, so its turn is the compaction itself. */
+export function isCompactionCommandMessage(message: CompactionMessageFields): boolean {
+  return (
+    message.role === "user" &&
+    message.text.trim().toLowerCase() === IDLE_COMPACTION_TEXT &&
+    (message.attachments?.length ?? 0) === 0
+  );
+}
+
+/** Why T3 Code sent this `/compact` on its own, or undefined for one someone asked for. */
+export function idleCompactionOf(
+  message: CompactionMessageFields,
+): OrchestrationV2IdleCompaction | undefined {
+  if (!isCompactionCommandMessage(message)) return undefined;
+  if (message.idleCompaction !== undefined) return message.idleCompaction;
+  // Servers before `idleCompaction` marked their own as agent-created.
+  return message.createdBy === "agent" && message.creationSource === "server"
+    ? "beforeCacheExpires"
+    : undefined;
+}
+
 export const OrchestrationV2RunStatus = Schema.Literals([
   "preparing",
   "queued",
@@ -1116,11 +1148,16 @@ export const OrchestrationV2Notification = Schema.Struct({
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
+/** Why T3 Code compacted a thread on its own, on the `/compact` it sent. */
+export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpires", "onReturn"]);
+export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
+
 export const OrchestrationV2ConversationMessage = Schema.Struct({
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   senderThreadId: Schema.optional(ThreadId),
+  idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
   /**
    * The message is the script a provider-native workflow run executes, not prose. Clients show
    * the workflow's opening instead and keep the script behind a disclosure.
@@ -1377,6 +1414,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
@@ -1857,6 +1895,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStopRequested: Schema.optional(Schema.Boolean),
+  /** Suppress routine notifications for idle compaction; failures still notify. */
+  latestRunSilent: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   activityRunStatus: Schema.optional(
@@ -2141,6 +2181,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
@@ -2832,6 +2873,7 @@ export const OrchestrationV2Command = Schema.Union([
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,

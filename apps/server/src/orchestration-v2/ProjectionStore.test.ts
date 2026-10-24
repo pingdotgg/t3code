@@ -2879,6 +2879,150 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect.each([
+    ["T3 Code's idle compaction", "agent", "server", undefined, true, "/compact"],
+    ["compacting on return", "user", "web", "onReturn", true, "/compact"],
+    ["a typed /compact", "user", "mobile", undefined, false, "/compact"],
+    ["a normalized idle command", "agent", "server", undefined, true, " \t\u00a0/COMPACT\u3000\n"],
+    ["an ordinary prompt with idle metadata", "user", "web", "onReturn", false, "Continue"],
+  ] as const)(
+    "marks the shell's latest run silent only for %s",
+    ([name, createdBy, creationSource, idleCompaction, silent, text]) =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const key = name.replaceAll(/\W+/g, "-");
+        const threadId = ThreadId.make(`thread:projection-shell-silent:${key}`);
+        const runId = RunId.make(`run:projection-shell-silent:${key}`);
+        const messageId = MessageId.make(`message:projection-shell-silent:${key}`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-silent:${key}:thread`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:projection-shell-silent"),
+            title: "Idle compaction",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-silent:${key}:message`),
+          type: "message.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy,
+            creationSource,
+            ...(idleCompaction === undefined ? {} : { idleCompaction }),
+            id: messageId,
+            threadId,
+            runId,
+            nodeId: null,
+            role: "user",
+            text,
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-silent:${key}:run`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId: NodeId.make(`node:projection-shell-silent:${key}`),
+          driver,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: messageId,
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+
+        const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        );
+        const memoryShell = ProjectionStore.threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(threadId),
+        );
+        assert.equal(sqlShell?.latestRunSilent, silent);
+        assert.equal(memoryShell.latestRunSilent, silent);
+
+        // Claude can finish the run successfully even when its /compact failed.
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-silent:${key}:failure`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`item:projection-shell-silent:${key}:compaction`),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            type: "compaction",
+            driver,
+            status: "failed",
+            title: "Context compaction failed",
+            summary: "Not enough messages to compact.",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+        assert.equal(
+          (yield* projectionStore.getShellSnapshot()).threads.find(
+            (thread) => thread.id === threadId,
+          )?.latestRunSilent,
+          false,
+        );
+        assert.equal(
+          ProjectionStore.threadShellFromProjection(
+            yield* projectionStore.getThreadProjection(threadId),
+          ).latestRunSilent,
+          false,
+        );
+      }),
+  );
+
   it.effect("only exposes interruptible runs through the shell activeRunId", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

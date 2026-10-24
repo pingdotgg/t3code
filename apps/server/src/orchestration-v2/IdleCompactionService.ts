@@ -1,5 +1,6 @@
 import {
   CommandId,
+  IDLE_COMPACTION_TEXT,
   MessageId,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -70,10 +71,11 @@ export const make = Effect.gen(function* () {
           commandId: CommandId.make(`server:idle-compact:${threadId}:${runId}`),
           messageId: MessageId.make(`idle-compact:${threadId}:${runId}`),
           threadId,
-          text: "/compact",
+          text: IDLE_COMPACTION_TEXT,
           attachments: [],
           createdBy: "agent",
           creationSource: "server",
+          idleCompaction: "beforeCacheExpires",
           dispatchMode: { type: "start_immediately" },
         });
         return;

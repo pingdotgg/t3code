@@ -7,6 +7,8 @@ import "~/index.css";
 
 import { act, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { makeStreamingTimelineFixture } from "../../test-fixtures";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
@@ -385,4 +387,79 @@ describe("compact reasoning math", () => {
       "x^2",
     ]);
   });
+});
+
+it("renders automatic compaction as one live divider that finishes with its reason and token delta", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const prompt = fixture.visibleTurnItems[3]!;
+  const assistant = fixture.visibleTurnItems[5]!;
+  if (prompt.item.type !== "user_message" || assistant.item.type !== "assistant_message") {
+    throw new Error("Expected streaming fixture messages");
+  }
+  const promptItem = prompt.item;
+  const compaction = {
+    ...assistant,
+    item: {
+      ...assistant.item,
+      type: "compaction" as const,
+      driver: null,
+      beforeTokenCount: 899_000,
+    },
+  };
+  const entries = (completed: boolean) =>
+    deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          ...prompt,
+          item: { ...promptItem, text: "/compact", idleCompaction: "beforeCacheExpires" },
+        },
+        {
+          ...compaction,
+          item: {
+            ...compaction.item,
+            status: completed ? "completed" : "running",
+            afterTokenCount: completed ? 19_000 : undefined,
+          },
+        },
+      ],
+      optimisticMessages: [],
+    });
+  const props = baseProps();
+  const ui = (completed: boolean) => (
+    <MessagesTimeline
+      {...props}
+      timelineEntries={entries(completed)}
+      isWorking={!completed}
+      isCompacting={!completed}
+      activeTurnInProgress={!completed}
+      activeTurnStartedAt={fixture.time(5)}
+      latestRun={{
+        runId: fixture.runId,
+        status: completed ? "completed" : "running",
+        startedAt: fixture.time(5),
+        completedAt: completed ? fixture.time(9) : null,
+      }}
+    />
+  );
+  const container = document.createElement("div");
+  container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
+  await using screen = await render(ui(false), { container });
+  await expect
+    .element(screen.getByRole("separator", { name: "Compacting before the cache expires…" }))
+    .toBeVisible();
+  expect(container.textContent).not.toContain("/compact");
+  expect(container.textContent).not.toContain("Thinking");
+  expect(container.textContent).not.toContain("Working");
+  expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
+  await screen.rerender(ui(true));
+  await expect
+    .element(
+      screen.getByRole("separator", {
+        name: "Context automatically compacted before cache expiry 899K → 19K tokens",
+      }),
+    )
+    .toBeVisible();
+  expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
+  expect(container.textContent).not.toContain("Compacting before");
 });
