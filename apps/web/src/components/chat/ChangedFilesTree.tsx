@@ -27,6 +27,8 @@ interface ChangedFileRow {
 }
 
 export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
+/** Returns true when it handled the click, which skips opening the diff. */
+export type ChangedFileModifierClickHandler = (filePath: string, event: MouseEvent) => boolean;
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   runId: RunId;
@@ -36,6 +38,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
+  onFileModifierClick?: ChangedFileModifierClickHandler | undefined;
 }) {
   const {
     runId,
@@ -45,6 +48,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onToggleAllDirectories,
     onOpenTurnDiff,
     onFileContextMenu,
+    onFileModifierClick,
   } = props;
   const summaryStat = summarizeTurnDiffStats(files);
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
@@ -125,6 +129,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         resolvedTheme={resolvedTheme}
         onOpenTurnDiff={onOpenTurnDiff}
         onFileContextMenu={onFileContextMenu}
+        onFileModifierClick={onFileModifierClick}
       />
     </div>
   );
@@ -137,9 +142,17 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
+  onFileModifierClick?: ChangedFileModifierClickHandler | undefined;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId, onFileContextMenu } =
-    props;
+  const {
+    files,
+    allDirectoriesExpanded,
+    onOpenTurnDiff,
+    resolvedTheme,
+    runId,
+    onFileContextMenu,
+    onFileModifierClick,
+  } = props;
   // Overrides apply only while their key matches the current one, so starting from no key is
   // the same as starting with no overrides. That lets this hook run before the tree is built,
   // and the compiler caches the tree on `files`.
@@ -215,7 +228,10 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         type="button"
         className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(runId, node.path)}
+        onClick={(event) => {
+          if (onFileModifierClick?.(node.path, event)) return;
+          onOpenTurnDiff(runId, node.path);
+        }}
         onContextMenu={
           onFileContextMenu
             ? (event) => {

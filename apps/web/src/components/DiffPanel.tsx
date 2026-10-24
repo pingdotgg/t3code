@@ -24,7 +24,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { useFileContextMenuHandler } from "../fileContextMenu";
+import { resolveFileModifierClickAction, useFileContextMenu } from "../fileContextMenu";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
@@ -237,7 +237,7 @@ export default function DiffPanel({
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
-  const onFileContextMenu = useFileContextMenuHandler(activeThread?.environmentId ?? null);
+  const fileContextMenu = useFileContextMenu(activeThread?.environmentId ?? null);
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeThread?.environmentId ?? null,
     serverConfig?.availableEditors ?? [],
@@ -1046,6 +1046,22 @@ export default function DiffPanel({
                     );
                     const filePath = title?.textContent;
                     if (filePath) {
+                      const modifierAction = resolveFileModifierClickAction(event, {
+                        modClickSelects: false,
+                      });
+                      if (
+                        modifierAction !== null &&
+                        fileContextMenu.activateModifierClick(modifierAction, {
+                          environmentId: activeThread?.environmentId ?? null,
+                          filePath: filePath.trim(),
+                          workspaceRoot: activeCwd,
+                          repositoryRoot: activeRepositoryRoot,
+                        })
+                      ) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                      }
                       openDiffFile(filePath);
                       return;
                     }
@@ -1069,14 +1085,14 @@ export default function DiffPanel({
                     const filePath = title?.textContent?.trim();
                     if (!filePath) return;
                     event.preventDefault();
-                    onFileContextMenu(
+                    void fileContextMenu.show(
                       {
                         environmentId: activeThread?.environmentId ?? null,
                         filePath,
                         workspaceRoot: activeCwd,
                         repositoryRoot: activeRepositoryRoot,
                       },
-                      event,
+                      { x: event.clientX, y: event.clientY },
                     );
                   }}
                 >
