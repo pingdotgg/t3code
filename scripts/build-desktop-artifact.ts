@@ -997,6 +997,12 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  // Packaged apps run the resource monitor from the resources/resource-monitor
+  // extra resource, so the staged copies would only add files to sign.
+  "!apps/desktop/resources/resource-monitor",
+  "!apps/desktop/resources/resource-monitor/**/*",
+  "!apps/desktop/prod-resources/resource-monitor",
+  "!apps/desktop/prod-resources/resource-monitor/**/*",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -1017,6 +1023,14 @@ export const MAC_FILE_EXCLUSIONS = [
 export const LINUX_FILE_EXCLUSIONS = [
   ...MAC_FILE_EXCLUSIONS,
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
+] as const;
+
+// The ffi-rs ia32 package declares cpu [x64, ia32], so pnpm installs it in x64
+// stages too. No Windows build targets ia32.
+const WINDOWS_UNUSED_NATIVE_PACKAGE = "@yuuang/ffi-rs-win32-ia32-msvc";
+export const WINDOWS_FILE_EXCLUSIONS = [
+  `!**/node_modules/${WINDOWS_UNUSED_NATIVE_PACKAGE}`,
+  `!**/node_modules/${WINDOWS_UNUSED_NATIVE_PACKAGE}/**/*`,
 ] as const;
 
 // node-pty publishes both Darwin prebuilds in one package. Single-architecture
@@ -1060,17 +1074,22 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/*.map",
 ] as const;
 
+// node-pty loads conpty.node from build/Release when it exists and otherwise
+// from prebuilds/win32-<arch>, and loads conpty.dll only from the conpty folder
+// beside that module. The stage installs prebuilds, so build/Release/conpty and
+// the third_party/conpty sources it is copied from are never loaded.
 export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type) {
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
-  const unusedPrebuild = `**/node_modules/node-pty/prebuilds/win32-${unusedArch}`;
-  const unusedConpty = `**/node_modules/node-pty/third_party/conpty/*/win10-${unusedArch}`;
+  const unusedDirectories = [
+    `**/node_modules/node-pty/prebuilds/win32-${unusedArch}`,
+    "**/node_modules/node-pty/build/Release/conpty",
+    "**/node_modules/node-pty/third_party/conpty",
+    `**/node_modules/${WINDOWS_UNUSED_NATIVE_PACKAGE}`,
+  ];
 
   return [
     ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-    unusedPrebuild,
-    `${unusedPrebuild}/**`,
-    unusedConpty,
-    `${unusedConpty}/**`,
+    ...unusedDirectories.flatMap((directory) => [directory, `${directory}/**`]),
   ];
 }
 
@@ -2839,7 +2858,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         ? resolveMacFileExclusions(arch)
         : platform === "linux"
           ? LINUX_FILE_EXCLUSIONS
-          : []),
+          : WINDOWS_FILE_EXCLUSIONS),
     ],
     directories: {
       buildResources: "apps/desktop/resources",
