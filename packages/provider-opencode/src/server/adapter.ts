@@ -386,6 +386,12 @@ interface OpenCodeThreadState {
   parentSubagent: OpenCodeSubagentContext | null;
   nextChildTurnOrdinal: number;
   nextAdmissionGeneration: number;
+  /**
+   * The permission rules the native session currently carries. OpenCode keeps
+   * them on the session, so a runtime mode change only lands when they are
+   * written back.
+   */
+  appliedPermissionRules: PermissionRuleset | null;
 }
 
 interface OpenCodeRequestOwner {
@@ -701,6 +707,17 @@ function permissionRuleEquals(
     left.permission === right.permission &&
     left.pattern === right.pattern &&
     left.action === right.action
+  );
+}
+
+function permissionRulesEqual(left: PermissionRuleset | null, right: PermissionRuleset): boolean {
+  return (
+    left !== null &&
+    left.length === right.length &&
+    left.every((rule, index) => {
+      const other = right[index];
+      return other !== undefined && permissionRuleEquals(rule, other);
+    })
   );
 }
 
@@ -1415,6 +1432,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               parentSubagent: context,
               nextChildTurnOrdinal: 1,
               nextAdmissionGeneration: 1,
+              appliedPermissionRules: childPermission,
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
@@ -2812,6 +2830,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             parentSubagent: subagentsByChildSessionId.get(nativeSession.id) ?? null,
             nextChildTurnOrdinal: 1,
             nextAdmissionGeneration: 1,
+            appliedPermissionRules: null,
           };
           threads.set(nativeSession.id, state);
           return state;
@@ -2997,6 +3016,34 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
         });
 
+        const applyPermissionRules = (
+          state: OpenCodeThreadState,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
+          nativeParentId: string | undefined,
+        ) =>
+          Effect.gen(function* () {
+            // A native subagent session carries the parent's rules plus the
+            // restrictions of its own agent, so the parent policy must not
+            // overwrite them. The in-memory marker is gone after a server
+            // restart, so the native parent id is the durable signal.
+            if (
+              runtimePolicy === undefined ||
+              state.parentSubagent !== null ||
+              nativeParentId !== undefined
+            ) {
+              return;
+            }
+            const rules = openCodePermissionRules(runtimePolicy);
+            if (permissionRulesEqual(state.appliedPermissionRules, rules)) return;
+            yield* sdkCall("session.update", { sessionID: state.nativeSessionId }, () =>
+              client.session.update({
+                sessionID: state.nativeSessionId,
+                permission: rules,
+              }),
+            );
+            state.appliedPermissionRules = rules;
+          });
+
         const runtimeSession: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver: OPENCODE_PROVIDER,
@@ -3009,16 +3056,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
+                  threadId: threadInput.threadId,
+                  modelSelection: threadInput.modelSelection,
+                  runtimePolicy: threadInput.runtimePolicy,
                 });
               }
               // No title: OpenCode generates one from the first prompt only when
               // session.create leaves it unset (SessionPrompt.ensureTitle).
+              const permissionRules = openCodePermissionRules(threadInput.runtimePolicy);
               const response = yield* sdkCall(
                 "session.create",
-                { permission: openCodePermissionRules(threadInput.runtimePolicy) },
+                { permission: permissionRules },
                 () =>
                   client.session.create({
-                    permission: openCodePermissionRules(threadInput.runtimePolicy),
+                    permission: permissionRules,
                   }),
               );
               const nativeSession = unwrapData("session.create", response);
@@ -3043,7 +3094,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       status: created.status,
                       updatedAt: created.updatedAt,
                     };
-              registerThread(nativeSession, providerThread, null);
+              const state = registerThread(nativeSession, providerThread, null);
+              state.appliedPermissionRules = permissionRules;
               return providerThread;
             },
             (effect, threadInput) =>
@@ -3072,7 +3124,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 status: "idle" as const,
                 updatedAt: dateTimeFromEpoch(nativeSession.time.updated, resumedAt),
               };
-              registerThread(nativeSession, providerThread, null);
+              const state = registerThread(nativeSession, providerThread, null);
+              yield* applyPermissionRules(state, threadInput.runtimePolicy, nativeSession.parentID);
               return providerThread;
             },
             (effect, threadInput) =>

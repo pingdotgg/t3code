@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, PermissionRuleset, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
   NodeId,
@@ -232,6 +232,69 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     runId: RunId.make(`run-opencode-${suffix}`),
     runtime,
     startTurn,
+    threadId,
+  };
+});
+
+const makePermissionRuleHarness = Effect.fn("makePermissionRuleHarness")(function* (
+  suffix: string,
+  nativeSession: { readonly id: string; readonly parentID?: string },
+) {
+  const nativeEvents = asyncEventStream();
+  const createdPermissions: Array<unknown> = [];
+  const updatedPermissions: Array<unknown> = [];
+  const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
+  const threadId = ThreadId.make(`thread-${suffix}`);
+  const modelSelection = {
+    instanceId,
+    model: "anthropic/claude-sonnet",
+    options: [],
+  };
+  const nativeSessionData = { ...nativeSession, time: { created: 1, updated: 1 } };
+  const adapter = yield* makeOpenCodeAdapterV2({
+    instanceId,
+    settings: OPEN_CODE_TEST_SETTINGS,
+    environment: {},
+  }).pipe(
+    Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
+      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
+      createOpenCodeSdkClient: () => ({
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async (input: { permission?: unknown }) => {
+            createdPermissions.push(input.permission);
+            return { data: nativeSessionData };
+          },
+          update: async (input: { permission?: unknown }) => {
+            updatedPermissions.push(input.permission);
+            return { data: true };
+          },
+          get: async () => ({ data: nativeSessionData }),
+        },
+      }),
+    } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
+    Effect.provideService(ProviderHost.ProviderHost, {
+      paths: { cwd: "/workspace" },
+      resolveAttachmentPath: () => null,
+    } as unknown as ProviderHost.ProviderHost["Service"]),
+  );
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`session-${suffix}`),
+    modelSelection,
+    runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection,
+    runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+  });
+  return {
+    createdPermissions,
+    updatedPermissions,
+    modelSelection,
+    providerThread,
+    runtime,
     threadId,
   };
 });
@@ -2266,6 +2329,56 @@ describe("OpenCodeAdapterV2", () => {
       action: "allow",
     });
   });
+
+  it.effect("reapplies the runtime mode permission rules when a session is resumed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makePermissionRuleHarness("resume-policy", { id: "root" });
+      assert.equal(
+        permissionAction(harness.createdPermissions[0] as PermissionRuleset, "bash"),
+        "ask",
+      );
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        threadId: harness.threadId,
+        modelSelection: harness.modelSelection,
+        runtimePolicy: runtimePolicy("full-access", { cwd: "/workspace" }),
+      });
+
+      assert.equal(harness.updatedPermissions.length, 1);
+      assert.equal(
+        permissionAction(harness.updatedPermissions[0] as PermissionRuleset, "bash"),
+        "allow",
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("keeps the rules of a resumed native child session", () =>
+    Effect.gen(function* () {
+      // A server restart drops the in-memory subagent marker, so the native
+      // parent id is the only signal that this session carries the child
+      // agent's own restrictions.
+      const harness = yield* makePermissionRuleHarness("resume-child-policy", {
+        id: "child",
+        parentID: "root",
+      });
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        threadId: harness.threadId,
+        modelSelection: harness.modelSelection,
+        runtimePolicy: runtimePolicy("full-access", { cwd: "/workspace" }),
+      });
+
+      assert.deepEqual(harness.updatedPermissions, []);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
 
   it("preserves OpenCode's recursion guard on task-created child sessions", () => {
     const childRules = openCodeChildPermissionRules(runtimePolicy("full-access"), [
