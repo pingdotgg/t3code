@@ -16,6 +16,7 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
@@ -230,6 +231,83 @@ const initRepoWithCommit = (
     const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
     return { initialBranch };
   });
+
+// A `git checkout` that stays running until its gate opens, and reports when git's process
+// scope is closed, which is what kills it.
+const makeSlowCheckout = Effect.gen(function* () {
+  const gate = yield* Deferred.make<void>();
+  const started = yield* Deferred.make<void>();
+  const released = yield* Deferred.make<void>();
+  const spawned: Array<string> = [];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.acquireRelease(
+      Effect.gen(function* () {
+        if (ChildProcess.isStandardCommand(command)) spawned.push(command.args.join(" "));
+        if (!ChildProcess.isStandardCommand(command) || command.args[0] !== "checkout") {
+          return makeSuccessfulHandle("feature");
+        }
+        yield* Deferred.succeed(started, undefined);
+        return ChildProcessSpawner.makeHandle({
+          ...makeSuccessfulHandle(""),
+          exitCode: Deferred.await(gate).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+        });
+      }),
+      () =>
+        ChildProcess.isStandardCommand(command) && command.args[0] === "checkout"
+          ? Deferred.succeed(released, undefined)
+          : Effect.void,
+    ),
+  );
+  const driver = yield* makeGitVcsDriverCore().pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  );
+  return { driver, started, released, spawned, finish: Deferred.succeed(gate, undefined) };
+});
+
+// A checkout rewriting thousands of files can outlast any fixed limit, and git cannot roll back
+// one that is killed after it has written part of the tree.
+it.effect("lets a slow branch checkout finish instead of killing it partway", () =>
+  Effect.gen(function* () {
+    const { driver, started, finish } = yield* makeSlowCheckout;
+
+    const switching = yield* driver
+      .switchRef({ cwd: "/repo", refName: "feature" })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("1 hour");
+    assert.isUndefined(switching.pollUnsafe(), "the checkout is still running");
+
+    yield* finish;
+    assert.deepEqual(yield* Fiber.join(switching), { refName: "feature" });
+  }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("keeps a branch checkout running when the request that started it is interrupted", () =>
+  Effect.gen(function* () {
+    const { driver, started, released, spawned, finish } = yield* makeSlowCheckout;
+
+    const switching = yield* driver
+      .switchRef({ cwd: "/repo", refName: "feature" })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* Fiber.interrupt(switching);
+    assert.isFalse(yield* Deferred.isDone(released), "git was killed with its caller");
+
+    // The caller's own cache invalidation ran when it was interrupted, before git finished
+    // rewriting the tree, so a read since could have cached the old branch. The cleanup that
+    // follows git's exit has to look the repository up again, which is the Git command counted.
+    yield* TestClock.adjust("0 seconds");
+    const spawnedBeforeFinish = spawned.length;
+    yield* finish;
+    yield* Deferred.await(released);
+    yield* TestClock.adjust("0 seconds");
+    assert.isAbove(
+      spawned.length,
+      spawnedBeforeFinish,
+      "cache cleanup did not run after git exited",
+    );
+  }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
 
 it.effect.each(["root", "nested", "worktree"] as const)(
   "skips clean filters while the %s index is locked and resumes after unlock",
