@@ -358,6 +358,41 @@ export interface ServerConfigSubscriptionOptions {
   readonly usageLimitsCommand?: boolean;
 }
 
+// Configs are JSON-shaped. Missing and undefined object fields persist identically.
+function sameCacheValue(previous: unknown, next: unknown): boolean {
+  if (previous === next) return true;
+  if (
+    previous === null ||
+    next === null ||
+    typeof previous !== "object" ||
+    typeof next !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(previous) || Array.isArray(next)) {
+    if (!Array.isArray(previous) || !Array.isArray(next) || previous.length !== next.length) {
+      return false;
+    }
+    for (let index = 0; index < previous.length; index += 1) {
+      if (!sameCacheValue(previous[index], next[index])) return false;
+    }
+    return true;
+  }
+  if (
+    Object.getPrototypeOf(previous) !== Object.prototype ||
+    Object.getPrototypeOf(next) !== Object.prototype
+  ) {
+    return false;
+  }
+  const before = previous as Record<string, unknown>;
+  const after = next as Record<string, unknown>;
+  return (
+    Object.keys(before).every((key) =>
+      sameCacheValue(before[key], Object.hasOwn(after, key) ? after[key] : undefined),
+    ) && Object.keys(after).every((key) => Object.hasOwn(before, key) || after[key] === undefined)
+  );
+}
+
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
   function* (subscription: ServerConfigSubscriptionOptions) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
@@ -383,13 +418,22 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     );
     const persistence = yield* Queue.sliding<ServerConfig>(1);
     const pendingPersistence = yield* Ref.make<Option.Option<ServerConfig>>(Option.none());
+    let lastPersisted: ServerConfig | undefined;
 
     const persist = Effect.fn("EnvironmentServerConfigState.persist")(function* (
       config: ServerConfig,
     ) {
       // A cached stall would read as a fresh freeze on the next launch.
-      const { lastEventLoopStall: _stall, ...cacheable } = withoutEnvironmentThemes(config);
-      return yield* cache.saveServerConfig(environmentId, cacheable).pipe(
+      const {
+        environmentThemes: _themes,
+        usageLimitSources: _sources,
+        lastEventLoopStall: _stall,
+        ...cacheable
+      } = config;
+      if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
+        return true;
+      }
+      const saved = yield* cache.saveServerConfig(environmentId, cacheable).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(
@@ -401,6 +445,8 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
           ),
         ),
       );
+      if (saved) lastPersisted = cacheable;
+      return saved;
     });
 
     const persistPending = Effect.fn("EnvironmentServerConfigState.persistPending")(function* (
