@@ -49,6 +49,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  scheduleTimelineEndPin,
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
@@ -262,6 +263,7 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   findOpen?: boolean;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
+  cancelEndPinRef?: React.RefObject<(() => void) | null> | undefined;
   hideEmptyPlaceholder?: boolean;
   /** Composer space to center the empty state against; held steady through collapse. */
   emptyPlaceholderInset: number;
@@ -360,6 +362,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
+  cancelEndPinRef,
   hideEmptyPlaceholder = false,
   emptyPlaceholderInset,
   topFadeEnabled = false,
@@ -624,7 +627,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
       : -1;
   const restoringAlwaysRender =
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
+  const followsEndRef = useRef(false);
+  const followsEndSmoothlyRef = useRef(false);
+  const endPinWasAtEndRef = useRef(true);
+  const endPinCancelRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const cancelEndPin = () => {
+      endPinCancelRef.current?.();
+      endPinCancelRef.current = null;
+    };
+    if (cancelEndPinRef) cancelEndPinRef.current = cancelEndPin;
+    return () => {
+      if (cancelEndPinRef?.current === cancelEndPin) cancelEndPinRef.current = null;
+      cancelEndPin();
+    };
+  }, [cancelEndPinRef]);
   useTimelinePositionRestore({
+    endPinCancelRef,
+    followsEndRef,
+    followsEndSmoothlyRef,
     listRef,
     listIdentityKey,
     restoringThreadPosition,
@@ -811,6 +832,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
+    if (isAtEnd !== undefined && (isAtEnd || !followsEndRef.current)) {
+      endPinWasAtEndRef.current = isAtEnd;
+    }
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && state && isAtEnd !== undefined && !paintOnly) {
       const index = state.indexByKey(position.rowId);
@@ -1024,6 +1048,39 @@ const ConversationTimeline = memo(function ConversationTimeline({
     contentInsetEndAdjustment,
   });
 
+  const followsEnd = !(
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null ||
+    disclosureToggleSettling
+  );
+  const followsEndSmoothly = followsEnd && isWorking && !prefersReducedMotion;
+  useLayoutEffect(() => {
+    followsEndRef.current = followsEnd;
+    followsEndSmoothlyRef.current = followsEndSmoothly && settlingListIdentity === null;
+  }, [followsEnd, followsEndSmoothly, settlingListIdentity]);
+  // Rows that land on a followed thread (a reply that finished while it was in the
+  // background) can grow the content past what LegendList keeps following. Check once
+  // the rows have laid out; smooth following during a stream moves the view itself.
+  const endPinRowsRef = useRef(rows);
+  useEffect(() => {
+    const rowsChanged = endPinRowsRef.current !== rows;
+    endPinRowsRef.current = rows;
+    const list = listRef.current;
+    if (
+      !rowsChanged ||
+      !list ||
+      !followsEnd ||
+      followsEndSmoothly ||
+      restoringThreadPosition ||
+      !endPinWasAtEndRef.current
+    )
+      return;
+    return scheduleTimelineEndPin(list, () => followsEndRef.current, endPinCancelRef);
+  }, [followsEnd, followsEndSmoothly, listRef, restoringThreadPosition, rows]);
+
   useThreadFindNavigation({
     listReady: findListReady,
     historyControls,
@@ -1126,12 +1183,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
               maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
+                !followsEnd
                   ? false
                   : isWorking && !prefersReducedMotion && settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH

@@ -2040,6 +2040,7 @@ export default function ChatView(props: ChatViewProps) {
     showScrollToBottom,
     timelineLiveFollowEnabled,
     cancelPositionRestoreRef,
+    cancelEndPinRef,
     isTimelineAtLogicalEndStable,
     cancelTimelineLiveFollowForUserNavigationStable,
     onComposerPageScrollKeyDownStable,
@@ -3400,6 +3401,7 @@ export default function ChatView(props: ChatViewProps) {
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEndStable}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigationStable}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
+                cancelEndPinRef={cancelEndPinRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 emptyPlaceholderInset={composerReservedHeight}
                 topFadeEnabled={!hasTimelineTopBanner}

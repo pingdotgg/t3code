@@ -108,6 +108,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const observedTimelineActivityRef = useRef<TimelineRunObservation | null>(null);
   const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
+  const cancelEndPinRef = useRef<(() => void) | null>(null);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
   const pendingAnchorScrollRestoreRef = useRef<{
     readonly messageId: MessageId;
@@ -259,6 +260,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   };
   const onComposerPageScrollReleaseStable = useStableCallback(onComposerPageScrollRelease);
   const scrollToEnd = (animated: boolean = false) => {
+    cancelEndPinRef.current?.();
     cancelPositionRestoreRef.current?.();
     isAtEndRef.current = true;
     timelineScrollModeRef.current = "following-end";
@@ -659,6 +661,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     showScrollToBottom,
     timelineLiveFollowEnabled,
     cancelPositionRestoreRef,
+    cancelEndPinRef,
     isTimelineAtLogicalEndStable,
     cancelTimelineLiveFollowForUserNavigationStable,
     onComposerPageScrollKeyDownStable,

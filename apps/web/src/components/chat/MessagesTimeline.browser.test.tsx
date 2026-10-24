@@ -1,11 +1,13 @@
 import { EnvironmentId, MessageId, RunId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
+import { createRef, Profiler, useState, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { act, render } from "../../../test/render";
+import { userEvent } from "vite-plus/test/browser";
+import { readTimelinePosition } from "./timelineScrollAnchoring";
+import { act, fakeTimers, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
@@ -384,5 +386,293 @@ describe("compact reasoning math", () => {
       " and ",
       "x^2",
     ]);
+  });
+});
+
+describe("MessagesTimeline scroll position", () => {
+  const tall = (index: number) =>
+    message(
+      `Message ${index}\n\n${"Long paragraph. ".repeat(80)}`,
+      { role: "assistant" },
+      `message-${index}`,
+    );
+  const tallEntries = Array.from({ length: 12 }, (_, index) => tall(index));
+
+  async function waitForList(props: ReturnType<typeof baseProps>) {
+    await vi.waitFor(() => {
+      const viewport = props.listRef.current?.getScrollableNode();
+      expect(viewport?.scrollHeight ?? 0).toBeGreaterThan(viewport?.clientHeight ?? 0);
+    });
+    return props.listRef.current!.getScrollableNode()!;
+  }
+
+  it("keeps following after a non-user scroll reports an end gap before new rows", async () => {
+    const onIsAtEndChange = vi.fn();
+    const props = { ...baseProps(), onIsAtEndChange };
+    const timeline = (entries: Entry[]) => (
+      <MessagesTimeline {...props} timelineEntries={entries} />
+    );
+    await using screen = await renderElement(timeline(tallEntries));
+    const viewport = await waitForList(props);
+    await vi.waitFor(() => expect(onIsAtEndChange).toHaveBeenLastCalledWith(true));
+    // Let restoration finish before the completed reply adds more than a viewport.
+    {
+      using _timers = fakeTimers();
+      await act(async () => {
+        for (let frame = 0; frame < 8; frame += 1) await vi.advanceTimersByTimeAsync(16);
+      });
+    }
+    // Deliver a non-user scroll callback with a gap larger than the follow threshold,
+    // without a wheel, touch or other user-navigation event disabling follow.
+    await act(async () => {
+      await props.listRef.current!.scrollToOffset({
+        offset: viewport.scrollTop - 2 * viewport.clientHeight,
+        animated: false,
+      });
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(onIsAtEndChange).toHaveBeenLastCalledWith(false);
+    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+      viewport.clientHeight,
+    );
+    using _timers = fakeTimers();
+    await act(async () => screen.rerender(timeline([...tallEntries, tall(12)])));
+    await act(async () => {
+      for (let frame = 0; frame < 8; frame += 1) await vi.advanceTimersByTimeAsync(16);
+    });
+    await vi.waitFor(() =>
+      expect(
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+      ).toBeLessThanOrEqual(2),
+    );
+  });
+
+  it.each(["together", "anchor-first", "rows-first"] as const)(
+    "preserves an anchored reading position when anchor clearing and changed rows arrive %s",
+    async (order) => {
+      const onIsAtEndChange = vi.fn();
+      const onAnchorReady = vi.fn();
+      const props = { ...baseProps(), onIsAtEndChange, onAnchorReady };
+      const sent = message("Newest prompt.", {}, "anchored-prompt");
+      const reply = tall(12);
+      const entries = [...tallEntries, sent, reply];
+      const timeline = (anchorCleared: boolean, rowsChanged = anchorCleared) => (
+        <MessagesTimeline
+          {...props}
+          timelineEntries={rowsChanged ? [...entries, tall(13)] : entries}
+          anchorMessageId={anchorCleared ? null : MessageId.make("anchored-prompt")}
+          isWorking={!anchorCleared}
+        />
+      );
+      await using screen = await renderElement(timeline(false));
+      const viewport = await waitForList(props);
+      await vi.waitFor(() => expect(onAnchorReady).toHaveBeenCalled());
+      await act(async () => {
+        await props.listRef.current!.scrollToOffset({ offset: 600, animated: false });
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      await vi.waitFor(() => expect(onIsAtEndChange).toHaveBeenLastCalledWith(false));
+      const offset = viewport.scrollTop;
+      using _timers = fakeTimers();
+
+      if (order !== "together") {
+        await act(async () =>
+          screen.rerender(timeline(order === "anchor-first", order === "rows-first")),
+        );
+      }
+      await act(async () => screen.rerender(timeline(true)));
+      await act(async () => {
+        // Drain the two-frame growth check and its first end correction.
+        for (let frame = 0; frame < 4; frame += 1) await vi.advanceTimersByTimeAsync(16);
+      });
+
+      expect(viewport.scrollTop).toBeCloseTo(offset, 0);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+        600,
+      );
+    },
+  );
+
+  it("keeps streamed growth smooth after restoring a working thread", async () => {
+    const props = baseProps();
+    const timeline = (restored: boolean, growth = 0) => (
+      <MessagesTimeline
+        {...props}
+        routeThreadKey={restored ? `${props.routeThreadKey}-restored` : props.routeThreadKey}
+        isWorking
+        timelineEntries={[
+          ...tallEntries.slice(0, -1),
+          message(
+            `Message 11\n\n${"Long paragraph. ".repeat(80 + growth * 20)}`,
+            { role: "assistant", streaming: true },
+            "message-11",
+          ),
+        ]}
+      />
+    );
+    await using screen = await renderElement(timeline(false));
+    const viewport = await waitForList(props);
+    await vi.waitFor(() =>
+      expect(
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+      ).toBeLessThanOrEqual(2),
+    );
+    const initialHeight = viewport.scrollHeight;
+    const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
+    using scrollTo = vi.spyOn(scrollable, "scrollTo");
+    using restoration = vi.spyOn(props.listRef.current!, "scrollToEnd");
+    {
+      using _timers = fakeTimers();
+      await screen.rerender(timeline(true));
+      await vi.waitFor(() => expect(restoration).toHaveResolved());
+      scrollTo.mockClear();
+      for (let growth = 1; growth <= 16; growth += 1) {
+        await screen.rerender(timeline(true, growth));
+        await act(async () => vi.advanceTimersByTimeAsync(16));
+      }
+      // LegendList coalesces further growth behind its 500ms smooth-follow timer.
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+    }
+    expect(viewport.scrollHeight).toBeGreaterThan(initialHeight);
+    const behaviors = scrollTo.mock.calls.map(([options]) => options.behavior);
+    const smoothStart = behaviors.indexOf("smooth");
+    expect(smoothStart).toBeGreaterThanOrEqual(0);
+    expect(behaviors.slice(smoothStart + 1)).not.toContain("auto");
+    await vi.waitFor(() =>
+      expect(
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+      ).toBeLessThanOrEqual(2),
+    );
+  });
+
+  it("does not interrupt a smooth jump when following is re-enabled without new rows", async () => {
+    const onIsAtEndChange = vi.fn();
+    const props = { ...baseProps(), onIsAtEndChange };
+    const timeline = (following: boolean) => (
+      <MessagesTimeline {...props} timelineEntries={tallEntries} liveFollowEnabled={following} />
+    );
+    await using screen = await renderElement(timeline(false));
+    const viewport = await waitForList(props);
+    const list = props.listRef.current!;
+    await act(async () => {
+      await list.scrollToEnd({ animated: false });
+      await list.scrollToOffset({ offset: 0, animated: false });
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(onIsAtEndChange).toHaveBeenLastCalledWith(false);
+    using _timers = fakeTimers();
+    const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
+    const scrollTo = vi.spyOn(scrollable, "scrollTo");
+
+    await act(async () => screen.rerender(timeline(true)));
+    await act(async () => {
+      void props.listRef.current!.scrollToEnd({ animated: true });
+      for (let frame = 0; frame < 5; frame += 1) {
+        await vi.advanceTimersByTimeAsync(16);
+      }
+    });
+
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "smooth")).toBe(true);
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "auto")).toBe(false);
+  });
+
+  it("lets an explicit smooth jump cancel an active end pin", async () => {
+    const onIsAtEndChange = vi.fn();
+    const props = { ...baseProps(), onIsAtEndChange };
+    const cancelEndPinRef = createRef<(() => void) | null>();
+    const timeline = (entries: Entry[]) => (
+      <MessagesTimeline {...props} timelineEntries={entries} cancelEndPinRef={cancelEndPinRef} />
+    );
+    await using screen = await renderElement(timeline(tallEntries));
+    const viewport = await waitForList(props);
+    const list = props.listRef.current!;
+    // Finish initial positioning and leave LegendList's follow threshold before
+    // adding rows, so its own maintenance cannot satisfy the correction first.
+    await act(async () => {
+      await list.scrollToEnd({ animated: false });
+      await list.scrollToOffset({ offset: 0, animated: false });
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(onIsAtEndChange).toHaveBeenLastCalledWith(false);
+    expect(list.getState().isWithinMaintainScrollAtEndThreshold).toBe(false);
+    using _timers = fakeTimers();
+    const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
+    const scrollTo = vi.spyOn(scrollable, "scrollTo");
+    const originalScrollToEnd = list.scrollToEnd.bind(list);
+    let jumped = false;
+    vi.spyOn(list, "scrollToEnd").mockImplementation((options) => {
+      const result = originalScrollToEnd(options);
+      if (!options?.animated && !jumped) {
+        jumped = true;
+        queueMicrotask(() => {
+          cancelEndPinRef.current?.();
+          viewport.scrollTop = 0;
+          scrollTo.mockClear();
+          void list.scrollToEnd({ animated: true });
+        });
+      }
+      return result;
+    });
+    await act(async () => {
+      viewport.scrollTop = 0;
+      await screen.rerender(
+        timeline([...tallEntries, ...Array.from({ length: 12 }, (_, index) => tall(index + 12))]),
+      );
+    });
+    await vi.waitFor(() => expect(jumped).toBe(true));
+    await act(async () => {
+      for (let frame = 0; frame < 5; frame += 1) await vi.advanceTimersByTimeAsync(16);
+    });
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "smooth")).toBe(true);
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "auto")).toBe(false);
+  });
+
+  it("restores a manual reading position after reopening and switching threads", async () => {
+    const props = baseProps();
+    function Chat() {
+      const [liveFollowEnabled, setLiveFollowEnabled] = useState(true);
+      // The chat view stops following the live edge when the reader scrolls.
+      return (
+        <div className="contents" onWheelCapture={() => setLiveFollowEnabled(false)}>
+          <MessagesTimeline
+            {...props}
+            timelineEntries={tallEntries}
+            liveFollowEnabled={liveFollowEnabled}
+          />
+        </div>
+      );
+    }
+    await using screen = await renderElement(<Chat />);
+    const viewport = await waitForList(props);
+    await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true));
+
+    await userEvent.wheel(viewport, { delta: { y: -600 } });
+    await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(false));
+    const offset = viewport.scrollTop;
+    await screen.unmount();
+    expect(readTimelinePosition(props.routeThreadKey)).toMatchObject({
+      atEnd: false,
+      scrollOffset: offset,
+    });
+
+    const timeline = (routeThreadKey: string) => (
+      <MessagesTimeline {...props} routeThreadKey={routeThreadKey} timelineEntries={tallEntries} />
+    );
+    await using reopened = await renderElement(timeline(props.routeThreadKey));
+    const reopenedViewport = await waitForList(props);
+    await vi.waitFor(() =>
+      expect(Math.abs(reopenedViewport.scrollTop - offset)).toBeLessThanOrEqual(1),
+    );
+
+    await act(async () => reopened.rerender(timeline(`${props.routeThreadKey}-other`)));
+    await vi.waitFor(() =>
+      expect(
+        reopenedViewport.scrollHeight - reopenedViewport.clientHeight - reopenedViewport.scrollTop,
+      ).toBeLessThanOrEqual(1),
+    );
+    await act(async () => reopened.rerender(timeline(props.routeThreadKey)));
+    await vi.waitFor(() =>
+      expect(Math.abs(reopenedViewport.scrollTop - offset)).toBeLessThanOrEqual(1),
+    );
   });
 });

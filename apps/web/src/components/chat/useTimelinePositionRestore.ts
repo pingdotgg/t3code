@@ -2,13 +2,16 @@ import { useLayoutEffect, useRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { AssistantCitationRequest } from "./AssistantCitationSource";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
-import type { RememberedTimelinePosition } from "./timelineScrollAnchoring";
+import { pinTimelineToEnd, type RememberedTimelinePosition } from "./timelineScrollAnchoring";
 
 /**
  * Scrolls a newly shown thread back to where the user left it, or to its end,
  * and reports the thread positioned once the saved row settles.
  */
 export function useTimelinePositionRestore({
+  endPinCancelRef,
+  followsEndRef,
+  followsEndSmoothlyRef,
   listRef,
   listIdentityKey,
   restoringThreadPosition,
@@ -19,6 +22,9 @@ export function useTimelinePositionRestore({
   onManualNavigation,
   onPositioned,
 }: {
+  readonly endPinCancelRef: React.RefObject<(() => void) | null>;
+  readonly followsEndRef: React.RefObject<boolean>;
+  readonly followsEndSmoothlyRef: React.RefObject<boolean>;
   readonly listRef: React.RefObject<LegendListRef | null>;
   readonly listIdentityKey: string;
   readonly restoringThreadPosition: boolean;
@@ -49,6 +55,7 @@ export function useTimelinePositionRestore({
     if (!restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;
     if (!list) return;
+    endPinCancelRef.current?.();
     if (citationRequest !== null) {
       // The citation scroll owns positioning once the list has mounted.
       onPositioned(listIdentityKey);
@@ -102,6 +109,13 @@ export function useTimelinePositionRestore({
     void Promise.resolve(scrolling).then(() => {
       if (cancelled) return;
       if (position?.atEnd !== false || index < 0) {
+        // That scroll aimed at estimated row heights; keep scrolling while the rows measure.
+        if (position?.atEnd !== false && scrolling !== undefined) {
+          endPinCancelRef.current = pinTimelineToEnd(
+            list,
+            () => followsEndRef.current && !followsEndSmoothlyRef.current,
+          );
+        }
         onPositioned(listIdentityKey);
         return;
       }
@@ -153,6 +167,9 @@ export function useTimelinePositionRestore({
       viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
     };
   }, [
+    endPinCancelRef,
+    followsEndRef,
+    followsEndSmoothlyRef,
     citationRequest,
     cancelPositionRestoreRef,
     listIdentityKey,
