@@ -82,6 +82,14 @@ it("resolves automatic message delivery from authoritative provider capabilities
   );
   assert.deepEqual(
     CommandPolicy.resolveMessageDispatchIntent(
+      dispatchProjection(baseCapabilities),
+      { type: "start_immediately" },
+      "steer",
+    ),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
       dispatchProjection(
         capabilities((current) => ({
           ...current,
@@ -119,16 +127,27 @@ it("resolves automatic message delivery from authoritative provider capabilities
 });
 
 it.each(["preparing", "starting"] as const)(
-  "queues an automatic message while the handoff run is %s",
+  "queues automatic and steer messages while the handoff run is %s",
   (status) => {
-    const projection = dispatchProjection(baseCapabilities);
+    const base = dispatchProjection(baseCapabilities);
+    const projection = { ...base, runs: base.runs.map((run) => ({ ...run, status })) };
+    for (const deliveryIntent of ["auto", "steer"] as const) {
+      assert.deepEqual(
+        CommandPolicy.resolveMessageDispatchIntent(
+          projection,
+          { type: "start_immediately" },
+          deliveryIntent,
+        ),
+        { type: "queue_after_active" },
+      );
+    }
     assert.deepEqual(
       CommandPolicy.resolveMessageDispatchIntent(
-        { ...projection, runs: projection.runs.map((run) => ({ ...run, status })) },
+        projection,
         { type: "start_immediately" },
-        "auto",
+        "restart",
       ),
-      { type: "queue_after_active" },
+      { type: "restart_active", targetRunId: activeRunId },
     );
   },
 );
@@ -141,28 +160,33 @@ it.each([
     "belongs to a previous attempt",
     [{ runAttemptId: RunAttemptId.make("previous-attempt"), status: "running" }],
   ],
-])("queues only automatic delivery when the active run's provider turn %s", (_, providerTurns) => {
-  const projection = {
-    ...dispatchProjection(baseCapabilities),
-    providerTurns,
-  } as unknown as OrchestrationV2ThreadProjection;
-  assert.deepEqual(
-    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
-    { type: "queue_after_active" },
-  );
-  assert.deepEqual(
-    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
-    { type: "steer_active", targetRunId: activeRunId },
-  );
-  assert.deepEqual(
-    CommandPolicy.resolveMessageDispatchIntent(
-      projection,
-      { type: "start_immediately" },
-      "restart",
-    ),
-    { type: "restart_active", targetRunId: activeRunId },
-  );
-});
+])(
+  "queues automatic and steer delivery when the active run's provider turn %s",
+  (_, providerTurns) => {
+    const projection = {
+      ...dispatchProjection(baseCapabilities),
+      providerTurns,
+    } as unknown as OrchestrationV2ThreadProjection;
+    for (const deliveryIntent of ["auto", "steer"] as const) {
+      assert.deepEqual(
+        CommandPolicy.resolveMessageDispatchIntent(
+          projection,
+          { type: "start_immediately" },
+          deliveryIntent,
+        ),
+        { type: "queue_after_active" },
+      );
+    }
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        "restart",
+      ),
+      { type: "restart_active", targetRunId: activeRunId },
+    );
+  },
+);
 
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
   const projection = dispatchProjection(baseCapabilities);
