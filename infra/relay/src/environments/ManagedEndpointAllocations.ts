@@ -25,6 +25,7 @@ export interface ManagedEndpointAllocation {
   readonly updatedAt: string;
   readonly generation: number;
   readonly tunnelReleasedAt: string | null;
+  readonly recoveryEnabledAt: string | null;
 }
 
 export interface ManagedEndpointTunnelAllocation extends ManagedEndpointAllocation {
@@ -204,6 +205,7 @@ const allocationSelection = {
   updatedAt: relayManagedEndpointAllocations.updatedAt,
   generation: relayManagedEndpointAllocations.generation,
   tunnelReleasedAt: relayManagedEndpointAllocations.tunnelReleasedAt,
+  recoveryEnabledAt: relayManagedEndpointAllocations.recoveryEnabledAt,
 };
 
 const whereAllocation = (input: ManagedEndpointAllocationKey) =>
@@ -483,7 +485,6 @@ export const make = Effect.gen(function* () {
             db
               .select({
                 ...allocationSelection,
-                recoveryEnabledAt: relayManagedEndpointAllocations.recoveryEnabledAt,
                 recoveryEnvironmentPublicKey:
                   relayManagedEndpointAllocations.recoveryEnvironmentPublicKey,
                 linkedEnvironmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
@@ -505,14 +506,13 @@ export const make = Effect.gen(function* () {
                 Effect.map((rows) =>
                   rows.map(
                     ({
-                      recoveryEnabledAt,
                       recoveryEnvironmentPublicKey,
                       linkedEnvironmentPublicKey,
                       ...allocation
                     }) => ({
                       ...allocation,
                       recoveryEnabled:
-                        recoveryEnabledAt !== null &&
+                        allocation.recoveryEnabledAt !== null &&
                         recoveryEnvironmentPublicKey !== null &&
                         recoveryEnvironmentPublicKey === linkedEnvironmentPublicKey,
                     }),

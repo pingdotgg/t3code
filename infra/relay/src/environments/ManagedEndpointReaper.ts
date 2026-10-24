@@ -358,6 +358,8 @@ export const make = Effect.gen(function* () {
               environmentId: candidate.owner.environmentId,
               expectedTunnelId: candidate.tunnel.id,
               expectedInactiveBefore: candidate.inactiveBefore,
+              expectedRecoveryEnabled: candidate.owner.recoveryEnabled,
+              expectedGeneration: candidate.owner.generation,
               expectedStatus: candidate.status,
               ...(candidate.legacy ? { markReleased: true } : {}),
             })

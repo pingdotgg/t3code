@@ -194,6 +194,8 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly environmentId: string;
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
+      readonly expectedRecoveryEnabled?: boolean;
+      readonly expectedGeneration?: number;
       readonly expectedStatus?: "inactive" | "down";
       readonly markReleased?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
@@ -992,6 +994,35 @@ export const make = Effect.gen(function* () {
       }
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
+      }
+      // The caller judged the allocation as it was when listed. A write since
+      // then, such as a recovery registration, may have made its tunnel
+      // recoverable again, so the next sweep decides with fresh data.
+      if (
+        input.expectedGeneration !== undefined &&
+        input.expectedGeneration !== allocation.generation
+      ) {
+        return false;
+      }
+      // A starting host registers recovery while cloudflared is still
+      // connecting, so Cloudflare keeps reporting the tunnel's old inactivity.
+      // A registration after the cutoff means the host is coming back to it.
+      // A relink that replaced the environment key keeps the old timestamp,
+      // but that registration can no longer recover the tunnel.
+      if (
+        input.expectedInactiveBefore !== undefined &&
+        input.expectedRecoveryEnabled !== false &&
+        allocation.recoveryEnabledAt !== null
+      ) {
+        const registeredAt = DateTime.make(allocation.recoveryEnabledAt);
+        const cutoff = DateTime.make(input.expectedInactiveBefore);
+        if (
+          Option.isSome(registeredAt) &&
+          Option.isSome(cutoff) &&
+          registeredAt.value.epochMilliseconds > cutoff.value.epochMilliseconds
+        ) {
+          return false;
+        }
       }
       // Claim the release against the allocation's current generation before
       // touching Cloudflare. A provision racing this release (fast environment
