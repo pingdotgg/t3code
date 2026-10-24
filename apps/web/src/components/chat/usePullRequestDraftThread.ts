@@ -62,6 +62,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     branch: string;
     worktreePath: string | null;
     envMode: DraftThreadEnvMode;
+    pullRequestUrl: string;
   }) => {
     if (!activeProject) {
       throw new Error("No active project is available for this pull request.");
@@ -125,11 +126,13 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
   const handlePreparedPullRequestThread = async (input: {
     branch: string;
     worktreePath: string | null;
+    pullRequestUrl: string;
   }) => {
     await openOrReuseProjectDraftThread({
       branch: input.branch,
       worktreePath: input.worktreePath,
       envMode: input.worktreePath ? "worktree" : "local",
+      pullRequestUrl: input.pullRequestUrl,
     });
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);

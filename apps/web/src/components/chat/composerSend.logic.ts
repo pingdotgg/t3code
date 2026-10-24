@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadContextRecord } from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
@@ -78,4 +78,22 @@ export function approvalRedirectNotice(input: {
     return "Another approval arrived, so your message wasn't sent.";
   }
   return null;
+}
+
+/**
+ * Links a thread started from a pull request checkout to that pull request. The thread already
+ * exists, so a failed link is reported rather than failing the send.
+ */
+export async function linkCheckedOutPullRequest(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly pullRequestUrl: string | null | undefined;
+  readonly linking: {
+    readonly canLink: (url: string) => boolean;
+    readonly changeLink: (threadRef: ScopedThreadRef, url: string, linked: true) => Promise<void>;
+  };
+  readonly onLinkFailed: (error: unknown) => void;
+}): Promise<void> {
+  const { pullRequestUrl } = input;
+  if (!pullRequestUrl || !input.linking.canLink(pullRequestUrl)) return;
+  await input.linking.changeLink(input.threadRef, pullRequestUrl, true).catch(input.onLinkFailed);
 }

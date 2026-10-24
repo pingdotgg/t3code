@@ -316,6 +316,7 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  pullRequestUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -407,6 +408,8 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  /** The pull request checked out into this draft, linked once the thread is created. */
+  pullRequestUrl?: string | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -452,6 +455,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      pullRequestUrl?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -468,6 +472,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      pullRequestUrl?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -483,6 +488,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      pullRequestUrl?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1410,6 +1416,7 @@ function createDraftThreadState(
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
+    pullRequestUrl?: string | null;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1441,6 +1448,14 @@ function createDraftThreadState(
       : options.startFromOrigin;
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
+  const nextPullRequestUrl =
+    options?.pullRequestUrl !== undefined
+      ? options.pullRequestUrl
+      : !projectChanged &&
+          nextBranch === existingThread?.branch &&
+          nextWorktreePath === existingThread?.worktreePath
+        ? (existingThread.pullRequestUrl ?? null)
+        : null;
   return {
     threadId,
     environmentId: projectRef.environmentId,
@@ -1465,6 +1480,7 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    ...(nextPullRequestUrl ? { pullRequestUrl: nextPullRequestUrl } : {}),
     promotedTo: null,
   };
 }
@@ -1499,6 +1515,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    (left.pullRequestUrl ?? null) === (right.pullRequestUrl ?? null) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1647,6 +1664,10 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        ...(typeof candidateDraftThread.pullRequestUrl === "string" &&
+        candidateDraftThread.pullRequestUrl.length > 0
+          ? { pullRequestUrl: candidateDraftThread.pullRequestUrl }
+          : {}),
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -2386,6 +2407,9 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    ...(persistedDraftThread.pullRequestUrl
+      ? { pullRequestUrl: persistedDraftThread.pullRequestUrl }
+      : {}),
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -2658,6 +2682,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               (options.branch != null || options.worktreePath != null
                 ? "manual"
                 : existing.environmentSelection);
+            // A pull request belongs to the checkout it was prepared for; moving the draft
+            // anywhere else drops it.
+            const nextPullRequestUrl =
+              options.pullRequestUrl !== undefined
+                ? options.pullRequestUrl
+                : !projectChanged &&
+                    nextBranch === existing.branch &&
+                    nextWorktreePath === existing.worktreePath
+                  ? (existing.pullRequestUrl ?? null)
+                  : null;
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
@@ -2681,6 +2715,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              ...(nextPullRequestUrl ? { pullRequestUrl: nextPullRequestUrl } : {}),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2696,6 +2731,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              (nextDraftThread.pullRequestUrl ?? null) === (existing.pullRequestUrl ?? null) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

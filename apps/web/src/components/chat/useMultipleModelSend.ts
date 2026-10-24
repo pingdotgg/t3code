@@ -97,6 +97,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     readFileBlockReason,
     buildOutgoingMessageContext,
     isCurrentSend,
+    onThreadStarted,
   }: {
     readonly threadId: ThreadId;
     readonly project: EnvironmentProject;
@@ -113,6 +114,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     ) => ReturnType<typeof buildMessageContext>;
     /** False once a newer send from this composer started. */
     readonly isCurrentSend: () => boolean;
+    readonly onThreadStarted: (threadId: ThreadId) => void;
   }) => {
     const { attachments: attachmentsSnapshot, messageText } = sendSnapshot;
     const failedSelections: ModelSelection[] = [];
@@ -208,6 +210,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                 to: "/$environmentId/$threadId",
                 params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
               }),
+            onStarted: onThreadStarted,
           });
           if (started) startedCount += 1;
           else failedSelections.push(target.selection);

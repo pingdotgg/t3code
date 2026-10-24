@@ -359,6 +359,7 @@ export function usePullRequestHandoffs({
       branch: prepared.value.branch,
       worktreePath: prepared.value.worktreePath,
       envMode: prepared.value.worktreePath === null ? "local" : "worktree",
+      pullRequestUrl: prepared.value.pullRequest.url,
     }).then(
       (session) => session !== null,
       () => false,

@@ -22,6 +22,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type PreviewAnnotationPayload,
+  type ScopedThreadRef,
   type ThreadId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -89,6 +90,7 @@ import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/u
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  linkCheckedOutPullRequest,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -108,6 +110,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { readEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { usePullRequestLinking } from "../../hooks/usePullRequestLinking";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   threadContextsOutsideEnvironment,
@@ -321,6 +324,7 @@ export function useComposerSend(input: ComposerSendInput) {
     persistThreadSettingsForNextTurn,
   } = input;
   const handleNewThread = useNewThreadHandler();
+  const pullRequestLinking = usePullRequestLinking(environmentId);
   const navigate = useNavigate();
   const clientSettingsHydrated = useClientSettingsHydrated();
   const planModeEnabled = useEnvironmentSettings(environmentId, selectPlanModeEnabled);
@@ -1083,6 +1087,22 @@ export function useComposerSend(input: ComposerSendInput) {
       );
     }
 
+    // A pull request checked out into the draft can only be linked once each thread it starts exists.
+    const checkedOutPullRequestUrl = isLocalDraftThread ? draftThread?.pullRequestUrl : null;
+    const linkStartedThread = (threadRef: ScopedThreadRef) =>
+      void linkCheckedOutPullRequest({
+        threadRef,
+        pullRequestUrl: checkedOutPullRequestUrl,
+        linking: pullRequestLinking,
+        onLinkFailed: (error) =>
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "Could not link the pull request to this thread",
+              description: error instanceof Error ? error.message : undefined,
+            }),
+          ),
+      });
     const turnAttachmentsPromise = prepareTurnAttachments({
       environmentId,
       attachments: composerAttachmentsSnapshot,
@@ -1102,6 +1122,8 @@ export function useComposerSend(input: ComposerSendInput) {
         readFileBlockReason: () => readLiveAttachmentCapabilities().fileBlockReason,
         buildOutgoingMessageContext,
         isCurrentSend: () => composerSendGenerationRef.current === sendGeneration,
+        onThreadStarted: (startedThreadId) =>
+          linkStartedThread(scopeThreadRef(environmentId, startedThreadId)),
       });
       return;
     }
@@ -1304,6 +1326,7 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (sentDraftThreadRef) linkStartedThread(sentDraftThreadRef);
         setKeepFullHistory(routeThreadKey, false);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {

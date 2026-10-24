@@ -1132,6 +1132,38 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  // #15721: the thread is created from the draft only on first send, so the pull request the
+  // draft was checked out for has to survive until then, including a reload.
+  it("keeps a checked-out pull request with its checkout until the draft moves off it", () => {
+    const pullRequestUrl = "https://github.com/pingdotgg/t3code/pull/123";
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, {
+      branch: "feature/pr",
+      worktreePath: "/worktree",
+      envMode: "worktree",
+      pullRequestUrl,
+    });
+    store.setPrompt(draftId, "review this");
+    store.setDraftThreadContext(draftId, { runtimeMode: "approval-required" });
+
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    useComposerDraftStore.setState(
+      merge(
+        JSON.parse(
+          JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+        ),
+        useComposerDraftStore.getState(),
+      ),
+    );
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.pullRequestUrl).toBe(
+      pullRequestUrl,
+    );
+
+    useComposerDraftStore.getState().setDraftThreadContext(draftId, { branch: "main" });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.pullRequestUrl).toBeFalsy();
+  });
+
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
