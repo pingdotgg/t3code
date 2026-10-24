@@ -86,6 +86,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
           threadId,
           tabId,
           canOperate,
+          sessionId: session.sessionId,
           maxWidth: intParam(params, "maxWidth", 1280, 7680),
           maxHeight: intParam(params, "maxHeight", 800, 4320),
           quality: intParam(params, "quality", DEFAULT_QUALITY, 100),

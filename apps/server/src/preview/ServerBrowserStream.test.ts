@@ -147,6 +147,7 @@ it.effect.each([
         maxHeight: 800,
         quality: 70,
         canOperate,
+        sessionId: "stream-test",
       },
     ]);
     expect(auth.requests).toEqual([resource]);
