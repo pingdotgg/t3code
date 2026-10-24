@@ -3446,6 +3446,113 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each(["completed", "interrupted"] as const)(
+    "streams Claude reply text before its snapshot when %s",
+    (status) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("reply-stream-attempt"),
+            text: "Write two paragraphs",
+            attachments: [],
+          }),
+        );
+        const stream = (event: unknown) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "stream-frame",
+          });
+        const textDelta = (text: string) =>
+          stream({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
+        const replies = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+        for (const frame of [
+          stream({ type: "message_start", message: { id: "reply-message" } }),
+          stream({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          }),
+          textDelta("First paragraph.\n\n"),
+          textDelta("Second para"),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* TestClock.adjust(50);
+        const streamed = replies();
+        assert.deepEqual(
+          streamed.map((item) => [item.text, item.streaming, item.status]),
+          [["First paragraph.\n\nSecond para", true, "running"]],
+        );
+
+        const snapshot = claudeSdkFrame({
+          type: "assistant",
+          uuid: "reply-snapshot",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "reply-message",
+            model: "claude-sonnet-4-6",
+            content: [{ type: "text", text: "First paragraph.\n\nSecond paragraph." }],
+          },
+        });
+        for (const frame of [
+          snapshot,
+          snapshot,
+          stream({ type: "content_block_stop", index: 0 }),
+          stream({ type: "message_start", message: { id: "partial-message" } }),
+          stream({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "Partial" },
+          }),
+          textDelta(" reply"),
+          makeResultFrame({
+            uuid: "reply-result",
+            result: "",
+            ...(status === "interrupted" ? { terminalReason: "aborted_streaming" as const } : {}),
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, status);
+        const latest = new Map(replies().map((item) => [item.id, item]));
+        assert.deepEqual(
+          [...latest.values()].map((item) => [item.text, item.streaming, item.status]),
+          [
+            ["First paragraph.\n\nSecond paragraph.", false, "completed"],
+            ["Partial reply", false, "completed"],
+          ],
+        );
+        assert.equal([...latest.keys()][0], streamed[0]?.id);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message.text]
+              : [],
+          ),
+          ["First paragraph.\n\nSecond paragraph.", "Partial reply"],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
   it.effect.each(["cancelled", "denied", "permission_denied", undefined])(
     "preserves native tool non-execution metadata %s without inferring a denial from text",
