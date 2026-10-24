@@ -1275,14 +1275,23 @@ const make = Effect.gen(function* () {
       }),
     );
     yield* forkParked(
-      Stream.runForEach(events, (event) =>
-        (event.type === "thread.deleted" ||
-          (event.type === "provider-session.updated" &&
-            (event.payload.status === "stopped" || event.payload.status === "error"))) &&
-        anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
-          ? requestSweep
-          : Effect.void,
-      ).pipe(
+      Stream.runForEach(events, (event) => {
+        if (
+          !(
+            event.type === "thread.deleted" ||
+            (event.type === "provider-session.updated" &&
+              (event.payload.status === "stopped" || event.payload.status === "error"))
+          ) ||
+          !anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
+        )
+          return Effect.void;
+        // A turn error can leave the runtime alive and emitting metadata.
+        return event.type === "provider-session.updated"
+          ? providerSessions
+              .isLive(event.payload.id)
+              .pipe(Effect.flatMap((live) => (live ? Effect.void : requestSweep)))
+          : requestSweep;
+      }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Storage cleanup event stream failed", { cause }),
         ),
