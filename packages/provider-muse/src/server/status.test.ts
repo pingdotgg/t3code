@@ -76,6 +76,30 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
     ),
   );
 
+  it.effect("explains how to finish setup when the launcher has no runtime binary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Mirrors the Muse launcher right after a fresh install: with auto-update
+        // disabled it refuses to download the runtime and exits 1.
+        const binaryPath = yield* fakeCli(
+          'if (process.env.MUSE_NO_AUTO_UPDATE === "1") { process.stderr.write("muse: installed binary is missing; rerun the installer\\n"); process.exit(1); } process.stdout.write("muse 1.4.11-R6667.1\\n");',
+        );
+        const createHost = vi.fn(async () => makeHost(metaCatalog));
+        const snapshot = yield* checkMuseProviderStatus(
+          settings({ enabled: true, binaryPath }),
+          undefined,
+          undefined,
+          createHost,
+        );
+        expect(snapshot.installed).toBe(true);
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.message).toContain("`muse --version`");
+        expect(snapshot.message).toContain("exit code 1");
+        expect(createHost).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   it.effect("discovers the Meta catalog without treating it as authentication proof", () =>
     Effect.scoped(
       Effect.gen(function* () {

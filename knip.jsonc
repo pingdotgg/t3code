@@ -26,6 +26,7 @@
         "fixtures/*/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
+        "seed-muse-uninitialized.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "verify-windows-desktop-artifact.ts",
