@@ -1,10 +1,12 @@
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
+import { useSafeAreaFrame, useSafeAreaInsets } from "react-native-safe-area-context";
 import { threadHeaderAppearance } from "./thread-header-appearance";
+import { threadTitleMaxWidth } from "./thread-title-menu";
 import { isDuoDevice } from "../../lib/device-type";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
-import { useDeviceType } from "../../native/native-layout-metrics";
+import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -29,7 +31,11 @@ export function useThreadHeaderOptions(props: {
   const deviceType = useDeviceType();
   const usesDuoHeader = usesNativeWorkspaceColumns && isDuoDevice(deviceType);
   const navigation = useNavigation();
-  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
+  const frame = useSafeAreaFrame();
+  const metrics = useNativeLayoutMetrics();
+  const verticalBar = metrics != null && metrics.verticalBarEdge !== "none";
+  const insets = useSafeAreaInsets();
+  const { layout, panes, startNewTask } = useAdaptiveWorkspaceLayout();
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
@@ -84,6 +90,9 @@ export function useThreadHeaderOptions(props: {
     [navigation],
   );
 
+  // The workspace navigator adds compose to the Duo detail column's bar.
+  const rightItems =
+    usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems;
   const options: AppNativeStackNavigationOptions = {
     ...threadHeaderAppearance(props.usesNativeHeaderGlass),
     headerTitle: props.title,
@@ -94,16 +103,23 @@ export function useThreadHeaderOptions(props: {
       : canGoBack
         ? undefined
         : () => compactHomeHeaderItems,
-    // The workspace navigator adds compose to the Duo detail column's bar.
-    unstable_headerRightItems: () =>
-      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+    unstable_headerRightItems: () => rightItems,
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
   };
+  const titleMaxWidth = threadTitleMaxWidth({
+    paneWidth: Math.min(frame.width, panes.contentPaneWidth),
+    horizontalInsets: insets.left + insets.right,
+    verticalBar,
+    leadingItems: layout.usesSplitView ? splitLeftHeaderItems : null,
+    trailingItems: rightItems,
+    compose: usesDuoHeader,
+  });
   const { environmentId, threadId, gitStatus } = props.gitControls;
   return {
     options,
+    titleMaxWidth,
     // Header item factories are stabilized, so the native header only re-reads them when
     // this version changes. Keying on the items keeps the Git menu status live; the menu
     // callbacks also read state the items do not display (a "Push" item runs `push` or

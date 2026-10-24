@@ -901,6 +901,8 @@ function ThreadRouteContent(
         <ThreadScreenBinding
           header={
             <ThreadHeader
+              thread={selectedThreadDetailRef === null ? null : selectedThread}
+              canMutateThread={creationState?.kind !== "preparing" || creationState.serverOwned}
               title={selectedThread.title}
               subtitle={headerSubtitle}
               headerColor={headerColor}

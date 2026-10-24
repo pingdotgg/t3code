@@ -24,7 +24,7 @@ const state = vi.hoisted(() => ({
     environmentId: string;
     input: { threadId: string; orderKey?: string; snoozedUntil?: string; reason?: string };
   }[],
-  dialogs: [] as { onConfirm: () => void }[],
+  dialogs: [] as { onConfirm: () => unknown }[],
   alerts: [] as {
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
@@ -49,7 +49,7 @@ vi.mock("expo-haptics", () => ({
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
     state.alerts.push({ title, buttons }),
-  confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
+  confirm: (dialog: { onConfirm: () => unknown }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: (environmentId: string) => {
@@ -220,7 +220,8 @@ describe("thread list operation permissions", () => {
   });
 
   it("rechecks permission after a retained delete confirmation", async () => {
-    useThreadListActions().confirmDeleteThread(makeThread());
+    const onDeleted = vi.fn();
+    useThreadListActions().confirmDeleteThread(makeThread(), onDeleted);
     const confirm = state.dialogs[0]?.onConfirm;
     expect(confirm).toBeTypeOf("function");
     state.scopes.get(primaryEnvironmentId)!.clear();
@@ -228,6 +229,41 @@ describe("thread list operation permissions", () => {
     await confirm!();
 
     expect(state.requests).toEqual([]);
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+});
+
+describe("thread delete completion", () => {
+  it("reports a delete only after the server accepts it", async () => {
+    const onDeleted = vi.fn();
+    useThreadListActions().confirmDeleteThread(makeThread(), onDeleted);
+    expect(onDeleted).not.toHaveBeenCalled();
+
+    await state.dialogs[0]!.onConfirm();
+
+    expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the thread open when the server rejects the delete", async () => {
+    const onDeleted = vi.fn();
+    state.failedAction = "delete";
+    useThreadListActions().confirmDeleteThread(makeThread(), onDeleted);
+
+    await state.dialogs[0]!.onConfirm();
+
+    expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
+    expect(state.alerts.map((alert) => alert.title)).toEqual(["Could not delete thread"]);
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it("keeps the thread open when the confirmation is cancelled", () => {
+    const onDeleted = vi.fn();
+    useThreadListActions().confirmDeleteThread(makeThread(), onDeleted);
+
+    expect(state.dialogs).toHaveLength(1);
+    expect(state.requests).toEqual([]);
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 });
 
