@@ -1,4 +1,5 @@
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
+import { codexMcpAppTools } from "../../provider/codexMcpAppTools.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
@@ -6584,7 +6585,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               );
               const server = response.data.find((entry) => entry.name === toolsInput.server);
-              return Object.values(server?.tools ?? {});
+              const tools = Object.values(server?.tools ?? {});
+              return toolsInput.server === "codex_apps"
+                ? codexMcpAppTools(tools, toolsInput.sourceTool)
+                : tools;
             },
             Effect.mapError(mcpAppsError("Failed to list Codex MCP tools.")),
           ),

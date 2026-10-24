@@ -181,6 +181,87 @@ describe("McpAppRequests", () => {
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
   );
 
+  it.effect("resolves app-local tool names and calls the provider's qualified name", () =>
+    Effect.gen(function* () {
+      const tool = {
+        name: "atlassian.getJiraIssueTypeMetaWithFields",
+        appToolName: "getJiraIssueTypeMetaWithFields",
+        annotations: { readOnlyHint: true },
+      };
+      const invocations: Array<string> = [];
+      yield* Effect.gen(function* () {
+        const requests = yield* McpAppRequests.McpAppRequests;
+        const info = yield* requests.toolInfo({ threadId, itemId, name: tool.appToolName });
+        assert.isTrue(info.callable);
+        assert.isTrue(info.readOnly);
+        yield* requests.callTool({ threadId, itemId, name: tool.appToolName, arguments: {} });
+        assert.deepEqual(invocations, [tool.name]);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            item: appItem({ t3McpApp: app }),
+            mcpApps: {
+              ...mcpApps,
+              listTools: (input) => {
+                assert.equal(input.sourceTool, app.tool);
+                return Effect.succeed([tool]);
+              },
+              callTool: (input) =>
+                Effect.sync(() => {
+                  invocations.push(input.tool);
+                  return { content: [] };
+                }),
+            },
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("preserves visibility and write hints and refuses ambiguous app-local names", () =>
+    Effect.gen(function* () {
+      const invocations: Array<string> = [];
+      const tools = [
+        { name: "app.edit", appToolName: "edit", annotations: { readOnlyHint: false } },
+        { name: "app.hidden", appToolName: "hidden", _meta: { ui: { visibility: ["model"] } } },
+        { name: "app.search_a", appToolName: "search" },
+        { name: "app.search_b", appToolName: "search" },
+        { name: "refresh", annotations: { readOnlyHint: true } },
+        { name: "app.refresh", appToolName: "refresh", annotations: { readOnlyHint: false } },
+      ];
+      yield* Effect.gen(function* () {
+        const requests = yield* McpAppRequests.McpAppRequests;
+        assert.isFalse((yield* requests.toolInfo({ threadId, itemId, name: "edit" })).readOnly);
+        for (const name of ["hidden", "search", "unknown"]) {
+          assert.isFalse((yield* requests.toolInfo({ threadId, itemId, name })).callable);
+          assert.equal(
+            yield* reason(requests.callTool({ threadId, itemId, name, arguments: {} })),
+            "tool-not-callable",
+          );
+        }
+        assert.isEmpty(invocations);
+        yield* requests.callTool({ threadId, itemId, name: "app.edit", arguments: {} });
+        yield* requests.callTool({ threadId, itemId, name: "refresh", arguments: {} });
+        assert.deepEqual(invocations, ["app.edit", "refresh"]);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            item: appItem({ t3McpApp: app }),
+            mcpApps: {
+              ...mcpApps,
+              listTools: () => Effect.succeed(tools),
+              callTool: (input) =>
+                Effect.sync(() => {
+                  invocations.push(input.tool);
+                  return { content: [] };
+                }),
+            },
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("keeps each app's latest model context, without a live session", () =>
     Effect.gen(function* () {
       const requests = yield* McpAppRequests.McpAppRequests;
