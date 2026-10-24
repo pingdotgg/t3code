@@ -23,6 +23,8 @@ import { randomUUID } from "./utils";
 
 const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
 const REPORT_INTERVAL_MS = 25_000;
+// Shorter than the interval, so a report that never settles cannot hold up the next one.
+const REPORT_TIMEOUT_MS = 15_000;
 const LEASE_TTL_MS = 45_000;
 const RECENT_INTERACTION_WINDOW_MS = LEASE_TTL_MS;
 const BASELINE_SCOPES: ReadonlyArray<BackgroundScope> = [{ type: "provider-status" }];
@@ -207,7 +209,8 @@ export const layer = Layer.effectDiscard(
             )
             // Not `ignore`: tearing down an environment mid-request interrupts its report,
             // and an interrupt leaking out here would end the reporting loop for good.
-            .pipe(Effect.ignoreCause),
+            // The timeout covers a live connection that never answers, which would stall it.
+            .pipe(Effect.timeout(`${REPORT_TIMEOUT_MS} millis`), Effect.ignoreCause),
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("web.backgroundActivity.report"));
