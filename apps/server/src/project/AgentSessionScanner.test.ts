@@ -1222,9 +1222,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
         const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
         const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
-        for (const [sessionId, padding, mtimeMs] of [
-          ["excessive", "\n".repeat(100_001), nowMs],
-          ["older", "", nowMs - 1_000],
+        const exactLimit = makeRecordLimitTranscript(workspace, false);
+        // The newer transcript has 100,001 records; the older one has exactly 100,000.
+        for (const [sessionId, contents, mtimeMs] of [
+          ["excessive", exactLimit.replace("record-limit-session", "excessive") + "{}\n", nowMs],
+          ["older", exactLimit, nowMs - 1_000],
         ] as const) {
           yield* writeTranscript({
             filePath: path.join(
@@ -1235,17 +1237,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               "24",
               `rollout-${sessionId}.jsonl`,
             ),
-            contents:
-              [
-                encodeTranscriptRecord({
-                  type: "session_meta",
-                  payload: { id: sessionId, cwd: workspace },
-                }),
-                encodeTranscriptRecord({
-                  type: "event_msg",
-                  payload: { type: "user_message", message: "Imported prompt" },
-                }),
-              ].join("\n") + padding,
+            contents,
             mtimeMs,
           });
         }
@@ -1255,7 +1247,58 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: workspace,
         });
         expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
-        expect(outcomes[1]).toMatchObject({ thread: { providerSessionId: "older" } });
+        expect(outcomes[1]).toMatchObject({
+          thread: { providerSessionId: "record-limit-session" },
+        });
+      }),
+    );
+
+    it.effect("imports every transcript that fits the per-file record limit", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-shared-records-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-shared-records-codex-");
+        const workspace = yield* makeTempDir("t3code-shared-records-workspace-");
+        // Together these exceed 100,000 records, but each one is individually valid.
+        const recordCounts = [20_000, 20_000, 20_000, 58_000];
+        for (const [index, recordCount] of recordCounts.entries()) {
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              `rollout-${index}.jsonl`,
+            ),
+            contents:
+              [
+                encodeTranscriptRecord({
+                  type: "session_meta",
+                  payload: { id: `session-${index}`, cwd: workspace },
+                }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: "Imported prompt" },
+                }),
+              ].join("\n") +
+              "\n" +
+              "{}\n".repeat(recordCount - 2),
+            mtimeMs: nowMs - index * 1_000,
+          });
+        }
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+        expect(
+          outcomes.map((outcome) =>
+            outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
+          ),
+        ).toEqual(["session-0", "session-1", "session-2", "session-3"]);
       }),
     );
 
