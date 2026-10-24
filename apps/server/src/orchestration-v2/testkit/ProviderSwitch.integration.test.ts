@@ -2591,6 +2591,7 @@ describe("orchestration v2 provider switching", () => {
           );
           assert.equal(queuedItem?.runId, queued.runs[1]?.id);
           assert.equal(queuedItem?.providerThreadId, queued.runs[1]?.providerThreadId);
+          const queuedSequence = yield* eventSink.latestSequence({ threadId: rejectedThreadId });
           yield* eventSink.write({
             events: [
               {
@@ -2615,6 +2616,30 @@ describe("orchestration v2 provider switching", () => {
             Stream.runHead,
           );
           yield* worker.drain();
+          // Clients whose bounded snapshot omitted the hidden queued item must
+          // receive it while the run is still queued, before it fails.
+          const throughSequence = yield* eventSink.latestSequence({ threadId: rejectedThreadId });
+          const failureEvents = yield* eventSink
+            .stream({ threadId: rejectedThreadId, afterSequence: queuedSequence })
+            .pipe(
+              Stream.takeUntil((stored) => stored.sequence === throughSequence),
+              Stream.map(({ event }) => event),
+              Stream.filter((event) => event.runId === queued.runs[1]!.id),
+              Stream.runCollect,
+            );
+          const republished = failureEvents.findIndex(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.type === "user_message" &&
+              event.payload.messageId === rejectedMessageId,
+          );
+          assert.isAtLeast(republished, 0);
+          assert.isBelow(
+            republished,
+            failureEvents.findIndex(
+              (event) => event.type === "run.updated" && event.payload.status === "failed",
+            ),
+          );
           return yield* orchestrator.getThreadProjection(rejectedThreadId);
         }).pipe(
           Effect.provide(
@@ -2657,6 +2682,11 @@ describe("orchestration v2 provider switching", () => {
         assert.equal(
           failureItem?.type === "error" ? failureItem.failure.code : null,
           "context_handoff_unsupported",
+        );
+        assert.isTrue(
+          projection.visibleTurnItems.some(
+            ({ item }) => item.type === "user_message" && item.messageId === rejectedMessageId,
+          ),
         );
         assert.deepEqual(
           (yield* Ref.get(capturedTurns)).map((turn) => turn.driver),
