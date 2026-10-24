@@ -426,7 +426,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ) {
         return props.activeInstanceId;
       }
-      return favorites.length > 0 ? "favorites" : props.activeInstanceId;
+      // Favorites of a disabled provider are not listed, so they must not pick the empty tab.
+      const hasListedFavorite = favorites.some((favorite) => {
+        const entry = instanceEntries.find(
+          (candidate) => candidate.instanceId === favorite.provider,
+        );
+        return (
+          entry !== undefined &&
+          (modelOptionsByInstance.get(favorite.provider) ?? []).some(
+            (option) =>
+              option.slug === favorite.model &&
+              shouldIncludeModelPickerOption({
+                entry,
+                option,
+                activeInstanceId: props.activeInstanceId,
+                activeModel: activeModelSlug,
+              }),
+          )
+        );
+      });
+      return hasListedFavorite ? "favorites" : props.activeInstanceId;
     },
   );
   const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
