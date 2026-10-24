@@ -124,6 +124,7 @@ describe("chat math parsing", () => {
       "It costs $5 and $10.",
       "Budget $5-$10 per seat, or $20,000-$30,000 a year.",
       "Plans are $5/$10 monthly.",
+      "Pay $5,$10 now.",
       "Run $browser then $deploy on it.",
       "Set $HOME before running.",
     ]) {
@@ -141,6 +142,14 @@ describe("chat math parsing", () => {
       ]);
       expect(text(source)).toBe(`Price ${price} stays literal. The formula is  and .`);
     }
+  });
+
+  it("reads formulas that end in a comma", () => {
+    expect(formulas("Where $x = 1,$ with $$a,$$ and $$ b,$$.")).toEqual([
+      ["inline", "x = 1,"],
+      ["display", "a,"],
+      ["display", " b,"],
+    ]);
   });
 
   it("leaves code, escapes, links, and citations alone", () => {
