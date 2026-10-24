@@ -12,7 +12,7 @@
     "test": "vp test run --passWithNoTests --project unit --project browser"
   },
   "dependencies": {
-    "@base-ui/react": "^1.4.1",
+    "@base-ui/react": "^1.8.0",
     "@clerk/clerk-js": "catalog:",
     "@clerk/electron": "catalog:",
     "@clerk/react": "catalog:",

@@ -261,7 +261,7 @@ function SidebarUpdateControl() {
 
   useEffect(() => {
     if (!showReleaseNotesPopover) {
-      releaseNotesPopoverHandle.close();
+      if (releaseNotesPopoverHandle.isOpen) releaseNotesPopoverHandle.close();
       return;
     }
 
