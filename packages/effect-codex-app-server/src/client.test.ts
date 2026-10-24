@@ -1,3 +1,4 @@
+import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -122,6 +123,26 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
           turnId: "turn-1",
         },
       ]);
+    }),
+  );
+  it.effect("reports SIGKILL between requests to every termination observer", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle();
+      const context = yield* Layer.build(CodexClient.layerChildProcess(handle));
+      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        Effect.provide(context),
+      );
+      yield* client.request("initialize", {
+        clientInfo: { name: "termination-test", version: "0.0.0" },
+        capabilities: { experimentalApi: true, optOutNotificationMethods: null },
+      });
+      const observer = yield* client.termination.pipe(Effect.exit, Effect.forkChild);
+      yield* handle.kill({ killSignal: "SIGKILL" });
+      const exit = yield* Fiber.join(observer);
+      assert.isTrue(Exit.isFailure(exit));
+      // The signal is durable even for observers attached after the death.
+      assert.deepEqual(yield* Effect.exit(client.termination), exit);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(client.raw.request("account/read", {}))));
     }),
   );
   it.effect("drains child stderr so large diagnostics cannot block protocol responses", () =>

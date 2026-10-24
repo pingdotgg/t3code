@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
+  CodexSettings,
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -17,6 +18,15 @@ import {
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexError from "effect-codex-app-server/errors";
+import * as Crypto from "effect/Crypto";
+import * as Schema from "effect/Schema";
+import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stdio from "effect/Stdio";
+import * as CodexAdapter from "./Adapters/CodexAdapterV2.ts";
+import { makeReplayServerConfig } from "./Adapters/CodexAdapterV2.testkit.ts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -158,6 +168,8 @@ const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>
       });
     }),
   ).pipe(Layer.provide(layerTestEventSink));
+
+const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
@@ -457,6 +469,15 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 });
 
 function layerTest(input: {
+  readonly adapters?: Effect.Effect<
+    ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>,
+    never,
+    | McpProviderSessions.McpProviderSessions
+    | FileSystem.FileSystem
+    | Path.Path
+    | Crypto.Crypto
+    | IdAllocator.IdAllocatorV2
+  >;
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
@@ -499,30 +520,33 @@ function layerTest(input: {
             ? layerFailingReleaseEventSink
             : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
-    makeProviderAdapter(input.state, {
-      failEventStream: input.failEventStream ?? false,
-      ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
-      ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
-      ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
-      ...(input.hasPendingBackgroundWork === undefined
-        ? {}
-        : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
-      ...(input.hasPendingBackgroundWorkForThread === undefined
-        ? {}
-        : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
-      ...(input.backgroundTasksEndWithProcess === undefined
-        ? {}
-        : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
-      ...(input.hangSessionScopeClose === undefined
-        ? {}
-        : { hangSessionScopeClose: input.hangSessionScopeClose }),
-      ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
-      ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
-      ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
-      ...(input.scopeCloseReached === undefined
-        ? {}
-        : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    (
+      input.adapters ??
+      makeProviderAdapter(input.state, {
+        failEventStream: input.failEventStream ?? false,
+        ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+        ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+        ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+        ...(input.hasPendingBackgroundWork === undefined
+          ? {}
+          : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+        ...(input.hasPendingBackgroundWorkForThread === undefined
+          ? {}
+          : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+        ...(input.backgroundTasksEndWithProcess === undefined
+          ? {}
+          : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
+        ...(input.hangSessionScopeClose === undefined
+          ? {}
+          : { hangSessionScopeClose: input.hangSessionScopeClose }),
+        ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+        ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+        ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
+        ...(input.scopeCloseReached === undefined
+          ? {}
+          : { scopeCloseReached: input.scopeCloseReached }),
+      }).pipe(Effect.map((adapter) => [adapter]))
+    ).pipe(Effect.map(ProviderAdapterRegistry.layerFromAdapters)),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -553,7 +577,10 @@ function layerTest(input: {
     }).pipe(
       Layer.provide(
         Layer.mergeAll(
-          layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
+          layerRegistry.pipe(
+            Layer.provide(IdAllocator.layer),
+            Layer.provideMerge(McpProviderSessions.layer),
+          ),
           CommandOutputHub.layer.pipe(
             Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
           ),
@@ -3500,5 +3527,208 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect.each([false, true])(
+  "Codex transport death reopens the saved native thread (in flight: %s)",
+  (inFlight) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const frames: Array<{ process: number; method: string; params?: { threadId?: string } }> = [];
+      const processes: Array<{
+        input: Queue.Queue<Uint8Array, Cause.Done>;
+        closed: Deferred.Deferred<void>;
+        submitted: Deferred.Deferred<void>;
+      }> = [];
+      const healthyInstanceId = ProviderInstanceId.make("codex-healthy");
+      const settings = yield* decodeCodexSettings({
+        homePath: "/custom-codex-home",
+      }).pipe(Effect.orDie);
+      const openedSettings: Array<CodexSettings> = [];
+      const adapters = Effect.forEach(
+        [modelSelection.instanceId, healthyInstanceId],
+        (instanceId) =>
+          Effect.gen(function* () {
+            return yield* CodexAdapter.makeCodexAdapterV2({
+              instanceId,
+              settings,
+              environment: {},
+              crypto: yield* Crypto.Crypto,
+              fileSystem: yield* FileSystem.FileSystem,
+              idAllocator: yield* IdAllocator.IdAllocatorV2,
+              serverConfig: yield* makeReplayServerConfig("dead-session").pipe(Effect.orDie),
+              clientFactory: {
+                open: (openInput) =>
+                  Effect.gen(function* () {
+                    openedSettings.push(openInput.settings);
+                    const processIndex = processes.length;
+                    const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+                    const closed = yield* Deferred.make<void>();
+                    const submitted = yield* Deferred.make<void>();
+                    processes.push({ input, closed, submitted });
+                    yield* Effect.addFinalizer(() => Deferred.succeed(closed, undefined));
+                    const encoder = new TextEncoder();
+                    return yield* CodexClient.make(
+                      Stdio.make({
+                        args: Effect.succeed([]),
+                        stdin: Stream.fromQueue(input),
+                        stdout: () =>
+                          Sink.forEach((chunk: string | Uint8Array) =>
+                            Effect.gen(function* () {
+                              const frame = JSON.parse(
+                                typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+                              );
+                              frames.push({
+                                process: processIndex,
+                                method: frame.method,
+                                params: frame.params,
+                              });
+                              if (frame.id === undefined) return;
+                              if (frame.method === "turn/start") {
+                                yield* Deferred.succeed(submitted, undefined);
+                                return; // Accepted, but the reply is lost when the process dies.
+                              }
+                              const result =
+                                frame.method === "initialize"
+                                  ? {
+                                      userAgent: "test",
+                                      codexHome: process.cwd(),
+                                      platformFamily: "unix",
+                                      platformOs: "linux",
+                                    }
+                                  : { thread: { id: frame.params.threadId, updatedAt: 1 } };
+                              yield* Queue.offer(
+                                input,
+                                encoder.encode(JSON.stringify({ id: frame.id, result }) + "\n"),
+                              );
+                            }),
+                          ),
+                        stderr: () => Sink.drain,
+                      }),
+                      {},
+                      Effect.succeed(
+                        new CodexError.CodexAppServerTransportError({
+                          operation: "read-process-exit-status",
+                          cause: "SIGKILL",
+                        }),
+                      ),
+                    );
+                  }),
+              },
+            });
+          }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const allocator = yield* IdAllocator.IdAllocatorV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("dead-codex");
+        const healthyThreadId = ThreadId.make("healthy-codex");
+        for (const id of [threadId, healthyThreadId]) {
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId: id, now })],
+          });
+        }
+        const providerSessionId = yield* allocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const healthySessionId = yield* allocator.allocate.providerSession({
+          providerInstanceId: healthyInstanceId,
+          threadId: healthyThreadId,
+        });
+        const openInput = { threadId, providerSessionId, modelSelection, runtimePolicy };
+        const first = yield* manager.open(openInput);
+        const saved = makeProviderThread({
+          idAllocator: allocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "saved-native-id",
+        });
+        const resumeInput = { threadId, providerThread: saved, modelSelection, runtimePolicy };
+        yield* first.resumeThread(resumeInput);
+        const healthy = yield* manager.open({
+          ...openInput,
+          threadId: healthyThreadId,
+          providerSessionId: healthySessionId,
+          modelSelection: { ...modelSelection, instanceId: healthyInstanceId },
+        });
+        const subscription = yield* first.subscribeEvents!;
+        const streamExit = yield* subscription.events.pipe(
+          Stream.runDrain,
+          Effect.exit,
+          Effect.forkChild,
+        );
+        const runId = allocator.derive.run({ threadId, ordinal: 1 });
+        const starting = inFlight
+          ? yield* first
+              .startTurn({
+                appThread: (yield* projections.getThreadProjection(threadId)).thread,
+                threadId,
+                runId,
+                runOrdinal: 1,
+                providerTurnOrdinal: 1,
+                attemptId: allocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+                rootNodeId: allocator.derive.rootNode({ runId }),
+                providerThread: saved,
+                message: {
+                  createdBy: "user",
+                  creationSource: "web",
+                  messageId: yield* allocator.allocate.message({ threadId, ordinal: 1 }),
+                  text: "do work once",
+                  attachments: [],
+                },
+                modelSelection,
+                runtimePolicy,
+              })
+              .pipe(Effect.exit, Effect.forkChild)
+          : undefined;
+        if (starting) yield* Deferred.await(processes[0]!.submitted);
+        yield* Queue.end(processes[0]!.input);
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(streamExit)));
+        if (starting) assert.isTrue(Exit.isFailure(yield* Fiber.join(starting)));
+        yield* Deferred.await(processes[0]!.closed);
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(healthySessionId)), healthy);
+        assert.isFalse(yield* Deferred.isDone(processes[1]!.closed));
+        yield* healthy.resumeThread({
+          threadId: healthyThreadId,
+          providerThread: makeProviderThread({
+            idAllocator: allocator,
+            threadId: healthyThreadId,
+            providerSessionId: healthySessionId,
+            now,
+            nativeThreadId: "healthy-native-id",
+          }),
+          modelSelection: { ...modelSelection, instanceId: healthyInstanceId },
+          runtimePolicy,
+        });
+        const replacement = yield* manager.open(openInput);
+        const resumed = yield* replacement.resumeThread(resumeInput);
+        assert.notStrictEqual(replacement, first);
+        assert.equal(resumed.nativeThreadRef?.nativeId, "saved-native-id");
+        assert.equal(processes.length, 3);
+        assert.deepEqual(openedSettings, [settings, settings, settings]);
+        assert.deepEqual(
+          frames
+            .filter((f) => f.method === "thread/resume")
+            .map((f) => [f.process, f.params?.threadId]),
+          [
+            [0, "saved-native-id"],
+            [1, "healthy-native-id"],
+            [2, "saved-native-id"],
+          ],
+        );
+        assert.equal(frames.filter((f) => f.method === "thread/start").length, 0);
+        assert.equal(frames.filter((f) => f.method === "turn/start").length, inFlight ? 1 : 0);
+        assert.deepEqual(
+          frames.filter((f) => f.method === "initialize").map((f) => f.process),
+          [0, 1, 2],
+        );
+      }).pipe(Effect.provide(layerTest({ state, adapters, idleTimeoutMs: 60_000 })));
     }),
 );

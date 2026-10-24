@@ -1,3 +1,4 @@
+import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -39,6 +40,8 @@ interface CodexAppServerClientRaw {
 export class CodexAppServerClient extends Context.Service<
   CodexAppServerClient,
   {
+    /** Fails once when the underlying transport dies, including between requests. */
+    readonly termination: Effect.Effect<never, CodexError.CodexAppServerError>;
     readonly raw: CodexAppServerClientRaw;
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,
@@ -195,12 +198,14 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
       : Effect.fail(CodexError.CodexAppServerRequestError.methodNotFound(request.method));
   };
 
+  const terminated = yield* Deferred.make<never, CodexError.CodexAppServerError>();
   const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
     stdio,
     ...(terminationError ? { terminationError } : {}),
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
+    onTermination: (error) => Deferred.fail(terminated, error).pipe(Effect.asVoid),
     onNotification: dispatchNotification,
     onRequest: dispatchRequest,
   });
@@ -230,6 +235,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
     );
 
   return CodexAppServerClient.of({
+    termination: Deferred.await(terminated),
     raw: {
       notifications: transport.incomingNotifications,
       requests: transport.incomingRequests,
