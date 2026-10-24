@@ -3515,6 +3515,9 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // Per process, not per session: a relative temp dir follows the cwd this CLI
+  // was launched in, and a later turn's cwd can differ.
+  readonly taskOutputRoot: string | undefined;
 }
 
 interface ActiveClaudeToolCall {
@@ -3936,6 +3939,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.environment,
   ).pipe(Effect.provideService(Path.Path, path));
   const hostEnvironment = yield* HostProcess.Environment;
+  const hostPlatform = yield* HostProcess.Platform;
   const customHome =
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
@@ -4035,7 +4039,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           string,
           { readonly fiber: Fiber.Fiber<void>; readonly stop: Deferred.Deferred<void> }
         >();
-        const taskOutputRoot = claudeTaskOutputRoot(adapterOptions.environment, path);
         // Waits for the tail's last read so its output lands before the call settles.
         const stopTaskOutputTail = (toolUseId: string) =>
           Effect.suspend(() => {
@@ -8067,7 +8070,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ? undefined
                   : findToolCall(context, message.tool_use_id);
               if (
-                taskOutputRoot !== undefined &&
+                liveQuery.taskOutputRoot !== undefined &&
                 message.task_type === "local_bash" &&
                 // Older Claude Code builds omit the flag on foreground calls.
                 message.is_backgrounded !== true &&
@@ -8080,7 +8083,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
                 const stop = yield* Deferred.make<void>();
                 const fiber = yield* tailClaudeTaskOutput({
-                  root: taskOutputRoot,
+                  root: liveQuery.taskOutputRoot,
                   sessionId: message.session_id,
                   taskId: message.task_id,
                   stop,
@@ -9380,6 +9383,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
               ),
+            ),
+            taskOutputRoot: claudeTaskOutputRoot(
+              adapterOptions.environment,
+              path,
+              turnInput.runtimePolicy.cwd,
+              hostPlatform,
             ),
           };
           yield* Ref.set(queryContext, context);
