@@ -1,7 +1,9 @@
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -18,6 +20,14 @@ import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotPr
 
 const DRIVER = ProviderDriverKind.make("muse");
 const MUSE_CHANNELS = new Set(["muse-stable", "muse-canary"]);
+const WINDOWS_LAUNCHER_SHIM = [
+  "@echo off",
+  "setlocal",
+  '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0.muse-launcher.ps1" %*',
+  "exit /b %ERRORLEVEL%",
+]
+  .join("\n")
+  .toLowerCase();
 const ChannelManifest = Schema.Struct({
   version: Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+-R\d+(?:\.\d+)?$/)),
 });
@@ -44,15 +54,46 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
       ...makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER, packageName: null }),
       compareVersions: compareMuseVersions,
     };
-    if (!context || context.platform === "win32") return manual;
+    if (!context) return manual;
     const fs = yield* FileSystem.FileSystem;
-    const isLauncher = yield* Effect.gen(function* () {
+    const windows = context.platform === "win32";
+    const launcherPath = yield* Effect.gen(function* () {
       const stat = yield* fs.stat(context.realCommandPath);
-      if (Number(stat.size) > 128 * 1_024) return false;
-      const source = yield* fs.readFileString(context.realCommandPath);
-      return source.includes("muse-code/launcher-") && source.includes("MUSE_SYNC_UPDATE");
-    }).pipe(Effect.orElseSucceed(() => false));
-    if (!isLauncher) return manual;
+      if (Number(stat.size) > 128 * 1_024) return null;
+      let source = yield* fs.readFileString(context.realCommandPath);
+      let launcher = context.realCommandPath;
+      if (windows) {
+        if (/\.(?:cmd|bat)$/i.test(launcher)) {
+          if (source.trim().replaceAll("\r\n", "\n").toLowerCase() !== WINDOWS_LAUNCHER_SHIM) {
+            return null;
+          }
+          const path = yield* Path.Path;
+          launcher = path.join(path.dirname(launcher), ".muse-launcher.ps1");
+          if (Number((yield* fs.stat(launcher)).size) > 128 * 1_024) return null;
+          source = yield* fs.readFileString(launcher);
+        } else if (!/\.ps1$/i.test(launcher)) {
+          return null;
+        }
+      }
+      const recognized = windows
+        ? isOfficialWindowsLauncher(source)
+        : source.includes("muse-code/launcher-") && source.includes("MUSE_SYNC_UPDATE");
+      return recognized ? launcher : null;
+    }).pipe(Effect.orElseSucceed(() => null));
+    if (!launcherPath) return manual;
+    let executable = context.resolvedCommandPath;
+    let args = ["--version"];
+    if (windows) {
+      const hostEnv = yield* HostProcess.Environment;
+      const systemRoot = [context.env, hostEnv]
+        .flatMap((env) => Object.entries(env))
+        .find(([key, value]) => key.toUpperCase() === "SYSTEMROOT" && value)?.[1];
+      executable = systemRoot
+        ? `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+        : "powershell.exe";
+      // -File passes the verified installation's path literally, without cmd parsing it.
+      args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcherPath, "--version"];
+    }
     // The launcher has no `update` subcommand. Its documented launch environment
     // forces a synchronous refresh of this executable's own installation.
     const updateEnv = {
@@ -65,12 +106,16 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
       ...makeProviderMaintenanceCapabilities({
         provider: DRIVER,
         packageName: null,
-        updateExecutable: context.resolvedCommandPath,
-        updateArgs: ["--version"],
+        updateExecutable: executable,
+        updateArgs: args,
         updateCommand: [
-          ...Object.entries(updateEnv).map(([key, value]) => `${key}=${shellQuote(value)}`),
-          shellQuote(context.resolvedCommandPath),
-          "--version",
+          ...Object.entries(updateEnv).map(([key, value]) =>
+            windows ? `$env:${key}=${powerShellQuote(value)};` : `${key}=${shellQuote(value)}`,
+          ),
+          ...(windows ? ["&"] : []),
+          ...[executable, ...args].map((word) =>
+            windows ? powerShellQuote(word) : shellQuote(word),
+          ),
         ].join(" "),
         updateLockKey: `muse:${context.realCommandPath}`,
         platform: context.platform,
@@ -81,8 +126,35 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
   }),
 };
 
+function isOfficialWindowsLauncher(source: string) {
+  const normalized = source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .join("\n")
+    .trim();
+  // The banner alone also appears in wrappers; require the official entry point and updater.
+  return (
+    normalized.startsWith("Set-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n") &&
+    /^\$launcher_version = '\d+'$/m.test(normalized) &&
+    [
+      "$launcher_url = 'https://api.meta.ai/muse-launcher.ps1'",
+      '$user_agent = "muse-code/launcher-ps-$launcher_version"',
+      "function Update-Launcher {",
+      "function Update-Binary {",
+      "function Invoke-Main {",
+      "$self = $PSCommandPath\n$dir = Split-Path -Parent $self",
+      "if ($env:MUSE_SYNC_UPDATE -eq '1') {\nUpdate-Launcher -Self $self\nUpdate-Binary -Dir $dir\n$binary = Get-ActiveBinary -Dir $dir",
+    ].every((signature) => normalized.includes(`\n${signature}\n`)) &&
+    normalized.endsWith("\nInvoke-Main @args")
+  );
+}
+
 function shellQuote(word: string) {
   return /^[\w./:@=-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+}
+
+function powerShellQuote(word: string) {
+  return `'${word.replace(/['\u2018\u2019\u201a\u201b]/g, "$&$&")}'`;
 }
 
 export const latestMuseVersion = Effect.fn("latestMuseVersion")(function* (
