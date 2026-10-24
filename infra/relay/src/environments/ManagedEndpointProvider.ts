@@ -1121,19 +1121,23 @@ export const make = Effect.gen(function* () {
             // this tunnel again to retry.
             return yield* deleteTunnel.pipe(
               Effect.as(true),
-              Effect.catchIf(
-                (error) => isManagedEndpointTunnelInUse(error.cause),
-                () => Effect.succeed(false),
-              ),
               Effect.catchTags({
                 ManagedEndpointDeprovisioningFailed: (failure) =>
-                  confirmTunnelGone(failure).pipe(Effect.as(true)),
+                  isManagedEndpointTunnelInUse(failure.cause)
+                    ? Effect.fail(failure)
+                    : confirmTunnelGone(failure).pipe(Effect.as(true)),
               }),
             );
           }),
         )
         .pipe(
           Effect.catchTags({
+            // A refused delete must roll back the marking claim before it
+            // becomes a successful false result.
+            ManagedEndpointDeprovisioningFailed: (failure) =>
+              isManagedEndpointTunnelInUse(failure.cause)
+                ? Effect.succeedSome(false)
+                : Effect.fail(failure),
             ManagedEndpointAllocationPersistenceError: (cause) =>
               Effect.fail(
                 new ManagedEndpointDeprovisioningFailed({
