@@ -23,6 +23,7 @@ export const remoteDeviceScript = (
   mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
 ) =>
   `
+async function bootstrap() {
 const owner = ${JSON.stringify(owner)};
 const mode = ${JSON.stringify(mode)};
 const hubVersion = ${JSON.stringify(DEVICE_HUB_VERSION)};
@@ -131,7 +132,6 @@ async function install(name, version, entry) {
     release();
   }
 }
-(async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
   const android = run('adb', ['version']).status === 0;
   const platforms = [
@@ -141,7 +141,7 @@ async function install(name, version, entry) {
   if (mode === 'probe') {
     if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
     if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
-    console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions() })); return;
+    return { nodePath: process.execPath, platforms, tools: versions() };
   }
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   // Serialize starts and stops for this environment/host owner, including agent startup.
@@ -226,8 +226,50 @@ async function install(name, version, entry) {
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
   const optional = file => fs.existsSync(file) ? file : null;
   await pruneTools(path.join(root, 'tools'), [['expo-device-hub', hubVersion], ...(mode === 'agent-start' ? [['agent-device', agentVersion]] : [])], true).catch(() => {});
-  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, ...agentResult,
-    helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
+  return { nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, ...agentResult,
+    helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } };
   } finally { releaseHost(); }
-})().catch(error => { console.error(error.message); process.exitCode = 1; });
+}
+async function start() {
+  if (process.platform !== 'win32' || !['start', 'agent-start'].includes(${JSON.stringify(mode)})) return bootstrap();
+  // Windows detached children inherit SSH's pipe handles even with redirected stdio.
+  // WMI creates the bootstrap outside that process tree, so its services cannot keep SSH open.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const state = path.join(require('node:os').homedir(), '.t3', 'device', 'hosts', ${JSON.stringify(owner)});
+  fs.mkdirSync(state, { recursive: true, mode: 0o700 });
+  const directory = fs.mkdtempSync(path.join(state, '.bootstrap-'));
+  const script = path.join(directory, 'bootstrap.cjs');
+  const result = path.join(directory, 'result.json');
+  const finish = value => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const file = path.join(__dirname, 'result.json');
+    fs.writeFileSync(file + '.tmp', JSON.stringify(value), { mode: 0o600 });
+    fs.renameSync(file + '.tmp', file);
+  };
+  try {
+    fs.writeFileSync(script, bootstrap.toString() + '\nconst finish = ' + finish.toString() + ';\nbootstrap().then(value => finish({ value }), error => finish({ error: error.message }));', { mode: 0o600 });
+    const quote = value => "'" + value.replaceAll("'", "''") + "'";
+    const command = '"' + process.execPath + '" "' + script + '"';
+    const launchScript = "$ErrorActionPreference = 'Stop'\n" +
+      "$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0; CreateFlags = [uint32]1024; EnvironmentVariables = [string[]]@([Environment]::GetEnvironmentVariables().GetEnumerator() | ForEach-Object { $_.Key + '=' + $_.Value }) }\n" +
+      "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = " + quote(command) + "; CurrentDirectory = " + quote(process.cwd()) + "; ProcessStartupInformation = $startup } | Select-Object ReturnValue,ProcessId | ConvertTo-Json -Compress\n";
+    const launched = require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(launchScript, 'utf16le').toString('base64')], {
+      encoding: 'utf8', timeout: 30000,
+    });
+    if (launched.status !== 0) throw Error('Could not isolate Windows device startup: ' + (launched.error?.message || launched.stderr));
+    const launch = JSON.parse(launched.stdout);
+    if (launch.ReturnValue !== 0 || !Number.isSafeInteger(launch.ProcessId) || launch.ProcessId <= 0) throw Error('Could not isolate Windows device startup (WMI result ' + launch.ReturnValue + ').');
+    while (!fs.existsSync(result)) {
+      try { process.kill(launch.ProcessId, 0); }
+      catch (error) { if (error.code !== 'ESRCH') throw error; if (!fs.existsSync(result)) throw Error('Windows device bootstrap exited without a response.'); }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const response = JSON.parse(fs.readFileSync(result, 'utf8'));
+    if (response.error) throw Error(response.error);
+    return response.value;
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
+start().then(value => { if (value) console.log(JSON.stringify(value)); }).catch(error => { console.error(error.message); process.exitCode = 1; });
 `;
