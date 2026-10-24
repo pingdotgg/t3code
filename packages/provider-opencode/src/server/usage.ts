@@ -166,14 +166,80 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         )).map((row) => row.name),
       );
       if (!tables.has("message") && !tables.has("session_message")) error = true;
-      for (const table of ["message", "session_message"] as const) {
-        if (!tables.has(table)) continue;
-        const columns = new Set(
+      const columnsOf = Effect.fnUntraced(function* (table: string) {
+        return new Set(
           (yield* sql.unsafe<{ readonly name: unknown }>(`PRAGMA table_info(${table})`)).map(
             (row) => row.name,
           ),
         );
+      });
+      // Forking a session copies the parent's messages through its boundary,
+      // keeping their seq, creation time and data, under new ids. The fork's
+      // own messages continue after the last copied seq. Resolve each fork
+      // to that seq so a copy can name its original as (session, seq).
+      const forks = new Map<
+        string,
+        { readonly parent: string; readonly lastCopiedSeq: number; readonly created: number }
+      >();
+      if (
+        tables.has("session_v2") &&
+        tables.has("session_message") &&
+        (yield* columnsOf("session_message")).has("seq") &&
+        (yield* columnsOf("session_v2")).has("fork_boundary")
+      ) {
+        // A fork whose parent or boundary message is gone has no copy left to
+        // match, so it keeps its own identity and its usage still counts.
+        const resolved = yield* sql.unsafe<{
+          readonly id: unknown;
+          readonly parent: unknown;
+          readonly created: unknown;
+          readonly last_copied_seq: unknown;
+        }>(
+          `SELECT fork.id, fork.fork_session_id AS parent, fork.time_created AS created,
+             (SELECT MAX(copied.seq) FROM session_message AS copied
+              WHERE copied.session_id = fork.fork_session_id
+                AND CASE json_extract(fork.fork_boundary, '$.type')
+                  WHEN 'through' THEN copied.seq <= boundary.seq
+                  WHEN 'before' THEN copied.seq < boundary.seq
+                END) AS last_copied_seq
+           FROM session_v2 AS fork
+           JOIN session_message AS boundary
+             ON boundary.session_id = fork.fork_session_id
+            AND boundary.id = json_extract(fork.fork_boundary, '$.messageID')
+           WHERE fork.fork_session_id IS NOT NULL AND json_valid(fork.fork_boundary)`,
+        );
+        for (const row of resolved) {
+          if (typeof row.last_copied_seq !== "number" || typeof row.created !== "number") continue;
+          forks.set(text(row.id), {
+            parent: text(row.parent),
+            lastCopiedSeq: row.last_copied_seq,
+            created: row.created,
+          });
+        }
+      }
+      const original = (sessionId: string, seq: number, created: number) => {
+        const visited = new Set<string>();
+        let session = sessionId;
+        for (
+          let fork = forks.get(session);
+          fork !== undefined &&
+          seq <= fork.lastCopiedSeq &&
+          created < fork.created &&
+          !visited.has(session);
+          fork = forks.get(session)
+        ) {
+          visited.add(session);
+          session = fork.parent;
+        }
+        return `${session}:${seq}`;
+      };
+      const originals = new Set<string>();
+      for (const table of ["message", "session_message"] as const) {
+        if (!tables.has(table)) continue;
+        const columns = yield* columnsOf(table);
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
+        const lineage =
+          table === "session_message" && forks.size > 0 && columns.has("seq") ? "seq" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
         predicates.push("rowid > ?", "rowid <= ?");
@@ -197,8 +263,9 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               readonly session_id: unknown;
               readonly data: unknown;
               readonly created: unknown;
+              readonly seq: unknown;
             }>(
-              `SELECT id, session_id, data, ${timestamp} AS created
+              `SELECT id, session_id, data, ${timestamp} AS created, ${lineage} AS seq
                FROM ${table} WHERE ${predicates.join(" AND ")} ORDER BY rowid`,
               [
                 ...(timestamp === "NULL" ? [] : [sinceMs]),
@@ -208,14 +275,18 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
             )
             .pipe(Effect.withTracerEnabled(false));
           for (const row of rows) {
-            append(
-              file.records,
-              parseOpenCodeMessage(text(row.data), {
-                id: text(row.id),
-                sessionId: text(row.session_id),
-                ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
-              }),
-            );
+            const sessionId = text(row.session_id);
+            const record = parseOpenCodeMessage(text(row.data), {
+              id: text(row.id),
+              sessionId,
+              ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
+            });
+            if (record !== null && typeof row.seq === "number") {
+              const key = original(sessionId, row.seq, record.timestampMs);
+              if (originals.has(key)) continue;
+              originals.add(key);
+            }
+            append(file.records, record);
           }
           yield* Effect.yieldNow;
         }
