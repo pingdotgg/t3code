@@ -236,13 +236,13 @@ export const HTML_RENDER_THEME_GUIDE = [
   "--destructive, --destructive-foreground, --destructive-surface, --warning, --warning-foreground, --warning-surface,",
   "--success, --success-foreground, --info, --info-foreground, --code-background, --code-foreground,",
   "--chart-1 … --chart-6 (categorical series for charts), --radius, --font-sans, --font-mono.",
-  "The base stylesheet sets html background/color/font from these, body margin to 0, and hides the page's scrollbar; your own CSS overrides it.",
+  "The base stylesheet sets html background/color/font from these, adds an 8px safety gutter on html for selection rings and shadows, sets body margin to 0, and hides the page's scrollbar; your own CSS overrides it.",
 ].join(" ");
 
 export const HTML_RENDER_LAYOUT_GUIDE = [
   `The frame is borderless on the thread's background, as wide as the reply column (${HTML_RENDER_COLUMN_WIDTH}px on desktop by default, wider if the reader widens chat, about 360px on phones), and its left edge lines up with your reply text.`,
   "The page sits on the thread's own background, so by default leave html, body, and the outermost element with no background color. This overrides general style preferences such as a fixed black page background.",
-  "Use a fluid width with no horizontal padding on the outermost element, and no outer card, border, or banner title: the page is part of your reply.",
+  "Use a fluid width with no extra horizontal padding on the outermost element. T3 already adds an 8px safety gutter for selection rings and shadows. Add no outer card, border, or banner title: the page is part of your reply.",
   "If a box needs its own background (a mock of a specific screen, a panel that must stand apart), give it at least 16px of padding on every side and var(--radius) corners, so content never touches its edge.",
   "Give charts fixed pixel heights rather than heights that scale with width.",
   "Let content set the page's height. The frame grows to fit the page, so a height that follows the viewport makes it grow again and again: html_preview and html_render reject vh, svh, lvh, and dvh units, and height:100% on html or body has the same problem.",
@@ -373,7 +373,7 @@ export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
 }
 
 const BASE_CSS =
-  "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
+  "html{box-sizing:border-box;padding:8px;background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
   "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}" +
   // Focus outlines paint inside the element, so the frame edge never clips them.
   ":where(:focus-visible){outline:2px solid var(--ring)}:focus-visible{outline-width:2px!important;outline-offset:-2px!important}" +
