@@ -232,10 +232,12 @@ export const layer: Layer.Layer<
 
     /**
      * Scan newest first to retain the newest state for each entity. Keyed
-     * entities (messages, nodes, PR links) also keep their oldest event: client
-     * reducers append an entity where they first see it, so a replay from any
-     * cursor must either carry that first event or find the entity already
-     * present. Only the events in between are deleted.
+     * entities (messages, nodes, provider turns, PR links) also keep their
+     * oldest event: client reducers append an entity where they first see it,
+     * so a replay from any cursor must either carry that first event or find
+     * the entity already present. Only the events in between are deleted.
+     * Provider turns also keep their newest event with token usage, because
+     * reducers carry usage forward from earlier updates that omit it.
      * Page every event, including non-candidates: filtering before LIMIT could
      * still scan the entire history when superseded events are sparse.
      * turn-item.updated stays intact because replay assigns positions on first write.
@@ -256,6 +258,7 @@ export const layer: Layer.Layer<
       // Per key: the lowest sequence seen so far after the newest. It is
       // deleted once an even older event turns up and kept otherwise.
       const oldestCandidateByEntityKey = new Map<string, number | null>();
+      const providerTurnKeysWithRetainedUsage = new Set<string>();
       let deletedEventCount = 0;
       let deletedReceiptCount = 0;
 
@@ -267,6 +270,7 @@ export const layer: Layer.Layer<
           readonly stream_id: string;
           readonly event_type: string;
           readonly entity_id: string | null;
+          readonly carries_token_usage: number;
           readonly imported_legacy_thread: number;
         }>`
           SELECT
@@ -277,7 +281,7 @@ export const layer: Layer.Layer<
             event.event_type,
             CASE
               WHEN event.application_event_version = 2
-                AND event.event_type IN ('message.updated', 'node.updated')
+                AND event.event_type IN ('message.updated', 'node.updated', 'provider-turn.updated')
               THEN json_extract(event.payload_json, '$.id')
               WHEN event.application_event_version = 2
                 AND event.event_type = 'thread.pull-request-link-updated'
@@ -286,6 +290,12 @@ export const layer: Layer.Layer<
                 json_extract(event.payload_json, '$.number'))
               ELSE NULL
             END AS entity_id,
+            CASE
+              WHEN event.application_event_version = 2
+                AND event.event_type = 'provider-turn.updated'
+              THEN json_extract(event.payload_json, '$.tokenUsage') IS NOT NULL
+              ELSE 0
+            END AS carries_token_usage,
             CASE
               WHEN event.application_event_version = 1 AND event.aggregate_kind = 'thread'
               THEN EXISTS (
@@ -330,11 +340,18 @@ export const layer: Layer.Layer<
             } else if (
               row.event_type === "thread.pull-request-link-updated" ||
               row.event_type === "message.updated" ||
-              row.event_type === "node.updated"
+              row.event_type === "node.updated" ||
+              row.event_type === "provider-turn.updated"
             ) {
               const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
               const candidate = oldestCandidateByEntityKey.get(key);
-              if (candidate === undefined) oldestCandidateByEntityKey.set(key, null);
+              const retainsUsage =
+                row.carries_token_usage === 1 && !providerTurnKeysWithRetainedUsage.has(key);
+              if (retainsUsage) {
+                providerTurnKeysWithRetainedUsage.add(key);
+                if (candidate !== undefined && candidate !== null) obsolete.push(candidate);
+                oldestCandidateByEntityKey.set(key, null);
+              } else if (candidate === undefined) oldestCandidateByEntityKey.set(key, null);
               else {
                 if (candidate !== null) obsolete.push(candidate);
                 oldestCandidateByEntityKey.set(key, row.sequence);
