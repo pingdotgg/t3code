@@ -83,7 +83,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         tabIndex={0}
       >
         {approval.responseCapability === "not_resumable"
-          ? "Provider process is gone. Interrupt or restart the run to respond."
+          ? "The agent process has stopped, so you can no longer answer this approval request. Interrupt or restart the turn to continue."
           : approval.detail || fallbackLabel}
       </Detail>
       {approval.reason ? (
