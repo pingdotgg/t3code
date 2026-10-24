@@ -177,6 +177,8 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
     return;
   }
   if (!(yield* fs.exists(resolvedPath))) return;
+  // OpenSSH skips directories matched by Include, even when the pattern names one directly.
+  if ((yield* fs.stat(resolvedPath)).type === "Directory") return;
   visited.add(resolvedPath);
 
   const directory = path.dirname(resolvedPath);
