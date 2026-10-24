@@ -129,6 +129,15 @@ export function assetUrlStateFromResult(
   };
 }
 
+/**
+ * `cacheRevision` stays on the client: it keys a separate cached URL, so a file overwritten
+ * at the same path is minted again for a new revision (such as a new reply) instead of
+ * reusing a URL the browser already holds the previous bytes for.
+ */
+export type AssetCreateUrlCacheInput = AssetCreateUrlInput & {
+  readonly cacheRevision?: string;
+};
+
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
   localMediaEnvironment?: Atom.Atom<{
@@ -136,7 +145,10 @@ export function createAssetEnvironmentAtoms<R, E>(
     readonly httpBaseUrl: string;
   } | null>,
 ) {
-  const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
+  const execute = Effect.fn("assets.createUrl")(function* ({
+    cacheRevision: _cacheRevision,
+    ...input
+  }: AssetCreateUrlCacheInput) {
     const result = yield* request(WS_METHODS.assetsCreateUrl, input).pipe(Effect.result);
     if (Result.isSuccess(result)) return result.success;
     const error = result.failure;

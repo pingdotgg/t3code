@@ -22,13 +22,17 @@ export type AssetUrlState = RuntimeAssetUrlState & { readonly waiting?: boolean 
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  cacheRevision?: string,
 ): AssetUrlState {
   const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     blocked !== null || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : assetEnvironment.createUrl({ environmentId, input: { resource } }),
+      : assetEnvironment.createUrl({
+          environmentId,
+          input: assetUrlInput(resource, cacheRevision),
+        }),
   );
   if (blocked !== null) return blocked;
   return {
@@ -43,6 +47,7 @@ export function useAssetUrlState(
 export function useAssetUrlRefresh(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  cacheRevision?: string,
 ): () => Promise<string | null> {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
@@ -52,7 +57,7 @@ export function useAssetUrlRefresh(
   });
   return async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    const result = await refresh({ environmentId, input: { resource } });
+    const result = await refresh({ environmentId, input: assetUrlInput(resource, cacheRevision) });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     return resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
   };
@@ -90,6 +95,10 @@ export function useAssetUrls(
     );
   }
   return urls;
+}
+
+function assetUrlInput(resource: AssetResource, cacheRevision: string | undefined) {
+  return cacheRevision === undefined ? { resource } : { resource, cacheRevision };
 }
 
 function isFileResource(resource: AssetResource): boolean {

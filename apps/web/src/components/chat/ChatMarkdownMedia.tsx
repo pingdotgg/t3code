@@ -332,10 +332,15 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly workspaceMutationId?: string | null | undefined;
+  readonly mediaRevision?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource, props.mediaRevision);
+  const refreshAssetUrl = useAssetUrlRefresh(
+    props.environmentId,
+    props.resource,
+    props.mediaRevision,
+  );
   const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
   const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);

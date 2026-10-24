@@ -30,6 +30,9 @@ import {
  */
 export const MarkdownImageAvailableWidthContext = createContext(0);
 
+/** The reply an image belongs to, so a file overwritten at the same path is fetched again. */
+export const MarkdownMediaRevisionContext = createContext<string | undefined>(undefined);
+
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
@@ -248,7 +251,12 @@ export function ThreadMarkdownImage(props: {
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const revision = useContext(MarkdownMediaRevisionContext);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    props.resource,
+    props.resource._tag === "media-file" ? revision : undefined,
+  );
 
   return (
     <ThreadMarkdownImageView

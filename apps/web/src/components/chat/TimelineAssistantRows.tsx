@@ -43,6 +43,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               text={messageText}
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
+              mediaRevision={row.message.id}
               isStreaming={Boolean(row.message.streaming)}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
