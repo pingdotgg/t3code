@@ -226,6 +226,7 @@ import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import {
   getComposerPromptLengthValidationMessage,
   getComposerSubmissionValidationMessage,
+  isComposerSubmissionBlocked,
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
@@ -2115,9 +2116,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
+    const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
     if (
-      noProviderAvailable ||
-      isSendDisabled ||
+      isComposerSubmissionBlocked({
+        submissionTarget,
+        noProviderAvailable,
+        sendDisabledReason,
+        attachmentBlockReason,
+        environmentUnavailable: environmentUnavailable !== null,
+      }) ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
@@ -2146,9 +2153,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     const submission = submitComposerDraft({
       prompt: promptRef.current,
-      submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+      submissionTarget,
       event,
       onSend: (sendEvent) => {
+        // The thread's send guards are for provider turns, so an answer skips them.
+        if (submissionTarget === "pending-user-input") {
+          sendEvent?.preventDefault();
+          onAdvanceActivePendingUserInput();
+          return;
+        }
         providerInputRejectedRef.current = false;
         onSend(
           sendEvent,
