@@ -33,6 +33,7 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -56,10 +57,11 @@ export type ThemeFile = Readonly<{
 }>;
 
 /**
- * The environment's palettes are not saved: they are republished by the server
- * on every change and would go stale the moment the machine's theme moved on.
+ * The server republishes the environment's palettes on every change, so the
+ * stored copy is only the last snapshot: it lets boot paint the selected
+ * palette before the server connects, and the next publish replaces it.
  */
-let environmentThemeDefinitions: ReadonlyArray<ThemeDefinition> = [];
+let environmentThemeDefinitions: ReadonlyArray<ThemeDefinition> | null = null;
 
 const customThemeListeners = new Set<() => void>();
 type CustomThemeLibrarySnapshot =
@@ -240,7 +242,20 @@ export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   return snapshot.status === "ready" ? snapshot.themes : EMPTY_CUSTOM_THEMES;
 }
 
+function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
+    );
+    return Array.isArray(parsed) ? parseStoredThemes(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  environmentThemeDefinitions ??= readStoredEnvironmentThemes();
   return environmentThemeDefinitions;
 }
 
@@ -250,8 +265,13 @@ export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
  * kind of wasted work users of this product notice.
  */
 export function setEnvironmentThemes(themes: ReadonlyArray<ThemeDefinition>): boolean {
-  if (Equal.equals(environmentThemeDefinitions, themes)) return false;
+  if (Equal.equals(getEnvironmentThemes(), themes)) return false;
   environmentThemeDefinitions = themes;
+  try {
+    window.localStorage.setItem(ENVIRONMENT_THEMES_STORAGE_KEY, JSON.stringify(themes));
+  } catch {
+    // Only boot reads the copy; without it the next launch paints stock colors until connect.
+  }
   notifyCustomThemeListeners();
   return true;
 }
@@ -1032,7 +1052,7 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??
-    environmentThemeDefinitions.find((definition) => definition.id === themeId) ??
+    getEnvironmentThemes().find((definition) => definition.id === themeId) ??
     null
   );
 }

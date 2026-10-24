@@ -173,9 +173,19 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
+/**
+ * Null until the server has said what it publishes: snapshots never carry
+ * themes, so a capable server's config has none until its theme event lands.
+ */
 export const primaryServerEnvironmentThemesAtom = Atom.make(
-  (get): ReadonlyArray<EnvironmentTheme> =>
-    get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+  (get): ReadonlyArray<EnvironmentTheme> | null => {
+    const config = get(primaryServerConfigAtom);
+    if (!config) return null;
+    if (config.environmentThemes) return config.environmentThemes;
+    return config.environment.capabilities.environmentThemes === true
+      ? null
+      : EMPTY_ENVIRONMENT_THEMES;
+  },
 ).pipe(Atom.withLabel("web-primary-server-environment-themes"));
 
 /** Providers for views that do not show `checkedAt`; see {@link reuseProvidersIgnoringCheckedAt}. */

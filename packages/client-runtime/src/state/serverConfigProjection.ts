@@ -124,7 +124,8 @@ export function applyServerConfigProjection(
       return Option.map(current, (projection) => ({
         config: {
           ...projection.config,
-          environmentThemes: event.payload.themes.length > 0 ? event.payload.themes : undefined,
+          // Kept even when empty: undefined means the event has not arrived yet.
+          environmentThemes: event.payload.themes,
         },
         latestEvent: event,
         source: "live",

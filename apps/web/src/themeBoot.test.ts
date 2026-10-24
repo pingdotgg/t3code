@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import indexHtml from "../index.html?raw";
+import { environmentThemeDefinition } from "./hooks/useEnvironmentTheme";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
   getDefaultThemeColors,
@@ -8,6 +9,7 @@ import {
   invalidateCustomThemes,
   isKnownThemePreference,
   resolveThemeAppearance,
+  setEnvironmentThemes,
   T3_CHAT_THEME,
   EMBER_THEME,
   GROVE_THEME,
@@ -344,6 +346,40 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-background"]).toBe(
       getThemeColorsForMode(GROVE_THEME, "dark")!.canvas,
     );
+  });
+
+  it("paints the last published environment theme before the server connects", () => {
+    const storage: Record<string, string> = {
+      [THEME_STORAGE_KEY]: "system",
+      [THEME_APPEARANCE_MODE_STORAGE_KEY]: "dark",
+      "t3code:theme-halves:v1": JSON.stringify({ light: "ghostty", dark: "ghostty" }),
+    };
+    const published = environmentThemeDefinition({
+      id: "ghostty",
+      name: "Ghostty",
+      appearance: "light",
+      colors: { canvas: "#f5f5f5", chrome: "#ececec" },
+      variants: { dark: { canvas: "#282c34", chrome: "#21252b", text: "#dcdfe4" } },
+    });
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => storage[key] ?? null,
+        setItem: (key: string, value: string) => {
+          storage[key] = value;
+        },
+      },
+    });
+    try {
+      setEnvironmentThemes([published]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    const boot = runBootScript({ storage, prefersDark: true });
+    const dark = getThemeColorsForMode(published, "dark")!;
+    expect(boot.themeId).toBe("ghostty");
+    expect(boot.bootVariables["--boot-background"]).toBe(dark.canvas);
+    expect(boot.backgroundColor).toBe(dark.chrome);
   });
 
   it("uses runtime defaults for malformed custom roles", () => {
