@@ -120,6 +120,15 @@ export function collectComposerContextReferences(
 export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
 
+/**
+ * True when a stored user message is only the bootstrap prompt T3 Code sends in place of
+ * empty text. Clients hide that prompt in the chat and show a status line instead; the
+ * message itself, and what the agent received, stay untouched.
+ */
+export function isAttachmentOnlyBootstrapText(text: string): boolean {
+  return text.trim() === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
+}
+
 export function isImageReferencesOnly(text: string): boolean {
   const references = collectComposerContextReferences(text);
   return (

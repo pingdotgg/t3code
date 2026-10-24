@@ -52,7 +52,10 @@ import {
   resolveUserMessageContext,
   selectedMessageContextFragment,
 } from "~/lib/composerContextRecords";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectComposerContextReferences,
+  isAttachmentOnlyBootstrapText,
+} from "@t3tools/shared/composerContextReferences";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
@@ -304,6 +307,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       : null,
   );
   const resolvedContext = resolveUserMessageContext(row.message);
+  // The bootstrap prompt is for the agent, not the reader: a person's photo-only message shows a
+  // caption instead. Messages from other agents keep their folded rendering.
+  const attachmentOnly = !folded && isAttachmentOnlyBootstrapText(resolvedContext.text);
+  const bodyText = attachmentOnly ? "" : resolvedContext.text;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
   const chippedAttachmentIds = new Set(
@@ -321,7 +328,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     resolvedContext.text,
     (reference) => reference.label,
   );
-  const promptLink = promptLinkFor(plainText);
+  const promptLink = attachmentOnly ? null : promptLinkFor(plainText);
   const foldSummary =
     plainText
       .split(/\r?\n/)
@@ -459,7 +466,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           >
             <MessageAuthorHeading>You</MessageAuthorHeading>
             {(regularImages.length > 0 || userVideos.length > 0) && (
-              <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
+              <div
+                className={cn(
+                  "mb-2 grid gap-2",
+                  // A lone photo sent without text fills its bubble instead of leaving half of it empty.
+                  // It sits at the bubble's right edge so opening the caption grows the bubble leftward
+                  // without moving the photo.
+                  attachmentOnly && regularImages.length + userVideos.length === 1
+                    ? "ms-auto max-w-[240px] grid-cols-1"
+                    : "max-w-[210px] grid-cols-2",
+                )}
+              >
                 {regularImages.map((image) => (
                   <div
                     key={image.id}
@@ -567,9 +584,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 ))}
               </div>
             ) : null}
+            {attachmentOnly ? (
+              <AttachmentOnlyCaption
+                label={
+                  userVideos.length + unchippedFiles.length + unknownAttachments.length > 0
+                    ? "Attachment only"
+                    : "Image only"
+                }
+                instruction={resolvedContext.text}
+              />
+            ) : null}
             <div onCopyCapture={onBodyCopyCapture}>
               <CollapsibleUserMessageBody
-                text={resolvedContext.text}
+                text={bodyText}
                 renderContextReference={renderContextReference}
                 skills={ctx.skills}
                 markdownCwd={ctx.markdownCwd}
@@ -600,7 +627,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               {typeof revertTurnCount === "number" && (
                 <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
               )}
-              {resolvedContext.text && (
+              {bodyText && (
                 <MessageCopyButton
                   text={contextClipboardFragment ? resolvedContext.text : plainText}
                   {...(contextClipboardFragment
@@ -625,6 +652,31 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** Sent with no text: a quiet caption stands in for the agent's bootstrap prompt, and a click reveals it. */
+function AttachmentOnlyCaption({
+  label,
+  instruction,
+}: {
+  readonly label: string;
+  readonly instruction: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="text-xs text-muted-foreground" data-user-message-attachment-only="true">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        data-scroll-anchor-ignore
+        onClick={() => setExpanded((value) => !value)}
+        className="cursor-pointer rounded-sm italic hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        {expanded ? "Hide" : label}
+      </button>
+      {expanded ? <p className="mt-1 leading-relaxed">{instruction}</p> : null}
     </div>
   );
 }
