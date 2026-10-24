@@ -2,6 +2,7 @@ import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import { textDirection } from "@t3tools/shared/textDirection";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -65,6 +66,11 @@ export interface PendingUserInputCardProps {
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
+
+function proseDirectionStyle(text: string) {
+  const direction = textDirection(text);
+  return direction ? { direction, writingDirection: direction } : undefined;
+}
 
 function QuestionText(props: { readonly markdown: string }) {
   const styles = useMarkdownPreviewStyles();
@@ -240,7 +246,10 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
-              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
+              <Text
+                className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted"
+                style={proseDirectionStyle(question.header)}
+              >
                 {question.header}
               </Text>
               <QuestionText markdown={question.question} />
@@ -274,11 +283,15 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                             "font-t3-bold text-sm",
                             selected ? "text-foreground" : "text-foreground-secondary",
                           )}
+                          style={proseDirectionStyle(option.label)}
                         >
                           {option.label}
                         </Text>
                         {description ? (
-                          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+                          <Text
+                            className="font-sans text-sm leading-5 text-foreground-muted"
+                            style={proseDirectionStyle(description)}
+                          >
                             {description}
                           </Text>
                         ) : null}
