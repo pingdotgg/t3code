@@ -95,17 +95,10 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
     return session.capabilities.sessions.supportsProviderSwitchingViaHandoff;
   }
   if (resolveActiveThreadRun(projection) !== null) return false;
-  if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
 
-  // Detaching a stopped session removes it from the projection, but its native
-  // provider thread remains available for the next turn's portable handoff.
-  return projection.providerThreads.some(
-    (thread) =>
-      thread.id === projection.thread.activeProviderThreadId &&
-      thread.appThreadId === projection.thread.id &&
-      thread.providerInstanceId === projection.thread.modelSelection.instanceId &&
-      thread.nativeThreadRef !== null,
-  );
+  // With no live session the server plans a portable handoff from saved app
+  // history, so the outgoing provider's native thread ref is not required.
+  return true;
 }
 
 export function getUserQueuedThreadRuns(
