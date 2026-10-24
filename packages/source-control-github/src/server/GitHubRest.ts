@@ -49,10 +49,13 @@ export class GitHubRest extends Context.Service<
   {
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
     /** The credential a request to `host` would carry right now. */
-    readonly credential: (
-      host: string,
-    ) => Effect.Effect<
-      { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
+    readonly credential: (host: string) => Effect.Effect<
+      {
+        readonly token: Redacted.Redacted<string>;
+        readonly fingerprint: string;
+        /** Absent for a pinned credential, which keeps no record of where it came from. */
+        readonly source?: GitHubCredentials.GitHubCredentialSource;
+      },
       GitHubApiError
     >;
   }

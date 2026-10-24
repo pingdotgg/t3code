@@ -1900,7 +1900,7 @@ export const make = Effect.gen(function* () {
       // with no rows rather than with an error — so an empty listing is read again from the
       // repository's own list.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
-      return read(true).pipe(
+      const listed = read(true).pipe(
         Effect.filterOrElse(
           (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
           () => read(false),
@@ -1941,6 +1941,33 @@ export const make = Effect.gen(function* () {
             Effect.map((items) => ({ ...batch, items })),
           );
         }),
+      );
+      // GitHub answers a private repository the token cannot see as missing, so the reader is
+      // told which credential that was: a saved token quietly overrides GH_TOKEN and gh. The
+      // listing is pinned to the credential it names, so a token changed mid-read is not blamed.
+      const host = GitHubRequestPolicy.normalizeHost(input.host);
+      return api.credential(host).pipe(
+        Effect.flatMap(({ token, fingerprint, source }) =>
+          listed.pipe(
+            Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+              host,
+              token,
+              credentialFingerprint: fingerprint,
+            }),
+            Effect.catchTags({
+              GitHubApiNotFoundError: (error) =>
+                Effect.fail(
+                  source === undefined
+                    ? error
+                    : new GitHubRequestPolicy.GitHubApiNotFoundError({
+                        host: error.host,
+                        operation: error.operation,
+                        credential: source,
+                      }),
+                ),
+            }),
+          ),
+        ),
       );
     },
 
