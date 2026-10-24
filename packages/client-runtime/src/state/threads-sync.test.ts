@@ -1120,6 +1120,153 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect.each(["complete", "follow-up page failure", "notification"] as const)(
+    "one load-earlier request pages until it reaches the turn that started an agent run (#21821), %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const common = {
+          threadId: THREAD_ID,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          status: "completed",
+          title: null,
+          startedAt: "2026-06-20T00:00:00.000Z",
+          completedAt: "2026-06-20T00:00:00.000Z",
+          updatedAt: "2026-06-20T00:00:00.000Z",
+        };
+        const projected = (item: { readonly id: string }) => ({
+          position: 0,
+          visibility: "local",
+          sourceThreadId: THREAD_ID,
+          sourceItemId: item.id,
+          item,
+        });
+        const commands = (from: number, count: number) =>
+          Array.from({ length: count }, (_, index) => ({
+            ...common,
+            id: `item:command-${from + index}`,
+            ordinal: from + index,
+            type: "command_execution",
+            input: "pwd",
+            output: "",
+            exitCode: 0,
+          }));
+        const agentTurnStart = {
+          ...common,
+          id: "item:agent-turn-start",
+          ordinal: 1,
+          type: "user_message",
+          createdBy: "agent",
+          creationSource: "mcp",
+          messageId: "message:agent-turn-start",
+          inputIntent: "turn_start",
+          text: "Run every check",
+          attachments: [],
+        };
+        // Arrives mid-run, so it does not open the run, but the timeline still shows it.
+        const notification = {
+          ...common,
+          id: "item:task-notification",
+          ordinal: 151,
+          type: "notification",
+          source: { kind: "delegated_task", taskIds: [] },
+          outcome: "completed",
+          summary: "Checks finished",
+        };
+        // Newest page first: a long agent run whose opening message is two pages back.
+        const pages: Record<string, { items: ReadonlyArray<unknown>; nextCursor: string | null }> =
+          {
+            "page-1": { items: commands(152, 75).map(projected), nextCursor: "page-2" },
+            "page-2": {
+              items: [...commands(77, 75), ...(mode === "notification" ? [notification] : [])].map(
+                projected,
+              ),
+              nextCursor: "page-3",
+            },
+            "page-3": {
+              items: [projected(agentTurnStart), ...commands(2, 75).map(projected)],
+              nextCursor: "page-4",
+            },
+          };
+        const requestedCursors: Array<string | null> = [];
+        let failFollowUp = mode === "follow-up page failure";
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            const cursor = url.searchParams.get("cursor");
+            requestedCursors.push(cursor);
+            const page = cursor === null ? undefined : pages[cursor];
+            if (page === undefined) return Effect.die(`Unexpected history cursor ${cursor}`);
+            if (cursor === "page-2" && failFollowUp) {
+              failFollowUp = false;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("Unavailable", { status: 503 })),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: 14,
+                  items: page.items,
+                  nextCursor: page.nextCursor,
+                  hasMoreHistory: true,
+                }),
+              ),
+            );
+          }),
+        });
+        yield* Queue.offer(harness.inputs, {
+          ...snapshot(BASE_PROJECTION, 14),
+          historyCursor: "page-1",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 300,
+          payloadBudgetExceeded: false,
+        });
+        yield* awaitThreadState(
+          harness.observed,
+          (state) => state.status === "live" && state.history.historyCursor === "page-1",
+        );
+
+        if (mode === "follow-up page failure") {
+          // The failure lands on the follow-up cursor and leaves the first page merged.
+          expect((yield* harness.loadEarlier())._tag).toBe("error");
+          const failed = yield* SubscriptionRef.get(harness.threadState);
+          expect(failed.history).toMatchObject({ loading: false, historyCursor: "page-2" });
+          expect(failed.history.error).not.toBeNull();
+        }
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+
+        const state = yield* SubscriptionRef.get(harness.threadState);
+        if (mode === "notification") {
+          expect(requestedCursors).toEqual(["page-1", "page-2"]);
+          expect(state.history).toMatchObject({
+            loading: false,
+            error: null,
+            historyCursor: "page-3",
+          });
+          return;
+        }
+        expect(
+          Option.getOrThrow(state.data).visibleTurnItems.map((row) => String(row.sourceItemId)),
+        ).toContain(agentTurnStart.id);
+        expect(requestedCursors).toEqual(
+          mode === "complete"
+            ? ["page-1", "page-2", "page-3"]
+            : ["page-1", "page-2", "page-2", "page-3"],
+        );
+        expect(state.history).toMatchObject({
+          loading: false,
+          error: null,
+          historyCursor: "page-4",
+          hasMoreHistory: true,
+        });
+      }),
+  );
+
   it.effect.each(["complete", "replacement snapshot", "retry"] as const)(
     "progressively reveals conversation history before activity, then handles %s",
     (mode) =>
@@ -1236,7 +1383,7 @@ describe("EnvironmentThreads", () => {
         }
         if (mode === "retry") {
           expect(result._tag).toBe("error");
-          expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+          expect(yield* harness.loadEarlier(message.messageId)).toEqual({ _tag: "loaded" });
         } else expect(result).toEqual({ _tag: "loaded" });
         const complete = yield* SubscriptionRef.get(harness.threadState);
         expect(complete.history).toMatchObject({

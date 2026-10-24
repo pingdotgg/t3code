@@ -74,6 +74,17 @@ function formatHistoryError(error: unknown): string {
   return "Could not load earlier activity.";
 }
 
+// Steers join a running turn; every other user message opens one. The timeline shows every
+// notification as a response boundary, whether it opened its run or arrived mid-run.
+function startsTurn(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "notification" ||
+    (item.type === "user_message" &&
+      item.inputIntent !== "steer" &&
+      item.inputIntent !== "promoted_queued_to_steer")
+  );
+}
+
 function historyMetaFromCachedSnapshot(
   snapshot: OrchestrationV2ThreadDetailSnapshot,
 ): ThreadHistoryMeta {
@@ -665,7 +676,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
     // Capture the cursor that initiated this request. Completions/failures must
     // no-op if a socket or new bounded snapshot replaced progressive meta mid-flight.
-    const requestCursor = current.history.historyCursor;
+    // Advances as follow-up pages are fetched, so the guards below track the latest page.
+    let requestCursor = current.history.historyCursor;
     yield* patchHistoryMeta((history) =>
       isActiveHistoryRequestCursor(requestCursor, history)
         ? { ...history, loading: true, error: null }
@@ -697,8 +709,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       if (Option.isNone(preparedOption) || Option.isNone(httpClient))
         return yield* failLoad("Environment is not connected.");
 
-      const views =
-        throughEntryId === undefined ? [undefined] : ["conversation" as const, undefined];
+      const views: Array<"conversation" | undefined> =
+        throughEntryId === undefined ? [undefined] : ["conversation", undefined];
+      // A long agent run can fill whole pages without the message that started it, so a
+      // plain load-earlier keeps paging until it reaches a turn start or runs out of
+      // history (#21821). Follow-up pages are appended to `views` while it is iterated.
       for (const view of views) {
         const pageResult = yield* fetchEnvironmentThreadHistoryPage({
           prepared: preparedOption.value,
@@ -713,6 +728,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           return yield* failLoad(formatHistoryError(pageResult.failure));
         const page = pageResult.success;
         const complete = view === undefined;
+        const continues =
+          throughEntryId === undefined &&
+          complete &&
+          page.hasMoreHistory &&
+          page.nextCursor !== null &&
+          !page.items.some(({ item }) => startsTurn(item));
         const waiting = yield* Ref.get(awaitingCompletion);
         const result = yield* applyLock.withPermits(1)(
           SubscriptionRef.modify(
@@ -734,7 +755,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   data: Option.some(mergeOlderHistoryIntoProjection(latest.data.value, page.items)),
                   status: complete && waiting ? "synchronizing" : latest.status,
                   history: complete
-                    ? applyHistoryPageMeta(latest.history, page)
+                    ? { ...applyHistoryPageMeta(latest.history, page), loading: continues }
                     : { ...latest.history, expanded: true },
                 },
               ];
@@ -743,6 +764,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         );
         if (result._tag !== "loaded") return result;
         if (complete) yield* remember;
+        if (continues && page.nextCursor !== null) {
+          requestCursor = page.nextCursor;
+          views.push(undefined);
+        }
       }
       return { _tag: "loaded" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
     });
