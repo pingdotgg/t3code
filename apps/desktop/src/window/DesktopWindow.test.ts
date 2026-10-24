@@ -472,6 +472,28 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("restores bounds that overhang a snapped display edge by at most 1px", () => {
+    const displays = [
+      { x: 0, y: 0, width: 1920, height: 1080 },
+      { x: 1920, y: 0, width: 1280, height: 975 },
+    ];
+    const snapped = { x: 1921, y: 30, width: 1280, height: 945 };
+
+    assert.deepEqual(DesktopWindow.resolveInitialMainWindowBounds(snapped, displays), snapped);
+
+    const overhangBy2 = { ...snapped, x: 1922 };
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(overhangBy2, displays),
+      DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+
+    const offDisplay = { x: 3300, y: 30, width: 1280, height: 945 };
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(offDisplay, displays),
+      DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+  });
+
   it.effect(
     "opens and reopens the window without backend readiness when local execution is disabled",
     () =>

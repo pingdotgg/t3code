@@ -139,15 +139,21 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
+// A window snapped to a display edge is reported up to 1px past that edge, so
+// an exact fit check would discard the bounds we just saved.
+const DISPLAY_EDGE_TOLERANCE_PX = 1;
+
 function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
   displayBounds: DisplayBounds,
 ): boolean {
   return (
-    windowBounds.x >= displayBounds.x &&
-    windowBounds.y >= displayBounds.y &&
-    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width &&
-    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height
+    windowBounds.x >= displayBounds.x - DISPLAY_EDGE_TOLERANCE_PX &&
+    windowBounds.y >= displayBounds.y - DISPLAY_EDGE_TOLERANCE_PX &&
+    windowBounds.x + windowBounds.width <=
+      displayBounds.x + displayBounds.width + DISPLAY_EDGE_TOLERANCE_PX &&
+    windowBounds.y + windowBounds.height <=
+      displayBounds.y + displayBounds.height + DISPLAY_EDGE_TOLERANCE_PX
   );
 }
 
