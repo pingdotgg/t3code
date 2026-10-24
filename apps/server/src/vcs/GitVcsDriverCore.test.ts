@@ -292,6 +292,21 @@ it.effect("invalidates origin remote cache when a driver mutation adds origin", 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("treats a repository's only non-origin remote as its primary remote", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+    assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, false);
+    yield* driver.ensureRemote({ cwd, preferredName: "github", url: remote });
+
+    assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, true);
+    assert.equal((yield* driver.listRefs({ cwd, refresh: true })).hasPrimaryRemote, true);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 describe("pullCurrentBranch", () => {
   // A fast-forward that prints over 1 MB takes thousands of files, so the real pull's output is
   // padded past the cap instead.
