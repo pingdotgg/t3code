@@ -496,11 +496,27 @@ function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined 
   return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
 }
 
-function codexDynamicToolOutput(
+const CODEX_IMAGE_DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i;
+
+/**
+ * Codex reports image output as `inputImage` with a data URL; the work log and
+ * asset routes only recognize the `image` block shape, so translate it here.
+ */
+function codexContentItemImage<T>(item: T): T | { type: "image"; mimeType: string; data: string } {
+  if (typeof item !== "object" || item === null) return item;
+  const { type, imageUrl } = item as { type?: unknown; imageUrl?: unknown };
+  if (type !== "inputImage" || typeof imageUrl !== "string") return item;
+  const match = CODEX_IMAGE_DATA_URL.exec(imageUrl);
+  return match?.[1] && match[2]
+    ? { type: "image", mimeType: match[1].toLowerCase(), data: match[2] }
+    : item;
+}
+
+export function codexDynamicToolOutput(
   item: Extract<CodexDynamicToolItem, { readonly type: "dynamicToolCall" }>,
 ): unknown | undefined {
   if (item.contentItems !== null && item.contentItems !== undefined) {
-    return item.contentItems;
+    return item.contentItems.map(codexContentItemImage);
   }
   return item.success === false ? { success: false } : undefined;
 }
