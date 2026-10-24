@@ -27,6 +27,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 
 import { emptyProjection } from "./ProjectionStore.ts";
+import { isAutoSettlementCandidate } from "./ThreadSettlementService.ts";
 
 const parentThreadId = ThreadId.make("thread:subagent-snoozed-parent");
 const childThreadId = ThreadId.make("thread:subagent-awake-child");
@@ -115,6 +116,48 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
     type: "node",
     nodeId: parentNodeId,
   });
+});
+
+it("creates a pinned parent's subagent child unpinned so it can settle", () => {
+  const pinnedParent = {
+    ...makeParentThread(),
+    pinnedAt: parentCreatedAt,
+    pinOrderKey: "a0",
+  };
+  for (const parentThread of [pinnedParent, makeParentThread()]) {
+    const childThread = makeSubagentChildThread({
+      parentThread,
+      childThreadId,
+      parentNodeId: NodeId.make("node:subagent-parent"),
+      activeProviderThreadId: null,
+      providerInstanceId: childProviderInstanceId,
+      modelSelection: childModelSelection,
+      title: "Child",
+      now: childCreatedAt,
+      createdBy: "agent",
+      creationSource: "provider",
+    });
+
+    assert.notExists(childThread.pinnedAt);
+    assert.notExists(childThread.pinOrderKey);
+    assert.isTrue(
+      isAutoSettlementCandidate(
+        {
+          ...childThread,
+          status: "idle",
+          activityRunStatus: null,
+          pendingRuntimeRequest: null,
+          pendingBackgroundTasks: [],
+          latestRunId: null,
+          latestRunRequestedAt: null,
+          latestRunStartedAt: null,
+          latestRunCompletedAt: null,
+          latestUserMessageAt: null,
+        },
+        DateTime.toEpochMillis(childCreatedAt),
+      ),
+    );
+  }
 });
 
 function taskFixture() {
