@@ -314,11 +314,12 @@ export function useComposerCommandMenu({
     }).then((result) => {
       const refreshed =
         result._tag === "Success" &&
-        hasCompleteProviderWorkspaceSnapshot(
+        hasCurrentProviderWorkspaceSnapshot(
           result.value.providers.find(
             (provider) => provider.instanceId === selectedProviderInstanceId,
           ),
           projectCwd,
+          Date.now(),
         );
       if (!refreshed) retryLater();
     }, retryLater);
