@@ -851,19 +851,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   ) : null;
 
   const modelControl = (
-    <View className="min-w-0 shrink">
-      <ComposerModelControl
-        size={hasSidebarTabBar ? "large" : "regular"}
-        modelOption={currentModelOption}
-        selection={currentModelSelection}
-        provider={selectedProviderStatus?.driver}
-        reportedSelection={props.reportedModelSelection}
-        prompt={draftMessage}
-        surfaceColor={composerPanel}
-        iconOnly={!compactEditor.isExpanded}
-        onPress={openSettings}
-      />
-    </View>
+    <ComposerModelControl
+      size={hasSidebarTabBar ? "large" : "regular"}
+      modelOption={currentModelOption}
+      selection={currentModelSelection}
+      provider={selectedProviderStatus?.driver}
+      reportedSelection={props.reportedModelSelection}
+      prompt={draftMessage}
+      surfaceColor={composerPanel}
+      iconOnly={!compactEditor.isExpanded}
+      onPress={openSettings}
+    />
   );
 
   return (

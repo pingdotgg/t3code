@@ -24,6 +24,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
+import { withModelShortNames } from "./modelShortName.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import {
@@ -1008,19 +1009,35 @@ export const layer = Layer.effect(
       );
     });
 
+    // Derived short names stay out of the registry state so cached and retained
+    // models never carry a value computed by an older rule.
+    const presentProviders = (providers: ReadonlyArray<ServerProvider>) =>
+      providers.map(withModelShortNames);
+
     return {
-      getProviders: Ref.get(providersRef),
+      getProviders: Ref.get(providersRef).pipe(Effect.map(presentProviders)),
       refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refresh(provider).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.map(presentProviders),
+        ),
       refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshInstance(instanceId).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.map(presentProviders),
+        ),
       refreshWorkspaceSnapshot: (input) =>
-        refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
-      refreshAfterUpdate,
+        refreshWorkspaceSnapshot(input).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.map(presentProviders),
+        ),
+      refreshAfterUpdate: (provider, selectedInstanceId) =>
+        refreshAfterUpdate(provider, selectedInstanceId).pipe(Effect.map(presentProviders)),
       getProviderMaintenanceCapabilitiesForInstance,
-      setProviderMaintenanceActionState,
+      setProviderMaintenanceActionState: (input) =>
+        setProviderMaintenanceActionState(input).pipe(Effect.map(presentProviders)),
       get streamChanges() {
-        return Stream.fromPubSub(changesPubSub);
+        return Stream.fromPubSub(changesPubSub).pipe(Stream.map(presentProviders));
       },
     } satisfies ProviderRegistry["Service"];
   }),

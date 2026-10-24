@@ -442,6 +442,10 @@
     "./model-traits": {
       "types": "./src/modelTraits.ts",
       "default": "./src/modelTraits.ts"
+    },
+    "./model-label": {
+      "types": "./src/modelLabel.ts",
+      "default": "./src/modelLabel.ts"
     }
   },
   "scripts": {
