@@ -8,9 +8,10 @@ import {
   FILL_PREVIEW_VIEWPORT,
   findBrowserProfile,
   INCOGNITO_BROWSER_PROFILE_ID,
+  isBuiltInBrowserProfileId,
   resolveBrowserProfiles,
   type BrowserProfile,
-  type PreviewReportProfilesInput,
+  PreviewReportProfilesInput,
   PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   PreviewViewportSetting as PreviewViewportSettingSchema,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -43,6 +44,7 @@ import {
   SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   type PreviewAppearancePreference,
 } from "@t3tools/contracts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
@@ -51,12 +53,15 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { constVoid } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -86,6 +91,9 @@ import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
+const SavedProfilesJson = Schema.fromJsonString(PreviewReportProfilesInput);
+const decodeSavedProfiles = Schema.decodeUnknownEffect(SavedProfilesJson);
+const encodeSavedProfiles = Schema.encodeSync(SavedProfilesJson);
 const RENDER_SCALE = 2;
 // Chromium allows three unacked frames, so 100 ms pacing caps viewers near 30 fps.
 const SCREENCAST_ACK_PACE_MS = 100;
@@ -1310,24 +1318,81 @@ const make = Effect.gen(function* () {
         ? ("agent" as const)
         : ("unclaimed" as const);
 
+  const resolveReportedProfiles = (input: PreviewReportProfilesInput) => {
+    const profiles = resolveBrowserProfiles(input.profiles);
+    return {
+      profiles,
+      defaultProfileId:
+        findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+    };
+  };
+
+  // Clients report profiles only when they connect, so the last catalog is kept on
+  // disk for agents and scheduled tasks that open a profile after a restart.
+  const savedProfilesPath = NodePath.join(
+    config.stateDir,
+    "server-browser",
+    "reported-profiles.json",
+  );
+  const fileServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  const saveProfilesLock = yield* Semaphore.make(1);
+  let savedProfiles = yield* (yield* FileSystem.FileSystem).readFileString(savedProfilesPath).pipe(
+    Effect.tapError((cause) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.void
+        : Effect.logWarning("failed to read saved browser profiles", {
+            path: savedProfilesPath,
+            cause,
+          }),
+    ),
+    Effect.orElseSucceed(() => ""),
+  );
   let reportedProfiles: {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
-  } | null = null;
+  } | null = yield* decodeSavedProfiles(savedProfiles).pipe(
+    Effect.map(resolveReportedProfiles),
+    Effect.tapError((cause) =>
+      savedProfiles === ""
+        ? Effect.void
+        : Effect.logWarning("ignoring invalid saved browser profiles", {
+            path: savedProfilesPath,
+            cause,
+          }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
   // Agent recordings encode here, so they need the client's Browser recording frame rate. The
   // last report outlives the client, which lets agents record while no client is connected.
   let recordingFrameRate = DEFAULT_BROWSER_RECORDING_FRAME_RATE;
 
-  const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = (input) =>
-    Effect.sync(() => {
-      if (input.recordingFrameRate !== undefined) recordingFrameRate = input.recordingFrameRate;
-      const profiles = resolveBrowserProfiles(input.profiles);
-      reportedProfiles = {
-        profiles,
-        defaultProfileId:
-          findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
-      };
-    });
+  const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = Effect.fn(
+    "ServerBrowser.reportProfiles",
+  )((input) =>
+    saveProfilesLock.withPermits(1)(
+      Effect.suspend(() => {
+        if (input.recordingFrameRate !== undefined) recordingFrameRate = input.recordingFrameRate;
+        const reported = resolveReportedProfiles(input);
+        reportedProfiles = reported;
+        const contents = encodeSavedProfiles({
+          profiles: reported.profiles.filter((profile) => !isBuiltInBrowserProfileId(profile.id)),
+          defaultProfileId: reported.defaultProfileId,
+        });
+        if (contents === savedProfiles) return Effect.void;
+        return writeFileStringAtomically({ filePath: savedProfilesPath, contents }).pipe(
+          Effect.provideContext(fileServices),
+          Effect.matchEffect({
+            onSuccess: () =>
+              Effect.sync(() => {
+                savedProfiles = contents;
+              }),
+            onFailure: (cause) =>
+              Effect.logWarning("failed to save reported browser profiles", { cause }),
+          }),
+        );
+      }),
+    ),
+  );
 
   const profileStatus = () => {
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
