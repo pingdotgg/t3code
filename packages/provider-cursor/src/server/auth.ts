@@ -29,9 +29,19 @@ interface AuthFlow {
   fiber?: Fiber.Fiber<void>;
 }
 
+/** A Cursor login saved by T3's browser sign-in, as opposed to a configured API key. */
+export type CursorStoredLogin =
+  | {
+      readonly status: "valid";
+      readonly apiKey: string;
+      readonly backendUrl: string;
+    }
+  | { readonly status: "expired" };
+
 export interface CursorAuth {
   readonly controller: ProviderAuthController;
   readonly readApiKey: Effect.Effect<string | undefined, ProviderSetupError>;
+  readonly readStoredLogin: Effect.Effect<CursorStoredLogin | undefined, ProviderSetupError>;
   readonly requireApiKey: Effect.Effect<string, ProviderSetupError>;
   readonly usesApiKey: boolean;
   readonly withAccess: <A, E, R>(
@@ -74,8 +84,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
       state: { ...current.state, ...patch },
     }));
 
-  const readApiKey = Effect.gen(function* () {
-    if (configuredKey) return configuredKey;
+  const readStoredLogin: CursorAuth["readStoredLogin"] = Effect.gen(function* () {
     const credentials = yield* Effect.tryPromise({
       try: () => options.store.load(),
       catch: (cause) =>
@@ -86,12 +95,23 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           cause,
         }),
     });
+    if (!credentials) return undefined;
     const now = yield* Clock.currentTimeMillis;
-    return credentials &&
-      (credentials.apiKeyExpiresAtMs === undefined || credentials.apiKeyExpiresAtMs > now)
-      ? credentials.apiKey
-      : undefined;
+    if (credentials.apiKeyExpiresAtMs !== undefined && credentials.apiKeyExpiresAtMs <= now) {
+      return { status: "expired" };
+    }
+    return {
+      status: "valid",
+      apiKey: credentials.apiKey,
+      backendUrl: credentials.backendUrl,
+    };
   });
+
+  const readApiKey = configuredKey
+    ? Effect.succeed(configuredKey)
+    : readStoredLogin.pipe(
+        Effect.map((login) => (login?.status === "valid" ? login.apiKey : undefined)),
+      );
 
   const requireApiKey = Effect.gen(function* () {
     if (operation !== "idle") {
@@ -497,6 +517,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
   return {
     controller,
     readApiKey,
+    readStoredLogin,
     requireApiKey,
     withAccess,
     usesApiKey: configuredKey !== undefined,
