@@ -367,9 +367,16 @@ export function ScheduledTasksSettings(target: {
     setEditor({ environmentId, task });
   };
   const defaultEnvironment = environment ?? connectedEnvironments[0];
-  const canCreate = useAtomValue(
-    serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
+  const createPermissions = useAtomValue(
+    scheduledTaskCreatePermissionsAtom(
+      environmentIdsKey(connectedEnvironments.map((entry) => entry.environmentId)),
+    ),
   );
+  const creationEnvironment =
+    connectedEnvironments.find(
+      (entry, index) =>
+        entry.environmentId === defaultEnvironment?.environmentId && createPermissions[index],
+    ) ?? connectedEnvironments.find((_entry, index) => createPermissions[index]);
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -379,10 +386,10 @@ export function ScheduledTasksSettings(target: {
           <Button
             size="xs"
             variant="ghost-muted"
-            disabled={!defaultEnvironment || !canCreate}
+            disabled={!creationEnvironment}
             onClick={() =>
-              defaultEnvironment &&
-              setEditor({ environmentId: defaultEnvironment.environmentId, task: null })
+              creationEnvironment &&
+              setEditor({ environmentId: creationEnvironment.environmentId, task: null })
             }
           >
             <PlusIcon className="size-3" />
@@ -441,6 +448,11 @@ export function ScheduledTasksSettings(target: {
     </SettingsPageContainer>
   );
 }
+
+const scheduledTaskCreatePermissionsAtom = environmentAtomList(
+  "web-scheduled-task-create-permissions",
+  serverEnvironment.upsertScheduledTask.permissionAtom,
+);
 
 const scheduledTasksListAtom = environmentAtomList("web-scheduled-tasks-list", (environmentId) =>
   serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
