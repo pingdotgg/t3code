@@ -29,6 +29,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useReducedMotion } from "react-native-reanimated";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 
@@ -429,6 +430,7 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
+  const reduceMotion = useReducedMotion();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
   const { panes, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
@@ -555,7 +557,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
     const nativeView = nativeReviewDiffViewRef.current;
     if (!nativeView) return;
     const result = await settlePromise(() =>
-      fileId === null ? nativeView.scrollToTop(true) : nativeView.scrollToFile(fileId, true),
+      fileId === null
+        ? nativeView.scrollToTop(!reduceMotion)
+        : nativeView.scrollToFile(fileId, !reduceMotion),
     );
     if (AsyncResult.isFailure(result)) {
       console.error("[review] Failed to navigate to diff file", squashAtomCommandFailure(result));
