@@ -1220,7 +1220,7 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      groups: [{ value: "new-thread-in", label: "Projects", items: projectThreadItems }],
     });
   }
 
@@ -1490,7 +1490,7 @@ function OpenCommandPaletteDialog(props: {
       case "new-thread-in":
         pushPaletteView({
           addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-          groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+          groups: [{ value: "new-thread-in", label: "Projects", items: projectThreadItems }],
         });
         return;
       case "change-theme":
@@ -1623,7 +1623,9 @@ function OpenCommandPaletteDialog(props: {
         ? changeThemeItem.groups
         : currentView?.groups[0]?.value === "appearance"
           ? changeAppearanceItem.groups
-          : (currentView?.groups ?? rootGroups);
+          : currentView?.groups[0]?.value === "new-thread-in"
+            ? [{ value: "new-thread-in", label: "Projects", items: projectThreadItems }]
+            : (currentView?.groups ?? rootGroups);
 
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,
