@@ -370,6 +370,7 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onAtEndChange?: (isAtEnd: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
@@ -2517,7 +2518,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   ref,
   ...props
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
-  const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
+  const { listRef, onAtEndChange, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } =
+    props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
@@ -3193,6 +3195,28 @@ export const ThreadFeed = memo(function ThreadFeed({
     const bottom = contentInsetEndAdjustment.get();
     if (list && bottom > 0) list.reportContentInset({ bottom });
   };
+  const atEndRef = useRef(true);
+  const reportListAtEnd = useEffectEvent(() => {
+    const isAtEnd = listRef.current?.getState().isAtEnd;
+    if (isAtEnd === undefined || atEndRef.current === isAtEnd) return;
+    atEndRef.current = isAtEnd;
+    onAtEndChange?.(isAtEnd);
+  });
+  // The edge signal refreshes on scroll, data and layout passes, not when a row grows, so a
+  // reply streaming in while the reader holds the list also re-reads the end.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the mounted list's end and size signals
+  useLayoutEffect(() => {
+    const listState = listRef.current?.getState();
+    if (!listState) return;
+    const unsubscribeAtEnd = listState.listen("isAtEnd", () => reportListAtEnd());
+    const unsubscribeTotalSize = listState.listen("totalSize", () => reportListAtEnd());
+    reportListAtEnd();
+    return () => {
+      unsubscribeAtEnd();
+      unsubscribeTotalSize();
+    };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The mount key names the list instance to subscribe to.
+  }, [listMountKey, listRef]);
   const jumpIndex = jumpReady
     ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
     : null;
