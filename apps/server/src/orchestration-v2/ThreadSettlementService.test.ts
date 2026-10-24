@@ -356,6 +356,74 @@ describe("resolveAutoSettlementAt", () => {
       }),
     ).toEqual(at(-45 * 60 * 1_000));
   });
+
+  it.each([
+    { keepPullRequests: false, expected: at(-4 * DAY_MS) },
+    { keepPullRequests: true, expected: null },
+  ])(
+    "settles an idle thread with synced open pull requests by inactivity unless kept (keep=$keepPullRequests)",
+    ({ keepPullRequests, expected }) => {
+      const link = (number: number) => ({
+        host: "example.test",
+        repository: "owner/repository",
+        number,
+        url: `https://example.test/owner/repository/pull/${number}`,
+        source: "manual" as const,
+        linkedAt: DateTime.formatIso(at(-4 * DAY_MS)),
+        snapshot: {
+          state: "open" as const,
+          title: "Pull request",
+          headBranch: `feature-${number}`,
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: DateTime.formatIso(at(-4 * DAY_MS)),
+          syncedAt: DateTime.formatIso(at(-1_000)),
+        },
+        stack: null,
+      });
+      // A stacked pull request links both open layers to the thread.
+      const input = {
+        thread: shell({
+          latestUserMessageAt: at(-4 * DAY_MS),
+          pullRequests: [link(1), link(2)],
+        }),
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: true,
+        autoSettleKeepPullRequests: keepPullRequests,
+      };
+      expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(expected);
+      // A merged layer does not settle the thread while another layer is open.
+      const merged = link(2);
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          thread: {
+            ...input.thread,
+            pullRequests: [
+              link(1),
+              {
+                ...merged,
+                snapshot: {
+                  ...merged.snapshot,
+                  state: "merged" as const,
+                  mergedAt: DateTime.formatIso(at(-60 * 1_000)),
+                },
+              },
+            ],
+          },
+        }),
+      ).toEqual(expected);
+      // A link whose state has not synced yet still holds the thread.
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          thread: { ...input.thread, pullRequests: [{ ...link(1), snapshot: null }] },
+        }),
+      ).toBeNull();
+    },
+  );
 });
 
 const NOW = "2026-08-28T12:00:00.000Z";

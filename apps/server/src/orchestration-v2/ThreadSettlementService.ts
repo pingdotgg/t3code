@@ -203,8 +203,11 @@ export function resolveAutoSettlementAt(input: {
   const { thread } = input;
   let pullRequest = input.pullRequest;
   const links = settlementPullRequestLinks(thread.pullRequests ?? []);
-  if (links.some((link) => link.snapshot === null || link.snapshot.state === "open")) return null;
-  if (links.length > 0) {
+  if (links.some((link) => link.snapshot === null)) return null;
+  // An open link means the work is still in review: it can only settle by
+  // inactivity, never through another link's merge or close.
+  const hasOpenLink = links.some((link) => link.snapshot?.state === "open");
+  if (!hasOpenLink && links.length > 0) {
     const latest = links.reduce((current, candidate) =>
       linkTerminalAtMs(candidate) > linkTerminalAtMs(current) ? candidate : current,
     );
@@ -229,7 +232,10 @@ export function resolveAutoSettlementAt(input: {
     return DateTime.makeUnsafe(activityAtMs);
   }
   const hasPullRequest =
-    pullRequest !== null || thread.linkedPullRequest != null || thread.branchPullRequest != null;
+    hasOpenLink ||
+    pullRequest !== null ||
+    thread.linkedPullRequest != null ||
+    thread.branchPullRequest != null;
   if (input.autoSettleKeepPullRequests === true && hasPullRequest) return null;
   if (input.autoSettleAfterDays === null) return null;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
