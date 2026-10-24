@@ -142,10 +142,9 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
     return Effect.flatMap(Clock.currentTimeMillis, (now) => {
       const key = fileRevisionsKey(project, ref);
       const held = heldFileRevisionsFor(key, paths, now);
-      if (held === null) return fetch;
+      if (held === null || freshness === "fresh") return fetch;
       if (now - held.at <= Duration.toMillis(FILE_REVISIONS_CACHE_TTL))
         return Effect.succeed(held.revisions);
-      if (freshness === "fresh") return fetch;
       if (refreshingFileRevisions.has(key)) return Effect.succeed(held.revisions);
       // Its own fiber rather than a child: the caller has been answered and is gone before this
       // lands.
@@ -278,7 +277,12 @@ export const make = (dependencies: Dependencies) => {
       input: PullRequestSetFilesViewedInput,
     ): Effect.fn.Return<void, PullRequestError> {
       const viewer = yield* requiredViewerOf(project, "setFilesViewed");
-      const cleared = input.files.filter((file) => file.viewed).map((file) => file.path);
+      // A press that names the version it was shown records that version, so a push landing
+      // after the diff was drawn reads as changed rather than as seen. Only a press that names
+      // none asks the host what the head has.
+      const cleared = input.files
+        .filter((file) => file.viewed && file.revision === undefined)
+        .map((file) => file.path);
       const revisions =
         cleared.length === 0
           ? null
@@ -299,7 +303,7 @@ export const make = (dependencies: Dependencies) => {
           // out to have a version after all.
           files: input.files.map((file) => ({
             path: file.path,
-            revision: revisions?.get(file.path) ?? null,
+            revision: file.revision ?? revisions?.get(file.path) ?? null,
             viewed: file.viewed,
           })),
           viewedAt,

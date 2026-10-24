@@ -16,6 +16,7 @@ import {
   toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
+  type FileViewedPress,
   type FileViewedStates,
 } from "./pullRequestFilesViewed.logic";
 
@@ -27,7 +28,7 @@ export interface PullRequestFilesViewedView {
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
-  readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly setViewed: (path: string, viewed: boolean, revision: string | undefined) => void;
   readonly truncated: boolean;
   readonly error: string | null;
   readonly refresh: () => void;
@@ -51,7 +52,7 @@ export function usePullRequestFilesViewed(options: {
     reportFailure: false,
   });
 
-  const queued = useRef<Map<string, boolean>>(new Map());
+  const queued = useRef<Map<string, FileViewedPress>>(new Map());
   const sentBy = useRef<Map<string, number>>(new Map());
   const requests = useRef(0);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,13 +140,15 @@ export function usePullRequestFilesViewed(options: {
   }, [scopeKey]);
 
   // Handed to every file header the viewer draws; a new identity would rebuild all of them.
-  const setViewed = useStableCallback((path: string, viewed: boolean) => {
-    setOverlay((current) => new Map(current).set(path, viewed));
-    queued.current.set(path, viewed);
-    if (flushTimer.current !== null) clearTimeout(flushTimer.current);
-    const target = { environmentId, reference };
-    flushTimer.current = setTimeout(() => flush(target), FLUSH_DELAY_MS);
-  });
+  const setViewed = useStableCallback(
+    (path: string, viewed: boolean, revision: string | undefined) => {
+      setOverlay((current) => new Map(current).set(path, viewed));
+      queued.current.set(path, { viewed, revision });
+      if (flushTimer.current !== null) clearTimeout(flushTimer.current);
+      const target = { environmentId, reference };
+      flushTimer.current = setTimeout(() => flush(target), FLUSH_DELAY_MS);
+    },
+  );
 
   return {
     enabled,

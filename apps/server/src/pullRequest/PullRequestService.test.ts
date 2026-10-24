@@ -31,6 +31,7 @@ import type { SourceControlProvider } from "@t3tools/source-control-core/server/
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { fakePullRequestProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diffFileRevisions";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -3620,6 +3621,108 @@ it.effect("reports a file pushed to since it was cleared as changed", () =>
         { path: "src/b.ts", state: "viewed" },
       ],
     );
+  }),
+);
+
+it.effect("clears a file against what the head has now, not what it had a moment ago", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "blob-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: false }],
+    });
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
+// A diff with `index` lines, as Forgejo and Bitbucket send. The GitLab project only selects environment-kept marks; GitLab's own patches name no version.
+const environmentViewedDiffService = (revisions: Map<string, string>) =>
+  makeService({
+    projects: [
+      project({
+        id: "p1",
+        title: "on gitlab",
+        workspaceRoot: "/a",
+        repository: "group/project",
+        provider: SourceControlProviderKind.make("gitlab"),
+      }),
+    ],
+    providers: [
+      {
+        ...environmentViewedProvider(revisions, []),
+        getDiff: () =>
+          Effect.sync(() => ({
+            patch: [
+              "diff --git a/src/a.ts b/src/a.ts",
+              `index 0000000..${revisions.get("src/a.ts")} 100644`,
+              "--- a/src/a.ts",
+              "+++ b/src/a.ts",
+              "@@ -0,0 +1 @@",
+              "+export const a = 1;",
+              "",
+            ].join("\n"),
+            truncated: false,
+            nextCursor: null,
+          })),
+      },
+    ],
+  });
+
+const shownRevision = (patch: string) => parseDiffFileRevisions(patch).get("src/a.ts") ?? "";
+
+it.effect("records the version the reader was shown, not one pushed after the diff was drawn", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "3464df0"]]);
+    const service = yield* environmentViewedDiffService(revisions);
+
+    const shown = shownRevision((yield* service.diff(GITLAB_REFERENCE)).patch);
+    revisions.set("src/a.ts", "e9ed029");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: shown }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+  }),
+);
+
+it.effect("records a pushed version as seen once the diff shows it", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "3464df0"]]);
+    const service = yield* environmentViewedDiffService(revisions);
+
+    yield* service.diff(GITLAB_REFERENCE);
+    revisions.set("src/a.ts", "e9ed029");
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    const shown = shownRevision((yield* service.diff(GITLAB_REFERENCE)).patch);
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: shown }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.strictEqual(shown, "e9ed029");
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
   }),
 );
 
