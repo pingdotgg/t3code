@@ -54,8 +54,39 @@ describe("parseCliArgs", () => {
     });
   });
 
-  it("ignores bare -- with no flag name", () => {
+  it("accepts a trailing -- without operands", () => {
     expect(parseCliArgs("--")).toEqual({ flags: {}, positionals: [] });
+  });
+
+  it.each([
+    { args: "--effort low -- --effort high --chrome" },
+    { args: ["--effort", "low", "--", "--effort", "high", "--chrome"] },
+  ])("ends option parsing at -- for $args", ({ args }) => {
+    expect(parseCliArgs(args)).toEqual({
+      flags: { effort: "low" },
+      positionals: ["--effort", "high", "--chrome"],
+    });
+  });
+
+  it("preserves all operands after --, including empty strings and another --", () => {
+    expect(parseCliArgs(["--", "", "--", "--model=example", "-x"])).toEqual({
+      flags: {},
+      positionals: ["", "--", "--model=example", "-x"],
+    });
+  });
+
+  it("ends option parsing with explicit boolean flags too", () => {
+    expect(parseCliArgs(["--chrome", "--", "--verbose"], { booleanFlags: ["chrome"] })).toEqual({
+      flags: { chrome: null },
+      positionals: ["--verbose"],
+    });
+  });
+
+  it("keeps -- inside an equals-form option value", () => {
+    expect(parseCliArgs("--append-system-prompt=-- --chrome")).toEqual({
+      flags: { "append-system-prompt": "--", chrome: null },
+      positionals: [],
+    });
   });
 
   it("boolean flag does not consume next token as value", () => {
