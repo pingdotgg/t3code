@@ -818,13 +818,36 @@ export const AntigravitySettings = makeProviderSettingsSchema(
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 
-export const UsageLimitSourceConfig = Schema.Struct({
+export const CliproxyUsageLimitSourceConfig = Schema.Struct({
   kind: Schema.Literal("cliproxy"),
   label: Schema.optional(TrimmedNonEmptyString),
   url: TrimmedNonEmptyString,
   managementKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
+export type CliproxyUsageLimitSourceConfig = typeof CliproxyUsageLimitSourceConfig.Type;
+
+/**
+ * `kind: "command"` sources run a command on the T3 server host and read a
+ * JSON document of the form `{ "accounts": UsageLimitSourceAccount[] }` from
+ * its stdout. This is the escape hatch for providers that can report quota
+ * or rate-limit windows but have no CLIProxyAPI hub integration — the
+ * command itself owns credential lookup, so nothing secret has to live in
+ * `args`.
+ */
+export const CommandUsageLimitSourceConfig = Schema.Struct({
+  kind: Schema.Literal("command"),
+  label: Schema.optional(TrimmedNonEmptyString),
+  command: TrimmedNonEmptyString,
+  args: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type CommandUsageLimitSourceConfig = typeof CommandUsageLimitSourceConfig.Type;
+
+export const UsageLimitSourceConfig = Schema.Union([
+  CliproxyUsageLimitSourceConfig,
+  CommandUsageLimitSourceConfig,
+]);
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
 export const GitHubHost = TrimmedNonEmptyString.pipe(
@@ -1658,9 +1681,15 @@ export function requiredScopesForServerSettingsPatch(
       changesSettings = true;
     }
   }
+  // A command source spawns a configured process on the server host, so saving
+  // one needs the same grant as launching an agent or a shell.
+  const needsExecution = Object.values(patch.usageLimitSources ?? {}).some(
+    (source) => source?.kind === "command",
+  );
   return [
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
+    ...(needsExecution ? [AuthOrchestrationOperateScope] : []),
   ];
 }
 

@@ -91,21 +91,24 @@ export function UsageProviderSettings({
           <SettingsRow title="No hubs configured." />
         ) : (
           entries.map(([id, source]) => {
-            const label = source.label?.trim() || source.url;
+            const target = source.kind === "command" ? source.command : source.url;
+            const label = source.label?.trim() || target;
             return (
               <SettingsRow
                 key={id}
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
-                    {label !== source.url ? ` · ${source.url}` : ""}
+                    {source.kind === "command" ? "Command" : "CLI Proxy"}
+                    {source.enabled ? "" : " · Disabled"}
+                    {label !== target ? ` · ${target}` : ""}
                   </span>
                 }
                 control={
                   !readOnly ? (
                     <RemoveUsageProviderButton
                       label={label}
+                      kind={source.kind}
                       onConfirm={() => updateSettings({ usageLimitSources: { [id]: null } })}
                     />
                   ) : null
@@ -129,9 +132,11 @@ export function UsageProviderSettings({
 
 function RemoveUsageProviderButton({
   label,
+  kind,
   onConfirm,
 }: {
   readonly label: string;
+  readonly kind: "cliproxy" | "command";
   readonly onConfirm: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -145,9 +150,9 @@ function RemoveUsageProviderButton({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              {kind === "command"
+                ? "This usage source is removed from settings; its accounts leave the Limits view. The command itself is untouched."
+                : "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

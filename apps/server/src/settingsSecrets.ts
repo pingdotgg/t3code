@@ -4,7 +4,8 @@ import {
   CodexSettings,
   EasDeviceHostConfig,
   type ServerSettings,
-  UsageLimitSourceConfig,
+  CliproxyUsageLimitSourceConfig,
+  CommandUsageLimitSourceConfig,
   secretSettingsFields,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
@@ -31,7 +32,10 @@ const providerSecretFields = new Map([
       [definition.driverKind, secretSettingsFields(definition.settingsSchema)] as const,
   ),
 ]);
-const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const usageLimitSecretFields = [
+  ...secretSettingsFields(CliproxyUsageLimitSourceConfig),
+  ...secretSettingsFields(CommandUsageLimitSourceConfig),
+];
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
