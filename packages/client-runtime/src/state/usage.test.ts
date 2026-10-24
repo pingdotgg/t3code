@@ -8,6 +8,7 @@ import {
   type UsageSummary,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -53,7 +54,7 @@ function harness(ids = ["a"]) {
       connection: { phase: "connected" },
     } as EnvironmentPresentation | null);
     const query = Atom.make(
-      Effect.promise(() => {
+      Effect.tryPromise(() => {
         scanStarted.resolve();
         return scan.promise;
       }),
@@ -111,6 +112,43 @@ describe("manual usage refresh", () => {
     entry.scan.resolve(summary);
     await refreshing;
     expect(finished).toBe(true);
+  });
+
+  it("retains the last summary on scan failure and replaces it after retry", async () => {
+    const {
+      registry,
+      environments: [environment],
+      refresh,
+    } = harness();
+    const entry = environment!;
+    let fail = false;
+    let current = summary;
+    entry.query = Atom.make(
+      Effect.tryPromise(async () => {
+        if (fail) throw new Error("Scan offline");
+        return current;
+      }),
+    );
+    const unmount = registry.mount(entry.query);
+    entry.rates.resolve(AsyncResult.success(pricing));
+    await refresh();
+    expect(Option.getOrNull(AsyncResult.value(registry.get(entry.query)))).toEqual(summary);
+
+    fail = true;
+    await refresh();
+    const failed = registry.get(entry.query);
+    expect(failed._tag).toBe("Failure");
+    expect(failed.waiting).toBe(false);
+    expect(Option.getOrNull(AsyncResult.value(failed))).toEqual(summary);
+
+    fail = false;
+    current = { ...summary, readAt: "2026-09-05T13:00:00Z" };
+    await refresh();
+    const recovered = registry.get(entry.query);
+    expect(recovered._tag).toBe("Success");
+    expect(recovered.waiting).toBe(false);
+    expect(Option.getOrNull(AsyncResult.value(recovered))).toEqual(current);
+    unmount();
   });
 
   it("settles when an environment disconnects during the rescan", async () => {

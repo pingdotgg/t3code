@@ -51,6 +51,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
+import { usageAvailability } from "./usageAvailability";
+import { UsageCompatibilityNotice } from "./UsageCompatibilityNotice";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { Menu } from "../../components/ui/Menu";
@@ -118,6 +120,7 @@ function UsageScreen(props: {
     selectedEnvironmentIds,
   );
   const isFocused = useIsFocused();
+  const availability = usageAvailability(selectedEnvironments, merged.contractMismatches);
   const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && tab === "limits");
   const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
   const refreshAfterCursorEnable = () => {
@@ -333,28 +336,19 @@ function UsageScreen(props: {
                   {merged.duplicateSources.join(", ")}
                 </Text>
               ) : null}
-              {isPending ? (
-                <Text className="py-16 text-center text-base text-foreground-muted">
-                  Scanning provider transcripts…
-                </Text>
-              ) : selectedEnvironments.length === 0 ? (
+              {selectedEnvironments.length === 0 ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
                   {environments.length === 0
                     ? "Connect an environment to see usage."
                     : "Select an environment to see usage."}
                 </Text>
-              ) : !canReadDiagnostics ? (
-                <View className="gap-2 py-16">
-                  {selectedEnvironments.map((environment) => (
-                    <Text
-                      key={environment.environmentId}
-                      className="text-center text-base text-foreground-muted"
-                    >
-                      {selectedEnvironments.length > 1 ? `${environment.label}: ` : null}
-                      {environment.error}
-                    </Text>
-                  ))}
-                </View>
+              ) : isPending &&
+                selectedEnvironments.every(
+                  (environment) => environment.isConnected && environment.error === null,
+                ) ? (
+                <Text className="py-16 text-center text-base text-foreground-muted">
+                  Scanning provider transcripts…
+                </Text>
               ) : (
                 <>
                   {sourceMessages.map((message) => (
@@ -362,28 +356,35 @@ function UsageScreen(props: {
                       {message}
                     </Text>
                   ))}
-                  <UsageUpdating dimmed={progress.dimmed} label={progress.label}>
-                    <ChartCard
-                      merged={merged}
-                      days={chartDays}
-                      daily={chartTotals}
-                      metric={metric}
-                      sinceDay={window.sinceDay}
-                      untilDay={window.untilDay}
-                      isPast24Hours={isPast24Hours}
-                      timeZone={window.timeZone}
-                    />
-                    <ProviderSection
-                      merged={merged}
-                      metric={metric}
-                      cursorAccessEnvironments={cursorAccessEnvironments}
-                      showCursorEnvironment={selectedEnvironments.length > 1}
-                      onCursorEnabled={refreshAfterCursorEnable}
-                    />
-                    <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
-                    <CostSection merged={merged} />
-                    <ModelsSection merged={merged} metric={metric} />
-                  </UsageUpdating>
+                  <UsageCompatibilityNotice
+                    availability={availability}
+                    onRetry={refreshWindow}
+                    refreshing={refreshingUsage}
+                  />
+                  {availability.hasCompatibleSummary ? (
+                    <UsageUpdating dimmed={progress.dimmed} label={progress.label}>
+                      <ChartCard
+                        merged={merged}
+                        days={chartDays}
+                        daily={chartTotals}
+                        metric={metric}
+                        sinceDay={window.sinceDay}
+                        untilDay={window.untilDay}
+                        isPast24Hours={isPast24Hours}
+                        timeZone={window.timeZone}
+                      />
+                      <ProviderSection
+                        merged={merged}
+                        metric={metric}
+                        cursorAccessEnvironments={cursorAccessEnvironments}
+                        showCursorEnvironment={selectedEnvironments.length > 1}
+                        onCursorEnabled={refreshAfterCursorEnable}
+                      />
+                      <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+                      <CostSection merged={merged} />
+                      <ModelsSection merged={merged} metric={metric} />
+                    </UsageUpdating>
+                  ) : null}
                 </>
               )}
             </>
