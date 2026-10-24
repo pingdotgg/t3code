@@ -1,8 +1,197 @@
+diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy.cpp b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy.cpp
+index c0825bb47a6fac02331138b5e0a0e5bbb52df0fa..1658cd1286d1087dec1dff84234f6251f791d63a 100644
+--- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy.cpp
++++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy.cpp
+@@ -823,35 +823,41 @@ void LayoutAnimationsProxy::addOngoingAnimations(ShadowViewMutationList &mutatio
+ 
+     maybeCorrectedTags = preserveMountedTags_(tagsToUpdate);
+     if (!maybeCorrectedTags.has_value()) {
++      if (!updateMap_.empty()) {
++        schedulePullOnNextFrame();
++      }
+       return;
+     }
+   }
+ 
+   const auto correctedTags = maybeCorrectedTags.has_value() ? maybeCorrectedTags->get() : nullptr;
+ 
+-  // since the map is not updated, we can assume that the ordering of tags in
+-  // correctedTags matches the iterator
++  // Erasing entries preserves the order of the remaining tags in correctedTags.
+   int i = -1;
+ #endif
+-  for (auto &[tag, updateValues] : updateMap_) {
++  for (auto it = updateMap_.begin(); it != updateMap_.end();) {
++    auto &[tag, updateValues] = *it;
+ #ifdef ANDROID
+     i++;
+-    if (correctedTags != nullptr && correctedTags[i] == -1) {
+-      // skip views that have not been mounted yet
+-      // on Android we start entering animations from the JS thread
+-      // so it might happen, that the first frame of the animation goes through
+-      // before the view is first mounted
+-      // https://github.com/software-mansion/react-native-reanimated/issues/7493
+-      continue;
+-    }
+ #endif
+-
+     auto layoutAnimationIt = layoutAnimations_.find(tag);
+     auto completedAnimationIt = completedAnimations_.find(tag);
+     if (layoutAnimationIt == layoutAnimations_.end() &&
+         (completedAnimationIt == completedAnimations_.end() || completedAnimationIt->second.shouldRemove)) {
++      it = updateMap_.erase(it);
++      continue;
++    }
++
++#ifdef ANDROID
++    if (correctedTags != nullptr && correctedTags[i] == -1) {
++      // A reduced-motion animation may have only one frame, before its view mounts.
++      // Keep it until a UI-thread pull can apply it; cancellation and teardown erase it.
++      // https://github.com/software-mansion/react-native-reanimated/issues/7493
++      schedulePullOnNextFrame();
++      ++it;
+       continue;
+     }
++#endif
+ 
+     auto &layoutAnimation = layoutAnimationIt != layoutAnimations_.end() ? layoutAnimationIt->second
+                                                                          : completedAnimationIt->second.animation;
+@@ -867,8 +873,8 @@ void LayoutAnimationsProxy::addOngoingAnimations(ShadowViewMutationList &mutatio
+     if (layoutAnimation.opacity && getViewProps(newView).opacity == *layoutAnimation.opacity) {
+       layoutAnimation.opacity.reset();
+     }
++    it = updateMap_.erase(it);
+   }
+-  updateMap_.clear();
+ }
+ 
+ void LayoutAnimationsProxy::endAnimationsRecursively(
+@@ -1056,10 +1062,14 @@ void LayoutAnimationsProxy::cleanupAnimations(
+     const PropsParserContext &propsParserContext,
+     const bool flushStructuralMutations) const {
+   ReanimatedSystraceSection s("cleanupAnimations");
+-  std::unordered_set<Tag> preservedContainerTags;
++  std::unordered_set<Tag> preservedTags;
++  // Completion must not discard a final frame still waiting for its native view.
++  for (const auto &[tag, _] : updateMap_) {
++    preservedTags.insert(tag);
++  }
+   if constexpr (StaticFeatureFlags::getFlag("ENABLE_SHARED_ELEMENT_TRANSITIONS")) {
+     for (const auto &[tag, _] : completedAnimations_) {
+-      if (hasPendingLayoutAnimation(tag)) {
++      if (hasPendingLayoutAnimation(tag) || preservedTags.contains(tag)) {
+         continue;
+       }
+       const auto containerIt = sharedContainers_.find(tag);
+@@ -1067,7 +1077,7 @@ void LayoutAnimationsProxy::cleanupAnimations(
+         continue;
+       }
+       if (!flushStructuralMutations) {
+-        preservedContainerTags.insert(tag);
++        preservedTags.insert(tag);
+         continue;
+       }
+       if (containerIt->second.restoreAfterNode) {
+@@ -1078,14 +1088,15 @@ void LayoutAnimationsProxy::cleanupAnimations(
+ 
+     cleanupSharedTransitions(transaction, propsParserContext);
+   }
+-  cleanupCompletedAnimations(transaction.filteredMutations, propsParserContext, true, preservedContainerTags);
++  cleanupCompletedAnimations(transaction.filteredMutations, propsParserContext, true, preservedTags);
+ }
+ 
+ #ifdef ANDROID
+ bool LayoutAnimationsProxy::hasPendingStructuralCleanup() const {
+   return std::ranges::any_of(completedAnimations_, [this](const auto &entry) {
+     const auto &[tag, completedAnimation] = entry;
+-    return !hasPendingLayoutAnimation(tag) && (completedAnimation.shouldRemove || sharedContainers_.contains(tag));
++    return !hasPendingLayoutAnimation(tag) && !updateMap_.contains(tag) &&
++        (completedAnimation.shouldRemove || sharedContainers_.contains(tag));
+   });
+ }
+ 
+diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.cpp b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.cpp
+index 0742d063666ac5579232b2f53e4117f427b7177d..3df48c377c4ad9c483d3cc6e5f4d867afd8c4032 100644
+--- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.cpp
++++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.cpp
+@@ -85,6 +85,11 @@ std::optional<SurfaceId> LayoutAnimationsProxyCommon::progressLayoutAnimation(
+   }
+
+   auto rawProps = std::make_shared<RawProps>(uiRuntime_, jsi::Value(uiRuntime_, newStyle));
++  // Rebase only the entering frame's own props, not its React base or fallback opacity.
++  folly::dynamic enteringProps = nullptr;
++  if (layoutAnimation.type == LayoutAnimationType::ENTERING) {
++    enteringProps = (folly::dynamic)*rawProps;
++  }
+   if (layoutAnimation.opacity) {
+     auto props = (folly::dynamic)*rawProps;
+     props["opacity"] = *layoutAnimation.opacity;
+@@ -97,7 +102,7 @@ std::optional<SurfaceId> LayoutAnimationsProxyCommon::progressLayoutAnimation(
+ #endif
+   auto newProps = componentDescriptorRegistry_->at(layoutAnimation.finalView.componentHandle)
+                       .cloneProps(propsParserContext, layoutAnimation.finalView.props, std::move(*rawProps));
+-  updateMap_.insert_or_assign(tag, UpdateValues{newProps, Frame(uiRuntime_, newStyle)});
++  updateMap_.insert_or_assign(tag, UpdateValues{newProps, Frame(uiRuntime_, newStyle), std::move(enteringProps)});
+
+   return surfaceId_;
+ }
+@@ -251,6 +256,13 @@ void LayoutAnimationsProxyCommon::applySynchronousPropsToLayoutAnimation(const T
+     auto pendingView = animation->finalView;
+     pendingView.props = it->second.newProps;
+     it->second.newProps = mergeSynchronousProps(pendingView, props);
++    if (!it->second.enteringProps.isNull()) {
++      for (const auto &[key, value] : props.items()) {
++        if (it->second.enteringProps.count(key) > 0) {
++          it->second.enteringProps[key] = value;
++        }
++      }
++    }
+   }
+ }
+
+@@ -265,7 +277,8 @@ ShadowView LayoutAnimationsProxyCommon::materializeLayoutAnimation(
+   auto currentView = before;
+   const auto activeAnimationIt = layoutAnimations_.find(tag);
+   if (type == LayoutAnimationType::ENTERING) {
+-    currentView = after;
++    // A pending retarget has not changed the frame submitted for native mounting.
++    currentView = before;
+   } else if (activeAnimationIt != layoutAnimations_.end()) {
+     currentView = activeAnimationIt->second.currentView;
+   } else if (const auto completedAnimationIt = completedAnimations_.find(tag);
+@@ -546,6 +559,19 @@ bool LayoutAnimationsProxyCommon::updateEnteringAnimationTarget(const Tag tag, c
+     }
+     return true;
+   }
++  if (const auto completedAnimationIt = completedAnimations_.find(tag);
++      completedAnimationIt != completedAnimations_.end() && !completedAnimationIt->second.shouldRemove &&
++      completedAnimationIt->second.animation.type == LayoutAnimationType::ENTERING && updateMap_.contains(tag)) {
++    // Preserve the queued animation values without replaying props from the old React target.
++    auto &animation = completedAnimationIt->second.animation;
++    auto &updateValues = updateMap_.at(tag);
++    updateValues.newProps = mergeSynchronousProps(finalView, updateValues.enteringProps);
++    animation.finalView = finalView;
++    if (animation.opacity) {
++      animation.opacity = getViewProps(finalView).opacity;
++    }
++    return true;
++  }
+   return false;
+ }
+
 diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsUtils.h b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsUtils.h
-index 675b1b7..dea79ba 100644
+index 675b1b7d890971d0c43522f59106f1cf20b0fe1a..af17cfe82e4d47969ddee02fa343e3c31b856e02 100644
 --- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsUtils.h
 +++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsUtils.h
-@@ -247,7 +247,9 @@ static inline bool isRNSScreenOrStack(const std::shared_ptr<LightNode> &node) {
+@@ -44,6 +44,7 @@ struct Frame {
+ struct UpdateValues {
+   Props::Shared newProps;
+   Frame frame;
++  folly::dynamic enteringProps = nullptr;
+ };
+
+ struct Snapshot {
+@@ -247,7 +248,9 @@ static inline bool isRNSScreenOrStack(const std::shared_ptr<LightNode> &node) {
    const auto componentName = node->current.componentName;
    react_native_assert(componentName && "Component name is nullptr");
    return !std::strcmp(componentName, "RNSScreenStack") || !std::strcmp(componentName, "RNSScreen") ||
