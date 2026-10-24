@@ -250,6 +250,21 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
     );
   const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
   const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
+  // A row that points into a cleared table cannot be copied, so whatever references one is
+  // cleared with it, however far down the chain a newer migration added it.
+  const references = yield* sql<{ name: string; parent: string }>`
+    SELECT m.name, f."table" AS parent FROM src.sqlite_master m, pragma_foreign_key_list(m.name, 'src') f
+    WHERE m.type = 'table'`;
+  const cleared = new Set(CLEARED_TABLES);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const { name, parent } of references) {
+      if (cleared.has(parent) && !cleared.has(name)) {
+        cleared.add(name);
+        grew = true;
+      }
+    }
+  }
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
@@ -263,7 +278,7 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
           WHERE ${rootIsVisible(sql)}`;
       }
       for (const { name } of tables) {
-        if (CLEARED_TABLES.includes(name) || virtualTables.includes(name)) continue;
+        if (cleared.has(name) || virtualTables.includes(name)) continue;
         const nullable = threadIdNullable.get(name);
         const filter = !filtered
           ? ""
