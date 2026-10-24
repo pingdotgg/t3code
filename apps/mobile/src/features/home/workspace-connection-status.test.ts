@@ -7,6 +7,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
   return {
     isLoadingConnections: false,
     hasConnections: true,
+    hasEnabledEnvironment: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
     hasSyncingConnectedEnvironment: false,
