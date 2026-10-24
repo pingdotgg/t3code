@@ -40,6 +40,7 @@ import {
   attachmentTokenAllowance,
   contextUsageForHandoff,
   historicalMessage,
+  nativeContextBytes,
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
@@ -1128,7 +1129,6 @@ export const layer: Layer.Layer<
                 (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
               )
                 return sum;
-              const historical = historicalMessage(item);
               const nativeAttachments =
                 item.type === "user_message" &&
                 item.providerThreadId === providerThread.id &&
@@ -1139,11 +1139,7 @@ export const layer: Layer.Layer<
                     !legacyRecoveredRunIds.has(item.runId)))
                   ? attachmentTokenAllowance(item.attachments)
                   : 0;
-              return (
-                sum +
-                (historical === null ? 0 : Buffer.byteLength(historical.text)) +
-                nativeAttachments
-              );
+              return sum + nativeContextBytes(item) + nativeAttachments;
             }, 0)
           : 0;
       });

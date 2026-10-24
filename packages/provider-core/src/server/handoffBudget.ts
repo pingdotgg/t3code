@@ -178,6 +178,26 @@ export function historicalMessage(
   };
 }
 
+// Agents truncate what a command prints before the model reads it (Claude Code's Bash tool keeps
+// 30,000 characters by default), so a long log does not fill the native session by its full size.
+const NATIVE_COMMAND_OUTPUT_BYTES = 30_000;
+
+/**
+ * Bytes a stored item is assumed to occupy in its provider's native session when the provider
+ * reports no usage. Full command output would overstate it and block switches that still fit.
+ */
+export function nativeContextBytes(item: OrchestrationV2TurnItem): number {
+  const historical = historicalMessage(item);
+  if (historical === null) return 0;
+  if (item.type !== "command_execution") return Buffer.byteLength(historical.text);
+  const output = item.output ?? "";
+  const withoutOutput = historical.text.slice(0, historical.text.length - output.length);
+  return (
+    Buffer.byteLength(withoutOutput) +
+    Math.min(Buffer.byteLength(output), NATIVE_COMMAND_OUTPUT_BYTES)
+  );
+}
+
 function renderHistoricalMessage(message: OrchestrationV2HistoricalMessage): string {
   return `[Historical ${message.role}; ${message.kind}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]\n${message.text}`;
 }

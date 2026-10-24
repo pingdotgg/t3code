@@ -23,6 +23,7 @@ import {
   historyResponseItems,
   selectHistory,
   historicalMessage,
+  nativeContextBytes,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
@@ -148,6 +149,36 @@ describe("handoff budget", () => {
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
   });
 
+  it("counts a long command's output only up to what an agent keeps", () => {
+    const item = (output: string) => ({
+      id: TurnItemId.make("item:long-command"),
+      threadId,
+      runId: RunId.make("run:source"),
+      nodeId: null,
+      providerThreadId: providerThread.id,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "command_execution" as const,
+      input: "vp test",
+      output,
+      exitCode: 0,
+    });
+    const short = nativeContextBytes(item("ok"));
+    // Everything a short output adds is counted, and a 274 KB log counts as the cap, not 274 KB.
+    assert.equal(nativeContextBytes(item("x".repeat(1_000))), short + 998);
+    assert.equal(nativeContextBytes(item("x".repeat(274_000))), short - 2 + 30_000);
+    assert.equal(
+      nativeContextBytes(item("x".repeat(30_000))),
+      nativeContextBytes(item("x".repeat(274_000))),
+    );
+  });
   it("omits oversized multilingual items whole, preserves original constraints and recent work", () => {
     const candidates = [
       messages[0]!,
