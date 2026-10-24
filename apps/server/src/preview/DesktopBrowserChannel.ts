@@ -52,6 +52,8 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
+    /** Whether a desktop window draws the tab on screen, which no streamed viewer counts. */
+    readonly isShown: (key: DesktopTabKey) => boolean;
     readonly endpoint: (key: DesktopTabKey) => Effect.Effect<string, never, Scope.Scope>;
     readonly pointer: (
       key: DesktopTabKey,
@@ -66,6 +68,8 @@ const make = Effect.gen(function* () {
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
+  // Only attached tabs count: the desktop re-sends `shown` when a tab attaches again.
+  const shownTabs = new Set<string>();
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
 
@@ -76,6 +80,7 @@ const make = Effect.gen(function* () {
       detached: Stream.empty,
       attached: Stream.empty,
       isAttached: () => Effect.succeed(false),
+      isShown: () => false,
       endpoint: () => Effect.die("No desktop app is attached to this server."),
       pointer: () => Effect.void,
     });
@@ -119,14 +124,20 @@ const make = Effect.gen(function* () {
           return PubSub.publish(changes, { key, attached: true });
         case "detached": {
           attachedTabs.delete(id);
+          shownTabs.delete(id);
           const queue = inbound.get(id);
           return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
             Effect.andThen(PubSub.publish(changes, { key, attached: false })),
           );
         }
+        case "shown":
+          if (event.shown) shownTabs.add(id);
+          else shownTabs.delete(id);
+          return Effect.void;
       }
     }),
     Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
+    Effect.ensuring(Effect.sync(() => shownTabs.clear())),
     Effect.forkScoped,
   );
 
@@ -214,6 +225,7 @@ const make = Effect.gen(function* () {
       Stream.map((change) => change.key),
     ),
     isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),
+    isShown: (key) => shownTabs.has(keyOf(key)),
     endpoint,
     pointer: (key, pointer) => command({ type: "pointer", ...key, ...pointer }),
   });
