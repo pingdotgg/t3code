@@ -8,6 +8,7 @@ import {
   type TerminalRestartInput,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -32,6 +33,8 @@ import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -981,6 +984,64 @@ it.layer(
     }),
   );
 
+  it.effect.each(["setup", "settle"] as const)(
+    "observes %s completion in the fallback shell instead of the configured fish shell",
+    (trigger) =>
+      Effect.gen(function* () {
+        const env = { SHELL: "/missing/fish" };
+        const { manager, ptyAdapter, baseDir } = yield* createManager(5, { env }).pipe(
+          Effect.provide(layerWithHostPlatform("linux")),
+        );
+        ptyAdapter.spawnFailures.push(new Error("spawn fish ENOENT"));
+        const runner = yield* ProjectSetupScriptRunner.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(TerminalManager.TerminalManager, manager),
+              Layer.mock(ProjectService.ProjectService)({}),
+              ServerSettings.layerTest(),
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(HostProcess.Environment, env),
+            ),
+          ),
+        );
+        const result = yield* runner.runForThread({
+          threadId: "thread-setup-fallback",
+          worktreePath: baseDir,
+          trigger,
+          project: {
+            id: ProjectId.make("project-setup-fallback"),
+            workspaceRoot: baseDir,
+            scripts: [
+              {
+                id: "setup",
+                name: "Setup",
+                command: "echo setup-ready",
+                icon: "play",
+                runOnWorktreeCreate: true,
+                runOnSettle: true,
+              },
+            ],
+          },
+          observeCompletion: {},
+        });
+        expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+          "/missing/fish",
+          "/bin/zsh",
+        ]);
+        const process = ptyAdapter.processes[0]!;
+        const command = process.writes[0]!;
+        expect(command).toContain('"$?"');
+        expect(command).not.toContain("$status");
+        const sentinel = /__T3_SETUP_DONE__[a-zA-Z0-9_]+:/.exec(command)?.[0];
+        assert.isDefined(sentinel);
+        assert.equal(result.status, "started");
+        if (result.status !== "started") return;
+        assert.isDefined(result.completion);
+        process.emitData(`setup-ready\r\n${sentinel}0\r\nprompt> `);
+        expect((yield* result.completion!).exitCode).toBe(0);
+      }),
+  );
+
   it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1071,7 +1132,65 @@ it.layer(
       ]);
       expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
       expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
+      expect(yield* manager.getShell(openInput())).toBe(
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      );
     }),
+  );
+
+  it.effect.each([false, true])(
+    "rejects cmd fallback and closes only an idle terminal (busy: %s)",
+    (hasRunningSubprocess) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+          env: { SystemRoot: "C:\\Windows" },
+          subprocessInspector: () =>
+            Effect.succeed({
+              hasRunningSubprocess,
+              childCommand: hasRunningSubprocess ? "node" : null,
+              processIds: [],
+            }),
+        }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+        ptyAdapter.spawnFailures.push(
+          new Error("spawn pwsh ENOENT"),
+          new Error("spawn WindowsPowerShell ENOENT"),
+          new Error("spawn powershell ENOENT"),
+        );
+        const runner = yield* ProjectSetupScriptRunner.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(TerminalManager.TerminalManager, manager),
+              Layer.mock(ProjectService.ProjectService)({}),
+              ServerSettings.layerTest(),
+            ),
+          ),
+        );
+        const error = yield* runner
+          .runForThread({
+            threadId: "thread-cmd-fallback",
+            worktreePath: baseDir,
+            project: {
+              id: ProjectId.make("project-cmd-fallback"),
+              workspaceRoot: baseDir,
+              scripts: [
+                {
+                  id: "setup",
+                  name: "Setup",
+                  command: "echo setup-ready",
+                  icon: "play",
+                  runOnWorktreeCreate: true,
+                },
+              ],
+            },
+            observeCompletion: {},
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
+        expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
+        expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+        expect(ptyAdapter.processes[0]?.killed).toBe(!hasRunningSubprocess);
+      }),
   );
 
   it.effect("turns off fish terminal queries unless the user chose query-term", () =>

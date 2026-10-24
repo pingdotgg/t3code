@@ -1,5 +1,4 @@
 import { ProjectId, type ProjectScript } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   projectScriptRuntimeEnv,
   projectScriptTerminalInput,
@@ -99,9 +98,19 @@ export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedError<P
   }
 }
 
+export class ProjectSetupScriptUnsupportedShellError extends Schema.TaggedError<ProjectSetupScriptUnsupportedShellError>()(
+  "ProjectSetupScriptUnsupportedShellError",
+  { shell: Schema.String },
+) {
+  override get message(): string {
+    return "Project script completion is not supported in cmd.exe. Install PowerShell and retry.";
+  }
+}
+
 export const ProjectSetupScriptRunnerError = Schema.Union([
   ProjectSetupScriptOperationError,
   ProjectSetupScriptProjectNotFoundError,
+  ProjectSetupScriptUnsupportedShellError,
 ]);
 export type ProjectSetupScriptRunnerError = typeof ProjectSetupScriptRunnerError.Type;
 
@@ -146,13 +155,9 @@ function stripTerminalControl(text: string): string {
 
 type CompletionShell = "posix" | "fish" | "powershell";
 
-function resolveCompletionShell(
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv,
-): CompletionShell {
-  if (platform === "win32") return "powershell";
-  const shell = env.SHELL ?? "";
-  const name = shell.split("/").at(-1) ?? shell;
+function resolveCompletionShell(shell: string): CompletionShell | null {
+  const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+  if (name === "cmd") return null;
   if (name === "fish") return "fish";
   if (name === "pwsh" || name === "powershell") return "powershell";
   return "posix";
@@ -186,10 +191,6 @@ export const make = Effect.gen(function* () {
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
-  const completionShell = resolveCompletionShell(
-    yield* HostProcess.Platform,
-    yield* HostProcess.Environment,
-  );
 
   const observeTerminalCompletion = Effect.fn("ProjectSetupScriptRunner.observeTerminalCompletion")(
     function* (input: {
@@ -368,15 +369,6 @@ export const make = Effect.gen(function* () {
     const completionToken = observe
       ? (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).replaceAll("-", "")
       : null;
-    const commandLine =
-      observe && completionToken
-        ? wrapCommandForCompletion(
-            script.command,
-            completionShell,
-            completionSentinel(completionToken),
-          )
-        : script.command;
-
     yield* terminalManager
       .open({
         threadId: input.threadId,
@@ -395,6 +387,29 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+    let commandLine = script.command;
+    if (observe && completionToken) {
+      const shell = yield* terminalManager.getShell({ threadId: input.threadId, terminalId }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectSetupScriptOperationError({
+              ...errorContext,
+              operation: "openTerminal",
+              cause,
+            }),
+        ),
+      );
+      const completionShell = resolveCompletionShell(shell);
+      if (completionShell === null) {
+        yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
+        return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
+      }
+      commandLine = wrapCommandForCompletion(
+        script.command,
+        completionShell,
+        completionSentinel(completionToken),
+      );
+    }
     // Subscribe before writing so the sentinel cannot race past the listener.
     const observed =
       observe && completionToken
