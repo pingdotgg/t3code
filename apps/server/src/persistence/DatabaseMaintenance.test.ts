@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -99,6 +101,14 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* sql`INSERT INTO discarded_data VALUES (zeroblob(4194304))`;
           yield* sql`DROP TABLE discarded_data`;
           yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+          yield* sql`INSERT INTO orchestration_v2_legacy_imports (
+            thread_id, source_updated_at, shell_imported_at, transcript_imported_at, imported_message_count
+          ) VALUES ('imported', '2026-10-17', '2026-10-17', '2026-10-17', 0)`;
+          yield* sql`WITH RECURSIVE history(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 51
+          ) INSERT INTO orchestration_command_receipts (
+            command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status, command_type
+          ) SELECT 'legacy-' || n, 'thread', 'imported', '2026-10-17', 0, 'accepted', 'legacy' FROM history`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
 
         // A server that merely has the database open, like an idle one, is enough to refuse.
@@ -111,7 +121,22 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         assert.equal(refused._tag, "DatabaseInUseError");
         assert.equal((yield* fs.stat(dbPath)).size, sizeBefore);
 
-        const result = yield* maintenance.compact(dbPath);
+        const clock = yield* Clock.Clock;
+        const pauses: number[] = [];
+        let activeNanos = 0n;
+        const result = yield* maintenance.compact(dbPath).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            // Exceed the background budget whenever the compactor checks elapsed time.
+            monotonicTimeNanos: Effect.sync(() => (activeNanos += 30_000_000n)),
+            sleep: (duration) =>
+              Effect.sync(() => {
+                pauses.push(Duration.toMillis(duration));
+              }),
+          }),
+        );
+        assert.deepEqual(pauses, [], "offline doctor must not throttle compaction");
+        assert.equal(result.deletedReceiptCount, 51);
         // The 4 MiB of free pages are returned to the filesystem.
         assert.isBelow(result.afterBytes, result.beforeBytes - 3 * 1024 * 1024);
         yield* Effect.gen(function* () {

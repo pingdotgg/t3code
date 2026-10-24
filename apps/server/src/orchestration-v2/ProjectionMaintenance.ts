@@ -32,7 +32,7 @@ export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMai
 export interface ProjectionMaintenanceV2Shape {
   readonly verify: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
   readonly rebuild: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
-  readonly compactEventStore: Effect.Effect<
+  readonly compactEventStore: (betweenPages?: Effect.Effect<void>) => Effect.Effect<
     {
       readonly deletedEventCount: number;
       readonly deletedReceiptCount: number;
@@ -227,7 +227,8 @@ export const layer: Layer.Layer<
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
     // Keep subagent.updated and turn-item.updated rows: slimmed payloads reference their prompts.
-    // Small pages bound work on the reader worker and synchronous fallback.
+    // Bound each reader request and writer delete, including when the reader
+    // worker is unavailable and discovery falls back to the writer.
     const COMPACTION_PAGE_SIZE = 50;
 
     /**
@@ -240,7 +241,9 @@ export const layer: Layer.Layer<
      * still scan the entire history when superseded events are sparse.
      * turn-item.updated stays intact because replay assigns positions on first write.
      */
-    const compactEventStore = Effect.gen(function* () {
+    const compactEventStore = Effect.fnUntraced(function* (
+      betweenPages: Effect.Effect<void> = Effect.void,
+    ) {
       const bounds = yield* sql<{
         readonly event_sequence: number;
         readonly receipt_row_id: number;
@@ -248,7 +251,7 @@ export const layer: Layer.Layer<
         SELECT
           COALESCE((SELECT MAX(sequence) FROM orchestration_events), 0) AS event_sequence,
           COALESCE((SELECT MAX(rowid) FROM orchestration_command_receipts), 0) AS receipt_row_id
-      `;
+      `.pipe(NodeSqliteClient.readOnly);
       let throughSequence = bounds[0]?.event_sequence ?? 0;
       let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
       const retainedThreadIds = new Set<string>();
@@ -298,10 +301,11 @@ export const layer: Layer.Layer<
           FROM orchestration_events AS event
           WHERE event.sequence <= ${throughSequence}
           ORDER BY event.sequence DESC
-          LIMIT ${COMPACTION_PAGE_SIZE}
+          LIMIT ${COMPACTION_PAGE_SIZE + 1}
         `.pipe(NodeSqliteClient.readOnly);
+        const page = rows.slice(0, COMPACTION_PAGE_SIZE);
         const obsolete: number[] = [];
-        for (const row of rows) {
+        for (const row of page) {
           if (row.imported_legacy_thread === 1) {
             obsolete.push(row.sequence);
           } else if (row.application_event_version === 2) {
@@ -342,15 +346,16 @@ export const layer: Layer.Layer<
             }
           }
         }
-        // Yield even without deletions for clients using the synchronous fallback.
+        // Never hold a transaction or the reader lock across a yield or a rest.
         yield* Effect.yieldNow;
         if (obsolete.length > 0) {
           yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
           deletedEventCount += obsolete.length;
           yield* Effect.yieldNow;
         }
-        throughSequence = (rows.at(-1)?.sequence ?? 1) - 1;
-        if (rows.length < COMPACTION_PAGE_SIZE) break;
+        throughSequence =
+          rows.length <= COMPACTION_PAGE_SIZE ? 0 : (page.at(-1)?.sequence ?? 1) - 1;
+        if (throughSequence > 0 || throughReceiptRowId > 0) yield* betweenPages;
       }
 
       while (throughReceiptRowId > 0) {
@@ -374,9 +379,10 @@ export const layer: Layer.Layer<
           FROM orchestration_command_receipts AS receipt
           WHERE receipt.rowid <= ${throughReceiptRowId}
           ORDER BY receipt.rowid DESC
-          LIMIT ${COMPACTION_PAGE_SIZE}
+          LIMIT ${COMPACTION_PAGE_SIZE + 1}
         `.pipe(NodeSqliteClient.readOnly);
-        const obsolete = rows
+        const page = rows.slice(0, COMPACTION_PAGE_SIZE);
+        const obsolete = page
           .filter((row) => row.imported_legacy_thread === 1)
           .map((row) => row.command_id);
         yield* Effect.yieldNow;
@@ -385,8 +391,9 @@ export const layer: Layer.Layer<
           deletedReceiptCount += obsolete.length;
           yield* Effect.yieldNow;
         }
-        throughReceiptRowId = (rows.at(-1)?.row_id ?? 1) - 1;
-        if (rows.length < COMPACTION_PAGE_SIZE) break;
+        throughReceiptRowId = (page.at(-1)?.row_id ?? 1) - 1;
+        if (rows.length <= COMPACTION_PAGE_SIZE) break;
+        yield* betweenPages;
       }
 
       const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
@@ -395,12 +402,12 @@ export const layer: Layer.Layer<
         (freelistRows[0]?.freelist_count ?? 0) * (pageSizeRows[0]?.page_size ?? 0);
 
       return { deletedEventCount, deletedReceiptCount, reclaimableBytes };
-    });
+    }, mapError("compact event store"));
 
     return ProjectionMaintenanceV2.of({
       verify: mapError("verify")(verify),
       rebuild: mapError("rebuild")(rebuild),
-      compactEventStore: mapError("compact event store")(compactEventStore),
+      compactEventStore,
     });
   }),
 );
