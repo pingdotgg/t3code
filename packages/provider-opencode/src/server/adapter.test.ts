@@ -2191,6 +2191,142 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  it.effect.each([
+    { kind: "root", nativeParentId: undefined },
+    { kind: "task child", nativeParentId: "ses_native_parent" },
+  ])("resumes a $kind native session from Auto under Full access", ({ nativeParentId }) =>
+    Effect.gen(function* () {
+      const nativeSessions = new Map<string, Record<string, unknown>>();
+      const updateInputs: Array<unknown> = [];
+      const fakeClient = {
+        event: {
+          subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
+            stream: {
+              [Symbol.asyncIterator]: () => ({
+                next: () =>
+                  new Promise<IteratorResult<never>>((resolve) => {
+                    const done = () => resolve({ done: true, value: undefined });
+                    if (options?.signal?.aborted) return done();
+                    options?.signal?.addEventListener("abort", done, { once: true });
+                  }),
+              }),
+            },
+          }),
+        },
+        session: {
+          create: async (input: { readonly permission?: unknown }) => {
+            const nativeSession = {
+              id: "ses_native_auto",
+              permission: input.permission,
+              time: { created: 1, updated: 1 },
+            };
+            nativeSessions.set(nativeSession.id, nativeSession);
+            return { data: nativeSession };
+          },
+          get: async ({ sessionID }: { readonly sessionID: string }) => ({
+            data: nativeSessions.get(sessionID),
+          }),
+          update: async (input: { readonly sessionID: string; readonly permission?: unknown }) => {
+            updateInputs.push(input);
+            const nativeSession = { ...nativeSessions.get(input.sessionID), ...input };
+            nativeSessions.set(input.sessionID, nativeSession);
+            return { data: nativeSession };
+          },
+        },
+      } as unknown as OpencodeClient;
+      const unused = (operation: string) => () => Effect.die(`${operation} is not used`);
+      const runtime: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
+        startOpenCodeServerProcess: unused("startOpenCodeServerProcess"),
+        connectToOpenCodeServer: () =>
+          Effect.succeed({
+            url: "test://opencode",
+            version: "test",
+            exitCode: null,
+            external: true,
+          }),
+        runOpenCodeCommand: unused("runOpenCodeCommand"),
+        createOpenCodeSdkClient: () => fakeClient,
+        loadOpenCodeInventory: unused("loadOpenCodeInventory"),
+        loadInventoryFromCli: unused("loadInventoryFromCli"),
+        loadOpenCodeSkills: unused("loadOpenCodeSkills"),
+        loadSkillsFromCli: unused("loadSkillsFromCli"),
+      };
+      const instanceId = ProviderInstanceId.make("opencode");
+      const threadId = ThreadId.make("thread-opencode-mode-switch");
+      const modelSelection = { instanceId, model: "default" };
+      const auto = runtimePolicy("auto");
+      const fullAccess = runtimePolicy("full-access");
+      const adapter = yield* makeOpenCodeAdapterV2({
+        instanceId,
+        settings: OPENCODE_TEST_SETTINGS,
+        environment: {},
+      }).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
+      const autoSession = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-opencode-auto"),
+        modelSelection,
+        runtimePolicy: auto,
+      });
+      const providerThread = yield* autoSession.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: auto,
+      });
+      assert.deepEqual(
+        nativeSessions.get("ses_native_auto")?.permission,
+        openCodePermissionRules(auto),
+      );
+      assert.equal(permissionAction(openCodePermissionRules(auto), "edit"), "ask");
+
+      // Switching the composer to Full access reloads the existing native
+      // session under the new policy; its creation-time Auto rules must not
+      // survive, or OpenCode keeps asking for edits and shell commands.
+      const fullAccessSession = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-opencode-full-access"),
+        modelSelection,
+        runtimePolicy: fullAccess,
+      });
+      // A native task child carries agent-specific restrictions, such as no
+      // nested tasks, that the root policy cannot reproduce. The fresh
+      // provider session has no in-memory child marker; only parentID says so.
+      const childPermission = openCodeChildPermissionRules(auto, [
+        { permission: "task", pattern: "*", action: "deny" },
+      ]);
+      if (nativeParentId !== undefined) {
+        nativeSessions.set("ses_native_auto", {
+          ...nativeSessions.get("ses_native_auto"),
+          parentID: nativeParentId,
+          permission: childPermission,
+        });
+      }
+      yield* fullAccessSession.ensureThread({
+        existingProviderThread: providerThread,
+        threadId,
+        modelSelection,
+        runtimePolicy: fullAccess,
+      });
+
+      if (nativeParentId === undefined) {
+        assert.deepEqual(updateInputs, [
+          { sessionID: "ses_native_auto", permission: openCodePermissionRules(fullAccess) },
+        ]);
+      } else {
+        assert.deepEqual(updateInputs, []);
+        assert.deepEqual(nativeSessions.get("ses_native_auto")?.permission, childPermission);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+  );
+
   it("maps runtime modes to safe OpenCode permission rules", () => {
     const approvalRequired = openCodePermissionRules(runtimePolicy("approval-required"));
     assert.equal(permissionAction(approvalRequired, "read"), "allow");

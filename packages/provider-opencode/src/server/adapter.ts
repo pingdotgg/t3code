@@ -3009,6 +3009,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
+                  runtimePolicy: threadInput.runtimePolicy,
                 });
               }
               // No title: OpenCode generates one from the first prompt only when
@@ -3064,7 +3065,21 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const response = yield* sdkCall("session.get", { sessionID: sessionId }, () =>
                 client.session.get({ sessionID: sessionId }),
               );
-              const nativeSession = unwrapData("session.get", response);
+              let nativeSession = unwrapData("session.get", response);
+              // OpenCode keeps the rules a session was created with, so a
+              // runtime mode change must replace them or the old mode's
+              // approvals survive the switch. Task child sessions carry
+              // agent-specific restrictions the root policy cannot rebuild,
+              // so their rules stay as installed when the task started.
+              if (threadInput.runtimePolicy !== undefined && nativeSession.parentID === undefined) {
+                const permission = openCodePermissionRules(threadInput.runtimePolicy);
+                nativeSession = unwrapData(
+                  "session.update",
+                  yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
+                    client.session.update({ sessionID: sessionId, permission }),
+                  ),
+                );
+              }
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,
