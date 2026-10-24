@@ -61,10 +61,13 @@ export function presentThreadLinkedPullRequests(
   const snapshot = link.snapshot;
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;
+  // A mixed aggregate has no state, so it renders muted like a pending one.
   const state = isMultiple
     ? badge.state === "draft"
       ? "open"
-      : badge.state
+      : badge.state === "mixed"
+        ? null
+        : badge.state
     : (snapshot?.state ?? null);
   const isDraft = isMultiple
     ? badge.state === "draft"
@@ -88,7 +91,9 @@ export function presentThreadLinkedPullRequests(
       badge.kind === "stack"
         ? `${badge.layers} pull requests in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
         : linkedCount !== null
-          ? `${linkedCount} linked pull requests, overall ${badge.state}`
+          ? badge.state === "mixed"
+            ? `${linkedCount} linked pull requests in different states`
+            : `${linkedCount} linked pull requests, overall ${badge.state}`
           : `#${link.number} pull request ${state === null ? "status pending" : isDraft ? "draft" : state}`,
     textClassName:
       state === null || isDraft

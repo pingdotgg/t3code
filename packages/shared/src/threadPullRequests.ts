@@ -258,15 +258,20 @@ export function resolveThreadPullRequestChains(
   return chains;
 }
 
-export type ThreadPullRequestBadge = {
-  readonly state: "open" | "closed" | "merged" | "draft";
-} & (
+type ThreadPullRequestBadgeState = "open" | "closed" | "merged" | "draft";
+
+export type ThreadPullRequestBadge =
   | {
       readonly kind: "stack";
       readonly layers: number;
+      readonly state: ThreadPullRequestBadgeState;
     }
-  | { readonly kind: "pull-request"; readonly others: number }
-);
+  | {
+      readonly kind: "pull-request";
+      readonly others: number;
+      // Unrelated pull requests in different states have no honest overall state.
+      readonly state: ThreadPullRequestBadgeState | "mixed";
+    };
 
 export function resolveThreadPullRequestBadge(
   pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
@@ -285,7 +290,11 @@ export function resolveThreadPullRequestBadge(
   if (visible.length > 1 && chains.length === 1) {
     return { kind: "stack", layers: visible.length, state };
   }
-  return { kind: "pull-request", others: visible.length - 1, state };
+  return {
+    kind: "pull-request",
+    others: visible.length - 1,
+    state: states.every((entry) => entry === states[0]) ? state : "mixed",
+  };
 }
 
 export function threadPullRequestSearchTerms(thread: {

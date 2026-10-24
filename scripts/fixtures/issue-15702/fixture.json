@@ -1,0 +1,220 @@
+{
+  "createdBy": "system",
+  "creationSource": "server",
+  "id": "thread:project:5f49e3aa-19b5-4b71-894f-a086db07d95e:73f117d9-b656-48aa-8975-285bc381c11d",
+  "projectId": "5f49e3aa-19b5-4b71-894f-a086db07d95e",
+  "title": "Mixed PR badge \u2014 3 open, 3 closed",
+  "providerInstanceId": "codex",
+  "modelSelection": {
+    "instanceId": "codex",
+    "model": "gpt-6-astra"
+  },
+  "runtimeMode": "full-access",
+  "interactionMode": "default",
+  "branch": null,
+  "worktreePath": null,
+  "pullRequests": [
+    {
+      "host": "github.com",
+      "repository": "t3-badge-fixture/repro",
+      "number": 15694,
+      "url": "https://github.com/t3-badge-fixture/repro/pull/15694",
+      "source": "manual",
+      "linkedAt": "2026-10-22T06:00:00.000Z",
+      "snapshot": {
+        "state": "closed",
+        "title": "Badge fixture 1",
+        "headBranch": "fixture-0",
+        "baseBranch": "main",
+        "isDraft": false,
+        "updatedAt": "2026-10-22T06:00:00.000Z",
+        "syncedAt": "2026-10-22T06:00:00.000Z",
+        "closedAt": "2026-10-22T06:00:00.000Z",
+        "mergedAt": null,
+        "author": {
+          "login": "fixture",
+          "name": "Fixture",
+          "avatarUrl": null
+        },
+        "additions": 10,
+        "deletions": 2,
+        "changedFiles": 1,
+        "reviewDecision": "approved",
+        "checksState": "passing",
+        "mergeability": "mergeable"
+      },
+      "stack": null
+    },
+    {
+      "host": "github.com",
+      "repository": "t3-badge-fixture/repro",
+      "number": 15692,
+      "url": "https://github.com/t3-badge-fixture/repro/pull/15692",
+      "source": "manual",
+      "linkedAt": "2026-10-22T06:00:00.000Z",
+      "snapshot": {
+        "state": "closed",
+        "title": "Badge fixture 2",
+        "headBranch": "fixture-1",
+        "baseBranch": "main",
+        "isDraft": false,
+        "updatedAt": "2026-10-22T06:00:00.000Z",
+        "syncedAt": "2026-10-22T06:00:00.000Z",
+        "closedAt": "2026-10-22T06:00:00.000Z",
+        "mergedAt": null,
+        "author": {
+          "login": "fixture",
+          "name": "Fixture",
+          "avatarUrl": null
+        },
+        "additions": 10,
+        "deletions": 2,
+        "changedFiles": 1,
+        "reviewDecision": "approved",
+        "checksState": "passing",
+        "mergeability": "mergeable"
+      },
+      "stack": null
+    },
+    {
+      "host": "github.com",
+      "repository": "t3-badge-fixture/repro",
+      "number": 15680,
+      "url": "https://github.com/t3-badge-fixture/repro/pull/15680",
+      "source": "manual",
+      "linkedAt": "2026-10-22T06:00:00.000Z",
+      "snapshot": {
+        "state": "closed",
+        "title": "Badge fixture 3",
+        "headBranch": "fixture-2",
+        "baseBranch": "main",
+        "isDraft": false,
+        "updatedAt": "2026-10-22T06:00:00.000Z",
+        "syncedAt": "2026-10-22T06:00:00.000Z",
+        "closedAt": "2026-10-22T06:00:00.000Z",
+        "mergedAt": null,
+        "author": {
+          "login": "fixture",
+          "name": "Fixture",
+          "avatarUrl": null
+        },
+        "additions": 10,
+        "deletions": 2,
+        "changedFiles": 1,
+        "reviewDecision": "approved",
+        "checksState": "passing",
+        "mergeability": "mergeable"
+      },
+      "stack": null
+    },
+    {
+      "host": "github.com",
+      "repository": "t3-badge-fixture/repro",
+      "number": 15697,
+      "url": "https://github.com/t3-badge-fixture/repro/pull/15697",
+      "source": "manual",
+      "linkedAt": "2026-10-22T06:00:00.000Z",
+      "snapshot": {
+        "state": "open",
+        "title": "Badge fixture 4",
+        "headBranch": "fixture-3",
+        "baseBranch": "main",
+        "isDraft": false,
+        "updatedAt": "2026-10-22T06:00:00.000Z",
+        "syncedAt": "2026-10-22T06:00:00.000Z",
+        "closedAt": null,
+        "mergedAt": null,
+        "author": {
+          "login": "fixture",
+          "name": "Fixture",
+          "avatarUrl": null
+        },
+        "additions": 10,
+        "deletions": 2,
+        "changedFiles": 1,
+        "reviewDecision": "approved",
+        "checksState": "passing",
+        "mergeability": "mergeable"
+      },
+      "stack": null
+    },
+    {
+      "host": "github.com",
+      "repository": "t3-badge-fixture/repro",
+      "number": 15698,
+      "url": "https://github.com/t3-badge-fixture/repro/pull/15698",
+      "source": "manual",
+      "linkedAt": "2026-10-22T06:00:00.000Z",
+      "snapshot": {
+        "state": "open",
+        "title": "Badge fixture 5",
+        "headBranch": "fixture-4",
+        "baseBranch": "main",
+        "isDraft": false,
+        "updatedAt": "2026-10-22T06:00:00.000Z",
+        "syncedAt": "2026-10-22T06:00:00.000Z",
+        "closedAt": null,
+        "mergedAt": null,
+        "author": {
+          "login": "fixture",
+          "name": "Fixture",
+          "avatarUrl": null
+        },
+        "additions": 10,
+        "deletions": 2,
+        "changedFiles": 1,
+        "reviewDecision": "approved",
+        "checksState": "passing",
+        "mergeability": "mergeable"
+      },
+      "stack": null
+    },
+    {
+      "host": "github.com",
+      "repository": "t3-badge-fixture/repro",
+      "number": 15699,
+      "url": "https://github.com/t3-badge-fixture/repro/pull/15699",
+      "source": "manual",
+      "linkedAt": "2026-10-22T06:00:00.000Z",
+      "snapshot": {
+        "state": "open",
+        "title": "Badge fixture 6",
+        "headBranch": "fixture-5",
+        "baseBranch": "main",
+        "isDraft": false,
+        "updatedAt": "2026-10-22T06:00:00.000Z",
+        "syncedAt": "2026-10-22T06:00:00.000Z",
+        "closedAt": null,
+        "mergedAt": null,
+        "author": {
+          "login": "fixture",
+          "name": "Fixture",
+          "avatarUrl": null
+        },
+        "additions": 10,
+        "deletions": 2,
+        "changedFiles": 1,
+        "reviewDecision": "approved",
+        "checksState": "passing",
+        "mergeability": "mergeable"
+      },
+      "stack": null
+    }
+  ],
+  "activeProviderThreadId": null,
+  "lineage": {
+    "parentThreadId": null,
+    "relationshipToParent": null,
+    "rootThreadId": "thread:project:5f49e3aa-19b5-4b71-894f-a086db07d95e:73f117d9-b656-48aa-8975-285bc381c11d"
+  },
+  "forkedFrom": null,
+  "createdAt": "2026-10-22T06:00:00.000Z",
+  "updatedAt": "2026-10-22T06:00:00.000Z",
+  "archivedAt": null,
+  "settledOverride": null,
+  "settledAt": null,
+  "snoozedUntil": null,
+  "snoozedAt": null,
+  "lastVisitedAt": "2026-10-22T06:00:00.000Z",
+  "deletedAt": null
+}
