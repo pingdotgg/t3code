@@ -139,28 +139,40 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     deactivateRef.current = registerWorkspaceInspector(wrappedRender);
   });
 
-  useFocusEffect(() => {
-    focusedRef.current = true;
-    syncRegistration();
-    return () => {
+  useEffect(() => {
+    if (navigation === undefined) {
+      return;
+    }
+    const focus = () => {
+      if (focusedRef.current) {
+        return;
+      }
+      focusedRef.current = true;
+      syncRegistration();
+    };
+    const blur = () => {
       focusedRef.current = false;
       syncRegistration();
     };
-  });
+    if (navigation.isFocused()) {
+      focus();
+    }
+    const unsubscribeFocus = navigation.addListener("focus", focus);
+    const unsubscribeBlur = navigation.addListener("blur", blur);
+    return () => {
+      unsubscribeFocus();
+      unsubscribeBlur();
+      focusedRef.current = false;
+      deactivateRef.current?.();
+      deactivateRef.current = null;
+    };
+  }, [navigation]);
 
   useEffect(() => {
     if (focusedRef.current) {
       syncRegistration();
     }
   }, [wrappedRender]);
-
-  useEffect(
-    () => () => {
-      deactivateRef.current?.();
-      deactivateRef.current = null;
-    },
-    [],
-  );
 }
 
 export function AdaptiveWorkspaceLayout(props: {
