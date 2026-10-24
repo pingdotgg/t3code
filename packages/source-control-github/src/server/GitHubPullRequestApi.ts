@@ -1900,7 +1900,7 @@ export const make = Effect.gen(function* () {
       // with no rows rather than with an error — so an empty listing is read again from the
       // repository's own list.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
-      return read(true).pipe(
+      const listed = read(true).pipe(
         Effect.filterOrElse(
           (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
           () => read(false),
@@ -1941,26 +1941,32 @@ export const make = Effect.gen(function* () {
             Effect.map((items) => ({ ...batch, items })),
           );
         }),
-        // GitHub answers a private repository the token cannot see as missing, so the reader is
-        // told which credential that was: a saved token quietly overrides GH_TOKEN and gh.
-        Effect.catchTags({
-          GitHubApiNotFoundError: (error) =>
-            api.credential(input.host).pipe(
-              Effect.map(({ source }) => source),
-              Effect.orElseSucceed(() => undefined),
-              Effect.flatMap((credential) =>
-                Effect.fail(
-                  credential === undefined
-                    ? error
-                    : new GitHubRequestPolicy.GitHubApiNotFoundError({
-                        host: error.host,
-                        operation: error.operation,
-                        credential,
-                      }),
+      );
+      // GitHub answers a private repository the token cannot see as missing, so the reader is
+      // told which credential that was: a saved token quietly overrides GH_TOKEN and gh. One that
+      // changed during the read goes unnamed rather than misnamed.
+      const activeCredential = api.credential(input.host).pipe(Effect.orElseSucceed(() => null));
+      return activeCredential.pipe(
+        Effect.flatMap((before) =>
+          listed.pipe(
+            Effect.catchTags({
+              GitHubApiNotFoundError: (error) =>
+                activeCredential.pipe(
+                  Effect.flatMap((after) =>
+                    Effect.fail(
+                      before?.source === undefined || after?.fingerprint !== before.fingerprint
+                        ? error
+                        : new GitHubRequestPolicy.GitHubApiNotFoundError({
+                            host: error.host,
+                            operation: error.operation,
+                            credential: before.source,
+                          }),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-        }),
+            }),
+          ),
+        ),
       );
     },
 
