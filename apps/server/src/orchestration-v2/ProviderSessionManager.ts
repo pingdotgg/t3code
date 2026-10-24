@@ -642,6 +642,13 @@ export const layerWithOptions = (
             ? "Provider session failed before this runtime request was resolved."
             : "Provider session was closed before this runtime request was resolved.";
 
+        // Shutdown recovery runs next and decides which of these questions can
+        // still be answered after the restart.
+        const leaveQuestionsToRecovery =
+          input.reason === "server_shutdown" &&
+          input.entry.runtime.providerSession.capabilities.sessions
+            .questionsAnswerableAfterRestart === true;
+
         const events: Array<OrchestrationV2DomainEvent> = [];
         for (const threadId of input.entry.attachedThreadIds) {
           const projection = yield* projectionStore.getThreadRecords(
@@ -654,6 +661,7 @@ export const layerWithOptions = (
               request.status === "pending" &&
               request.responseCapability.type === "live" &&
               request.responseCapability.providerSessionId === providerSessionId &&
+              !(leaveQuestionsToRecovery && request.kind === "user_input") &&
               DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt),
           );
 

@@ -13,6 +13,7 @@ import {
   type Project,
   ProjectId,
   ProviderDriverKind,
+  NodeId,
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
@@ -2573,6 +2574,87 @@ it.effect("ProviderSessionManagerV2 marks pending runtime requests non-live on r
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
+it.effect.each([
+  ["server shutdown", "pending"],
+  ["manual close", "cancelled"],
+] as const)(
+  "ProviderSessionManagerV2 leaves Codex questions to recovery only on %s",
+  ([release, questionStatus]) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread-provider-session-manager-question-${release}`);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const approval = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread,
+          now,
+        });
+        const questionId = yield* idAllocator.allocate.runtimeRequest({
+          driver: CODEX_DRIVER,
+          nativeRequestId: "pending-question",
+        });
+        yield* eventSink.write({
+          events: [
+            ...approval.events,
+            {
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "runtime-request.updated",
+              threadId,
+              nodeId: NodeId.make(`${threadId}:question`),
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: {
+                id: questionId,
+                nodeId: NodeId.make(`${threadId}:question`),
+                providerTurnId: null,
+                nativeRequestRef: {
+                  driver: CODEX_DRIVER,
+                  nativeId: "pending-question",
+                  strength: "strong",
+                },
+                kind: "user_input",
+                status: "pending",
+                responseCapability: { type: "live", providerSessionId },
+                createdAt: now,
+                resolvedAt: null,
+              },
+            },
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* release === "server shutdown" ? manager.shutdown : manager.close(providerSessionId);
+
+        const { runtimeRequests } = yield* projectionStore.getThreadProjection(threadId);
+        const status = (id: typeof questionId) =>
+          runtimeRequests.find((request) => request.id === id)?.status;
+        assert.equal(status(questionId), questionStatus);
+        assert.equal(status(approval.requestId), "cancelled");
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 retries release records that failed to persist", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

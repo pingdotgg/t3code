@@ -213,6 +213,11 @@ export const OrchestrationV2SessionCapabilities = Schema.Struct({
   supportsProviderSwitchingViaHandoff: Schema.Boolean,
   supportsRuntimeModeSwitchInSession: Schema.Boolean,
   pendingRequestsSurviveRestart: Schema.Boolean,
+  /**
+   * The provider resumes a native conversation from a follow-up message, so a question cut off by
+   * a server restart can still be answered as a reply.
+   */
+  questionsAnswerableAfterRestart: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2SessionCapabilities = typeof OrchestrationV2SessionCapabilities.Type;
 

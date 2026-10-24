@@ -4915,6 +4915,244 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect.each(["startup", "shutdown"] as const)(
+    "keeps a blocked Codex question answerable across %s and answers it once",
+    (trigger) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+        const threadId = ThreadId.make(`restart-question-${trigger}`);
+        const firstMessageId = MessageId.make(`${threadId}:message`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Question across restart",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "plan",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message`),
+          threadId,
+          messageId: firstMessageId,
+          text: "Ask me to choose Alpha or Beta.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const initial = yield* orchestrator.getThreadProjection(threadId);
+        const run = initial.runs[0]!;
+        const now = yield* DateTime.now;
+        const providerThread = {
+          ...initial.providerThreads[0]!,
+          nativeThreadRef: { driver, nativeId: `${threadId}:native`, strength: "strong" as const },
+          status: "active" as const,
+          updatedAt: now,
+        };
+        const providerSessionId = providerThread.providerSessionId!;
+        const providerTurnId = ProviderTurnId.make(`${threadId}:turn`);
+        const requestId = RuntimeRequestId.make(`${threadId}:request`);
+        const nodeId = NodeId.make(`${threadId}:question-node`);
+        const itemId = TurnItemId.make(`${threadId}:question-item`);
+        yield* eventSink.write({
+          commandId: CommandId.make(`${threadId}:waiting`),
+          events: [
+            {
+              id: EventId.make(`${threadId}:run-running`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "running", startedAt: now },
+            },
+            {
+              id: EventId.make(`${threadId}:session`),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: providerSessionId,
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                status: "ready",
+                cwd: process.cwd(),
+                model: modelSelection.model,
+                capabilities: CodexProviderCapabilitiesV2,
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+            },
+            {
+              id: EventId.make(`${threadId}:provider-thread`),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: providerThread,
+            },
+            {
+              id: EventId.make(`${threadId}:turn`),
+              type: "provider-turn.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: {
+                id: providerTurnId,
+                providerThreadId: providerThread.id,
+                nodeId: run.rootNodeId!,
+                runAttemptId: run.activeAttemptId,
+                nativeTurnRef: { driver, nativeId: `${threadId}:native-turn`, strength: "strong" },
+                ordinal: 1,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make(`${threadId}:question-node`),
+              type: "node.updated",
+              threadId,
+              runId: run.id,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: nodeId,
+                threadId,
+                runId: run.id,
+                parentNodeId: run.rootNodeId,
+                rootNodeId: run.rootNodeId!,
+                kind: "user_input_request",
+                status: "waiting",
+                countsForRun: false,
+                providerThreadId: providerThread.id,
+                providerTurnId,
+                nativeItemRef: { driver, nativeId: "call_question", strength: "strong" },
+                runtimeRequestId: requestId,
+                checkpointScopeId: null,
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make(`${threadId}:question-request`),
+              type: "runtime-request.updated",
+              threadId,
+              runId: run.id,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: requestId,
+                nodeId,
+                providerTurnId,
+                nativeRequestRef: { driver, nativeId: "call_question", strength: "strong" },
+                kind: "user_input",
+                status: "pending",
+                responseCapability: { type: "live", providerSessionId },
+                createdAt: now,
+                resolvedAt: null,
+              },
+            },
+            {
+              id: EventId.make(`${threadId}:question-item`),
+              type: "turn-item.updated",
+              threadId,
+              runId: run.id,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: itemId,
+                type: "user_input_request",
+                threadId,
+                runId: run.id,
+                nodeId,
+                providerThreadId: providerThread.id,
+                providerTurnId,
+                nativeItemRef: { driver, nativeId: "call_question", strength: "strong" },
+                parentItemId: null,
+                ordinal: 1,
+                status: "waiting",
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                requestId,
+                questions: [
+                  { id: "choice", header: "Choice", question: "Alpha or Beta?", options: [] },
+                ],
+              },
+            },
+          ],
+        });
+
+        yield* recovery.prepareForShutdown;
+        yield* recovery.reconcile(trigger);
+        yield* recovery.reconcile("startup");
+        const restarted = yield* orchestrator.getThreadProjection(threadId);
+        const pending = restarted.runtimeRequests.find((request) => request.id === requestId);
+        assert.equal(pending?.status, "pending");
+        assert.deepEqual(pending?.responseCapability, { type: "message" });
+        assert.equal(restarted.nodes.find((node) => node.id === nodeId)?.status, "waiting");
+        assert.equal(restarted.turnItems.find((item) => item.id === itemId)?.status, "waiting");
+        assert.deepEqual(
+          restarted.runs.map((candidate) => candidate.status),
+          ["cancelled"],
+        );
+        assert.isTrue(Option.isNone(yield* outbox.get(`effect:restart-continuation:${run.id}`)));
+        assert.deepEqual(
+          restarted.messages.map((message) => message.id),
+          [firstMessageId],
+        );
+
+        const answer = (key: string, choice: string) =>
+          orchestrator
+            .dispatch({
+              type: "runtime-request.respond",
+              commandId: CommandId.make(`${threadId}:answer:${key}`),
+              threadId,
+              requestId,
+              answers: { choice },
+            })
+            .pipe(Effect.result);
+        const results = yield* Effect.all([answer("alpha", "Alpha"), answer("beta", "Beta")], {
+          concurrency: "unbounded",
+        });
+        assert.equal(results.filter((result) => result._tag === "Success").length, 1);
+        const answered = yield* orchestrator.getThreadProjection(threadId);
+        const resolved = answered.runtimeRequests.find((request) => request.id === requestId);
+        assert.equal(resolved?.status, "resolved");
+        const reply = answered.messages.find((message) => message.id !== firstMessageId);
+        assert.equal(reply?.text, `Alpha or Beta?\n${resolved?.answers?.choice}`);
+        assert.lengthOf(answered.messages, 2);
+        assert.lengthOf(answered.runs, 2);
+        const resumed = answered.runs.find((candidate) => candidate.userMessageId === reply?.id);
+        assert.equal(resumed?.providerThreadId, providerThread.id);
+        assert.deepEqual(
+          answered.providerThreads.find((candidate) => candidate.id === providerThread.id)
+            ?.nativeThreadRef,
+          providerThread.nativeThreadRef,
+        );
+
+        yield* recovery.reconcile("startup");
+        const afterStaleRecovery = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          afterStaleRecovery.runtimeRequests.find((request) => request.id === requestId),
+          resolved,
+        );
+        assert.lengthOf(afterStaleRecovery.messages, 2);
+        assert.lengthOf(afterStaleRecovery.runs, 2);
+      }),
+  );
+
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

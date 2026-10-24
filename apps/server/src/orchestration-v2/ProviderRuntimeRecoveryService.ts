@@ -4,6 +4,7 @@ import {
   CommandId,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
+  type RunId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -151,6 +152,61 @@ const cancelledItem = (
     ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
     : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
 
+/**
+ * A native question's callback dies with its provider process. When the root
+ * conversation it blocked can resume from a follow-up message, it stays
+ * answerable as a reply instead, and nothing continues until it is answered.
+ */
+function answerableAfterRestart(
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
+  request: OrchestrationV2ThreadProjection["runtimeRequests"][number],
+  cutRunIds: ReadonlySet<string>,
+): boolean {
+  if (
+    request.kind !== "user_input" ||
+    request.status !== "pending" ||
+    request.responseCapability.type !== "live" ||
+    projection.thread.lineage.relationshipToParent === "subagent" ||
+    projection.thread.deletedAt !== null
+  )
+    return false;
+  const { providerSessionId } = request.responseCapability;
+  const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+  if (node?.runId == null || !cutRunIds.has(node.runId)) return false;
+  const runId = node.runId;
+  const run = projection.runs.find((candidate) => candidate.id === runId);
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === node.providerThreadId,
+  );
+  const session = projection.providerSessions.find(
+    (candidate) => candidate.id === providerSessionId,
+  );
+  return (
+    run !== undefined &&
+    providerThread !== undefined &&
+    session !== undefined &&
+    session.capabilities.sessions.questionsAnswerableAfterRestart === true &&
+    session.driver === providerThread.driver &&
+    providerThread.providerSessionId === providerSessionId &&
+    run.providerThreadId === providerThread.id &&
+    run.providerInstanceId === providerThread.providerInstanceId &&
+    projection.thread.providerInstanceId === providerThread.providerInstanceId &&
+    providerThread.appThreadId === projection.thread.id &&
+    providerThread.ownerNodeId === null &&
+    providerThread.status !== "closed" &&
+    providerThread.status !== "archived" &&
+    providerThread.nativeThreadRef?.nativeId != null &&
+    providerThread.nativeThreadRef.strength === "strong" &&
+    providerThread.nativeThreadRef.driver === providerThread.driver &&
+    projection.turnItems.some(
+      (item) =>
+        item.type === "user_input_request" &&
+        item.requestId === request.id &&
+        item.questions.length > 0,
+    )
+  );
+}
+
 function latestStartedRun(
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,
   providerThreadId: ProviderThreadId,
@@ -228,16 +284,24 @@ export const make = Effect.gen(function* () {
         }
         runs.push(run);
       }
+      const cutRunIds = new Set(runs.map((run) => run.id));
+      const answerableRequests = projection.runtimeRequests.filter((request) =>
+        answerableAfterRestart(projection, request, cutRunIds),
+      );
       const messageRequestNodeIds = new Set(
         projection.runtimeRequests
           .filter(
             (request) =>
               request.status === "pending" && request.responseCapability.type === "message",
           )
+          .concat(answerableRequests)
           .map((request) => request.nodeId),
       );
       const requests = projection.runtimeRequests.filter(
-        (request) => request.status === "pending" && request.responseCapability.type !== "message",
+        (request) =>
+          request.status === "pending" &&
+          request.responseCapability.type !== "message" &&
+          !answerableRequests.includes(request),
       );
       // Delegated task rows, items and nodes stay open: the child settles them.
       const delegatedTaskNodeIds = new Set<string>([
@@ -332,6 +396,16 @@ export const make = Effect.gen(function* () {
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
           payload: { ...run, queueHeld: true },
+        });
+      }
+      for (const request of answerableRequests) {
+        events.push({
+          id: yield* allocateEventId(),
+          type: "runtime-request.updated",
+          threadId: projection.thread.id,
+          nodeId: request.nodeId,
+          occurredAt: now,
+          payload: { ...request, responseCapability: { type: "message" } },
         });
       }
       for (const request of requests) {
@@ -460,7 +534,6 @@ export const make = Effect.gen(function* () {
       // A blocking delegate_task wait dies with the turn that made it, and its
       // continuation never got the tool result. Let the child's result wake
       // the parent like an async task, so it reaches the continued turn.
-      const cutRunIds = new Set(runs.map((run) => run.id));
       for (const task of projection.subagents ?? []) {
         if (
           task.origin !== "app_owned" ||
@@ -483,6 +556,47 @@ export const make = Effect.gen(function* () {
         });
       }
       const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
+      // A request ended here whose run was not cut (missing, or kept to replay
+      // its checkpoint) would otherwise leave its card waiting.
+      const isLeftOpen = (status: string, runId: RunId | null) =>
+        isNonterminalTurnItemStatus(status) &&
+        (runId === null || !recoveredNonterminalRunIds.has(runId));
+      for (const request of requests) {
+        const item = (projection.turnItems ?? []).find(
+          (candidate) =>
+            (candidate.type === "approval_request" || candidate.type === "user_input_request") &&
+            candidate.requestId === request.id,
+        );
+        const providerInstanceId =
+          item === undefined
+            ? projection.thread.providerInstanceId
+            : resolveStaleBackgroundItemProviderInstanceId(item, projection);
+        if (item !== undefined && isLeftOpen(item.status, item.runId)) {
+          events.push({
+            id: yield* allocateEventId(),
+            type: "turn-item.updated",
+            threadId: projection.thread.id,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            providerInstanceId,
+            occurredAt: now,
+            payload: cancelledItem(item, now),
+          });
+        }
+        const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+        if (node !== undefined && isLeftOpen(node.status, node.runId)) {
+          events.push({
+            id: yield* allocateEventId(),
+            type: "node.updated",
+            threadId: projection.thread.id,
+            ...(node.runId === null ? {} : { runId: node.runId }),
+            nodeId: node.id,
+            providerInstanceId,
+            occurredAt: now,
+            payload: { ...node, status: "cancelled", completedAt: now },
+          });
+        }
+      }
       const cancelledStaleNodeIds = new Set<string>();
       for (const item of projection.turnItems ?? []) {
         if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {
