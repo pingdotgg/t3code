@@ -2,7 +2,7 @@ import {
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
-  OrchestrationSearchThreadsResult,
+  OrchestrationThreadSearchMatch,
   OrchestrationV2ThreadForkSourcePoint,
   OrchestrationV2ContextTransfer,
   TrimmedNonEmptyString,
@@ -243,12 +243,23 @@ const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a T3 thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
+    'Search active threads the way the command palette does: title, branch, pull request, and project matches first (source "title", ranked by match quality and recent use, with one-typo tolerance), then threads whose messages contain every query word of three or more characters (source "user" or "assistant", with a snippet; up to a fifth of the limit is kept for these). Subagent threads are skipped. Limited to one project (projectId, else the calling thread\'s project); a caller outside a T3 thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.',
   parameters: Schema.Struct({
     ...OrchestrationSearchThreadsInput.fields,
     projectId: Schema.optional(ProjectId),
   }),
-  success: OrchestrationSearchThreadsResult,
+  success: Schema.Struct({
+    matches: Schema.Array(
+      Schema.Struct({
+        threadId: OrchestrationThreadSearchMatch.fields.threadId,
+        projectId: OrchestrationThreadSearchMatch.fields.projectId,
+        title: Schema.String,
+        source: Schema.Literals(["title", "user", "assistant"]),
+        snippet: Schema.optional(OrchestrationThreadSearchMatch.fields.snippet),
+        messageCreatedAt: Schema.optional(OrchestrationThreadSearchMatch.fields.messageCreatedAt),
+      }),
+    ),
+  }),
   dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch],
 })
   .annotate(Tool.Readonly, true)

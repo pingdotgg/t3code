@@ -1,4 +1,15 @@
-import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import {
+  foldSearchQuery,
+  PALETTE_SECONDARY_LIMIT,
+  PALETTE_THREAD_LIMIT,
+  rankSearchGroups,
+  scoreSearchTerms,
+  scoreThreadSearch,
+  type SearchMatchHint,
+  type SearchRange,
+  type ThreadSearchSubject,
+} from "@t3tools/shared/paletteSearch";
+import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
   addProjectRemoteSourceLabel,
@@ -17,12 +28,7 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
-import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import * as Arr from "effect/Array";
-import * as Result from "effect/Result";
 import { type ReactNode } from "react";
-import { getThreadSortTimestamp, sortThreads } from "../lib/threadSort";
-import { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 import { isSidebarSubagentThread } from "./Sidebar.logic";
@@ -155,10 +161,17 @@ export interface CommandPaletteItem {
   readonly value: string;
   readonly searchTerms: ReadonlyArray<string>;
   readonly title: ReactNode;
+  /** The title as plain text, for searching, when `title` is styled. */
+  readonly searchTitle?: string;
   readonly description?: ReactNode;
   readonly threadContentMatch?: CommandPaletteThreadContentMatch;
   readonly timestamp?: string;
-  readonly searchRecency?: number;
+  /** Thread rows rank by this, with use history, instead of by `searchTerms`. */
+  readonly threadSearch?: ThreadSearchSubject;
+  /** Title ranges the current query matched, for highlighting. */
+  readonly titleRanges?: ReadonlyArray<SearchRange>;
+  /** Shown in place of the description when the match is not in the title. */
+  readonly matchHint?: SearchMatchHint;
   readonly icon: ReactNode;
   readonly disabled?: boolean;
   readonly titleLeadingContent?: ReactNode;
@@ -360,36 +373,37 @@ export type BuildThreadActionItemsThread = Pick<
   | "runtime"
   | "title"
   | "worktreePath"
-> & {
-  pullRequests?: SidebarThreadSummary["pullRequests"];
-  updatedAt: string;
-  latestUserMessageAt?: string | null;
-};
+> &
+  Partial<
+    Pick<
+      SidebarThreadSummary,
+      "pullRequests" | "linkedPullRequest" | "branchPullRequest" | "opens" | "latestUserMessageAt"
+    >
+  > & {
+    updatedAt: string;
+  };
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
   threads: ReadonlyArray<TThread>;
-  activeThreadId?: Thread["id"];
-  projectTitleById: ReadonlyMap<Project["id"], string>;
-  sortOrder: SidebarThreadSortOrder;
+  activeThread?: Pick<Thread, "environmentId" | "id">;
+  projectByKey: ReadonlyMap<string, Pick<Project, "title">>;
   icon: ReactNode;
   renderLeadingContent?: (thread: TThread) => ReactNode;
   renderTrailingContent?: (thread: TThread) => ReactNode;
   renderDescription?: (thread: TThread, meta: { projectTitle: string | undefined }) => ReactNode;
-  getContentMatch?: (thread: TThread) => CommandPaletteThreadContentMatch | undefined;
-  runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
-  limit?: number;
+  runThread: (thread: TThread) => Promise<void>;
+  /** Makes the environment searchable; pass it only with two or more environments. */
+  environmentLabelOf?: (thread: TThread) => string | null;
 }): CommandPaletteActionItem[] {
-  const sortedThreads = sortThreads(
-    input.threads.filter(
-      (thread) => thread.archivedAt === null && !isSidebarSubagentThread(thread),
-    ),
-    input.sortOrder,
+  // Callers order these: recents by last use, search results by rank.
+  const visibleThreads = input.threads.filter(
+    (thread) => thread.archivedAt === null && !isSidebarSubagentThread(thread),
   );
-  const visibleThreads =
-    input.limit === undefined ? sortedThreads : sortedThreads.slice(0, input.limit);
 
   return visibleThreads.map((thread) => {
-    const projectTitle = input.projectTitleById.get(thread.projectId);
+    const projectTitle = input.projectByKey.get(
+      `${thread.environmentId}:${thread.projectId}`,
+    )?.title;
     const descriptionParts: string[] = [];
 
     if (projectTitle) {
@@ -398,13 +412,15 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     if (thread.branch) {
       descriptionParts.push(`#${thread.branch}`);
     }
-    if (thread.id === input.activeThreadId) {
+    const isCurrent =
+      thread.id === input.activeThread?.id &&
+      thread.environmentId === input.activeThread.environmentId;
+    if (isCurrent) {
       descriptionParts.push("Current thread");
     }
 
     const leadingContent = input.renderLeadingContent?.(thread);
     const trailingContent = input.renderTrailingContent?.(thread);
-    const contentMatch = input.getContentMatch?.(thread);
     const description = input.renderDescription
       ? input.renderDescription(thread, { projectTitle })
       : descriptionParts.join(` · `);
@@ -412,26 +428,28 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     return Object.assign(
       {
         kind: "action" as const,
-        value: `thread:${thread.id}`,
-        searchTerms: [
-          thread.title,
-          ...threadPullRequestSearchTerms(thread),
-          projectTitle ?? ``,
-          thread.branch ?? ``,
-          contentMatch?.snippet ?? ``,
-          thread.id,
-        ],
+        value: `thread:${thread.environmentId}:${thread.id}`,
+        searchTerms: [thread.title],
+        threadSearch: threadSearchSubject(
+          {
+            ...thread,
+            latestUserMessageAt: thread.latestUserMessageAt ?? null,
+            opens: thread.opens ?? null,
+          },
+          projectTitle,
+          input.environmentLabelOf?.(thread),
+        ),
         title: thread.title,
         description,
         timestamp: formatRelativeTimeLabel(
           thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
         ),
-        searchRecency: getThreadSortTimestamp(thread, "updated_at"),
         icon: input.icon,
       },
       leadingContent ? { titleLeadingContent: leadingContent } : {},
       trailingContent ? { titleTrailingContent: trailingContent } : {},
-      contentMatch ? { threadContentMatch: contentMatch } : {},
+      // Last in its group: picking the thread already open does nothing.
+      isCurrent ? { secondary: true } : {},
       {
         run: async () => {
           await input.runThread(thread);
@@ -441,60 +459,54 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   });
 }
 
-const ALPHANUMERIC = /[\p{L}\p{N}]/u;
+type PaletteItem = CommandPaletteActionItem | CommandPaletteSubmenuItem;
 
-function startsWord(field: string, token: string): boolean {
-  for (let index = field.indexOf(token); index !== -1; index = field.indexOf(token, index + 1)) {
-    if (index === 0 || !ALPHANUMERIC.test(field[index - 1]!)) return true;
-  }
-  return false;
-}
-
-// 3 exact, 2 field prefix, 1 every token starts a word, 0 a token only matches mid-word.
-function rankSearchFieldMatch(
-  field: string,
+function rankPaletteItem(
+  item: PaletteItem,
   normalizedQuery: string,
-  queryTokens: ReadonlyArray<string>,
-): number {
-  const normalizedField = normalizeSearchText(field);
-  if (
-    normalizedField.length === 0 ||
-    !queryTokens.every((token) => normalizedField.includes(token))
-  ) {
-    return Number.NEGATIVE_INFINITY;
-  }
-  if (normalizedField === normalizedQuery) {
-    return 3;
-  }
-  if (normalizedField.startsWith(normalizedQuery)) {
-    return 2;
-  }
-  if (queryTokens.every((token) => startsWord(normalizedField, token))) {
-    return 1;
-  }
-  return 0;
+  now: number,
+  options: { readonly typos: boolean },
+): {
+  readonly score: number;
+  readonly quality: number;
+  readonly groupQuality?: number;
+  readonly strong: boolean;
+  readonly ranges: ReadonlyArray<SearchRange>;
+  readonly explain?: () => SearchMatchHint | undefined;
+  readonly pickedAt?: number;
+  readonly pickedExactly?: boolean;
+} | null {
+  const match = scorePaletteItem(item, normalizedQuery, now, options);
+  // A row listed last in its group (a keybinding setting, the open thread)
+  // does not decide where the group sits.
+  return match && item.secondary ? { ...match, groupQuality: 0 } : match;
 }
 
-// A word-start match in any field beats a mid-word match, then earlier fields win.
-// Thread titles collapse prefix and word-start into one tier so recency picks between them.
-function rankCommandPaletteItemMatch(
-  item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
+function scorePaletteItem(
+  item: PaletteItem,
   normalizedQuery: string,
-  queryTokens: ReadonlyArray<string>,
-): number {
-  let best = 0;
-  for (const [index, field] of item.searchTerms.filter((term) => term.length > 0).entries()) {
-    const fieldRank = rankSearchFieldMatch(field, normalizedQuery, queryTokens);
-    if (fieldRank === Number.NEGATIVE_INFINITY) continue;
-    const fieldScore =
-      index === 0 && item.searchRecency !== undefined
-        ? 1_000 + Number(fieldRank === 3)
-        : 1_000 - index * 100 + fieldRank;
-    best = Math.max(best, (fieldRank > 0 ? 10_000 : 0) + fieldScore);
-  }
-  return best;
+  now: number,
+  options: { readonly typos: boolean },
+) {
+  if (item.threadSearch) return scoreThreadSearch(normalizedQuery, item.threadSearch, now, options);
+  // The title names the item; search terms are keywords. Ranges index the
+  // first term, so they only highlight a title that is that term.
+  const name = typeof item.title === "string" ? item.title : item.searchTitle;
+  const terms =
+    name !== undefined && name !== item.searchTerms[0]
+      ? [name, ...item.searchTerms]
+      : item.searchTerms;
+  const match = scoreSearchTerms(normalizedQuery, terms, options);
+  return match && (item.title === terms[0] ? match : { ...match, ranges: [] });
 }
 
+/**
+ * Filters and ranks the palette for a query. Groups order by the class of their
+ * best match, and on equal classes commands come first, then threads, so "new"
+ * runs "New thread" and a thread's title is not stuck under a setting. Server
+ * message matches always come last, in their own group, so rows above never
+ * move when they arrive.
+ */
 export function filterCommandPaletteGroups(input: {
   activeGroups: ReadonlyArray<CommandPaletteGroup>;
   query: string;
@@ -502,10 +514,13 @@ export function filterCommandPaletteGroups(input: {
   projectSearchItems: ReadonlyArray<CommandPaletteActionItem>;
   settingsSearchItems?: ReadonlyArray<CommandPaletteActionItem>;
   threadSearchItems: ReadonlyArray<CommandPaletteActionItem>;
+  /** Threads whose messages match, best first; threads already listed are skipped. */
+  threadMessageItems?: ReadonlyArray<CommandPaletteActionItem>;
+  now?: number;
 }): CommandPaletteGroup[] {
   const isActionsFilter = input.query.startsWith(">");
   const searchQuery = isActionsFilter ? input.query.slice(1) : input.query;
-  const normalizedQuery = normalizeSearchText(searchQuery);
+  const normalizedQuery = foldSearchQuery(searchQuery);
 
   if (normalizedQuery.length === 0) {
     if (isActionsFilter) {
@@ -513,7 +528,6 @@ export function filterCommandPaletteGroups(input: {
     }
     return [...input.activeGroups];
   }
-  const queryTokens = normalizedQuery.split(" ");
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
@@ -523,7 +537,17 @@ export function filterCommandPaletteGroups(input: {
   }
 
   const searchableGroups = [...baseGroups];
-  if (!input.isInSubmenu && !isActionsFilter) {
+  const searchesEverything = !input.isInSubmenu && !isActionsFilter;
+  // On equal match classes, groups keep this order: threads, what people search
+  // for most, right after commands.
+  if (searchesEverything) {
+    if (input.threadSearchItems.length > 0) {
+      searchableGroups.push({
+        value: "threads-search",
+        label: "Threads",
+        items: input.threadSearchItems,
+      });
+    }
     if (input.projectSearchItems.length > 0) {
       searchableGroups.push({
         value: "projects-search",
@@ -538,43 +562,45 @@ export function filterCommandPaletteGroups(input: {
         items: input.settingsSearchItems,
       });
     }
-    if (input.threadSearchItems.length > 0) {
-      searchableGroups.push({
-        value: "threads-search",
-        label: "Threads",
-        items: input.threadSearchItems,
-      });
-    }
   }
 
-  return searchableGroups.flatMap((group) => {
-    const items = Arr.filterMap(group.items, (item, index) => {
-      const haystack = normalizeSearchText(item.searchTerms.join(" "));
-      if (!queryTokens.every((token) => haystack.includes(token))) {
-        return Result.failVoid;
-      }
-
-      return Result.succeed({
-        item,
-        index,
-        rank: rankCommandPaletteItemMatch(item, normalizedQuery, queryTokens),
-      });
-    })
+  const now = input.now ?? Date.now();
+  const ranked = rankSearchGroups(
+    searchableGroups.map((group) => ({ group, items: group.items })),
+    (item, options) => rankPaletteItem(item, normalizedQuery, now, options),
+  );
+  const threadsMatch = ranked.some(({ group }) => group.value === "threads-search");
+  const groups = ranked.map(({ group, ranked }): CommandPaletteGroup => {
+    // Secondary items stay below the rest; the sort is stable, so score order holds.
+    const limit =
+      group.value === "threads-search"
+        ? PALETTE_THREAD_LIMIT
+        : searchesEverything && threadsMatch
+          ? PALETTE_SECONDARY_LIMIT
+          : ranked.length;
+    // Hints are built only for the rows shown.
+    const items = ranked
       .toSorted(
         (left, right) =>
-          Number(left.item.secondary ?? false) - Number(right.item.secondary ?? false) ||
-          right.rank - left.rank ||
-          (right.item.searchRecency ?? 0) - (left.item.searchRecency ?? 0) ||
-          left.index - right.index,
+          Number(left.item.secondary ?? false) - Number(right.item.secondary ?? false),
       )
-      .map((entry) => entry.item);
-
-    if (items.length === 0) {
-      return [];
-    }
-
-    return [{ value: group.value, label: group.label, items }];
+      .slice(0, limit)
+      .map(({ item, match }) => {
+        if (match.ranges.length > 0) return { ...item, titleRanges: match.ranges };
+        // Built only for the rows shown.
+        const matchHint = match.explain?.();
+        return matchHint ? { ...item, matchHint } : item;
+      });
+    return { value: group.value, label: group.label, items };
   });
+
+  if (!searchesEverything) return groups;
+  const listed = new Set(groups.flatMap((group) => group.items.map((item) => item.value)));
+  // The items arrive cut to what the palette shows; see `nextShownOrder`.
+  const messageItems = (input.threadMessageItems ?? []).filter((item) => !listed.has(item.value));
+  return messageItems.length === 0
+    ? groups
+    : [...groups, { value: "threads-messages", label: "In messages", items: messageItems }];
 }
 
 export function buildBrowseGroups(input: {

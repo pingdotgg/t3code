@@ -16,6 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Command, Flag } from "effect/cli";
 
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
+import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -216,6 +217,7 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
 ];
 
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";
+const FTS5_SHADOW_SUFFIXES = ["_data", "_idx", "_content", "_docsize", "_config"];
 
 // Settled threads stay: they are most of real history, and the UI shows them.
 const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
@@ -236,7 +238,17 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
     SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
     WHERE m.type = 'table' AND c.name = 'thread_id'`;
   const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
-  const tables = schema.filter((entry) => entry.type === "table");
+  // FTS5 makes its own shadow tables and contentless rows cannot be copied:
+  // create the virtual table, skip its shadow tables and rows, and rebuild the
+  // index once the messages and triggers are in.
+  const virtualTables = schema
+    .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
+    .map((entry) => entry.name);
+  const isShadowTable = (name: string) =>
+    virtualTables.some((virtual) =>
+      FTS5_SHADOW_SUFFIXES.some((suffix) => name === `${virtual}${suffix}`),
+    );
+  const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
   const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
 
   yield* sql.withTransaction(
@@ -251,7 +263,7 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
           WHERE ${rootIsVisible(sql)}`;
       }
       for (const { name } of tables) {
-        if (CLEARED_TABLES.includes(name)) continue;
+        if (CLEARED_TABLES.includes(name) || virtualTables.includes(name)) continue;
         const nullable = threadIdNullable.get(name);
         const filter = !filtered
           ? ""
@@ -271,6 +283,7 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
       for (const entry of schema) {
         if (entry.type !== "table") yield* sql.unsafe(entry.sql).unprepared;
       }
+      yield* rebuildMessageSearch(sql);
     }),
   );
   yield* sql`DETACH DATABASE src`;

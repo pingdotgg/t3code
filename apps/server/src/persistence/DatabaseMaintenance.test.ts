@@ -98,6 +98,20 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* sql`CREATE TABLE discarded_data (value BLOB)`;
           yield* sql`INSERT INTO discarded_data VALUES (zeroblob(4194304))`;
           yield* sql`DROP TABLE discarded_data`;
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_messages (
+              message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json
+            )
+            VALUES (
+              'message-1', 'thread-1', NULL, NULL, 'user', 0,
+              '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', '{"text":"needle"}'
+            )
+          `;
+          // An index that drifted from its rows, as a renumbering VACUUM would leave it.
+          yield* sql`
+            INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search)
+            VALUES ('delete-all')
+          `;
           yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
 
@@ -118,6 +132,16 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           const sql = yield* SqlClient.SqlClient;
           assert.deepEqual(yield* sql`PRAGMA auto_vacuum`, [{ auto_vacuum: 2 }]);
           assert.deepEqual(yield* sql`SELECT value FROM retained_data`, [{ value: "keep" }]);
+          assert.deepEqual(
+            yield* sql`
+              SELECT messages.message_id AS "messageId"
+              FROM orchestration_v2_message_search AS search
+              INNER JOIN orchestration_v2_projection_messages AS messages
+                ON messages.rowid = search.rowid
+              WHERE orchestration_v2_message_search MATCH '"needle"'
+            `,
+            [{ messageId: "message-1" }],
+          );
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
       }).pipe(Effect.scoped),
     );

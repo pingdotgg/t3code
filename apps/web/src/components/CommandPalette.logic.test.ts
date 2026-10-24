@@ -112,6 +112,26 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildThreadActionItems", () => {
+  it("keeps threads apart when two environments share a thread ID", async () => {
+    const local = makeThread();
+    const remote = makeThread({ environmentId: EnvironmentId.make("remote-copy") });
+    const runThread = vi.fn(async () => {});
+    const items = buildThreadActionItems({
+      threads: [local, remote],
+      activeThread: remote,
+      projectByKey: new Map([
+        [`${local.environmentId}:${local.projectId}`, { title: "Local project" }],
+        [`${remote.environmentId}:${remote.projectId}`, { title: "Remote project" }],
+      ]),
+      icon: null,
+      runThread,
+    });
+    expect(new Set(items.map((item) => item.value)).size).toBe(2);
+    const remoteItem = items.find((item) => item.description === "Remote project · Current thread");
+    await remoteItem?.run();
+    expect(runThread).toHaveBeenCalledWith(remote);
+  });
+
   it("ranks thread title matches ahead of contextual project-name matches", () => {
     const threadItems = buildThreadActionItems({
       threads: [
@@ -127,8 +147,7 @@ describe("buildThreadActionItems", () => {
           updatedAt: "2026-03-19T00:00:00.000Z",
         }),
       ],
-      projectTitleById: new Map([[PROJECT_ID, "Project"]]),
-      sortOrder: "updated_at",
+      projectByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, { title: "Project" }]]),
       icon: null,
       runThread: async (_thread) => undefined,
     });
@@ -144,57 +163,250 @@ describe("buildThreadActionItems", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.value).toBe("threads-search");
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:thread-title-match",
-      "thread:thread-context-match",
+      "thread:environment-local:thread-title-match",
+      "thread:environment-local:thread-context-match",
     ]);
   });
 
-  it("orders title matches by recent activity before older prefix matches", () => {
+  it("lists message matches last, once, without moving the title matches above them", () => {
     const threads = [
-      makeThread({
-        id: ThreadId.make("old-prefix"),
-        title: "Convex InvalidCursor in Convex threads query",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      }),
-      makeThread({
-        id: ThreadId.make("recent-title"),
-        title: "Disable Convex schema validation",
-        createdAt: "2025-12-01T00:00:00.000Z",
-        updatedAt: "2026-03-24T00:00:00.000Z",
-      }),
-      makeThread({
-        id: ThreadId.make("recent-content"),
-        title: "Fix schema validation",
-        createdAt: "2026-03-25T00:00:00.000Z",
-        updatedAt: "2026-03-25T00:00:00.000Z",
-      }),
+      makeThread({ id: ThreadId.make("title"), title: "Disable Convex schema validation" }),
+      makeThread({ id: ThreadId.make("message"), title: "Fix schema validation" }),
     ];
     const items = buildThreadActionItems({
       threads,
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
-      sortOrder: "created_at",
+      projectByKey: new Map(),
       icon: null,
-      getContentMatch: (thread) =>
-        thread.id === ThreadId.make("recent-content")
-          ? { source: "user", snippet: "Please check Convex", query: "convex" }
-          : undefined,
       runThread: async () => undefined,
     });
+    const filter = (threadMessageItems: typeof items) =>
+      filterCommandPaletteGroups({
+        activeGroups: [],
+        query: "convex",
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: items,
+        threadMessageItems,
+      }).map((group) => [group.label, group.items.map((item) => item.value)]);
 
-    const groups = filterCommandPaletteGroups({
-      activeGroups: [],
-      query: "convex",
+    const before = filter([]);
+    // The server matched both; the title match stays where it was.
+    const after = filter([items[0]!, items[1]!].toReversed());
+    expect(before).toEqual([["Threads", ["thread:environment-local:title"]]]);
+    expect(after).toEqual([
+      ["Threads", ["thread:environment-local:title"]],
+      ["In messages", ["thread:environment-local:message"]],
+    ]);
+  });
+
+  it("keeps an active thread first while its title is typed, above settings and actions", () => {
+    const now = Date.parse("2026-10-23T00:00:00.000Z");
+    const action = (value: string, title: string, searchTerms: string[] = [title]) => ({
+      kind: "action" as const,
+      value,
+      searchTerms,
+      title,
+      icon: null,
+      run: async () => undefined,
+    });
+    const threadSearchItems = buildThreadActionItems({
+      threads: [
+        makeThread({
+          title: "Compaction prompt timing and cache age",
+          latestUserMessageAt: "2026-10-11T00:00:00.000Z",
+        }),
+      ],
+      projectByKey: new Map(),
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const firstGroup = (query: string) =>
+      filterCommandPaletteGroups({
+        activeGroups: [
+          { value: "actions", label: "Actions", items: [action("action:copy", "Copy thread ID")] },
+        ],
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        settingsSearchItems: [
+          action("setting:compact", "Compact idle threads"),
+          action("setting:providers", "Providers", ["Providers", "compatibility"]),
+        ],
+        threadSearchItems,
+        now,
+      })[0]?.label;
+
+    for (const query of ["comp", "compa", "compac", "compact", "compacti", "compaction"]) {
+      expect(firstGroup(query), query).toBe("Threads");
+    }
+  });
+
+  it("orders groups by their best match, so a strong thread is not under a weak action", () => {
+    const action = (value: string, title: string) => ({
+      kind: "action" as const,
+      value,
+      searchTerms: [title],
+      title,
+      icon: null,
+      run: async () => undefined,
+    });
+    const threadSearchItems = buildThreadActionItems({
+      threads: [makeThread({ title: "Upgrade to pnpm 12" })],
+      projectByKey: new Map(),
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const labels = (query: string) =>
+      filterCommandPaletteGroups({
+        activeGroups: [
+          { value: "actions", label: "Actions", items: [action("action:upload", "Upload file")] },
+        ],
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems,
+      }).map((group) => group.label);
+
+    expect(labels("upgrade")).toEqual(["Threads"]);
+    expect(labels("upl")).toEqual(["Actions"]);
+    // A short query still finds a command by a keyword it equals.
+    const prGroups = filterCommandPaletteGroups({
+      activeGroups: [
+        {
+          value: "actions",
+          label: "Actions",
+          items: [
+            {
+              kind: "action",
+              value: "action:open-prs",
+              searchTerms: ["Open pull requests", "pr", "prs", "review"],
+              title: "Open pull requests",
+              icon: null,
+              run: async () => undefined,
+            },
+            action("action:project", "Project settings"),
+          ],
+        },
+      ],
+      query: "pr",
       isInSubmenu: false,
       projectSearchItems: [],
-      threadSearchItems: items,
+      threadSearchItems: [],
     });
-
-    expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:recent-title",
-      "thread:old-prefix",
-      "thread:recent-content",
+    expect(prGroups.flatMap((group) => group.items.map((item) => item.value))).toEqual([
+      "action:open-prs",
+      "action:project",
     ]);
+    expect(labels("up")).toEqual(["Actions", "Threads"]);
+    expect(labels("pnpm up")).toEqual(["Threads"]);
+  });
+
+  it("runs the command for its whole name over a thread with that title, and lists the open thread last", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-new"), title: "New thread" }),
+      makeThread({ id: ThreadId.make("thread-open"), title: "New thread layout" }),
+      makeThread({ id: ThreadId.make("thread-other"), title: "New thread button" }),
+    ];
+    const threadSearchItems = buildThreadActionItems({
+      threads,
+      activeThread: threads[1]!,
+      projectByKey: new Map(),
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [
+        {
+          value: "actions",
+          label: "Actions",
+          items: [
+            {
+              kind: "action",
+              value: "action:new-thread",
+              searchTerms: ["New thread in t3code"],
+              title: "New thread in t3code",
+              icon: null,
+              run: async () => undefined,
+            },
+          ],
+        },
+      ],
+      query: "new thread",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems,
+    });
+    expect(groups.map((group) => group.label)).toEqual(["Actions", "Threads"]);
+    expect(groups[1]?.items.at(-1)?.title).toBe("New thread layout");
+  });
+
+  it("lists a project above threads that only hold its name when the name is typed", () => {
+    const threadSearchItems = buildThreadActionItems({
+      threads: [makeThread({ title: "Lakebed performance gains" })],
+      projectByKey: new Map(),
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const projectSearchItems = [
+      {
+        kind: "action" as const,
+        value: "project:lakebed",
+        searchTerms: ["Lakebed", "/code/lakebed"],
+        title: "Lakebed",
+        icon: null,
+        run: async () => undefined,
+      },
+    ];
+    const labels = (query: string) =>
+      filterCommandPaletteGroups({
+        activeGroups: [],
+        query,
+        isInSubmenu: false,
+        projectSearchItems,
+        threadSearchItems,
+      }).map((group) => group.label);
+    expect(labels("lakebed")).toEqual(["Projects", "Threads"]);
+    expect(labels("lake")).toEqual(["Threads", "Projects"]);
+  });
+
+  it("keeps a command first over a thread in daily use that matches as well", () => {
+    const now = Date.parse("2026-10-23T00:00:00.000Z");
+    const threadSearchItems = buildThreadActionItems({
+      threads: [
+        makeThread({
+          title: "New onboarding flow",
+          latestUserMessageAt: "2026-10-22T00:00:00.000Z",
+          opens: { openedAt: Date.parse("2026-10-22T00:00:00.000Z"), score: 7, picks: [] },
+        }),
+      ],
+      projectByKey: new Map(),
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [
+        {
+          value: "actions",
+          label: "Actions",
+          items: [
+            {
+              kind: "action",
+              value: "action:new-thread",
+              searchTerms: ["new thread", "chat"],
+              title: "New thread",
+              icon: null,
+              run: async () => undefined,
+            },
+          ],
+        },
+      ],
+      query: "new",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems,
+      now,
+    });
+    expect(groups.map((group) => group.label)).toEqual(["Actions", "Threads"]);
   });
 
   it("ranks an order-independent setting title match above a split context match", () => {
@@ -231,6 +443,59 @@ describe("buildThreadActionItems", () => {
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
       "setting:remote-pairing",
       "setting:context-match",
+    ]);
+  });
+
+  it("searches a styled command title by its plain text", () => {
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [
+        {
+          value: "actions",
+          label: "Actions",
+          items: [
+            {
+              kind: "action",
+              value: "action:new-thread",
+              searchTerms: ["new thread", "chat"],
+              // Styled: not a string, so only `searchTitle` holds its words.
+              title: ["New thread in ", "t3code"],
+              searchTitle: "New thread in t3code",
+              icon: null,
+              run: async () => undefined,
+            },
+          ],
+        },
+      ],
+      query: "> new t3code",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+    expect(groups.flatMap((group) => group.items.map((item) => item.value))).toEqual([
+      "action:new-thread",
+    ]);
+  });
+
+  it("forgives a typo in a setting name when nothing matches exactly", () => {
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "keybindngs",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: [],
+      settingsSearchItems: [
+        {
+          kind: "action",
+          value: "setting:keybindings",
+          title: "Keybindings",
+          searchTerms: ["Keybindings", "General", "shortcuts"],
+          icon: null,
+          run: async () => undefined,
+        },
+      ],
+    });
+    expect(groups.flatMap((group) => group.items.map((item) => item.value))).toEqual([
+      "setting:keybindings",
     ]);
   });
 
@@ -280,8 +545,7 @@ describe("buildThreadActionItems", () => {
     });
     const items = buildThreadActionItems({
       threads: [idThread, titleThread],
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
-      sortOrder: "updated_at",
+      projectByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, { title: "T3 Code" }]]),
       icon: null,
       runThread: async (_thread) => undefined,
     });
@@ -296,8 +560,8 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(groups.flatMap((group) => group.items)).toEqual([
-      expect.objectContaining({ value: `thread:${titleThread.id}` }),
-      expect.objectContaining({ value: `thread:${idThread.id}` }),
+      expect.objectContaining({ value: `thread:${LOCAL_ENVIRONMENT_ID}:${titleThread.id}` }),
+      expect.objectContaining({ value: `thread:${LOCAL_ENVIRONMENT_ID}:${idThread.id}` }),
     ]);
   });
 
@@ -325,13 +589,15 @@ describe("buildThreadActionItems", () => {
           },
         }),
       ],
-      projectTitleById: new Map(),
-      sortOrder: "updated_at",
+      projectByKey: new Map(),
       icon: null,
       runThread: async () => undefined,
     });
 
-    expect(items.map((item) => item.value).toSorted()).toEqual(["thread:fork", "thread:parent"]);
+    expect(items.map((item) => item.value).toSorted()).toEqual([
+      "thread:environment-local:fork",
+      "thread:environment-local:parent",
+    ]);
   });
 
   it("ranks word-start title matches above newer mid-word matches", () => {
@@ -354,8 +620,7 @@ describe("buildThreadActionItems", () => {
           updatedAt: "2026-03-01T00:00:00.000Z",
         }),
       ],
-      projectTitleById: new Map(),
-      sortOrder: "updated_at",
+      projectByKey: new Map(),
       icon: null,
       runThread: async () => undefined,
     });
@@ -369,13 +634,13 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:word-start",
-      "thread:branch-word-start",
-      "thread:mid-word",
+      "thread:environment-local:word-start",
+      "thread:environment-local:branch-word-start",
+      "thread:environment-local:mid-word",
     ]);
   });
 
-  it("breaks ties within a match tier by latest user message", () => {
+  it("breaks ties between equal matches by latest user message", () => {
     const items = buildThreadActionItems({
       threads: [
         makeThread({
@@ -391,8 +656,7 @@ describe("buildThreadActionItems", () => {
           latestUserMessageAt: "2026-03-10T00:00:00.000Z",
         }),
       ],
-      projectTitleById: new Map(),
-      sortOrder: "updated_at",
+      projectByKey: new Map(),
       icon: null,
       runThread: async () => undefined,
     });
@@ -403,11 +667,12 @@ describe("buildThreadActionItems", () => {
       isInSubmenu: false,
       projectSearchItems: [],
       threadSearchItems: items,
+      now: Date.parse("2026-03-20T00:00:00.000Z"),
     });
 
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:word-fresh",
-      "thread:prefix-stale",
+      "thread:environment-local:word-fresh",
+      "thread:environment-local:prefix-stale",
     ]);
   });
 });
@@ -457,8 +722,7 @@ it.each([
       }),
       makeThread({ id: ThreadId.make("unrelated"), title: "Other work" }),
     ],
-    projectTitleById: new Map(),
-    sortOrder: "updated_at",
+    projectByKey: new Map(),
     icon: null,
     runThread: async () => undefined,
   });
