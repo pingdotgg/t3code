@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { HttpClient } from "effect/http";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
@@ -200,13 +201,20 @@ export interface BootServiceStep {
    */
   readonly optional?: boolean;
   readonly timeout?: Duration.Input;
+  /**
+   * Re-run once a second while the command exits 0, for up to
+   * STOP_STEP_TIMEOUT, until it exits with one of these codes. Any other exit
+   * fails.
+   */
+  readonly untilExit?: ReadonlyArray<number>;
 }
 
 /**
- * Stop commands block until the service manager gives up: 90s by default for
- * systemd's TimeoutStopSec, and ExitTimeOut=90 in the rendered plist. This
- * must stay above both, or the runner cancels the stop mid-shutdown and the
- * next step races a still-loaded service.
+ * Stops end when the service manager gives up: 90s by default for systemd's
+ * TimeoutStopSec, which `systemctl stop` blocks on, and ExitTimeOut=90 in the
+ * rendered plist, which the launchd stop polls for. This must stay above both,
+ * or the stop gives up mid-shutdown and the next step races a still-loaded
+ * service.
  */
 const STOP_STEP_TIMEOUT = Duration.seconds(120);
 
@@ -313,6 +321,16 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
+  // bootout returns while the job drains for up to ExitTimeOut, and a
+  // bootstrap during the drain fails EIO. `print` finds the job until launchd
+  // has removed it: 113 is no such service, 112 no such domain. The wait is
+  // strict, so a bootout that failed with the job still loaded fails here.
+  const waitForStop: BootServiceStep = {
+    step: "waiting for the launch agent to stop",
+    command: "launchctl",
+    args: ["print", serviceTarget],
+    untilExit: [112, 113],
+  };
   // bootout/enable are optional: they fail on not-loaded states that are fine
   // to proceed from. The strict `bootstrap` runs last and is also the start:
   // loading a RunAtLoad/KeepAlive plist starts the job, so a separate kickstart
@@ -325,18 +343,15 @@ function launchdManager(input: {
         homeDir: input.homeDir,
         environmentPath: input.environmentPath,
       }),
-    // Without --wait, bootout returns in milliseconds while the job drains
-    // for up to ExitTimeOut, and a bootstrap during the drain fails EIO.
-    // --wait (present on modern macOS, absent from the man page) blocks until
-    // the job is removed from the domain; STOP_STEP_TIMEOUT outlives it.
     stop: [
       {
         step: "stopping the installed launch agent",
         command: "launchctl",
-        args: ["bootout", "--wait", serviceTarget],
+        args: ["bootout", serviceTarget],
         optional: true,
         timeout: STOP_STEP_TIMEOUT,
       },
+      waitForStop,
     ],
     activate: [
       // A persisted `launchctl disable` override refuses bootstrap; clear it.
@@ -365,10 +380,11 @@ function launchdManager(input: {
       {
         step: "stopping the service",
         command: "launchctl",
-        args: ["bootout", "--wait", serviceTarget],
+        args: ["bootout", serviceTarget],
         optional: true,
         timeout: STOP_STEP_TIMEOUT,
       },
+      waitForStop,
     ],
     finalize: [],
   };
@@ -660,16 +676,46 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
   });
 
+  const waitForStep = Effect.fn("cloud.boot_service.wait_for_step")(function* (
+    step: string,
+    command: string,
+    args: ReadonlyArray<string>,
+    untilExit: ReadonlyArray<number>,
+  ) {
+    return yield* runner.run({ command, args }).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced(Duration.seconds(1)),
+        while: (result) => result.code === 0,
+      }),
+      Effect.timeout(STOP_STEP_TIMEOUT),
+      Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
+      Effect.filterOrFail(
+        (result) => untilExit.includes(Number(result.code)),
+        (result) =>
+          new BootServiceCommandError({
+            step,
+            exitCode: Number(result.code),
+            stdoutLength: result.stdout.length,
+            stderrLength: result.stderr.length,
+          }),
+      ),
+      Effect.tapError(logFailure),
+    );
+  });
+
   const runSteps = (steps: ReadonlyArray<BootServiceStep>) =>
     Effect.forEach(
       steps,
       (entry) => {
-        const run = runStep(
-          entry.step,
-          entry.command,
-          entry.args,
-          entry.timeout === undefined ? undefined : { timeout: entry.timeout },
-        );
+        const run =
+          entry.untilExit === undefined
+            ? runStep(
+                entry.step,
+                entry.command,
+                entry.args,
+                entry.timeout === undefined ? undefined : { timeout: entry.timeout },
+              )
+            : waitForStep(entry.step, entry.command, entry.args, entry.untilExit);
         return entry.optional === true ? run.pipe(Effect.ignore) : run.pipe(Effect.asVoid);
       },
       { discard: true },

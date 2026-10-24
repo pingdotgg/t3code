@@ -4,11 +4,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
@@ -91,11 +94,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    drainPolls: number;
+    onDrainPoll: Effect.Effect<void>;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
     active: true,
+    drainPolls: 0,
+    onDrainPoll: Effect.void,
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
@@ -112,10 +119,20 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       // A stop that fails (a timeout, say) has still stopped the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
+      // On macOS `active` means loaded. A booted-out job still shows in
+      // `print` for `drainPolls` more calls while it drains.
+      if (!failed && command.startsWith("launchctl bootstrap ")) control.active = true;
+      if (!failed && command.startsWith("launchctl bootout ")) control.active = false;
+      const launchdPrint = !failed && command.startsWith("launchctl print ");
+      const draining = launchdPrint && !control.active && control.drainPolls > 0;
+      if (draining) {
+        control.drainPolls -= 1;
+        yield* control.onDrainPoll;
+      }
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
-          command.startsWith("launchctl bootout --wait "))
+          command.startsWith("launchctl bootout "))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
       }
@@ -132,11 +149,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
-          failed ||
-            (input.args[1] === "is-active" && !control.active) ||
-            (input.args[1] === "is-enabled" && !control.enabled)
-            ? 1
-            : 0,
+          launchdPrint
+            ? control.active || draining
+              ? 0
+              : 113
+            : failed ||
+                (input.args[1] === "is-active" && !control.active) ||
+                (input.args[1] === "is-enabled" && !control.enabled)
+              ? 1
+              : 0,
         ),
         timedOut: false,
         stdoutTruncated: false,
@@ -404,7 +425,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           platform === "linux"
             ? ["systemctl --user stop t3code.service", "systemctl --user restart t3code.service"]
             : [
-                "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+                "launchctl bootout gui/501/com.t3tools.t3code.service",
+                "launchctl print gui/501/com.t3tools.t3code.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
               ],
         );
@@ -774,9 +796,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* service.uninstall).toBe(true);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
-      // A bootout can block up to the plist's 90s ExitTimeOut; the runner's
-      // 60s default would cancel it and let bootstrap race a loaded job.
-      expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
+      // A bootout can block up to the plist's 90s ExitTimeOut, which the
+      // runner's 60s default would cut short.
+      expect(timeouts.get("launchctl bootout gui/501/com.t3tools.t3code.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -838,10 +860,77 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
-      control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+      control.active = false;
+      control.failCommand = "launchctl bootout gui/501/com.t3tools.t3code.service";
 
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  // regression: #11995 macOS 15 rejects `bootout --wait`, so the stop waits on `print`
+  it.effect("starts a booted-out launch agent again only once launchd has removed it", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const polls = yield* Queue.unbounded<void>();
+      control.drainPolls = 2;
+      control.onDrainPoll = Queue.offer(polls, undefined).pipe(Effect.asVoid);
+      commands.length = 0;
+
+      const reinstall = yield* service.install().pipe(Effect.forkChild);
+      yield* Queue.take(polls);
+      yield* TestClock.adjust("1 second");
+      yield* Queue.take(polls);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(reinstall);
+
+      const print = "launchctl print gui/501/com.t3tools.t3code.service";
+      expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
+        "launchctl bootout gui/501/com.t3tools.t3code.service",
+        print,
+        print,
+        print,
+        "launchctl enable gui/501/com.t3tools.t3code.service",
+        `launchctl bootstrap gui/501 ${plan.unitPath}`,
+      ]);
+    }),
+  );
+
+  it.effect("fails an install whose launch agent is still loaded after the stop timeout", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const polls = yield* Queue.unbounded<void>();
+      control.drainPolls = Number.POSITIVE_INFINITY;
+      control.onDrainPoll = Queue.offer(polls, undefined).pipe(Effect.asVoid);
+      commands.length = 0;
+
+      const reinstall = yield* service.install().pipe(Effect.flip, Effect.forkChild);
+      yield* Queue.take(polls);
+      yield* TestClock.adjust("120 seconds");
+
+      expect(yield* Fiber.join(reinstall)).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "waiting for the launch agent to stop",
+      });
+      expect(commands).not.toContain(`launchctl bootstrap gui/501 ${plan.unitPath}`);
+    }),
+  );
+
+  it.effect("fails an install when launchd cannot say whether the agent stopped", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      control.failCommand = "launchctl print gui/501/com.t3tools.t3code.service";
+      commands.length = 0;
+
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "waiting for the launch agent to stop",
+        exitCode: 1,
+      });
+      expect(commands).not.toContain(`launchctl bootstrap gui/501 ${plan.unitPath}`);
     }),
   );
 
