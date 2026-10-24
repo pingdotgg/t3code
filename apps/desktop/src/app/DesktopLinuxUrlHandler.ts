@@ -141,9 +141,14 @@ export const make = Effect.gen(function* () {
   const themeIconDir = environment.path.join(hicolorDir, LINUX_THEME_ICON_SIZE, "apps");
 
   const writeDesktopEntry = Effect.gen(function* () {
+    // Distribution packages that run on a shared Electron set
+    // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
     // Inside the mounted AppImage, process.execPath points at a transient
     // /tmp/.mount_* path — the handler must launch the AppImage itself.
-    const execTarget = Option.getOrElse(environment.appImagePath, () => process.execPath);
+    const execTarget = environment.desktopLauncherPath.pipe(
+      Option.orElse(() => environment.appImagePath),
+      Option.getOrElse(() => process.execPath),
+    );
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
