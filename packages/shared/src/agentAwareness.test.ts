@@ -63,6 +63,20 @@ describe("projectThreadAwarenessV2", () => {
     ).toBeNull();
   });
 
+  it.each([
+    ["running", null],
+    ["completed", null],
+    ["failed", "failed"],
+  ] as const)("keeps an idle compaction's %s run quiet unless it fails", (status, phase) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: { ...v2Thread({ status }), latestRunSilent: true },
+      })?.phase ?? null,
+    ).toBe(phase);
+  });
+
   it.each(["running", "completed", "failed"] as const)(
     "does not publish %s subagent activity",
     (status) => {

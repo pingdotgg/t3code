@@ -155,6 +155,7 @@ function EnvironmentNotifications({
         attention && attention !== prior.attention
           ? "input"
           : !rawThread.latestRunStopRequested &&
+              !rawThread.latestRunSilent &&
               completion !== null &&
               (prior.completion === null || completion > prior.completion)
             ? "completion"
