@@ -581,7 +581,32 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const toTsvCell = (value: string) => value.replace(/[\t\r\n]/g, " ");
+
+const projectListCommand = Command.make("list", projectLocationFlags).pipe(
+  Command.withDescription("List projects."),
+  Command.withHandler((flags) =>
+    runProjectMutation(flags, ({ snapshot }) => {
+      const active = snapshot.projects.filter((project) => project.deletedAt === null);
+      return Effect.succeed(
+        active.length === 0
+          ? "No projects."
+          : active
+              .map((project) =>
+                [project.id, project.title, project.workspaceRoot].map(toTsvCell).join("\t"),
+              )
+              .join("\n"),
+      );
+    }),
+  ),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectAddCommand,
+    projectListCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+  ]),
 );
