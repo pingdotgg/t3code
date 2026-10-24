@@ -117,7 +117,15 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
 
 const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
-const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
+// Locks record `pid:token`. A dead pid is an installer that exited, including
+// a quit mid-download, and is removed immediately. A lock with no pid is the
+// previous format and names no owner, so it only blocks for a short grace.
+// The retry loop outlasts that grace.
+const INSTALL_LOCK_LEGACY_GRACE_MS = 5_000;
+// Longer than the download timeout, so a live installer is not stolen while a
+// slow transfer is still running. A pid that is still alive after this is
+// wedged, or the pid was reused.
+const INSTALL_LOCK_LIVE_STALE_MS = 12 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
 
 const ACTIVATE_RETRY_COUNT = 40;
@@ -198,6 +206,24 @@ class VersionProbeKey extends Data.Class<{
 
 function isAlreadyExists(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "AlreadyExists";
+}
+
+function parseLockOwnerPid(contents: string): number | null {
+  const separator = contents.indexOf(":");
+  if (separator <= 0) return null;
+  const pid = Number(contents.slice(0, separator));
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+// `EPERM` means the process exists but belongs to someone else. Any other
+// failure, including `ESRCH`, means the installer that wrote the lock is gone.
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { readonly code?: unknown }).code === "EPERM";
+  }
 }
 
 const wrapInstallFailure =
@@ -465,13 +491,22 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return bytes;
   });
 
+  const releaseOwnedLock = (lockPath: string, token: string) =>
+    fileSystem.readFileString(lockPath).pipe(
+      Effect.flatMap((contents) =>
+        contents.trim() === token ? fileSystem.remove(lockPath, { force: true }) : Effect.void,
+      ),
+      Effect.ignore,
+    );
+
   const acquireInstallLock = Effect.fn("cloudflared.acquireInstallLock")(function* (
     lockPath: string,
   ) {
+    const token = `${process.pid}:${yield* crypto.randomUUIDv4()}`;
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* Effect.acquireRelease(
-        fileSystem.writeFileString(lockPath, "", { flag: "wx" }),
-        () => fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore),
+        fileSystem.writeFileString(lockPath, token, { flag: "wx" }).pipe(Effect.as(token)),
+        (owned) => releaseOwnedLock(lockPath, owned),
       ).pipe(
         Effect.as(true),
         Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
@@ -480,9 +515,29 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
       const now = yield* Clock.currentTimeMillis;
       const lockInfo = yield* fileSystem.stat(lockPath).pipe(Effect.option);
-      const mtime = Option.flatMap(lockInfo, (info) => info.mtime);
-      if (Option.isSome(mtime) && now - mtime.value.getTime() > INSTALL_LOCK_STALE_MS) {
-        yield* fileSystem.remove(lockPath, { force: true });
+      // The holder removed it between the exclusive create and this stat.
+      if (Option.isNone(lockInfo)) continue;
+      const mtime = lockInfo.value.mtime;
+      const age = Option.isSome(mtime) ? now - mtime.value.getTime() : Number.POSITIVE_INFINITY;
+      const contents = yield* fileSystem.readFileString(lockPath).pipe(
+        Effect.map((value) => value.trim()),
+        Effect.orElseSucceed(() => ""),
+      );
+      const ownerPid = parseLockOwnerPid(contents);
+      const abandoned =
+        ownerPid === null
+          ? age > INSTALL_LOCK_LEGACY_GRACE_MS
+          : !processIsAlive(ownerPid) || age > INSTALL_LOCK_LIVE_STALE_MS;
+      if (abandoned) {
+        // Only unlink the contents just judged abandoned. A replacement belongs
+        // to whoever won the race.
+        const current = yield* fileSystem.readFileString(lockPath).pipe(
+          Effect.map((value) => value.trim()),
+          Effect.option,
+        );
+        if (Option.isSome(current) && current.value === contents) {
+          yield* fileSystem.remove(lockPath, { force: true });
+        }
         continue;
       }
       yield* Effect.sleep(INSTALL_LOCK_RETRY_DELAY);

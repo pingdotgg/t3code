@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -182,6 +183,93 @@ describe("RelayClient", () => {
         ),
       ),
     ),
+  );
+
+  it.effect("keeps an install lock whose owner is still running", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cloudflared-test-" });
+      const directory = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64`;
+      const lockPath = `${directory}/cloudflared.lock`;
+      const token = `${process.pid}:still-running`;
+      yield* fileSystem.makeDirectory(directory, { recursive: true });
+      yield* fileSystem.writeFileString(lockPath, token);
+      const contended = yield* Deferred.make<void>();
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          writeFileString: (path, contents, options) =>
+            fileSystem
+              .writeFileString(path, contents, options)
+              .pipe(
+                Effect.tapError(() =>
+                  path === lockPath ? Deferred.succeed(contended, undefined) : Effect.void,
+                ),
+              ),
+        }),
+      );
+      const installing = yield* manager.install.pipe(Effect.forkChild);
+      yield* Deferred.await(contended);
+      yield* Fiber.interrupt(installing);
+      expect(yield* fileSystem.readFileString(lockPath)).toBe(token);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerHttpClient(new Uint8Array()),
+          layerSpawner([]),
+          layerHostRuntime({ PATH: "" }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.skipIf(windowsHost)("replaces an install lock left by an exited installer", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const lockPath = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared.lock`;
+      yield* fileSystem.makeDirectory(lockPath.slice(0, lockPath.lastIndexOf("/")), {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(lockPath, "2147483647:exited-installer");
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: testReleaseAsset,
+      });
+
+      expect(yield* manager.install).toMatchObject({ status: "available" });
+      expect(yield* fileSystem.exists(lockPath)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
+  );
+
+  it.effect.skipIf(windowsHost)("replaces an empty install lock left by an exited installer", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const lockPath = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared.lock`;
+      yield* fileSystem.makeDirectory(lockPath.slice(0, lockPath.lastIndexOf("/")), {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(lockPath, "");
+      const written = yield* fileSystem.stat(lockPath);
+      const mtime = Option.getOrElse(written.mtime, () => new Date(0)).getTime();
+      // The test clock starts at the epoch, so a lock just written looks
+      // newer than the clock. Move past its mtime by more than the grace.
+      yield* TestClock.setTime(mtime + 60 * 60 * 1_000);
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: testReleaseAsset,
+      });
+
+      expect(yield* manager.install).toMatchObject({ status: "available" });
+      expect(yield* fileSystem.exists(lockPath)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
   );
 
   it.effect("releases the install lock when a download is cancelled", () =>
