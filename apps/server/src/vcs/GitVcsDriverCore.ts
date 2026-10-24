@@ -148,6 +148,30 @@ function statusUpstreamRefreshFailureCooldown(consecutiveFailures: number): Dura
   return Duration.min(Duration.millis(cooldownMs), STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN);
 }
 
+// PR checkouts keep the PR's branch name, so without a cap the folder name can
+// be any length. On Windows every character comes out of the 260-character
+// budget that tools without long-path support (and git's own `.git/worktrees`
+// bookkeeping, even with core.longpaths) have for files inside the worktree.
+// Long names keep a readable prefix and a hash of the full branch.
+const MAX_WORKTREE_DIRECTORY_NAME_LENGTH = 40;
+
+function worktreeDirectoryName(branch: string): string {
+  const name = branch.replace(/\//g, "-");
+  if (name.length <= MAX_WORKTREE_DIRECTORY_NAME_LENGTH) return name;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < branch.length; index++) {
+    hash = Math.imul(hash ^ branch.charCodeAt(index), 0x01000193);
+  }
+  const suffix = (hash >>> 0).toString(16).padStart(8, "0");
+  const prefix = name
+    .slice(0, MAX_WORKTREE_DIRECTORY_NAME_LENGTH - suffix.length - 1)
+    // A cut emoji leaves a lone surrogate, which git lists back as U+FFFD, so
+    // T3's stored path would stop matching git's.
+    .replace(/[\uD800-\uDBFF]$/, "")
+    .replace(/[.-]+$/, "");
+  return `${prefix}-${suffix}`;
+}
+
 class GitRefsSnapshotCacheKey extends Data.Class<{
   gitCommonDir: string;
   epoch: number;
@@ -3718,7 +3742,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
     const targetBranch = input.newRefName ?? input.refName;
-    const sanitizedBranch = targetBranch.replace(/\//g, "-");
     // resolve: a cwd like `<repo>/sub/..` must not name the folder `..`.
     const repoName = path.basename(path.resolve(input.cwd));
     let worktreePath = input.path;
@@ -3737,7 +3760,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Storage.`,
         });
       }
-      worktreePath = path.join(parentDir, repoName, sanitizedBranch);
+      worktreePath = path.join(parentDir, repoName, worktreeDirectoryName(targetBranch));
     }
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, "--", worktreePath, input.refName]

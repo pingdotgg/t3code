@@ -3344,6 +3344,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps worktree folder names short for long branch names", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const worktreesDirectory = yield* makeTmpDir("custom-worktrees-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // Flattened, this is one 280-character folder name, over every OS's limit.
+        const longBranch = (last: string) =>
+          `feature/${"a".repeat(90)}/${"b".repeat(90)}/${last.repeat(90)}`;
+
+        const folders = new Set<string>();
+        for (const branch of [longBranch("c"), longBranch("d")]) {
+          const created = yield* driver.createWorktree(
+            { cwd, path: null, refName: initialBranch, newRefName: branch },
+            { worktreesDirectory },
+          );
+          const folder = pathService.basename(created.worktree.path);
+          assert.isAtMost(folder.length, 40);
+          assert.equal(yield* fileSystem.exists(created.worktree.path), true);
+          assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
+          folders.add(folder);
+        }
+        assert.equal(folders.size, 2);
+      }),
+    );
+
     it.effect("resolves the submodule mode from the option, then t3.json", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
