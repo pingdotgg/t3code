@@ -177,18 +177,27 @@ export function HostedBrowserWebview(props: {
         if (!disposed) remountCrashedWebview();
       }, recovery.delayMs);
     };
-    // A click inside the guest only reaches this document as a webview focus
-    // event, so open menus and popovers never see the outside press that
-    // would dismiss them. Replay it as a pointerdown on the webview itself.
+    // A click inside the guest never reaches this document as a pointer event,
+    // so open menus and popovers never see the outside press that would dismiss
+    // them. Replay it as a pointerdown on the webview itself. The guest preload
+    // reports every real press, because the guest does not always take focus
+    // on a click and the webview `focus` event alone would miss those.
     const dismissHostPopups = () => {
       webview.dispatchEvent(
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
+    const guestPointerDown = (event: Event) => {
+      // Mirrors POINTER_DOWN_HOST_CHANNEL in apps/desktop/src/preview/GuestProtocol.ts.
+      if ((event as Event & { channel?: string }).channel === "preview:pointer-down") {
+        dismissHostPopups();
+      }
+    };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
+    webview.addEventListener("ipc-message", guestPointerDown);
     register();
     return () => {
       disposed = true;
@@ -197,6 +206,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
+      webview.removeEventListener("ipc-message", guestPointerDown);
     };
   }, [
     clientSettingsHydrated,
