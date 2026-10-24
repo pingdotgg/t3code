@@ -41,7 +41,7 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -55,6 +55,8 @@ import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { LRUCache } from "~/lib/lruCache";
+import { observeResize } from "~/lib/observeResize";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import type { ChatFileAttachment } from "~/types";
@@ -915,6 +917,11 @@ function EditableFileSurface({
   );
 }
 
+// The rendered surface remounts on every file tab or source toggle, so its offset lives
+// outside React and is written from the scroll listener without re-rendering.
+const renderedMarkdownScrollTops = new LRUCache<number>(200, 200);
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -943,9 +950,52 @@ function RenderedMarkdownSurface({
     relativePath,
     onPendingChange,
   });
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const root = scrollAreaRef.current;
+    const viewport = root?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!root || !viewport) return;
+    const key = JSON.stringify([environmentId, cwd, relativePath]);
+    const target = renderedMarkdownScrollTops.get(key) ?? 0;
+    // Images, math, and code blocks can settle after mount; keep reapplying the offset
+    // while content grows so a clamped early scrollTop does not overwrite the saved one.
+    let restoring = true;
+    let unobserve = () => {};
+    // Listen on the root so dragging the scrollbar, a sibling of the viewport, also
+    // hands control back to the user.
+    const stopRestoring = () => {
+      restoring = false;
+      unobserve();
+      for (const type of USER_SCROLL_EVENTS) root.removeEventListener(type, stopRestoring);
+    };
+    const save = () => {
+      if (!restoring) renderedMarkdownScrollTops.set(key, viewport.scrollTop, 1);
+    };
+    viewport.scrollTop = target;
+    if (Math.abs(viewport.scrollTop - target) < 1) {
+      stopRestoring();
+    } else {
+      unobserve = observeResize(Array.from(viewport.children), () => {
+        viewport.scrollTop = target;
+        if (Math.abs(viewport.scrollTop - target) < 1) stopRestoring();
+      });
+      for (const type of USER_SCROLL_EVENTS) {
+        root.addEventListener(type, stopRestoring, { passive: true });
+      }
+    }
+    viewport.addEventListener("scroll", save, { passive: true });
+    return () => {
+      // A scroll in the same frame as the tab switch has not dispatched its event yet.
+      // The surface is keyed by file identity, so this runs before its DOM is detached.
+      if (viewport.isConnected) save();
+      stopRestoring();
+      viewport.removeEventListener("scroll", save);
+    };
+  }, [environmentId, cwd, relativePath]);
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}
@@ -1415,7 +1465,7 @@ export default function FilePreviewPanel({
           ) : relativePath && file.data ? (
             isMarkdown && renderMarkdown ? (
               <RenderedMarkdownSurface
-                key={relativePath}
+                key={JSON.stringify([environmentId, cwd, relativePath])}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}

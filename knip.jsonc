@@ -26,6 +26,8 @@
         "fixtures/*/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
+        // Manual verification seeds a sandbox worktree with these fixtures.
+        "seed-markdown-scroll-fixtures.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "verify-windows-desktop-artifact.ts",
