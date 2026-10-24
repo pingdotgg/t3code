@@ -20,6 +20,8 @@ interface PendingUserInputPanelProps {
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
@@ -33,6 +35,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   respondingRequestIds,
   answers,
   questionIndex,
+  collapsed,
+  onCollapsedChange,
   onToggleOption,
   onAdvance,
   onDismiss,
@@ -51,6 +55,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
+      isCollapsed={collapsed}
+      onCollapsedChange={onCollapsedChange}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
@@ -66,6 +72,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding,
   answers,
   questionIndex,
+  isCollapsed,
+  onCollapsedChange,
   onToggleOption,
   onAdvance,
   onDismiss,
@@ -77,6 +85,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  isCollapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
@@ -91,7 +101,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     questionId: string;
     optionValue: string;
   } | null>(null);
-  const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
   // The active question keys the shortcut listener, so it must keep its identity across renders.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
@@ -101,8 +110,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     (option) =>
       !customAnswerActive && progress.selectedOptionValues.includes(option.value ?? option.label),
   );
-  const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
-
   // The optimistic pick is dropped once the draft confirms it or the question moves on.
   if (
     optimisticSingleSelect &&
@@ -181,7 +188,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     <Collapsible
       open={!isCollapsed}
       onOpenChange={(open) => {
-        setCollapsedQuestionId(open ? null : activeQuestion.id);
+        onCollapsedChange(!open);
       }}
     >
       <CollapsibleTrigger

@@ -1249,6 +1249,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const [collapsedPendingQuestionKey, setCollapsedPendingQuestionKey] = useState<string | null>(
+    null,
+  );
+  const activePendingQuestionKey =
+    activePendingUserInput && activePendingProgress?.activeQuestion
+      ? `${activePendingUserInput.requestId}:${activePendingProgress.activeQuestion.id}`
+      : null;
+  const isPendingQuestionCollapsed =
+    activePendingQuestionKey !== null && collapsedPendingQuestionKey === activePendingQuestionKey;
+  const setPendingQuestionCollapsed = (collapsed: boolean) => {
+    setCollapsedPendingQuestionKey(collapsed ? activePendingQuestionKey : null);
+  };
+  const setPendingQuestionCollapsedStable = useStableCallback(setPendingQuestionCollapsed);
   const showComposerTopDrawer =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
@@ -2352,8 +2365,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       upload.environmentId === environmentId;
     return nonPersistedComposerImageIdSet.has(image.id) && !failedInCurrentEnvironment;
   });
+  // A collapsed question card is only its header row, so the composer may rest beneath it.
+  const restsBeneathCollapsedQuestion = isPendingQuestionCollapsed && !isComposerApprovalState;
   const composerHasExpandedChrome =
-    showComposerTopDrawer ||
+    (showComposerTopDrawer && !restsBeneathCollapsedQuestion) ||
     isTasksDrawerOpen ||
     composerMenuOpen ||
     isStashMenuOpen ||
@@ -2437,9 +2452,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !composerHasExpandedChrome &&
     !showInlineTasksBadge;
   const composerScrollCollapseEligible = canScrollCollapseComposer && !isComposerResting;
+  const restsBeneathCollapsedQuestionRef = useRef(false);
   useLayoutEffect(() => {
     composerScrollCollapseEligibleRef.current = composerScrollCollapseEligible;
+    restsBeneathCollapsedQuestionRef.current = restsBeneathCollapsedQuestion;
   });
+  // An answer being typed keeps its editor open while the timeline scrolls.
+  const isComposerScrollCollapseEligible = useStableCallback(
+    () =>
+      composerScrollCollapseEligibleRef.current &&
+      !(
+        restsBeneathCollapsedQuestionRef.current &&
+        document.activeElement?.closest('[data-testid="composer-editor"]')
+      ),
+  );
 
   useEffect(() => {
     if (!canScrollCollapseComposer) {
@@ -2517,7 +2543,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         now: window.performance.now(),
         deltaPx,
         collapseThresholdPx: COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX,
-        collapseEligible: targetsTimeline && composerScrollCollapseEligibleRef.current,
+        collapseEligible: targetsTimeline && isComposerScrollCollapseEligible(),
         canScrollInGestureDirection,
         scrollsTowardLogicalEnd: event.deltaY > 0 && isTimelineAtLogicalEnd(),
       });
@@ -2536,6 +2562,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     canTrackComposerScrollGesture,
     getTimelineScrollableNode,
+    isComposerScrollCollapseEligible,
     isTimelineAtLogicalEnd,
     setIsComposerScrollCollapsed,
   ]);
@@ -3086,7 +3113,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       collapseForTimelineScrollKey: (key) => {
         const scrollNode = getTimelineScrollableNode();
         if (
-          composerScrollCollapseEligibleRef.current &&
+          isComposerScrollCollapseEligible() &&
           scrollNode &&
           shouldCollapseComposerForScrollKey({
             key,
@@ -3566,6 +3593,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     answers={activePendingDraftAnswers}
                     questionIndex={activePendingQuestionIndex}
+                    collapsed={isPendingQuestionCollapsed}
+                    onCollapsedChange={setPendingQuestionCollapsedStable}
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
