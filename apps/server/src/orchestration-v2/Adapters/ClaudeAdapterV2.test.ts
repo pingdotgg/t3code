@@ -12,6 +12,7 @@ import type {
   SDKMessage,
   SDKResultMessage,
   SDKUserMessage,
+  SessionCronSummary,
   SpawnedProcess,
   SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -6462,6 +6463,169 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(roster, [
           { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
         ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // The SDK reports CronCreate, ScheduleWakeup and /loop jobs only through the Stop hook,
+  // which fires just before the turn's result.
+  const runStopHook = (
+    harness: Effect.Success<typeof makeWakeHarness>,
+    sessionCrons: ReadonlyArray<SessionCronSummary>,
+  ) =>
+    Effect.promise(async () => {
+      const matchers = harness.getOpenedOptions()?.hooks?.Stop ?? [];
+      for (const hook of matchers.flatMap((matcher) => matcher.hooks)) {
+        await hook(
+          {
+            hook_event_name: "Stop",
+            session_id: WAKE_NATIVE_SESSION,
+            transcript_path: "/tmp/transcript.jsonl",
+            cwd: "/tmp",
+            stop_hook_active: false,
+            background_tasks: [],
+            session_crons: [...sessionCrons],
+          },
+          undefined,
+          { signal: new AbortController().signal },
+        );
+      }
+    });
+  const pendingSessionCron: SessionCronSummary = {
+    id: "4e805017",
+    schedule: "20 12 22 10 *",
+    recurring: false,
+    prompt: "Append `date -u` to /tmp/cron.txt",
+  };
+
+  it.effect("keeps a session with a pending session cron alive until no cron remains", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, text: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-claude-session-cron:${ordinal}`),
+            text,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+
+        yield* harness.runtime.startTurn(turn(1, "At 12:20 append the date to a file."));
+        yield* runStopHook(harness, [pendingSessionCron]);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
+        assert.isTrue(
+          yield* harness.hasPendingBackgroundWork,
+          "a pending session cron must keep the idle session alive",
+        );
+
+        yield* harness.runtime.startTurn(turn(2, "Cancel that job."));
+        yield* runStopHook(harness, []);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(2);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("forgets session crons when the next turn is interrupted before Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, text: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-claude-session-cron-interrupt:${ordinal}`),
+            text,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+
+        yield* harness.runtime.startTurn(turn(1, "At 12:20 append the date to a file."));
+        yield* runStopHook(harness, [pendingSessionCron]);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // Stop closes the CLI that owns the crons, and the SDK Stop hook never reports them gone.
+        const second = turn(2, "Keep going.");
+        yield* harness.runtime.startTurn(second);
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${second.attemptId}`,
+          }),
+        });
+        yield* harness.awaitTerminal(2);
+        assert.equal(harness.terminalEvents()[1]?.status, "interrupted");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps session crons pinned when the next turn fails without closing the CLI", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, text: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-claude-session-cron-failed:${ordinal}`),
+            text,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+
+        yield* harness.runtime.startTurn(turn(1, "At 12:20 append the date to a file."));
+        yield* runStopHook(harness, [pendingSessionCron]);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // A usage limit fails the turn through StopFailure, which carries no crons, and the
+        // CLI keeps running with the job still scheduled.
+        yield* harness.runtime.startTurn(turn(2, "Keep going."));
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000013439",
+            result: "Usage limit reached.",
+            isError: true,
+            apiErrorStatus: 429,
+            terminalReason: "api_error",
+          }),
+        );
+        yield* harness.awaitTerminal(2);
+        assert.equal(harness.terminalEvents()[1]?.status, "failed");
+        assert.isTrue(
+          yield* harness.hasPendingBackgroundWork,
+          "a failed turn must not forget crons the live CLI still holds",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
