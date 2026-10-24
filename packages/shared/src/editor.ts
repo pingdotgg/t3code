@@ -25,6 +25,25 @@ const isVersionedBundle = (entry: string, name: string) => {
   return /^\d[\d.]*$/.test(entry.slice(name.length + 1, -".app".length));
 };
 
+/**
+ * The program a Toolbox script line runs: its first word, or the operand of `exec`, `open -na` or
+ * `start ""`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
+ * about whether the IDE is still installed. */
+const launchedProgram = (line: string) => {
+  const words = [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|(\S+)/g)].map((match) => ({
+    text: match[1] ?? match[2] ?? "",
+    quoted: match[1] !== undefined,
+  }));
+  const launcher = words.shift();
+  if (!launcher) return undefined;
+  const name = launcher.text.toLowerCase();
+  if (name !== "exec" && name !== "open" && name !== "start") return launcher.text;
+  // `start` reads its first quoted word as the window title.
+  if (name === "start" && words[0]?.quoted) words.shift();
+  const option = name === "start" ? /^\// : /^-/;
+  return words.find((word) => word.quoted || !option.test(word.text))?.text;
+};
+
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
   editor: Editor,
   env: NodeJS.ProcessEnv,
@@ -47,16 +66,14 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
-  // A Toolbox script names its IDE by absolute path or a HOME-based path. Keep a numbered script
-  // only while one of those paths exists, so a script left behind by a
+  // A Toolbox script launches its IDE by absolute path or a HOME-based path. Keep a numbered script
+  // only while that path exists, so a script left behind by a
   // removed IDE is skipped. The script is read, never run.
   const hasLaunchTarget = Effect.fn("editor.hasLaunchTarget")(function* (script: string) {
     const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
     const targets = text
       .split(/\r?\n/)
-      .filter((line) => !/^\s*(#|::|@?rem\b)/i.test(line))
-      .flatMap((line) => [...line.matchAll(/"([^"]*)"|([^\s"=;]+)/g)])
-      .map((match) => match[1] ?? match[2] ?? "")
+      .flatMap((line) => launchedProgram(line) ?? [])
       .map((target) => (home ? target.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : target))
       .filter((target) => path.isAbsolute(target));
     for (const target of targets) {

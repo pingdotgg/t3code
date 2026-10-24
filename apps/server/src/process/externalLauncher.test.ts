@@ -753,13 +753,18 @@ it.effect.skipIf(windowsHost)(
       yield* fs.makeDirectory(scripts, { recursive: true });
       yield* fs.makeDirectory(path.dirname(target), { recursive: true });
       yield* fs.writeFileString(target, "");
+      const launch = (ide: string) => `exec "${ide}" "$@"\n`;
       for (const [name, script] of [
-        ["idea1", path.join(home, "apps/removed/bin/idea")],
-        ["idea10", target],
-        ["idea2", target],
+        // Existing paths outside the launch command do not keep the script.
+        [
+          "idea1",
+          `JAVA_HOME="${home}"\ncd "${home}"\n${launch(path.join(home, "apps/removed/bin/idea"))}`,
+        ],
+        ["idea10", launch(target)],
+        ["idea2", launch(target)],
       ] as const) {
         const executable = path.join(scripts, name);
-        yield* fs.writeFileString(executable, `#!/bin/sh\nexec "${script}" "$@"\n`);
+        yield* fs.writeFileString(executable, `#!/bin/sh\n${script}`);
         yield* fs.chmod(executable, 0o755);
       }
 
