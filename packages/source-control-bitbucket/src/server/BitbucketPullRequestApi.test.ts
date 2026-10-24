@@ -152,7 +152,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       // Bitbucket takes one `q`, so the two narrowings are joined rather than one replacing the
       // other — and the search keeps its brackets, which is what keeps the AND out of its OR.
       expect(filterOfCall(0)).toBe(
-        '(title ~ "page" OR description ~ "page") AND updated_on <= 2026-07-02T00:00:00+00:00',
+        '(title ~ "page" OR description ~ "page") AND updated_on < 2026-07-02T00:00:00.001Z',
       );
     }),
   );
