@@ -264,7 +264,11 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const offset = input.cursor?.delivered ?? 0;
         const items: ReturnType<typeof forgejoChangeRequest>[] = [];
+        // Forgejo lists merged pull requests as closed, so both views read the closed list and
+        // keep the rows whose merged flag matches.
         const state = input.state === "merged" ? "closed" : input.state;
+        const keeps = (row: typeof ForgejoPullRequest.Type) =>
+          input.state === "merged" ? row.merged : input.state !== "closed" || !row.merged;
         const params = new URLSearchParams({ state, sort: "recentupdate" });
         const filters = input.filters;
         // Several `labels` match a pull request holding any of them but list it once per label it
@@ -297,6 +301,9 @@ export const make = Effect.gen(function* () {
         if (first === null) return { items: [], truncated: false, continues: false };
         const pageSize = first.rows.length || 50;
         const firstIndex = Math.floor(offset / pageSize) + 1;
+        // The cursor counts every row read, kept or not, so a continuation resumes after the
+        // last one. A slice reads at most `limit` rows however few it keeps, since each page can
+        // be slow on a large server; the service continues from one that kept none.
         let consumed = 0;
         let more = true;
         for (let index = firstIndex; more && consumed < input.limit; index++) {
@@ -308,7 +315,7 @@ export const make = Effect.gen(function* () {
           for (const row of rows.slice(start)) {
             if (consumed >= input.limit) break;
             consumed++;
-            if (row) items.push(forgejoChangeRequest(row));
+            if (row && keeps(row)) items.push(forgejoChangeRequest(row));
           }
           more = result.more || rows.length - start > consumed - countBefore;
         }
