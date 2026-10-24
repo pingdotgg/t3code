@@ -3808,19 +3808,54 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* progress.onSubmodulesStarted();
       }
       const onSubmoduleLine = progress?.onSubmoduleLine;
-      yield* runGit(
-        "GitVcsDriver.createWorktree.updateSubmodules",
-        worktreePath,
-        submoduleMode.value === "recursive"
-          ? ["submodule", "update", "--init", "--recursive"]
-          : ["submodule", "update", "--init"],
-        onSubmoduleLine
-          ? {
-              env: { LC_ALL: "C" },
-              progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
-            }
-          : {},
-      ).pipe(
+      const updateArgs = ["submodule", "update", "--init"];
+      if (submoduleMode.value === "recursive") updateArgs.push("--recursive");
+      const updateSubmodules = (args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
+        runGit(
+          "GitVcsDriver.createWorktree.updateSubmodules",
+          worktreePath,
+          args,
+          onSubmoduleLine
+            ? {
+                env: { ...env, LC_ALL: "C" },
+                progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
+              }
+            : { env },
+        );
+      yield* Effect.gen(function* () {
+        // Submodule repositories are per worktree, so Git would clone each one again even
+        // though the source already has it in `.git/modules`. `alternateLocation=superproject`
+        // borrows from `<alternate>/modules/<name>`, but a linked worktree shares the source's
+        // object store instead of listing it as an alternate. Present it as one for this
+        // command, which needs a separate (empty) primary store. Git skips sources it cannot
+        // borrow from, and `--dissociate` copies what it borrowed so the worktree stays
+        // independent of the source.
+        const sharedObjects = yield* runGitStdout(
+          "GitVcsDriver.createWorktree.objectsPath",
+          worktreePath,
+          ["rev-parse", "--git-path", "objects"],
+        );
+        const emptyObjects = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-submodule-objects-",
+        });
+        yield* updateSubmodules(
+          [
+            "-c",
+            "submodule.alternateLocation=superproject",
+            "-c",
+            "submodule.alternateErrorStrategy=ignore",
+            ...updateArgs,
+            "--dissociate",
+          ],
+          {
+            GIT_OBJECT_DIRECTORY: emptyObjects,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: path.resolve(worktreePath, sharedObjects.trim()),
+          },
+        );
+      }).pipe(
+        Effect.scoped,
+        // Borrowing only saves time, so whatever it trips on must not leave submodules empty.
+        Effect.catch(() => updateSubmodules(updateArgs)),
         Effect.matchEffect({
           onFailure: (cause) =>
             Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {

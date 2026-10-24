@@ -3253,6 +3253,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
         yield* git(cwd, ["commit", "-m", "add submodule"]);
+        // The remote still advertises its refs but can no longer serve objects, so the
+        // worktree can only populate the submodule from the source's `.git/modules`.
+        const remoteObjects = pathService.join(submoduleRepo, ".git", "objects");
+        yield* fileSystem.remove(remoteObjects, { recursive: true });
+        yield* fileSystem.makeDirectory(pathService.join(remoteObjects, "pack"), {
+          recursive: true,
+        });
 
         const worktreePath = pathService.join(
           yield* makeTmpDir("git-worktrees-"),
@@ -3270,6 +3277,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
           true,
         );
+        // The borrowed objects were copied, so the worktree survives the source losing them.
+        yield* fileSystem.remove(pathService.join(cwd, ".git", "modules"), { recursive: true });
+        yield* git(pathService.join(worktreePath, "shared"), ["fsck", "--no-progress"]);
       }),
     );
 
