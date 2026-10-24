@@ -391,27 +391,16 @@ export const layer: Layer.Layer<
     );
 
     /**
-     * A native subagent's thread starts on the parent's model when the provider
-     * names the real one later (a Claude agent file's model arrives with the
-     * subagent's first reply). Thread commands rewrite the whole thread row
-     * under the thread's lock, so this read and write take it too.
+     * Thread commands rewrite the whole thread row under the thread's lock, so
+     * this read and write take it too.
      */
-    const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
-      function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
-        const { childThreadId, model } = subagent;
-        if (
-          subagent.origin !== "provider_native" ||
-          childThreadId === null ||
-          (model === null && subagent.modelSelection === undefined)
-        ) {
-          return [];
-        }
-        const reportedSelection = ({ modelSelection }: { modelSelection: ModelSelection }) =>
-          subagent.modelSelection ??
-          (model === null || model === modelSelection.model
-            ? modelSelection
-            : { instanceId: modelSelection.instanceId, model });
-        const staleThread = projections.getThread(childThreadId).pipe(
+    const syncThreadModelSelection = Effect.fn("ProviderEventIngestor.syncThreadModelSelection")(
+      function* (
+        input: ProviderEventIngestInput,
+        threadId: ThreadId,
+        reportedSelection: (thread: { modelSelection: ModelSelection }) => ModelSelection,
+      ) {
+        const staleThread = projections.getThread(threadId).pipe(
           Effect.map((thread) =>
             modelSelectionsEqual(thread.modelSelection, reportedSelection(thread)) ? null : thread,
           ),
@@ -419,7 +408,7 @@ export const layer: Layer.Layer<
         );
         if ((yield* staleThread) === null) return [];
         return yield* threadCommands.withLock(
-          childThreadId,
+          threadId,
           Effect.gen(function* () {
             const thread = yield* staleThread;
             if (thread === null) return [];
@@ -436,6 +425,33 @@ export const layer: Layer.Layer<
             });
             return yield* eventSink.write({ events: [event] });
           }),
+        );
+      },
+    );
+
+    /**
+     * A native subagent's thread starts on the parent's model when the provider
+     * names the real one later (a Claude agent file's model arrives with the
+     * subagent's first reply).
+     */
+    const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
+      function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
+        const { childThreadId, model } = subagent;
+        if (
+          subagent.origin !== "provider_native" ||
+          childThreadId === null ||
+          (model === null && subagent.modelSelection === undefined)
+        ) {
+          return [];
+        }
+        return yield* syncThreadModelSelection(
+          input,
+          childThreadId,
+          ({ modelSelection }) =>
+            subagent.modelSelection ??
+            (model === null || model === modelSelection.model
+              ? modelSelection
+              : { instanceId: modelSelection.instanceId, model }),
         );
       },
     );
@@ -555,6 +571,9 @@ export const layer: Layer.Layer<
                 }),
               ];
             }
+            case "app_thread.model_selection.updated":
+              // Written under the thread's lock after ingestion.
+              return [];
             case "provider_session.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -815,10 +834,22 @@ export const layer: Layer.Layer<
                   ),
                 ),
               ),
-              Effect.flatMap((storedEvents) =>
-                storedEvents.length === 0 || input.event.type !== "subagent.updated"
+              Effect.flatMap((storedEvents) => {
+                const event = input.event;
+                const sync =
+                  event.type === "app_thread.model_selection.updated"
+                    ? // A thread the user has since moved to another provider keeps its choice.
+                      syncThreadModelSelection(input, event.threadId, ({ modelSelection }) =>
+                        modelSelection.instanceId === event.modelSelection.instanceId
+                          ? event.modelSelection
+                          : modelSelection,
+                      )
+                    : storedEvents.length > 0 && event.type === "subagent.updated"
+                      ? syncSubagentThreadModel(input, event.subagent)
+                      : null;
+                return sync === null
                   ? Effect.succeed(storedEvents)
-                  : syncSubagentThreadModel(input, input.event.subagent).pipe(
+                  : sync.pipe(
                       Effect.map((synced) => [...storedEvents, ...synced]),
                       Effect.mapError(
                         (cause) =>
@@ -828,8 +859,8 @@ export const layer: Layer.Layer<
                             cause,
                           }),
                       ),
-                    ),
-              ),
+                    );
+              }),
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
                   if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")
