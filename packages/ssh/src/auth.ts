@@ -213,3 +213,13 @@ export function isSshAuthFailure(error: unknown): boolean {
     /too many authentication failures/u.test(normalized)
   );
 }
+
+// OpenSSH asks the agent to sign only after the server accepts the offered key, so this means
+// the key is authorized and the agent could not sign right now (locked, or approval not given).
+// OpenSSH 8.2+ names the key and adds "from agent"; older releases print only the agent error.
+export function isSshAgentSigningFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /sign_and_send_pubkey: signing failed(?: for [^\n]* from agent:|: (?:agent refused operation|communication with agent failed))/u.test(
+    message,
+  );
+}

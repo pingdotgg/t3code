@@ -1465,6 +1465,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       if (input.authSecret !== null) {
         authSecrets.delete(input.key);
       }
+      // 1Password and Secretive cannot sign while the screen is locked. Prompting here would open
+      // a password dialog on every background reconnect, and the key works again once the agent can.
+      if (SshAuth.isSshAgentSigningFailure(input.error)) {
+        return yield* input.error;
+      }
       if (input.promptCount >= 2) {
         return yield* input.error;
       }
