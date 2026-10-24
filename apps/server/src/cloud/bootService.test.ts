@@ -305,9 +305,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(plan.program).toEqual([runtime.entryPath, "__service-launcher"]);
-      expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `ExecStart=${runtime.entryPath} __service-launcher`,
-      );
+      const unit = yield* fs.readFileString(plan.unitPath);
+      expect(unit).toContain(`ExecStart=${runtime.entryPath} __service-launcher`);
+      expect(unit).toContain("OOMPolicy=continue");
+      expect(unit).toContain("CPUWeight=1000");
+      expect(unit).toContain("IOWeight=1000");
+      expect(unit).not.toContain("ManagedOOMPreference=");
       expect(yield* service.status).toMatchObject({
         current: true,
         installedVersion: "1.2.3",
