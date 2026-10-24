@@ -508,7 +508,9 @@ results use the latest assistant content from the final work turn.
 - A requested model must be advertised by the selected provider when the
   provider publishes a model list.
 - `clientRequestId` derives stable command, thread, and message IDs within the
-  provider session. Retrying the same call returns the same durable work.
+  caller's namespace: the calling thread for thread callers, so retries survive
+  a reissued MCP credential, and the OAuth session for client callers.
+  Retrying the same call returns the same durable work.
 - Calls without `clientRequestId` receive a generated request key and create
   new work.
 

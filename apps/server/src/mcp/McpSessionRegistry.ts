@@ -104,7 +104,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const browserToolsAvailable = request.browserToolsAvailable ?? true;
       const scope: McpInvocationContext.McpThreadInvocationScope = {
         environmentId,
-        requestNamespace: providerSessionId,
+        // Keyed by thread, not credential: a reissued credential (for example
+        // after a server restart) must replay the thread's earlier mutations.
+        requestNamespace: `thread:${request.threadId}`,
         thread: {
           threadId: ThreadId.make(request.threadId),
           providerSessionId,

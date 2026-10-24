@@ -25,8 +25,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -51,6 +54,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1606,6 +1610,151 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(retryCommand.modelSelection.instanceId, codexInstanceId);
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
+  );
+
+  it.live("replays a delegation retried under a credential reissued for the same thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const otherParentThreadId = ThreadId.make("thread:mcp-providers-other-parent");
+        const driver = ProviderDriverKind.make("codex");
+        const cwd = yield* checkpointWorkspace("mcp-delegate-reissue");
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          {
+            instanceId: codexInstanceId,
+            driver,
+            getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+            planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+            openSession: () =>
+              Effect.die("This test exercises committed commands before provider execution."),
+          },
+        ]);
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          { name: "mcp-delegate-reissue", runtimePolicyOverride: { cwd } },
+          layerRegistry,
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        );
+        const layerSettings = ServerSettings.layerTest();
+        const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layerOrchestrator),
+          Layer.provide(
+            LegacyV1ThreadImporter.layer.pipe(
+              Layer.provide(layerOrchestrator),
+              Layer.provide(layerDatabase),
+            ),
+          ),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+          Layer.provideMerge(layerSettings),
+        );
+        const layerTest = layerOrchestratorService.pipe(
+          Layer.provideMerge(layerThreads),
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              layerRegistry,
+              layerSettings,
+              providerRegistryLayer([
+                providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+              ]),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ),
+          ),
+        );
+
+        // A server restart builds a new registry, and the provider session
+        // reconnects with a freshly issued credential for the same thread.
+        const issueScope = (threadId: ThreadId) =>
+          Effect.gen(function* () {
+            const registry = yield* McpSessionRegistry.__testing.make().pipe(
+              Effect.provideService(
+                HttpServer.HttpServer,
+                HttpServer.HttpServer.of({
+                  address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+                  serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+                }),
+              ),
+              Effect.provideService(
+                ServerEnvironment.ServerEnvironment,
+                ServerEnvironment.ServerEnvironment.of({
+                  getEnvironmentId: Effect.succeed(scope.environmentId),
+                  getDescriptor: Effect.die("unused"),
+                }),
+              ),
+            );
+            const issued = yield* registry.issue({ threadId, providerInstanceId: codexInstanceId });
+            const resolved = yield* registry.resolve(
+              issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+            );
+            assert.isDefined(resolved);
+            return resolved!;
+          });
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          for (const threadId of [parentThreadId, otherParentThreadId]) {
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`${threadId}:create`),
+              threadId,
+              projectId,
+              title: "MCP parent",
+              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`${threadId}:start`),
+              threadId,
+              messageId: MessageId.make(`${threadId}:message`),
+              text: "Delegate a task.",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+            });
+          }
+          const delegate = (callerScope: McpInvocationScope, clientRequestId: string) =>
+            service.delegateTask(callerScope, {
+              task: "Reply with only PROBE_DONE.",
+              target: { providerInstanceId: codexInstanceId, model: "gpt-5.4" },
+              mode: "async",
+              clientRequestId,
+            });
+          const childThreadIds = Effect.map(
+            orchestrator.getThreadProjection(parentThreadId),
+            (projection) => projection.subagents.map((task) => task.childThreadId),
+          );
+
+          const beforeRestart = yield* issueScope(parentThreadId);
+          const first = yield* delegate(beforeRestart, "delegate-reissue");
+          const otherThread = yield* delegate(
+            yield* issueScope(otherParentThreadId),
+            "delegate-reissue",
+          );
+          assert.notEqual(otherThread.childThreadId, first.childThreadId);
+
+          const afterRestart = yield* issueScope(parentThreadId);
+          assert.notEqual(
+            afterRestart.thread.providerSessionId,
+            beforeRestart.thread.providerSessionId,
+          );
+          const retry = yield* delegate(afterRestart, "delegate-reissue");
+          assert.equal(retry.taskId, first.taskId);
+          assert.deepEqual(yield* childThreadIds, [first.childThreadId]);
+
+          const fresh = yield* delegate(afterRestart, "delegate-reissue-2");
+          assert.deepEqual(yield* childThreadIds, [first.childThreadId, fresh.childThreadId]);
+        }).pipe(Effect.provide(layerTest));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
   );
 
   it.live.each([
