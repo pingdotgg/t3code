@@ -57,7 +57,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
   desktopLocalConnectionId,
-  readDesktopSecondaryBootstrapsResult,
+  refreshDesktopSecondaryBootstraps,
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
 import * as ConnectionStorage from "./storage";
@@ -643,6 +643,8 @@ const layerPlatformConnectionSource = Layer.effect(
       const next = new Map<string, CachedPlatformRegistration>();
       const registrations: Array<PlatformConnectionRegistration> = [];
 
+      // The async refresh also updates the bridge's cached primary entry, so it runs first.
+      const topologyRead = yield* Effect.promise(refreshDesktopSecondaryBootstraps);
       const primaryTopologyRead = readPrimaryEnvironmentTargetResult();
       const retainedPrimary = primaryRegistrationToRetainAfterTopologyRead(
         previous,
@@ -682,7 +684,6 @@ const layerPlatformConnectionSource = Layer.effect(
         }
       }
 
-      const topologyRead = readDesktopSecondaryBootstrapsResult();
       for (const [id, cached] of secondaryRegistrationsToRetainAfterTopologyRead(
         previous,
         topologyRead,
