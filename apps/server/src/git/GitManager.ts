@@ -1769,7 +1769,7 @@ export const make = Effect.gen(function* () {
 
   // `git worktree add -b feature origin/main` makes the new local branch track
   // origin/main. That upstream is the branch's base, not its published PR head.
-  // Looking up PRs for it can attach an old reverse merge from main and
+  // Looking up PRs for it can attach an old reverse or release merge and
   // auto-settle an unrelated feature thread.
   const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
     cwd: string,
@@ -1792,15 +1792,17 @@ export const make = Effect.gen(function* () {
         };
       }
     }
-    const upstreamHeadIsDefault =
+    if (headContext.headBranch === details.branch || headContext.isCrossRepository) {
+      return { headContext, lookup: true };
+    }
+    const upstreamHeadIsBase =
       headContext.headBranch === details.defaultBranch ||
       (details.defaultBranch === null &&
-        (headContext.headBranch === "main" || headContext.headBranch === "master"));
-    if (
-      headContext.headBranch === details.branch ||
-      !upstreamHeadIsDefault ||
-      headContext.isCrossRepository
-    ) {
+        (headContext.headBranch === "main" || headContext.headBranch === "master")) ||
+      // A worktree cut from a non-default base records it here and still tracks it.
+      headContext.headBranch ===
+        (yield* readConfigValueNullable(cwd, `branch.${details.branch}.gh-merge-base`));
+    if (!upstreamHeadIsBase) {
       return { headContext, lookup: true };
     }
     const remoteName = yield* findRemoteTrackingRemote(

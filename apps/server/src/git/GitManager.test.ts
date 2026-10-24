@@ -2349,6 +2349,47 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "status does not inherit a release PR from a worktree's non-default base upstream",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "origin", "main:dev"]);
+        yield* runGit(repoDir, ["fetch", "origin"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/from-dev", "origin/dev"]);
+        yield* runGit(repoDir, ["config", "branch.feature/from-dev.gh-merge-base", "dev"]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              dev: JSON.stringify([
+                {
+                  number: 49,
+                  title: "Release dev to main",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/49",
+                  baseRefName: "main",
+                  headRefName: "dev",
+                  state: "MERGED",
+                  mergedAt: "2026-08-20T10:00:00Z",
+                  updatedAt: "2026-08-20T10:00:00Z",
+                },
+              ]),
+            },
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.refName).toBe("feature/from-dev");
+        expect(status.pr).toBeNull();
+        expect(ghCalls.some((call) => call.includes("--head dev"))).toBe(false);
+      }),
+  );
+
   it.effect("status finds a PR pushed under the branch's own name despite a default upstream", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
