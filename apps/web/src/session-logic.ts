@@ -941,27 +941,86 @@ export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMe
   return shallow(previousMetadata, nextMetadata);
 }
 
+function streamedTextMetadata(item: OrchestrationV2TurnItem) {
+  if (item.type === "proposed_plan" && item.streaming) {
+    const { markdown: _markdown, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  if ((item.type === "assistant_message" || item.type === "reasoning") && item.streaming) {
+    const { text: _text, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  return null;
+}
+
 export function isStreamingTurnItemTextUpdate(
   previous: OrchestrationV2ProjectedTurnItem,
   next: OrchestrationV2ProjectedTurnItem,
 ): boolean {
   const { item: previousItem, ...previousSource } = previous;
   const { item: nextItem, ...nextSource } = next;
+  const previousMetadata = streamedTextMetadata(previousItem);
+  const nextMetadata = streamedTextMetadata(nextItem);
   if (
-    previousItem.type !== "assistant_message" ||
-    nextItem.type !== "assistant_message" ||
-    !previousItem.streaming ||
-    !nextItem.streaming ||
+    previousMetadata === null ||
+    nextMetadata === null ||
     !shallow(previousSource, nextSource) ||
     projectedItemCreatedAt(previous) !== projectedItemCreatedAt(next)
   ) {
     return false;
   }
-  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previousItem;
-  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = nextItem;
   // Wire decoding can recreate timestamps and attachments on each update.
   // Compare only the changed item's metadata, never the entire transcript.
   return Equal.equals(previousMetadata, nextMetadata);
+}
+
+function patchStreamedEntry(
+  entry: TimelineEntry,
+  replacements: ReadonlyMap<string, OrchestrationV2ProjectedTurnItem>,
+): TimelineEntry {
+  const sourceItemId =
+    entry.kind === "message"
+      ? entry.projectedItem?.item.id
+      : entry.kind === "work"
+        ? entry.entry.projectedItem?.item.id
+        : entry.id;
+  const row = sourceItemId === undefined ? undefined : replacements.get(sourceItemId);
+  if (row === undefined) return entry;
+  const { item } = row;
+  if (entry.kind === "message" && item.type === "assistant_message") {
+    return {
+      ...entry,
+      projectedItem: row,
+      message: { ...entry.message, text: item.text, updatedAt: DateTime.formatIso(item.updatedAt) },
+    };
+  }
+  if (entry.kind === "work" && item.type === "reasoning") {
+    return { ...entry, entry: projectedWorkEntry(row) };
+  }
+  if (entry.kind === "proposed-plan" && item.type === "proposed_plan") {
+    return {
+      ...entry,
+      proposedPlan: {
+        ...entry.proposedPlan,
+        planMarkdown: item.markdown,
+        updatedAt: DateTime.formatIso(item.updatedAt),
+      },
+    };
+  }
+  return entry;
+}
+
+/** Entries read only each plan's status; streaming plans rebuild artifacts with every delta. */
+function samePlanStatuses(
+  next: TimelineEntriesInput["plans"],
+  previous: TimelineEntriesInput["plans"],
+): boolean {
+  if (next === previous) return true;
+  if (next === undefined || previous === undefined || next.length !== previous.length) return false;
+  return next.every((plan, index) => {
+    const before = previous[index]!;
+    return plan.id === before.id && plan.kind === before.kind && plan.status === before.status;
+  });
 }
 
 function reuseTimelineEntries(
@@ -976,7 +1035,7 @@ function reuseTimelineEntries(
     !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
     !shallow(input.attempts, before.attempts) ||
     !shallow(input.nodes, before.nodes) ||
-    !shallow(input.plans, before.plans)
+    !samePlanStatuses(input.plans, before.plans)
   ) {
     return null;
   }
@@ -1001,34 +1060,16 @@ function reuseTimelineEntries(
       )
   )
     return null;
-  const replacements = new Map<
-    OrchestrationV2ProjectedTurnItem,
-    OrchestrationV2ProjectedTurnItem
-  >();
+  const replacements = new Map<string, OrchestrationV2ProjectedTurnItem>();
   for (let index = 0; index < before.visibleTurnItems.length; index += 1) {
     const previousItem = before.visibleTurnItems[index]!;
     const item = input.visibleTurnItems[index]!;
     if (item === previousItem) continue;
     if (!isStreamingTurnItemTextUpdate(previousItem, item)) return null;
-    replacements.set(previousItem, item);
+    replacements.set(item.item.id, item);
   }
   if (replacements.size === 0 && !appended) return previous.entries;
-  const entries = previous.entries.map((entry): TimelineEntry => {
-    const row =
-      entry.kind === "message" && entry.projectedItem !== undefined
-        ? replacements.get(entry.projectedItem)
-        : undefined;
-    if (entry.kind !== "message" || row?.item.type !== "assistant_message") return entry;
-    return {
-      ...entry,
-      projectedItem: row,
-      message: {
-        ...entry.message,
-        text: row.item.text,
-        updatedAt: DateTime.formatIso(row.item.updatedAt),
-      },
-    };
-  });
+  const entries = previous.entries.map((entry) => patchStreamedEntry(entry, replacements));
   if (appended) {
     entries.push(
       ...deriveTimelineEntriesFromVisibleTurnItems({

@@ -2,6 +2,7 @@ import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   MessageId,
+  PlanId,
   RunId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -219,5 +220,53 @@ export function makeStreamingTimelineFixture(text = "") {
     sourceItemId: item.id,
     item,
   }));
-  return { threadId, runId, historyRunId, visibleTurnItems, time };
+  return { threadId, runId, historyRunId, visibleTurnItems, time, base };
+}
+
+/** The streaming fixture, ending in streaming thinking or a streaming plan instead of assistant text. */
+export function makeStreamingWorkTimelineFixture(kind: "reasoning" | "proposed_plan") {
+  const fixture = makeStreamingTimelineFixture();
+  const live = {
+    ...fixture.base("live-streaming", fixture.runId, 7),
+    status: "running" as const,
+    completedAt: null,
+  };
+  const streamingItem: OrchestrationV2TurnItem =
+    kind === "proposed_plan"
+      ? {
+          ...live,
+          type: "proposed_plan",
+          planId: PlanId.make("live-plan"),
+          markdown: "",
+          streaming: true,
+        }
+      : { ...live, type: "reasoning", text: "", streaming: true };
+  const visibleTurnItems = fixture.visibleTurnItems.map((row) =>
+    row.item.id === "live-assistant-item"
+      ? { ...row, sourceItemId: streamingItem.id, item: streamingItem }
+      : row,
+  );
+  return { ...fixture, visibleTurnItems, streamingItemId: streamingItem.id };
+}
+
+/** One coalesced provider flush: only the streamed text and `updatedAt` change. */
+export function withStreamedText(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  itemId: string,
+  text: string,
+  updatedAt: string,
+): OrchestrationV2ProjectedTurnItem[] {
+  return rows.map((row) => {
+    if (row.item.id !== itemId) return row;
+    const updated = DateTime.makeUnsafe(updatedAt);
+    return {
+      ...row,
+      item:
+        row.item.type === "proposed_plan"
+          ? { ...row.item, markdown: text, updatedAt: updated }
+          : row.item.type === "reasoning"
+            ? { ...row.item, text, updatedAt: updated }
+            : row.item,
+    };
+  });
 }
