@@ -1,3 +1,4 @@
+import { AgentFileSyncCoordinator } from "../components/AgentFileSyncCoordinator";
 import { PermissionUpdateNotice } from "../components/PermissionUpdateNotice";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -250,6 +251,7 @@ function RootRouteView() {
           <AddProjectToMachineDialogHost />
           <PullRequestGuideRunCoordinator />
           <HostedStaticEnvironmentBootstrap />
+          <AgentFileSyncCoordinator />
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
           ) : null}

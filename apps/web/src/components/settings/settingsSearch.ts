@@ -20,6 +20,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/snap-shot"
+  | "/settings/skills"
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
@@ -78,6 +79,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
+  "/settings/skills": "Skills & instructions",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
@@ -129,6 +131,14 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
 );
 
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "agent-file-sync",
+    title: "Sync skills and instructions",
+    to: "/settings/skills",
+    searchTerms: [
+      "AGENTS.md CLAUDE.md skills instructions sync fleet hosts machines environments sections",
+    ],
+  },
   {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
@@ -1021,6 +1031,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/skills": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

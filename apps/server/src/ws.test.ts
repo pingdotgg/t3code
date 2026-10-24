@@ -90,6 +90,8 @@ import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as AgentFileSyncLinks from "./agentFileSync/AgentFileSyncLinks.ts";
+import * as AgentFileSync from "./agentFileSync/AgentFileSync.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -294,6 +296,8 @@ it.live.each(["thread", "shell"] as const)(
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+  Layer.mock(AgentFileSync.AgentFileSync)({}),
+  Layer.mock(AgentFileSyncLinks.AgentFileSyncLinks)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
   Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),

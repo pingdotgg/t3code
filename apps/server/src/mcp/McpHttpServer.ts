@@ -1,3 +1,5 @@
+import { AgentFileSyncToolkit } from "./toolkits/agentFileSync/tools.ts";
+import * as AgentFileSyncHandlers from "./toolkits/agentFileSync/handlers.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -1077,6 +1079,7 @@ export const layer = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentToolkit,
+  toolkitRegistration(AgentFileSyncToolkit, AgentFileSyncHandlers.layer),
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,

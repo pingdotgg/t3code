@@ -1,3 +1,4 @@
+import { AgentFileSyncCoordinator } from "./features/settings/AgentFileSyncCoordinator";
 import { PermissionUpdateNotice } from "./features/connection/PermissionUpdateNotice";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
@@ -93,6 +94,7 @@ function AppContent() {
     <>
       <SplashScreenCoordinator />
       <SubscriptionUsageCoordinator />
+      <AgentFileSyncCoordinator />
       <PermissionUpdateNotice />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>

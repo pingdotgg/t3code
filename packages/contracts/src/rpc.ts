@@ -22,6 +22,24 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
+import {
+  AgentFileSyncCheckInput,
+  AgentFileSyncCheckResult,
+  AgentFileSyncSubscribeInput,
+  AgentFileSyncRefreshInput,
+  AgentFileSyncLinks,
+  AgentFileSyncManageInput,
+  AgentFileSyncScope,
+  AgentFileSyncCatalog,
+  AgentFileSyncExportInput,
+  AgentFileSyncBundle,
+  AgentFileSyncPreviewInput,
+  AgentFileSyncPreview,
+  AgentFileSyncApplyInput,
+  AgentFileSyncApplyResult,
+  AgentFileSyncUndoInput,
+  AgentFileSyncError,
+} from "./agentFileSync.ts";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -385,6 +403,17 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
+  agentFileSyncCheck: "agentFileSync.check",
+  agentFileSyncList: "agentFileSync.list",
+  agentFileSyncExport: "agentFileSync.export",
+  agentFileSyncPreview: "agentFileSync.preview",
+  agentFileSyncApply: "agentFileSync.apply",
+  agentFileSyncUndo: "agentFileSync.undo",
+  agentFileSyncLinks: "agentFileSync.links",
+  agentFileSyncSubscribe: "agentFileSync.subscribe",
+  agentFileSyncRefresh: "agentFileSync.refresh",
+  agentFileSyncManage: "agentFileSync.manage",
+
   projectsReadFile: "projects.readFile",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
@@ -1237,6 +1266,57 @@ const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFil
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsAgentFileSyncLinksRpc = Rpc.make(WS_METHODS.agentFileSyncLinks, {
+  payload: AgentFileSyncScope,
+  success: AgentFileSyncLinks,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncSubscribeRpc = Rpc.make(WS_METHODS.agentFileSyncSubscribe, {
+  payload: AgentFileSyncSubscribeInput,
+  success: Schema.Void,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncRefreshRpc = Rpc.make(WS_METHODS.agentFileSyncRefresh, {
+  payload: AgentFileSyncRefreshInput,
+  success: Schema.Void,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncManageRpc = Rpc.make(WS_METHODS.agentFileSyncManage, {
+  payload: AgentFileSyncManageInput,
+  success: Schema.Void,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncCheckRpc = Rpc.make(WS_METHODS.agentFileSyncCheck, {
+  payload: AgentFileSyncCheckInput,
+  success: AgentFileSyncCheckResult,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncListRpc = Rpc.make(WS_METHODS.agentFileSyncList, {
+  payload: AgentFileSyncScope,
+  success: AgentFileSyncCatalog,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncExportRpc = Rpc.make(WS_METHODS.agentFileSyncExport, {
+  payload: AgentFileSyncExportInput,
+  success: AgentFileSyncBundle,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncPreviewRpc = Rpc.make(WS_METHODS.agentFileSyncPreview, {
+  payload: AgentFileSyncPreviewInput,
+  success: AgentFileSyncPreview,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncApplyRpc = Rpc.make(WS_METHODS.agentFileSyncApply, {
+  payload: AgentFileSyncApplyInput,
+  success: AgentFileSyncApplyResult,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+const WsAgentFileSyncUndoRpc = Rpc.make(WS_METHODS.agentFileSyncUndo, {
+  payload: AgentFileSyncUndoInput,
+  success: AgentFileSyncApplyResult,
+  error: Schema.Union([AgentFileSyncError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
@@ -1998,6 +2078,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsListIgnoredFilesRpc,
+  WsAgentFileSyncLinksRpc,
+  WsAgentFileSyncSubscribeRpc,
+  WsAgentFileSyncRefreshRpc,
+  WsAgentFileSyncManageRpc,
+  WsAgentFileSyncCheckRpc,
+  WsAgentFileSyncListRpc,
+  WsAgentFileSyncExportRpc,
+  WsAgentFileSyncPreviewRpc,
+  WsAgentFileSyncApplyRpc,
+  WsAgentFileSyncUndoRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,

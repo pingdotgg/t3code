@@ -11,6 +11,7 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
+  AuthFilesystemWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
@@ -85,6 +86,37 @@ describe("command permissions", () => {
         expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
+      }),
+    ),
+  );
+
+  it.effect("requires the destination file grant for sync setup, refresh and management", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        for (const method of [
+          WS_METHODS.agentFileSyncSubscribe,
+          WS_METHODS.agentFileSyncRefresh,
+          WS_METHODS.agentFileSyncManage,
+        ]) {
+          const access = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(access.permissionAtom(env))).toBe(false);
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(false),
+              scopes: [AuthFilesystemWriteScope],
+              permissions: [AuthFilesystemWriteScope],
+            }),
+          );
+          expect(registry.get(access.permissionAtom(env))).toBe(true);
+          yield* access.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect((yield* access.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+        }
       }),
     ),
   );
