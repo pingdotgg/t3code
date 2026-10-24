@@ -272,10 +272,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     if (!settings.enabled) return;
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
-    const usageLimits =
-      options.probeUsage && (!before.draft.usageLimits || before.draft.usageLimits.unavailable)
-        ? yield* options.probeUsage
-        : before.draft.usageLimits;
+    const usageLimits = options.probeUsage ? yield* options.probeUsage : before.draft.usageLimits;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
       if (

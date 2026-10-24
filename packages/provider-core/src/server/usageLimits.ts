@@ -15,11 +15,18 @@ export function clampPercent(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
 }
 
+function windowGroupOrder(window: ServerProviderUsageWindow): number {
+  if (window.id.startsWith("gemini-")) return 0;
+  if (window.id.startsWith("3p-")) return 1;
+  return 2;
+}
+
 function sortWindows(
   windows: Iterable<ServerProviderUsageWindow>,
 ): ReadonlyArray<ServerProviderUsageWindow> {
   return [...windows].toSorted(
     (left, right) =>
+      windowGroupOrder(left) - windowGroupOrder(right) ||
       WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind] ||
       left.id.localeCompare(right.id),
   );

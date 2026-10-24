@@ -58,6 +58,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summaryStatusByHost?: Record<string, number>;
     tokenStatus?: number;
     refreshToken?: string;
+    projectId?: string;
+    companionProject?: string;
     userId?: string;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "gemini-api-key";
@@ -68,6 +70,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const profileDirectory = yield* fs.makeTempDirectoryScoped();
   yield* fs.makeDirectory(path.join(profileDirectory, "antigravity-acp"));
   const tokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
+  const configuredProjectId = options.projectId ?? "project-id";
+  const expectedProjectId = options.companionProject ?? configuredProjectId;
   const writeToken = (refreshToken: string) =>
     fs.writeFileString(
       tokenPath,
@@ -75,7 +79,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         client_id: "client-id",
         client_secret: "client-secret",
         refresh_token: refreshToken,
-        project_id: "project-id",
+        project_id: configuredProjectId,
       }),
     );
   if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
@@ -106,7 +110,16 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual({ project: "project-id" });
+      if (request.url.endsWith(":loadCodeAssist")) {
+        expect(JSON.parse(body)).toEqual({ metadata: { ideType: "ANTIGRAVITY" } });
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            options.companionProject ? { cloudaicompanionProject: options.companionProject } : {},
+          ),
+        );
+      }
+      expect(JSON.parse(body)).toEqual({ project: expectedProjectId });
       return HttpClientResponse.fromWeb(
         request,
         request.url.endsWith(":retrieveUserQuotaSummary")
@@ -302,5 +315,84 @@ describe("Antigravity subscription limits", () => {
         expect(requests).toEqual([]);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "resolves companion project for consumer accounts and merges weekly groups with model 5h quotas",
+    () =>
+      Effect.gen(function* () {
+        const { probe } = yield* fixture({
+          projectId: "aicode-consumers",
+          companionProject: "companion-project-123",
+          summary: {
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    displayName: "Weekly",
+                    remainingFraction: 1,
+                    resetTime: "2026-10-23T01:41:56Z",
+                  },
+                ],
+              },
+              {
+                displayName: "Claude and GPT Models",
+                buckets: [
+                  {
+                    displayName: "Weekly",
+                    description:
+                      "You have hit your weekly limit for Claude and GPT models. Limit refreshes in 2h 30m.",
+                  },
+                ],
+              },
+            ],
+          },
+          models: {
+            models: {
+              "gemini-3-flash": {
+                modelProvider: "MODEL_PROVIDER_GOOGLE",
+                quotaInfo: { remainingFraction: 1, resetTime: "2026-10-17T22:55:26Z" },
+              },
+              "claude-sonnet-4-6": {
+                modelProvider: "MODEL_PROVIDER_ANTHROPIC",
+                quotaInfo: { remainingFraction: 1, resetTime: "2026-10-17T22:57:08Z" },
+              },
+            },
+          },
+        });
+        const limits = yield* probe;
+        expect(limits.windows.map((window) => window.id)).toEqual([
+          "gemini-5h",
+          "gemini-weekly",
+          "3p-5h",
+          "3p-weekly",
+        ]);
+        const byId = new Map(limits.windows.map((window) => [window.id, window]));
+        expect(byId.get("gemini-5h")).toMatchObject({
+          label: "Gemini · 5-hour",
+          kind: "session",
+          usedPercent: 0,
+          windowDurationMins: 300,
+        });
+        expect(byId.get("gemini-weekly")).toMatchObject({
+          label: "Gemini · Weekly",
+          kind: "weekly",
+          usedPercent: 0,
+          windowDurationMins: 10080,
+        });
+        expect(byId.get("3p-5h")).toMatchObject({
+          label: "Claude & GPT (shared) · 5-hour",
+          kind: "session",
+          usedPercent: 0,
+          windowDurationMins: 300,
+        });
+        expect(byId.get("3p-weekly")).toMatchObject({
+          label: "Claude & GPT (shared) · Weekly",
+          kind: "weekly",
+          usedPercent: 100,
+          windowDurationMins: 10080,
+        });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

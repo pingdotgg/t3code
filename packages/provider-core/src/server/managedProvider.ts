@@ -83,8 +83,20 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         return [null, state] as const;
       }
       // Enrichment derives from the snapshot it was handed; a runtime usage
-      // update that landed since must not be reverted by it.
-      const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
+      // update that landed since must not be reverted by it, while fresher
+      // enriched probes or sign-out clears must still publish.
+      const usageLimits =
+        nextSnapshot.auth.status === "unauthenticated"
+          ? nextSnapshot.usageLimits
+          : nextSnapshot.usageLimits &&
+              (!state.snapshot.usageLimits ||
+                nextSnapshot.usageLimits.checkedAt >= state.snapshot.usageLimits.checkedAt)
+            ? resolveUsageLimitsAfterProbe({
+                published: state.snapshot.usageLimits,
+                probed: nextSnapshot.usageLimits,
+              })
+            : state.snapshot.usageLimits;
+      const merged = withUsageLimits(nextSnapshot, usageLimits);
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
       }

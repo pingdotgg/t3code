@@ -37,9 +37,10 @@ const Quota = Schema.Struct({
 });
 const Bucket = Schema.Struct({
   ...Quota.fields,
-  bucketId: Schema.NonEmptyString,
+  bucketId: Schema.optional(Schema.String),
   window: Schema.optional(Schema.String),
   displayName: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
 });
 const Summary = Schema.Struct({
@@ -75,6 +76,22 @@ function iso(value: string | undefined): string | undefined {
   return Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : undefined;
 }
 
+function parseResetTimeFromDescription(
+  description: string | undefined,
+  now: number,
+): string | undefined {
+  if (!description) return undefined;
+  const match = /refresh(?:es)? in\s+([^.]+)/i.exec(description);
+  if (!match?.[1]) return undefined;
+  const clause = match[1];
+  const days = Number(/(\d+)\s*d(?:ay)?s?/i.exec(clause)?.[1] ?? 0);
+  const hours = Number(/(\d+)\s*h(?:our|r)?s?/i.exec(clause)?.[1] ?? 0);
+  const minutes = Number(/(\d+)\s*m(?:in(?:ute)?s?)?/i.exec(clause)?.[1] ?? 0);
+  const totalMs = ((days * 24 + hours) * 60 + minutes) * 60_000;
+  if (totalMs <= 0) return undefined;
+  return DateTime.formatIso(DateTime.makeUnsafe(now + totalMs));
+}
+
 function quotaWindow(
   id: string,
   label: string,
@@ -96,25 +113,60 @@ function quotaWindow(
   };
 }
 
-function summaryWindows(summary: typeof Summary.Type) {
+function summaryWindows(summary: typeof Summary.Type, now: number) {
   const windows = new Map<string, ServerProviderUsageWindow>();
-  const groups = summary.groups?.some((group) => group.buckets?.length)
-    ? summary.groups
-    : [{ buckets: summary.buckets }];
-  for (const group of groups ?? []) {
+  const groups = [
+    ...(summary.groups ?? []),
+    ...(summary.buckets?.length ? [{ displayName: "", buckets: summary.buckets }] : []),
+  ];
+  for (const group of groups) {
+    const groupName = group.displayName?.trim() ?? "";
+    const groupPrefix = /gemini/i.test(groupName)
+      ? "gemini"
+      : /claude|gpt|3p/i.test(groupName)
+        ? "3p"
+        : undefined;
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
+      const rawId = bucket.bucketId?.trim() ?? "";
+      const rawWindow = bucket.window?.trim().toLowerCase() ?? "";
+      const displayName = bucket.displayName?.trim() ?? "";
+      const description = bucket.description?.trim() ?? "";
+      const weekly = rawWindow === "weekly" || /weekly/i.test(rawId) || /weekly/i.test(displayName);
+      const session =
+        rawWindow === "5h" ||
+        rawWindow === "5-hour" ||
+        rawWindow === "five_hour" ||
+        /5h|5-hour|five.?hour/i.test(rawId) ||
+        /5-hour|five.?hour|5 hour/i.test(displayName);
+      const bucketId =
+        rawId ||
+        (groupPrefix && (weekly || session)
+          ? `${groupPrefix}-${weekly ? "weekly" : "5h"}`
+          : undefined);
+      if (!bucketId) continue;
+      const family = bucketId.startsWith("gemini-")
         ? "Gemini"
-        : bucket.bucketId.startsWith("3p-")
+        : bucketId.startsWith("3p-")
           ? "Claude & GPT (shared)"
-          : group.displayName?.trim() || bucket.bucketId;
-      const weekly = bucket.window === "weekly";
-      const session = bucket.window === "5h";
+          : groupName || bucketId;
+      const inferredFraction =
+        bucket.remainingFraction !== undefined
+          ? bucket.remainingFraction
+          : /hit your .* limit|limit reached/i.test(description) ||
+              ((weekly || session) && (Boolean(displayName) || Boolean(description)))
+            ? 0
+            : undefined;
+      const inferredResetTime = bucket.resetTime ?? parseResetTimeFromDescription(description, now);
+      const effectiveQuota = {
+        ...bucket,
+        ...(inferredFraction !== undefined ? { remainingFraction: inferredFraction } : {}),
+        ...(inferredResetTime !== undefined ? { resetTime: inferredResetTime } : {}),
+      };
       const window = quotaWindow(
-        bucket.bucketId,
-        `${family} · ${weekly ? "Weekly" : session ? "5-hour" : bucket.displayName?.trim() || "Quota"}`,
-        bucket,
+        bucketId,
+        `${family} · ${weekly ? "Weekly" : session ? "5-hour" : displayName || "Quota"}`,
+        effectiveQuota,
         weekly ? "weekly" : session ? "session" : "other",
         weekly ? 7 * 24 * 60 : session ? 5 * 60 : undefined,
       );
@@ -124,8 +176,25 @@ function summaryWindows(summary: typeof Summary.Type) {
   return [...windows.values()];
 }
 
+function extractCompanionProject(response: unknown): string | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const raw = (response as { cloudaicompanionProject?: unknown }).cloudaicompanionProject;
+  if (typeof raw === "string" && raw.trim().length > 0) return raw.trim();
+  if (raw && typeof raw === "object") {
+    const id = (raw as { id?: unknown }).id;
+    if (typeof id === "string" && id.trim().length > 0) return id.trim();
+  }
+  return undefined;
+}
+
 /** Older accounts expose model quotas without a window length. Do not invent a reset cadence. */
-function modelWindows(models: typeof Models.Type) {
+function modelWindows(
+  models: typeof Models.Type,
+  options?: {
+    readonly hasWeeklySummary?: boolean;
+    readonly hasShared3pSummary?: boolean;
+  },
+) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   for (const [modelId, model] of Object.entries(models.models)) {
     const family =
@@ -137,17 +206,23 @@ function modelWindows(models: typeof Models.Type) {
             ? "GPT"
             : undefined;
     if (!family) continue;
+    const isShared3p =
+      options?.hasShared3pSummary === true && (family === "Claude" || family === "GPT");
+    const isFiveHourQuota =
+      model.weeklyQuotaInfo !== undefined || options?.hasWeeklySummary === true;
+    const idPrefix = isShared3p ? "3p" : family.toLowerCase();
+    const displayFamily = isShared3p ? "Claude & GPT (shared)" : family;
     for (const [suffix, quota] of [
-      ["quota", model.quotaInfo],
+      [isFiveHourQuota ? "5h" : "quota", model.quotaInfo],
       ["weekly", model.weeklyQuotaInfo],
     ] as const) {
       if (!quota) continue;
       const window = quotaWindow(
-        `${family.toLowerCase()}-${suffix}`,
-        `${family} · ${suffix === "weekly" ? "Weekly" : "Reported quota"}`,
+        `${idPrefix}-${suffix}`,
+        `${displayFamily} · ${suffix === "weekly" ? "Weekly" : suffix === "5h" ? "5-hour" : "Reported quota"}`,
         quota,
-        suffix === "weekly" ? "weekly" : "other",
-        suffix === "weekly" ? 7 * 24 * 60 : undefined,
+        suffix === "weekly" ? "weekly" : suffix === "5h" ? "session" : "other",
+        suffix === "weekly" ? 7 * 24 * 60 : suffix === "5h" ? 5 * 60 : undefined,
       );
       if (!window) continue;
       const previous = windows.get(window.id);
@@ -167,6 +242,9 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const crypto = yield* Crypto.Crypto;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
+  const osType = platform === "win32" ? "windows" : platform;
+  const arch = architecture === "x64" ? "amd64" : architecture;
+  const userAgent = `antigravity/hub/2.24.0 (aidev_client; os_type=${osType}; arch=${arch}; cl=963137146)`;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
@@ -246,6 +324,34 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
+    const needsProjectResolution = !token.project_id || token.project_id === "aicode-consumers";
+    let resolvedCompanionProject: string | undefined;
+    if (needsProjectResolution) {
+      for (const endpoint of ENDPOINTS) {
+        resolvedCompanionProject = yield* request(
+          HttpClientRequest.post(`${endpoint}/v1internal:loadCodeAssist`).pipe(
+            HttpClientRequest.setHeaders({
+              Authorization: `Bearer ${accessToken}`,
+              "User-Agent": userAgent,
+            }),
+            HttpClientRequest.bodyJsonUnsafe({ metadata: { ideType: "ANTIGRAVITY" } }),
+          ),
+        ).pipe(
+          Effect.map(extractCompanionProject),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (resolvedCompanionProject) break;
+      }
+    }
+    const projectCandidates = needsProjectResolution
+      ? [
+          ...new Set([
+            ...(resolvedCompanionProject ? [resolvedCompanionProject] : []),
+            ...(token.project_id ? [token.project_id] : []),
+            "",
+          ]),
+        ]
+      : [token.project_id!];
     // Endpoints can report different quota groups (the daily endpoint has
     // returned the Claude/GPT group without Gemini), so merge every endpoint's
     // windows. The most-used reading of a bucket wins, as in modelWindows.
@@ -255,21 +361,24 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     ) {
       const responses = yield* Effect.forEach(
         ENDPOINTS,
-        (endpoint) =>
-          request(
-            HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
-              HttpClientRequest.setHeaders({
-                Authorization: `Bearer ${accessToken}`,
-                "User-Agent": `antigravity/hub/1.0.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
-              }),
-              HttpClientRequest.bodyJsonUnsafe(
-                token.project_id ? { project: token.project_id } : {},
+        Effect.fnUntraced(function* (endpoint) {
+          for (const projectId of projectCandidates) {
+            const windows = yield* request(
+              HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
+                HttpClientRequest.setHeaders({
+                  Authorization: `Bearer ${accessToken}`,
+                  "User-Agent": userAgent,
+                }),
+                HttpClientRequest.bodyJsonUnsafe(projectId ? { project: projectId } : {}),
               ),
-            ),
-          ).pipe(
-            Effect.flatMap(parse),
-            Effect.orElseSucceed(() => []),
-          ),
+            ).pipe(
+              Effect.flatMap(parse),
+              Effect.orElseSucceed(() => []),
+            );
+            if (windows.length > 0) return windows;
+          }
+          return [];
+        }),
         { concurrency: "unbounded" },
       );
       const windows = new Map<string, ServerProviderUsageWindow>();
@@ -280,13 +389,34 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       return [...windows.values()];
     });
     const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response) =>
-      decodeSummary(response).pipe(Effect.map(summaryWindows)),
+      decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, now))),
     );
-    const windows = summary.length
-      ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
-          decodeModels(response).pipe(Effect.map(modelWindows)),
-        );
+    const hasGemini5h = summary.some((window) => window.id === "gemini-5h");
+    const hasWeeklySummary = summary.some((window) => window.kind === "weekly");
+    const hasShared3pSummary = summary.some((window) => window.id.startsWith("3p-"));
+    const hasAll5h =
+      hasGemini5h && (!hasShared3pSummary || summary.some((window) => window.id === "3p-5h"));
+    const fallbackModels =
+      summary.length > 0 && hasAll5h
+        ? []
+        : yield* fetchWindows("fetchAvailableModels", (response) =>
+            decodeModels(response).pipe(
+              Effect.map((models) =>
+                modelWindows(models, { hasWeeklySummary, hasShared3pSummary }),
+              ),
+            ),
+          );
+    const windows =
+      summary.length === 0
+        ? fallbackModels
+        : hasAll5h
+          ? summary
+          : [
+              ...summary,
+              ...fallbackModels.filter(
+                (window) => !summary.some((existing) => existing.id === window.id),
+              ),
+            ];
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,
