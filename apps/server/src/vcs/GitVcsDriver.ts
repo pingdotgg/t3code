@@ -539,6 +539,21 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
     }),
 );
 
+const REFLOG_CURSOR_TRAILER = "T3-HEAD-Reflog";
+const REFLOG_LINE_MAX_BYTES = 65_536;
+
+// A reflog line is "<old oid> <new oid> <identity> <time> <zone>\t<message>".
+function parseReflogLines(lines: string) {
+  return lines
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [from = "", to = ""] = line.split(" ", 2);
+      const tab = line.indexOf("\t");
+      return { from, to, message: tab === -1 ? "" : line.slice(tab + 1) };
+    });
+}
+
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -827,6 +842,95 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // Checkpoints must handle existing paths beyond Windows MAX_PATH, even when
   // core.longpaths is disabled in the user's Git configuration.
   const longPaths = hostPlatform === "win32" ? ["-c", "core.longpaths=true"] : [];
+
+  // Git appends whole lines to a reflog, and only expiry or deletion rewrites it. A cursor is the
+  // byte length the reflog had plus a hash of its last line, so a rewrite is detected rather than
+  // misread.
+  const hashLine = (line: string) =>
+    crypto
+      .digest("SHA-256", NodeBuffer.Buffer.from(line, "latin1"))
+      .pipe(Effect.map((digest) => NodeBuffer.Buffer.from(digest).toString("hex")));
+
+  const readHeadReflogTail = Effect.fn("GitVcsDriver.readHeadReflogTail")(function* (
+    cwd: string,
+    cursor: string,
+  ) {
+    const gitPath = (yield* execute({
+      operation: "GitVcsDriver.checkpoints.readHeadReflogTail",
+      cwd,
+      args: ["rev-parse", "--git-path", "logs/HEAD"],
+    })).stdout.trim();
+    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    const reflogPath = path.resolve(physicalCwd, gitPath);
+    if (!(yield* fileSystem.exists(reflogPath))) return null;
+    const [cursorOffset = "", cursorHash = ""] = cursor.split(" ");
+    const range = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fileSystem.open(reflogPath);
+        const size = Number((yield* file.stat).size);
+        // Enough before the cursor or the end to hold the line that ends there.
+        const start = Math.max(
+          0,
+          Math.min(Number(cursorOffset) || size, size) - REFLOG_LINE_MAX_BYTES,
+        );
+        yield* file.seek(BigInt(start), "start");
+        // A read can return fewer bytes than asked for. A range that ends early, such as one
+        // truncated mid-read, would publish a cursor behind moves a later checkpoint replays.
+        const chunks: Array<Uint8Array> = [];
+        let remaining = size - start;
+        while (remaining > 0) {
+          const chunk = yield* file.readAlloc(remaining);
+          if (Option.isNone(chunk) || chunk.value.length === 0) return null;
+          chunks.push(chunk.value);
+          remaining -= chunk.value.length;
+        }
+        return { start, bytes: NodeBuffer.Buffer.concat(chunks) };
+      }),
+    );
+    if (range === null) return null;
+    const { start, bytes } = range;
+    // Latin-1 keeps string indexes equal to byte offsets.
+    const text = bytes.toString("latin1");
+    const lineEndingAt = (end: number) =>
+      end > 0 && text[end - 1] === "\n" && (start === 0 || text.lastIndexOf("\n", end - 2) !== -1)
+        ? text.slice(text.lastIndexOf("\n", end - 2) + 1, end - 1)
+        : null;
+    const end = text.lastIndexOf("\n") + 1;
+    const lastLine = lineEndingAt(end);
+    const offset = Number(cursorOffset) - start;
+    const cursorLine = Number.isInteger(offset) ? lineEndingAt(offset) : null;
+    return {
+      cursor: lastLine === null ? null : `${start + end} ${yield* hashLine(lastLine)}`,
+      moves:
+        cursorLine !== null && offset <= end && (yield* hashLine(cursorLine)) === cursorHash
+          ? parseReflogLines(text.slice(offset, end))
+          : null,
+    };
+  });
+
+  // A checkpoint taken after a branch switch has a second parent built from the checkpoint
+  // before it, which is where that turn started. Other ranges start at their from checkpoint.
+  const resolveTurnStart = (input: VcsDriver.VcsDiffCheckpointsInput) =>
+    execute({
+      operation: "GitVcsDriver.checkpoints.resolveTurnStart",
+      cwd: input.cwd,
+      args: [
+        "log",
+        "--no-walk=unsorted",
+        "--format=%H %P",
+        `${input.fromCheckpointRef}^{commit}`,
+        `${input.toCheckpointRef}^2`,
+      ],
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => {
+        const [fromCommit = "", baseline = ""] = result.stdout.trimEnd().split("\n");
+        const [baselineCommit = "", baselineParent] = baseline.split(" ");
+        return result.exitCode === 0 && baselineParent === fromCommit.split(" ")[0]
+          ? baselineCommit
+          : input.fromCheckpointRef;
+      }),
+    );
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
@@ -1134,8 +1238,112 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
-        // HEAD is the parent so listAuthoredPaths can see how HEAD moved between checkpoints.
+        // A branch switch replaces the files that differ between the two branches, and the turn
+        // wrote none of them. The turn started from the previous checkpoint with those files as
+        // each switch left them. Only HEAD's reflog tells a switch from a reset, and it expires,
+        // so each checkpoint records where that reflog ended, and the next one records the start
+        // its turn had as a second parent.
+        const previous =
+          headExists && input.previousCheckpointRef !== undefined
+            ? yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [
+                  "log",
+                  "--no-walk",
+                  `--format=%H %T %(trailers:key=${REFLOG_CURSOR_TRAILER},valueonly,separator=)`,
+                  `${input.previousCheckpointRef}^{commit}`,
+                ],
+                allowNonZeroExit: true,
+              })
+            : null;
+        const [previousCommit = "", previousTree = "", ...previousCursor] =
+          previous?.exitCode === 0 ? previous.stdout.trim().split(" ") : [];
+        const reflog = yield* readHeadReflogTail(input.cwd, previousCursor.join(" ")).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("checkpoint HEAD reflog read failed", {
+              cwd: input.cwd,
+              cause: String(cause),
+            }).pipe(Effect.as(null)),
+          ),
+        );
+        const switches = (previousTree === "" ? null : (reflog?.moves ?? null))?.filter(
+          (move) => move.message.startsWith("checkout: moving from ") && move.from !== move.to,
+        );
+        const switchBaseline =
+          switches !== undefined && switches.length > 0
+            ? yield* Effect.gen(function* () {
+                yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: [...indexConfig, "read-tree", previousTree],
+                  env: commitEnv,
+                });
+                for (const { from, to } of switches) {
+                  const changes = yield* execute({
+                    operation,
+                    cwd: input.cwd,
+                    args: [
+                      "-c",
+                      "core.quotePath=true",
+                      "diff-tree",
+                      "-r",
+                      "--no-renames",
+                      from,
+                      to,
+                    ],
+                    maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+                    outputMode: "error",
+                  });
+                  // Git's quoted paths round-trip through index-info, including non-UTF-8 names,
+                  // and a deletion's zero mode drops the path.
+                  yield* execute({
+                    operation,
+                    cwd: input.cwd,
+                    args: [...indexConfig, "update-index", "--index-info"],
+                    stdin: changes.stdout.replace(
+                      /^:[0-7]{6} ([0-7]{6}) [0-9a-f]+ ([0-9a-f]+) [A-Z]\t/gm,
+                      "$1 $2\t",
+                    ),
+                    env: commitEnv,
+                  });
+                }
+                const baselineTree = (yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: [...indexConfig, ...durableWrite, "write-tree"],
+                  env: commitEnv,
+                })).stdout.trim();
+                if (baselineTree === previousTree) return null;
+                return (yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: [
+                    ...durableWrite,
+                    "commit-tree",
+                    baselineTree,
+                    "-p",
+                    previousCommit,
+                    "-m",
+                    `t3 checkpoint baseline ref=${input.checkpointRef}`,
+                  ],
+                  env: commitEnv,
+                })).stdout.trim();
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("checkpoint branch switch baseline failed", {
+                    cwd: input.cwd,
+                    checkpointRef: input.checkpointRef,
+                    cause: String(cause),
+                  }).pipe(Effect.as(null)),
+                ),
+              )
+            : null;
+
+        const message = `t3 checkpoint ref=${input.checkpointRef}${
+          reflog?.cursor ? `\n\n${REFLOG_CURSOR_TRAILER}: ${reflog.cursor}` : ""
+        }`;
+        // HEAD is the first parent so listAuthoredPaths can see how HEAD moved between checkpoints.
         const commitTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1144,6 +1352,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             "commit-tree",
             treeOid,
             ...(headExists ? ["-p", "HEAD"] : []),
+            ...(switchBaseline ? ["-p", switchBaseline] : []),
             "-m",
             message,
           ],
@@ -1273,15 +1482,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "checkpoint.fallback_from_to_head": input.fallbackFromToHead,
       });
 
-      let fromRevision: string = input.fromCheckpointRef;
+      let fromRevision: string = yield* resolveTurnStart(input);
       if (input.fallbackFromToHead === true) {
         const resolvedFromCommit = yield* resolveCheckpointCommit(
           input.cwd,
           input.fromCheckpointRef,
         );
-        if (resolvedFromCommit) {
-          fromRevision = resolvedFromCommit;
-        } else {
+        if (!resolvedFromCommit) {
           const headCommit = yield* resolveHeadCommit(input.cwd);
           if (!headCommit) {
             return yield* new VcsProcessExitError({
@@ -1340,14 +1547,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         args: [
           "log",
           "--no-walk=unsorted",
-          "--format=%P %ct",
+          "--format=%ct %P",
           `${input.fromCheckpointRef}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
         ],
       });
       const [fromLine = "", toLine = ""] = heads.stdout.trimEnd().split("\n");
-      const [startHead = "", capturedAt = ""] = fromLine.split(" ");
-      const [endHead = ""] = toLine.split(" ");
+      const [capturedAt = "", startHead = ""] = fromLine.split(" ");
+      const [, endHead = ""] = toLine.split(" ");
       if (startHead === "" || endHead === "" || startHead === endHead) {
         return null;
       }

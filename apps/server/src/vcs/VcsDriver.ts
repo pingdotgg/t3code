@@ -17,6 +17,8 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** The checkpoint this one follows, so a turn that switched branches diffs from where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
 }
 
 export interface VcsRestoreCheckpointInput {

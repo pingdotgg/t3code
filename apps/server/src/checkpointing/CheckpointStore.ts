@@ -10,6 +10,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 export interface CaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** The checkpoint this one follows, so a turn that switched branches diffs from where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
 }
 
 export interface RestoreCheckpointInput {
