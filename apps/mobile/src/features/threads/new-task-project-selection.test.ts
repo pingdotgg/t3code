@@ -121,11 +121,25 @@ describe("newTaskDestination", () => {
       draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
     });
   });
-  it("uses an available project when split view has no current project", () => {
-    expect(newTaskDestination(true, [makeProject("first")], undefined, "request")).toEqual({
-      draft: { requestId: "request", environmentId: "environment", projectId: "first" },
-    });
-  });
+  it.each([true, false])(
+    "leaves the draft unassigned when there is no current project (split view: %s)",
+    (usesSplitView) => {
+      const projects = [makeProject("first"), makeProject("second")];
+      expect(newTaskDestination(usesSplitView, projects, undefined, "request")).toEqual({
+        draft: { requestId: "request" },
+      });
+    },
+  );
+  it.each([true, false])(
+    "leaves the draft unassigned when the current project is stale (split view: %s)",
+    (usesSplitView) => {
+      const projects = [makeProject("first"), makeProject("second")];
+      const currentProject = makeProject("first", "removed-environment");
+      expect(newTaskDestination(usesSplitView, projects, currentProject, "request")).toEqual({
+        draft: { requestId: "request" },
+      });
+    },
+  );
   it("keeps the picker when there are no projects", () => {
     expect(newTaskDestination(true, [], undefined, "request")).toEqual({
       draft: { requestId: "request" },

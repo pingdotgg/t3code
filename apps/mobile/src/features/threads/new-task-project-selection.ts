@@ -112,12 +112,11 @@ export function newTaskDestination(
   currentProject: Pick<EnvironmentProject, "environmentId" | "id"> | undefined,
   requestId: string,
 ) {
-  const project =
-    projects.find(
-      (candidate) =>
-        candidate.environmentId === currentProject?.environmentId &&
-        candidate.id === currentProject.id,
-    ) ?? projects[0];
+  const project = projects.find(
+    (candidate) =>
+      candidate.environmentId === currentProject?.environmentId &&
+      candidate.id === currentProject.id,
+  );
   return project
     ? {
         draft: {
