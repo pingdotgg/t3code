@@ -42,7 +42,15 @@ Before stopping the old child, the launcher refuses an update whose snapshot wil
 not fit on disk, so a full disk does not cause an outage. After the old child
 exits, the launcher snapshots SQLite's main file, WAL, and shared-memory file. This makes trial migrations reversible without down
 migrations. The snapshot is made once per update and survives launcher restarts;
-replacing it during a retry could capture changes from the failed trial.
+replacing it during a retry could capture changes from the failed trial. A stop
+while the snapshot is still copying aborts its writer before removing staging and
+starts no trial. In-flight kernel I/O, including fsync, must finish before shutdown
+can complete. The update stays pending: the next launch copies from scratch unless
+the immutable snapshot was already published. Mandatory rollback restoration must
+finish even when a stop is requested; the backup's cancellation signal cannot
+interrupt it. A stop during backup starts no replacement server to release a
+managed tunnel retained for the handoff; it can remain provisioned after an
+uninstall unless explicitly unlinked or removed by relay cleanup.
 
 Rollback stops the trial before restoring. A durable restore marker makes an
 interrupted restore finish before either version boots. Keep the snapshot until

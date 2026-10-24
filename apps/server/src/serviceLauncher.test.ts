@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
-import type * as NodeChildProcess from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeNet from "node:net";
+import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -642,4 +644,293 @@ setInterval(() => {}, 1_000);
       assert.include(blocker ?? "", "The server was not stopped");
     }),
   );
+});
+
+it.live(
+  "stops an active backup, retries it, and preserves the snapshot across a trial restart",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* pendingBackupFixture;
+      const { root, statePath, databasePath, backupDir, trialMarker, logs } = fixture;
+      const original = yield* Effect.promise(() => readServiceState(statePath));
+      for (const signal of ["SIGTERM", "SIGINT"] as const) {
+        const copying = fixture.connection();
+        const interrupted = yield* fixture.launch(true);
+        const copy = yield* Effect.promise(() => copying);
+        assert.equal(copy.kind, "copy", interrupted.output());
+        assert.equal(
+          yield* fs.readFileString(path.join(`${backupDir}.staging`, "database")),
+          "data",
+        );
+        assert.isFalse(yield* fs.exists(backupDir));
+        assert.isFalse(yield* fs.exists(trialMarker));
+        const copyClosed = new Promise<void>((resolve) =>
+          copy.socket.once("close", () => resolve()),
+        );
+
+        interrupted.child.kill(signal);
+        const exit = yield* Effect.promise(() =>
+          Promise.all([interrupted.exited, copyClosed]),
+        ).pipe(
+          Effect.timeoutOrElse({
+            duration: "3 seconds",
+            orElse: () =>
+              Effect.die(
+                new Error(
+                  `${signal} did not stop the launcher and its active copy after the staging prefix was written.`,
+                ),
+              ),
+          }),
+        );
+        assert.deepEqual(exit[0], { code: 0, signal: null }, interrupted.output());
+        assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), original);
+        assert.deepEqual(yield* fs.readDirectory(path.dirname(backupDir)), []);
+        assert.isFalse(yield* fs.exists(trialMarker));
+        assert.equal(yield* fs.readFileString(databasePath), "database");
+      }
+
+      const retryStarted = fixture.connection();
+      const retry = yield* fixture.launch(false);
+      const trial = yield* Effect.promise(() => retryStarted);
+      assert.equal(trial.kind, "trial");
+      for (const [suffix, contents] of [
+        ["", "database"],
+        ["-wal", "wal"],
+        ["-shm", "shm"],
+      ]) {
+        assert.equal(yield* fs.readFileString(path.join(backupDir, `database${suffix}`)), contents);
+      }
+      assert.isFalse(yield* fs.exists(`${backupDir}.staging`));
+      const output = yield* fs.readFileString(logs);
+      assert.match(output, /backing up.*14 B/i);
+      assert.include(output, backupDir);
+      assert.include(output, "1.1.0");
+      assert.match(output, /backup.*(?:finished|completed).*\d+(?:\.\d+)?\s*s/i);
+
+      const migrated = new Promise<void>((resolve) => trial.socket.once("data", () => resolve()));
+      trial.socket.write("migrate");
+      yield* Effect.promise(() => migrated);
+      assert.equal(yield* fs.readFileString(databasePath), "migrated database");
+      retry.child.kill("SIGINT");
+      assert.deepEqual(yield* Effect.promise(() => retry.exited), { code: 0, signal: null });
+      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), original);
+
+      const resumedTrial = fixture.connection();
+      const resumed = yield* fixture.launch(false);
+      const resumedChild = yield* Effect.promise(() => resumedTrial);
+      assert.equal(resumedChild.kind, "trial");
+      assert.equal(yield* fs.readFileString(path.join(backupDir, "database")), "database");
+      const previousStarted = fixture.connection();
+      resumedChild.socket.write("fail");
+      assert.equal((yield* Effect.promise(() => previousStarted)).kind, "active");
+      const rolledBack = yield* Effect.promise(() => readServiceState(statePath));
+      assert.equal(rolledBack.activeVersion, "1.0.0");
+      assert.equal(rolledBack.update?.status, "rolled-back");
+      for (const [suffix, contents] of [
+        ["", "database"],
+        ["-wal", "wal"],
+        ["-shm", "shm"],
+      ]) {
+        assert.equal(yield* fs.readFileString(`${databasePath}${suffix}`), contents);
+      }
+      assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
+      resumed.child.kill("SIGTERM");
+      assert.deepEqual(yield* Effect.promise(() => resumed.exited), { code: 0, signal: null });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("10 seconds")),
+);
+
+it.live("diagnoses a failed backup before returning to the previous runtime", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const fixture = yield* pendingBackupFixture;
+    const { statePath, databasePath, backupDir, trialMarker, logs } = fixture;
+    yield* fs.remove(databasePath);
+    const previousStarted = fixture.connection();
+    const launcher = yield* fixture.launch(false);
+    assert.equal((yield* Effect.promise(() => previousStarted)).kind, "active");
+    const state = yield* Effect.promise(() => readServiceState(statePath));
+    assert.equal(state.activeVersion, "1.0.0");
+    assert.deepEqual(state.update, {
+      id: "update-1",
+      fromVersion: "1.0.0",
+      targetVersion: "1.1.0",
+      status: "failed",
+      reason: "db-backup-failed",
+    });
+    assert.isFalse(yield* fs.exists(trialMarker));
+    assert.isFalse(yield* fs.exists(backupDir));
+    assert.isFalse(yield* fs.exists(`${backupDir}.staging`));
+    const output = yield* fs.readFileString(logs);
+    assert.match(output, /backup.*fail/i);
+    assert.include(output, "ENOENT");
+    assert.include(output, databasePath);
+    launcher.child.kill("SIGTERM");
+    assert.deepEqual(yield* Effect.promise(() => launcher.exited), { code: 0, signal: null });
+  }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("10 seconds")),
+);
+
+// A socket gates a real cp subprocess after it writes a prefix. Shutdown must
+// terminate that copy; completing it from the test would hide queued-stop bugs.
+const pendingBackupFixture = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-backup-" });
+  const statePath = path.join(root, "runtime", "service-state.json");
+  const databasePath = path.join(root, "userdata", "state.sqlite");
+  const backupDir = path.join(root, "runtime", "db-backup", "update-1");
+  const trialMarker = path.join(root, "trial-started");
+  const logs = path.join(root, "backup.log");
+  yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+  yield* fs.writeFileString(databasePath, "database");
+  yield* fs.writeFileString(`${databasePath}-wal`, "wal");
+  yield* fs.writeFileString(`${databasePath}-shm`, "shm");
+  yield* fs.writeFileString(logs, "");
+
+  const sockets = new Set<NodeNet.Socket>();
+  let nextConnection = Promise.withResolvers<{ kind: string; socket: NodeNet.Socket }>();
+  const server = NodeNet.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.once("close", () => sockets.delete(socket));
+    socket.once("data", (data) => nextConnection.resolve({ kind: String(data), socket }));
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() => {
+      for (const socket of sockets) socket.destroy();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    }),
+  );
+  yield* Effect.promise(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      }),
+  );
+  const address = server.address();
+  assert.isNotNull(address);
+  assert.isNotString(address);
+  const port = (address as NodeNet.AddressInfo).port;
+  const encodedPaths = JSON.stringify({ databasePath, trialMarker });
+  const childSource = `
+import { writeFileSync } from "node:fs";
+import { connect } from "node:net";
+const paths = ${encodedPaths};
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+const trial = context.update?.status === "pending";
+if (trial) writeFileSync(paths.trialMarker, "started");
+const socket = connect(${port}, "127.0.0.1", () => socket.write(trial ? "trial" : "active"));
+socket.on("data", (data) => {
+  if (String(data) === "migrate") {
+    writeFileSync(paths.databasePath, "migrated database");
+    writeFileSync(paths.databasePath + "-wal", "migrated wal");
+    writeFileSync(paths.databasePath + "-shm", "migrated shm");
+    socket.write("migrated");
+  } else if (String(data) === "fail") process.exit(1);
+});
+`;
+  for (const version of ["1.0.0", "1.1.0"]) {
+    yield* writeFakeRuntime(fs, path, path.join(root, "runtime", "versions", version), childSource);
+  }
+  yield* Effect.promise(() =>
+    writeServiceState(statePath, {
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      activeVersion: "1.0.0",
+      update: {
+        id: "update-1",
+        fromVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        dbPath: databasePath,
+        status: "pending",
+      },
+    }),
+  );
+  const shimDir = path.join(root, "bin");
+  yield* fs.makeDirectory(shimDir);
+  const cp = path.join(shimDir, "cp");
+  yield* fs.writeFileString(
+    cp,
+    `#!${process.execPath}
+import { readFileSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
+const [source, destination] = process.argv.slice(-2);
+writeFileSync(destination, readFileSync(source).subarray(0, 4));
+const socket = connect(${port}, "127.0.0.1", () => socket.write("copy"));
+`,
+  );
+  yield* fs.chmod(cp, 0o755);
+  const runner = path.join(root, "launcher.mjs");
+  const launcherUrl = NodeURL.pathToFileURL(
+    path.join(import.meta.dirname, "serviceLauncher.ts"),
+  ).href;
+  yield* fs.writeFileString(
+    runner,
+    `
+import { appendFileSync } from "node:fs";
+import { Launcher, readServiceState } from ${JSON.stringify(launcherUrl)};
+const state = await readServiceState(${JSON.stringify(statePath)});
+await new Launcher(${JSON.stringify(root)}, state, {
+  log: (line) => appendFileSync(${JSON.stringify(logs)}, line + "\\n"),
+}).run();
+`,
+  );
+
+  const launch = (gateCopy: boolean) =>
+    Effect.gen(function* () {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        ["--experimental-strip-types", runner],
+        {
+          env: {
+            ...process.env,
+            ...(gateCopy ? { PATH: `${shimDir}:${process.env.PATH}` } : {}),
+          },
+          detached: true,
+          stdio: ["ignore", "ignore", "pipe"],
+        },
+      );
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve, reject) => {
+          child.once("error", reject);
+          child.once("exit", (code, signal) => resolve({ code, signal }));
+        },
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          // The process group is owned by this spawn, including a stuck cp or trial.
+          if (child.pid !== undefined) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch (cause) {
+              if ((cause as NodeJS.ErrnoException).code !== "ESRCH") throw cause;
+            }
+          }
+          await exited;
+        }),
+      );
+      return {
+        child,
+        exited,
+        output: () => stderr,
+      };
+    });
+  return {
+    root,
+    statePath,
+    databasePath,
+    backupDir,
+    trialMarker,
+    logs,
+    launch,
+    connection: () => {
+      nextConnection = Promise.withResolvers<{ kind: string; socket: NodeNet.Socket }>();
+      return nextConnection.promise;
+    },
+  };
 });

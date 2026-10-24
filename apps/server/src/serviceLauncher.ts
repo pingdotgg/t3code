@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeUtil from "node:util";
 
 import type {
@@ -39,12 +40,18 @@ const HANDOFF_DELAY_MS = 2_000;
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
+const BACKUP_PROGRESS_INTERVAL_MS = 15_000;
 // Matches SERVER_EXIT_CODE_STATE_DIR_OWNED in contracts. The standalone
 // launcher stays independent of the Effect-backed contracts package.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
+type LauncherLog = (line: string) => void;
+
+const logToStderr: LauncherLog = (line) => {
+  process.stderr.write(`[service-launcher] ${line}\n`);
+};
 
 interface ManagedChild {
   readonly version: string;
@@ -141,16 +148,36 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
-function runCp(args: ReadonlyArray<string>): Promise<boolean> {
-  return new Promise((resolve) => {
-    NodeChildProcess.execFile("cp", args, (error) => resolve(error === null));
+function runCp(args: ReadonlyArray<string>, signal?: AbortSignal): Promise<boolean> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const child = NodeChildProcess.spawn("cp", args, { stdio: "ignore" });
+    let force: NodeJS.Timeout | undefined;
+    const abort = () => {
+      child.kill("SIGTERM");
+      force = setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    // Even an abort callback can precede process exit. Staging must outlive its writer.
+    child.once("error", () => {});
+    child.once("close", (code) => {
+      clearTimeout(force);
+      signal?.removeEventListener("abort", abort);
+      if (signal?.aborted) reject(signal.reason);
+      else resolve(code === 0);
+    });
   });
 }
 
 /**
  * Node's own clone flag is not used: on macOS `fs.copyFile` falls back to a full copy.
  */
-async function copyDatabaseFile(source: string, destination: string): Promise<void> {
+async function copyDatabaseFile(
+  source: string,
+  destination: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
   // `cp -c` replaces the destination with a new file, which would cut a
@@ -164,7 +191,19 @@ async function copyDatabaseFile(source: string, destination: string): Promise<vo
       : platform === "linux"
         ? ["--reflink=auto", source, destination]
         : undefined;
-  if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
+  if (args !== undefined && (await runCp(args, signal))) return;
+  signal?.throwIfAborted();
+  if (signal === undefined) {
+    await NodeFSP.copyFile(source, destination);
+  } else {
+    const mode = (await NodeFSP.stat(source)).mode & 0o7777;
+    await NodeStreamPromises.pipeline(
+      NodeFS.createReadStream(source),
+      NodeFS.createWriteStream(destination, { mode }),
+      { signal },
+    );
+    await NodeFSP.chmod(destination, mode);
+  }
 }
 
 const GIB = 1024 ** 3;
@@ -262,31 +301,96 @@ export async function databaseBackupBlocker(
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
 }
 
+function formatBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
+const elapsedSeconds = (startedAt: number) =>
+  `${((performance.now() - startedAt) / 1000).toFixed(1)}s`;
+
 /**
  * A completed backup is never overwritten because a restarted launcher may be looking at
  * database writes from an earlier attempt by the same trial.
  */
-async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
+async function backupDatabaseOnce(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  signal: AbortSignal,
+  log: LauncherLog,
+): Promise<void> {
+  signal.throwIfAborted();
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
 
   const stagingDir = `${backupDir}.staging`;
-  await NodeFSP.rm(stagingDir, { recursive: true, force: true });
-  await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+  const startedAt = performance.now();
+  let timer: NodeJS.Timeout | undefined;
+  let reporting: Promise<void> | undefined;
+  let phase = "copying";
+  let progressDir = stagingDir;
   try {
+    await NodeFSP.rm(stagingDir, { recursive: true, force: true });
+    signal.throwIfAborted();
+    await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    const totalBytes = (await statDatabaseFiles(pending.dbPath)).reduce(
+      (total, file) => total + file.size,
+      0,
+    );
+    log(
+      `Backing up the database (${formatBytes(totalBytes)}) to ${backupDir} before starting t3@${pending.targetVersion}.`,
+    );
+    // Stat staging rather than count reads: native cp may clone or write ahead of fsync.
+    timer = setInterval(() => {
+      if (reporting !== undefined) return;
+      reporting = (async () => {
+        const sizes = await Promise.all(
+          DB_FILE_SUFFIXES.map((suffix) =>
+            NodeFSP.stat(databaseBackupFile(progressDir, suffix)).then(
+              (stat) => stat.size,
+              () => 0,
+            ),
+          ),
+        );
+        const writtenBytes = sizes.reduce((total, size) => total + size, 0);
+        log(
+          `Database backup ${phase}: ${formatBytes(writtenBytes)} of ${formatBytes(totalBytes)} written; ${elapsedSeconds(startedAt)} elapsed.`,
+        );
+      })()
+        .catch(() => undefined)
+        .finally(() => {
+          reporting = undefined;
+        });
+    }, BACKUP_PROGRESS_INTERVAL_MS);
     for (const suffix of DB_FILE_SUFFIXES) {
+      signal.throwIfAborted();
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
       const destination = databaseBackupFile(stagingDir, suffix);
-      await copyDatabaseFile(source, destination);
+      phase = "copying";
+      await copyDatabaseFile(source, destination, signal);
+      signal.throwIfAborted();
+      phase = "flushing to disk";
       await syncFile(destination);
     }
+    signal.throwIfAborted();
     await NodeFSP.rename(stagingDir, backupDir);
+    progressDir = backupDir;
     await syncDirectory(NodePath.dirname(backupDir));
   } catch (cause) {
     await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
     throw cause;
+  } finally {
+    clearInterval(timer);
+    await reporting;
   }
+  log(`Database backup finished in ${elapsedSeconds(startedAt)}.`);
 }
 
 const restoreMarkerPath = (baseDir: string, updateId: string) =>
@@ -475,6 +579,8 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
+  readonly #log: LauncherLog;
+  readonly #backupStopController = new AbortController();
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
 
   constructor(
@@ -482,11 +588,13 @@ export class Launcher {
     state: ServiceState,
     options: {
       readonly backupSpaceProbe?: Partial<BackupSpaceProbe>;
+      readonly log?: LauncherLog;
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
     } = {},
   ) {
     this.#baseDir = baseDir;
     this.#backupSpaceProbe = options.backupSpaceProbe;
+    this.#log = options.log ?? logToStderr;
     this.#environment = { ...(options.environment ?? process.env) };
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
@@ -537,12 +645,13 @@ export class Launcher {
       return;
     }
     this.#stopRequested = true;
+    this.#backupStopController.abort();
     this.#clearTimer();
     this.#enqueue(async () => {
-      // Let an update transition already in progress start its replacement
-      // before this queued stop tears it down. That replacement owns the
-      // pre-activation tunnel cleanup path and observes the marker above.
+      // A backup stop starts no replacement to release a managed tunnel the old
+      // child kept for the update handoff.
       this.#stopping = true;
+      this.#clearTimer();
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await terminateChild(child, signal);
@@ -592,11 +701,24 @@ export class Launcher {
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     try {
-      await backupDatabaseOnce(this.#baseDir, pending);
-    } catch {
+      await backupDatabaseOnce(
+        this.#baseDir,
+        pending,
+        this.#backupStopController.signal,
+        this.#log,
+      );
+    } catch (cause) {
+      if (this.#stopRequested) {
+        this.#log("Database backup stopped; the update stays pending for the next launch.");
+        return;
+      }
+      this.#log(
+        `Database backup failed (${cause instanceof Error ? cause.message : String(cause)}); returning to t3@${pending.fromVersion}.`,
+      );
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
     }
+    if (this.#stopRequested) return;
     try {
       await this.#startChild(pending.targetVersion, "trial", pending);
     } catch {
@@ -605,11 +727,11 @@ export class Launcher {
   }
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
-    if (this.#stopping) return;
+    if (this.#stopping || (role === "trial" && this.#stopRequested)) return;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
-    if (this.#stopping) return;
+    if (this.#stopping || (role === "trial" && this.#stopRequested)) return;
     const paths = runtimePaths(this.#baseDir, version);
     const context: ServiceLauncherContext = {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
