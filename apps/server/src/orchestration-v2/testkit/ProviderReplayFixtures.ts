@@ -31,6 +31,7 @@ const DRIVERS_WITH_REPLAY_FIXTURE_FILES = new Set([
   "codex",
   "cursor",
   "grok",
+  "kiro",
   "muse",
   "opencode",
   "pi",
@@ -172,7 +173,14 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   const projection = result.projections.get(projectionThreadId);
   assert.isDefined(projection);
   const latestRun = projection.runs.at(-1);
-  assert.deepEqual(latestRun?.modelSelection, input.driver.modelSelection);
+  // A `set_model` step moves later runs to another model of the same instance.
+  const finalModel = fixtureInput.steps.findLast((step) => step.type === "set_model");
+  assert.deepEqual(
+    latestRun?.modelSelection,
+    finalModel?.type === "set_model"
+      ? { ...input.driver.modelSelection, model: finalModel.model }
+      : input.driver.modelSelection,
+  );
   if (projection.runs.some((run) => run.status === "completed")) {
     const threadStartCheckpoint = projection.checkpoints.find(
       (checkpoint) => checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null,

@@ -37,6 +37,20 @@ import { assertClaudeMcpToolPresentationOutput } from "./claude_mcp_tool_present
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
+import { KIRO_EFFORT_LEVEL, KIRO_EFFORT_MODEL, kiroEffortInput } from "./kiro_effort/input.ts";
+import { assertKiroEffortOutput } from "./kiro_effort/output.ts";
+import { kiroModelSwitchInput } from "./kiro_model_switch/input.ts";
+import { assertKiroModelSwitchOutput } from "./kiro_model_switch/output.ts";
+import {
+  kiroFullAccessWriteInput,
+  kiroSupervisedWriteInput,
+} from "./kiro_permission_modes/input.ts";
+import {
+  assertKiroFullAccessWriteOutput,
+  assertKiroSupervisedWriteOutput,
+} from "./kiro_permission_modes/output.ts";
+import { kiroSubagentInterruptInput } from "./kiro_subagent_interrupt/input.ts";
+import { assertKiroSubagentInterruptOutput } from "./kiro_subagent_interrupt/output.ts";
 import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
 import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
 import { assertGrokBackgroundBashOutput } from "./grok_background_bash/output.ts";
@@ -70,6 +84,7 @@ import { assertMuseTurnInterruptOutput } from "./turn_interrupt/muse_output.ts";
 import { piCompactionInput } from "./pi_compaction/input.ts";
 import { assertPiCompactionOutput } from "./pi_compaction/output.ts";
 import { providerThreadResumeInput } from "./provider_thread_resume/input.ts";
+import { assertKiroProviderThreadResumeOutput } from "./provider_thread_resume/kiro_output.ts";
 import { assertPiProviderThreadResumeOutput } from "./provider_thread_resume/pi_output.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
 import { assertMultiTurnOutput } from "./multi_turn/codex_output.ts";
@@ -134,6 +149,7 @@ import { assertSubagentOutput } from "./subagent/codex_output.ts";
 import { assertClaudeSubagentOutput } from "./subagent/claude_output.ts";
 import { subagentInput } from "./subagent/input.ts";
 import { assertCursorSubagentOutput } from "./subagent/cursor_output.ts";
+import { assertKiroSubagentOutput } from "./subagent/kiro_output.ts";
 import { assertSubagentContinueOutput } from "./subagent_continue/codex_output.ts";
 import { subagentContinueInput } from "./subagent_continue/input.ts";
 import { assertSubagentV2Output } from "./subagent_v2/codex_output.ts";
@@ -171,9 +187,13 @@ import { assertToolCallReadOnlyCursorOutput } from "./tool_call_read_only/cursor
 import { toolCallReadOnlyInput } from "./tool_call_read_only/input.ts";
 import {
   assertToolCallReadOnlyOnRequestGrokOutput,
+  assertToolCallReadOnlyOnRequestKiroOutput,
   assertToolCallReadOnlyOnRequestOutput,
 } from "./tool_call_read_only_on_request/output.ts";
-import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
+import {
+  toolCallReadOnlyOnRequestInput,
+  toolCallReadOnlyOnRequestKiroInput,
+} from "./tool_call_read_only_on_request/input.ts";
 import {
   stopBackgroundWorkAfterFailedTurnInput,
   stopBackgroundWorkAfterReleaseInput,
@@ -194,6 +214,7 @@ import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_too
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
 import { turnInterruptMidToolInput } from "./turn_interrupt_mid_tool/input.ts";
+import { assertTurnInterruptMidToolKiroOutput } from "./turn_interrupt_mid_tool/kiro_output.ts";
 import { assertTurnInterruptMidToolPiOutput } from "./turn_interrupt_mid_tool/pi_output.ts";
 import { assertTurnInterruptRestartClaudeOutput } from "./turn_interrupt_restart/claude_output.ts";
 import { turnInterruptRestartInput } from "./turn_interrupt_restart/input.ts";
@@ -206,6 +227,7 @@ import {
   CODEX_MODEL_SELECTION,
   CURSOR_MODEL_SELECTION,
   GROK_MODEL_SELECTION,
+  KIRO_MODEL_SELECTION,
   MUSE_MODEL_SELECTION,
   OPENCODE_MODEL_SELECTION,
   OPENCODE2_MODEL_SELECTION,
@@ -497,6 +519,108 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "kiro_tool_call_read_only_on_request",
+    buildInput: toolCallReadOnlyOnRequestKiroInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./tool_call_read_only_on_request/kiro_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
+        assertOutput: assertToolCallReadOnlyOnRequestKiroOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_model_switch",
+    buildInput: kiroModelSwitchInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./kiro_model_switch/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroModelSwitchOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_effort",
+    buildInput: kiroEffortInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./kiro_effort/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: {
+          ...KIRO_MODEL_SELECTION,
+          model: KIRO_EFFORT_MODEL,
+          options: [{ id: "reasoningEffort", value: KIRO_EFFORT_LEVEL }],
+        },
+        assertOutput: assertKiroEffortOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_cloud_config",
+    buildInput: turnInterruptInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./kiro_cloud_config/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_supervised_write",
+    buildInput: kiroSupervisedWriteInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./kiro_permission_modes/kiro_supervised_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroSupervisedWriteOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_full_access_write",
+    buildInput: kiroFullAccessWriteInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./kiro_permission_modes/kiro_full_access_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroFullAccessWriteOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_subagent_interrupt",
+    buildInput: kiroSubagentInterruptInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./kiro_subagent_interrupt/kiro_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroSubagentInterruptOutput,
+      },
+    ],
+  },
+  {
     name: "grok_background_bash",
     buildInput: grokBackgroundBashInput,
     providers: [
@@ -639,6 +763,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./simple/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./simple/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
       {
@@ -858,6 +988,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertCursorSubagentOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./subagent/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroSubagentOutput,
       },
     ],
   },
@@ -1223,6 +1359,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertMultiTurnOutput,
       },
       {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./multi_turn/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./multi_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1317,6 +1459,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: PI_MODEL_SELECTION,
         assertOutput: assertPiProviderThreadResumeOutput,
       },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./provider_thread_resume/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroProviderThreadResumeOutput,
+      },
     ],
   },
   {
@@ -1371,6 +1519,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./queued_turn/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
       {
@@ -1507,6 +1661,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertGrokMessageSteeringOutput,
       },
       {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./message_steering/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertGrokMessageSteeringOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./message_steering/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1542,6 +1702,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./turn_interrupt/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },
@@ -1631,6 +1798,15 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./turn_interrupt_mid_tool/pi_transcript.ndjson", import.meta.url),
         modelSelection: PI_MODEL_SELECTION,
         assertOutput: assertTurnInterruptMidToolPiOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./turn_interrupt_mid_tool/kiro_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertTurnInterruptMidToolKiroOutput,
       },
     ],
   },
