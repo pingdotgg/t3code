@@ -18,6 +18,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
+import { vitePlusCommand } from "./check-changed-command.ts";
 
 const root = NodePath.resolve(import.meta.dirname, "..");
 const CODE = /\.[cm]?[jt]sx?$/;
@@ -205,11 +206,12 @@ const checkPatches = (): boolean => {
     for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
       if (NodeFS.existsSync(NodePath.join(root, extra))) copy(extra);
     }
-    const { status, stdout, stderr, error } = NodeChildProcess.spawnSync(
-      "vp",
-      ["install", "--lockfile-only", "--ignore-scripts"],
-      { cwd: temp, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-    );
+    const [command, args] = vitePlusCommand(["install", "--lockfile-only", "--ignore-scripts"]);
+    const { status, stdout, stderr, error } = NodeChildProcess.spawnSync(command, args, {
+      cwd: temp,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
     if (status === 0) return true;
     if (stdout) console.log(stdout);
     if (stderr) console.error(stderr);
@@ -285,7 +287,8 @@ const results = await Promise.all(
         // takes about a second, so the commands start right after it.
         if ("run" in step) return finish(step.run());
         const output: Array<Buffer> = [];
-        const child = NodeChildProcess.spawn("vp", step.args, { cwd: root, env });
+        const [command, args] = vitePlusCommand(step.args);
+        const child = NodeChildProcess.spawn(command, args, { cwd: root, env });
         child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
         child.stderr.on("data", (chunk: Buffer) => output.push(chunk));
         // A failed spawn emits "error", then "close" with a nonzero code.
