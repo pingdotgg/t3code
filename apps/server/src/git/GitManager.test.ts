@@ -1732,6 +1732,52 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a warm merged branch PR lookup skips the fresh git confirm only on request", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/merged-sweep"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/merged-sweep"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        gitCommands,
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 241,
+                title: "Merged sweep PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/241",
+                baseRefName: "main",
+                headRefName: "feature/merged-sweep",
+                state: "MERGED",
+                updatedAt: "2026-04-06T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+      const input = { cwd: repoDir, branch: "feature/merged-sweep" };
+      expect((yield* manager.branchPullRequest(input))?.state).toBe("merged");
+
+      gitCommands.length = 0;
+      const remembered = yield* manager.branchPullRequest(input, { confirmTerminal: false });
+      expect(remembered?.state).toBe("merged");
+      expect(gitCommands).toEqual([]);
+
+      expect((yield* manager.branchPullRequest(input))?.state).toBe("merged");
+      expect(gitCommands.length).toBeGreaterThan(0);
+    }),
+  );
+
   // regression: #8600 settle threads server-side
   it.effect("branch PR lookup propagates provider failures", () =>
     Effect.gen(function* () {

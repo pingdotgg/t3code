@@ -193,12 +193,13 @@ export const make = Effect.gen(function* () {
             worktreeExists && first.worktreePath !== null
               ? first.worktreePath
               : project.workspaceRoot;
+          // A detected PR is confirmed against fresh git state before it is saved.
           const detected =
             first.branch === null
               ? null
               : yield* git.branchPullRequest(
                   { cwd, branch: first.branch },
-                  { refresh: request.refresh },
+                  { refresh: request.refresh, confirmTerminal: false },
                 );
           if (detected !== null && !pullRequestMatchesProject(detected, resolvedProject)) {
             return finishBackfill(group);

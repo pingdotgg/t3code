@@ -500,7 +500,15 @@ export const make = Effect.gen(function* () {
       if (cwd === undefined) {
         return yield* Effect.die(new Error("thread project not found"));
       }
-      return yield* git.branchPullRequest({ cwd, branch: thread.branch });
+      // Remembered git state is enough to rule a thread out; only an answer
+      // that would settle it is confirmed against fresh git state.
+      const remembered = yield* git.branchPullRequest(
+        { cwd, branch: thread.branch },
+        { confirmTerminal: false },
+      );
+      if (remembered === null || remembered.state === "open") return remembered;
+      if (!(yield* wouldSettle(group, remembered))) return undefined;
+      return yield* git.branchPullRequest({ cwd, branch: thread.branch }, { freshGitState: true });
     });
 
     yield* Effect.forEach(

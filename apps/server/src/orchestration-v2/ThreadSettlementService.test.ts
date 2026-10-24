@@ -464,6 +464,18 @@ function makeBranchPullRequest(state: "open" | "closed" | "merged") {
   } satisfies GitManager.GitBranchPullRequest;
 }
 
+// GitManager rereads git state on request, and by default whenever its
+// remembered answer is merged or closed.
+function readsFreshGitState(
+  options: Parameters<GitManager.GitManager["Service"]["branchPullRequest"]>[1],
+): boolean {
+  return (
+    options?.refresh === true ||
+    options?.freshGitState === true ||
+    options?.confirmTerminal !== false
+  );
+}
+
 interface HarnessOptions {
   readonly snapshot: SettlementSnapshot;
   readonly settings?: ContractServerSettings;
@@ -513,9 +525,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       return next;
     });
 
-  const branchPullRequest: GitManager.GitManager["Service"]["branchPullRequest"] = (input) =>
+  const branchPullRequest: GitManager.GitManager["Service"]["branchPullRequest"] = (
+    input,
+    lookupOptions,
+  ) =>
     Ref.update(branchCalls, (calls) => [...calls, input]).pipe(
-      Effect.andThen(options.branchPullRequest?.(input) ?? Effect.succeed(null)),
+      Effect.andThen(options.branchPullRequest?.(input, lookupOptions) ?? Effect.succeed(null)),
     );
   const pullRequestSummary: PullRequestService.PullRequestService["Service"]["summary"] = (
     input,
@@ -820,6 +835,79 @@ describe("ThreadSettlementServiceV2 worker", () => {
           }).pipe(Effect.provide(fixture.layer));
         }),
       ),
+  );
+
+  it.effect("a merged branch PR that cannot settle its thread rereads no git state", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const freshReads = yield* Ref.make(0);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("worked-after-merge", {
+              branch: "merged-feature",
+              latestUserAuthoredMessageAt: DateTime.makeUnsafe("2026-08-28T06:00:00.000Z"),
+            }),
+          ]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+          branchPullRequest: (_input, lookupOptions) =>
+            Ref.update(
+              freshReads,
+              (count) => count + (readsFreshGitState(lookupOptions) ? 1 : 0),
+            ).pipe(
+              Effect.as({
+                ...makeBranchPullRequest("merged"),
+                mergedAt: "2026-08-27T00:00:00.000Z",
+              }),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.strictEqual((yield* Ref.get(fixture.branchCalls)).length, 2);
+          assert.strictEqual(yield* Ref.get(freshReads), 0);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("a remembered merged branch PR settles only after fresh git state agrees", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const freshState = yield* Ref.make<"open" | "merged">("open");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("merged-branch", { branch: "merged-feature" })]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+          branchPullRequest: (_input, lookupOptions) =>
+            readsFreshGitState(lookupOptions)
+              ? Ref.get(freshState).pipe(Effect.map(makeBranchPullRequest))
+              : Effect.succeed(makeBranchPullRequest("merged")),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* Ref.set(freshState, "merged");
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [ThreadId.make("merged-branch")],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
   );
 
   it.effect("a merge does not settle threads linked to an unrelated pull request", () =>
