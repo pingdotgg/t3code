@@ -49,6 +49,8 @@ export interface ProviderInstance {
   readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
     cwd: string,
+    /** Publishes what a slow scan already knows, such as skills read before a CLI probe. */
+    publishPartial?: (snapshot: ProviderWorkspaceSnapshot) => Effect.Effect<void>,
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;

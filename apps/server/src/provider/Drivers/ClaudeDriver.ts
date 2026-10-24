@@ -396,10 +396,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       enabled,
       snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
-      snapshotForCwd: (cwd: string) =>
+      snapshotForCwd: (cwd, publishPartial) =>
         snapshot.getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>
-            probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
+            probeClaudeWorkspaceSnapshot(
+              effectiveConfig,
+              machineSnapshot,
+              cwd,
+              processEnv,
+              publishPartial,
+            ),
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

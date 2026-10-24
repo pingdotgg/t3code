@@ -962,37 +962,49 @@ export const layer = Layer.effect(
             Effect.andThen(refreshInstance(input.instanceId)),
           )
         : Effect.void;
-      return yield* refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
-        // A failed scan fails this effect, so a returned snapshot is a real
-        // inventory even while the provider's health check reports an error.
-        Effect.flatMap((scopedSnapshot) =>
-          instanceRegistry.getInstance(input.instanceId).pipe(
-            Effect.flatMap((currentInstance) => {
-              if (currentInstance !== instance) return Ref.get(providersRef);
-              return updateProviders((currentProviders) => {
-                // Read ownership inside the update so a newer claim cannot race publication.
-                if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
-                  return currentProviders;
+      // Partial and final results replace whatever this scan last published,
+      // so a partial publication does not make the final one look stale.
+      let publishedFrom = scannedFrom;
+      const publish = (scopedSnapshot: ProviderWorkspaceSnapshot) =>
+        instanceRegistry.getInstance(input.instanceId).pipe(
+          Effect.flatMap((currentInstance) => {
+            if (currentInstance !== instance) return Ref.get(providersRef);
+            return updateProviders((currentProviders) => {
+              // Read ownership inside the update so a newer claim cannot race publication.
+              if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
+                return currentProviders;
+              }
+              return currentProviders.map((candidate) => {
+                if (
+                  candidate.instanceId !== input.instanceId ||
+                  !Equal.equals(workspaceSnapshotOf(candidate), publishedFrom)
+                ) {
+                  return candidate;
                 }
-                return currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Unless the driver reports its own command discovery,
-                        // commands come from the health check. A failed check
-                        // leaves them unknown, so keep the last ones and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                );
+                const next = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                  ...scopedSnapshot,
+                  checkedAt: scannedAt,
+                  // Unless the driver reports its own command discovery,
+                  // commands come from the health check. A failed check
+                  // leaves them unknown, so keep the last ones and retry.
+                  slashCommandsPending:
+                    scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                });
+                publishedFrom = workspaceSnapshotOf(next);
+                return next;
               });
-            }),
+            });
+          }),
+        );
+      return yield* refreshMachineSnapshot.pipe(
+        Effect.andThen(
+          instance.snapshotForCwd(input.cwd, (partial) =>
+            publish({ ...partial, slashCommandsPending: true }).pipe(Effect.asVoid),
           ),
         ),
+        // A failed scan fails this effect, so a returned snapshot is a real
+        // inventory even while the provider's health check reports an error.
+        Effect.flatMap(publish),
         Effect.ensuring(
           Ref.update(workspaceRefreshesRef, (refreshes) => {
             const current = refreshes.get(instance);

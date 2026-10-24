@@ -455,9 +455,14 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   machineSnapshot: ServerProvider,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  publishPartial?: (snapshot: ProviderWorkspaceSnapshot) => Effect.Effect<void>,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
+  // The capability probe starts the CLI and can take seconds.
+  if (publishPartial) {
+    yield* publishPartial({ ...machineSnapshot, skills, slashCommandsPending: true });
+  }
   const probeResult = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(
     Effect.result,
   );

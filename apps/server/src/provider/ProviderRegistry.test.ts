@@ -1380,6 +1380,133 @@ it.layer(
       }),
     );
 
+    it.effect("publishes an evicted folder's skills before its slow command probe ends", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const machineSkills = [{ name: "personal", path: "/home/me/SKILL.md", enabled: true }];
+        const projectSkills = [{ name: "project", path: "/a/.claude/SKILL.md", enabled: true }];
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [COMPACT_SLASH_COMMAND],
+          skills: machineSkills,
+        } as const satisfies ServerProvider;
+        const probeCommand = { name: "review", description: "Review changes" };
+        const probeStarted = yield* Deferred.make<void>();
+        const releaseProbe = yield* Deferred.make<void>();
+        const slowProbeCwd = yield* Ref.make<string | null>(null);
+        // Claude reads skills from disk quickly, then waits on a CLI probe for
+        // its commands. A driver may hand the registry what it already knows.
+        const snapshotForCwd = (
+          cwd: string,
+          publishPartial?: (snapshot: ProviderWorkspaceSnapshot) => Effect.Effect<void>,
+        ) =>
+          Effect.gen(function* () {
+            const skills = cwd === "/a" ? projectSkills : [];
+            if ((yield* Ref.get(slowProbeCwd)) === cwd) {
+              if (publishPartial) {
+                yield* publishPartial({ ...provider, skills, slashCommandsPending: true });
+              }
+              yield* Deferred.succeed(probeStarted, undefined);
+              yield* Deferred.await(releaseProbe);
+            }
+            return {
+              ...provider,
+              skills,
+              slashCommands: [COMPACT_SLASH_COMMAND, probeCommand],
+              slashCommandsPending: false,
+            } satisfies ProviderWorkspaceSnapshot;
+          });
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "claude:instance:claude" },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(provider),
+            refresh: Effect.succeed(provider),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          snapshotForCwd,
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-evicted-workspace-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const workspaceA = Effect.map(registry.getProviders, (providers) =>
+            providers[0]?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === "/a"),
+          );
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/a" });
+          assert.deepStrictEqual((yield* workspaceA)?.skills, projectSkills);
+
+          // Sixteen other worktrees push /a out of the capped snapshot list,
+          // so clients fall back to the machine's personal skills for /a.
+          for (let index = 0; index < 16; index++) {
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: `/other-${index}` });
+          }
+          assert.strictEqual(yield* workspaceA, undefined);
+
+          yield* Ref.set(slowProbeCwd, "/a");
+          const rescan = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/a" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(probeStarted);
+          const whileProbing = yield* workspaceA;
+          assert.deepStrictEqual(whileProbing?.skills, projectSkills);
+          assert.strictEqual(whileProbing?.slashCommandsPending, true);
+
+          yield* Deferred.succeed(releaseProbe, undefined);
+          yield* Fiber.join(rescan);
+          const settled = yield* workspaceA;
+          assert.deepStrictEqual(settled?.skills, projectSkills);
+          assert.deepStrictEqual(settled?.slashCommands, [COMPACT_SLASH_COMMAND, probeCommand]);
+          assert.strictEqual(settled?.slashCommandsPending, undefined);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect("shares one in-flight pass between concurrent untargeted refreshes", () =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("codex");
