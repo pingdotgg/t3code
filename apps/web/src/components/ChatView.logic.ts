@@ -69,6 +69,7 @@ import {
 import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
+  type ComposerThreadDraftState,
   type DraftId,
   type DraftThreadState,
 } from "../composerDraftStore";
@@ -1291,6 +1292,21 @@ export function shouldRefocusComposerOnWindowFocus(
       '[role="dialog"], [role="alertdialog"], [role="application"], [data-slot$="-popup"], [data-terminal-owner]',
     ) === null
   );
+}
+
+// Upload completion replaces file records without changing the content the user intends to send.
+export function composerDraftUserContentSignature(
+  draft: ComposerThreadDraftState | null | undefined,
+): string {
+  return JSON.stringify({
+    prompt: draft?.prompt ?? "",
+    images: draft?.images.map((image) => image.id) ?? [],
+    files: draft?.files.map((file) => file.id) ?? [],
+    terminalContexts: draft?.terminalContexts ?? [],
+    previewAnnotations: draft?.previewAnnotations ?? [],
+    reviewComments: draft?.reviewComments ?? [],
+    threadContexts: draft?.threadContexts ?? [],
+  });
 }
 
 export interface PlanFollowUpComposerSnapshot {
