@@ -4,11 +4,7 @@ import {
   formatComposerContextHref,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
-import {
-  markdownWithHtml,
-  markdownWithInlineFileLinks,
-  markdownWithTableBreaks,
-} from "../lib/markdownDocument";
+import { markdownForNativeRendering } from "../lib/markdownDocument";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, View } from "react-native";
 import {
@@ -155,13 +151,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
   const markdown = useMemo(
-    () =>
-      markdownWithTableBreaks(
-        markdownWithInlineFileLinks(
-          markdownWithHtml(props.markdown),
-          ENRICHED_INLINE_FILE_LINK_REGEX,
-        ),
-      ),
+    () => markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
     [props.markdown],
   );
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);

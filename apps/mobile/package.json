@@ -45,6 +45,7 @@
     "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "test": "vp test run --project unit --project react",
+    "test:markdown-native": "node scripts/test-enriched-markdown-native.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

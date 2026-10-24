@@ -1,0 +1,154 @@
+diff --git a/ios/internals/MeasurementCache.h b/ios/internals/MeasurementCache.h
+index dbd7e959c8dd25a20f2504763a81f9728737762f..3b3bcea140c7dfeafbc81447409cf7e507fa6e38 100644
+--- a/ios/internals/MeasurementCache.h
++++ b/ios/internals/MeasurementCache.h
+@@ -265,6 +265,9 @@ public:
+ 
+   void set(const MeasurementCacheKey &key, CachedSize size)
+   {
++    const size_t keyBytes = keyStorageBytes(key);
++    if (keyBytes > kMaxKeyBytes)
++      return;
+     std::lock_guard<std::mutex> lock(mutex_);
+ 
+     auto it = map_.find(key);
+@@ -274,14 +277,16 @@ public:
+       return;
+     }
+ 
+-    list_.push_front({key, size});
+-    map_[key] = list_.begin();
+-
+-    if (map_.size() > kMaxEntries) {
++    while (map_.size() >= kMaxEntries || keyBytes_ + keyBytes > kMaxKeyBytes) {
+       auto &lastEntry = list_.back();
++      keyBytes_ -= keyStorageBytes(lastEntry.key);
+       map_.erase(lastEntry.key);
+       list_.pop_back();
+     }
++
++    list_.push_front({key, size});
++    map_[key] = list_.begin();
++    keyBytes_ += keyBytes;
+   }
+ 
+   void removeMatchingMarkdown(const std::string &markdown)
+@@ -290,6 +295,7 @@ public:
+ 
+     for (auto it = list_.begin(); it != list_.end();) {
+       if (it->key.markdown == markdown) {
++        keyBytes_ -= keyStorageBytes(it->key);
+         map_.erase(it->key);
+         it = list_.erase(it);
+       } else {
+@@ -302,6 +308,15 @@ private:
+   MeasurementCache() = default;
+ 
+   static constexpr size_t kMaxEntries = 512;
++  // The list and map each own a key. Count both copies; allocator/node overhead is additional.
++  static constexpr size_t kMaxKeyBytes = 8 * 1024 * 1024;
++  static size_t keyStorageBytes(const MeasurementCacheKey &key)
++  {
++    return sizeof(CacheEntry) + sizeof(MeasurementCacheKey) +
++           2 * (key.markdown.size() + key.lineBreakStrategyIOS.size() + key.writingDirection.size() +
++                key.ellipsizeMode.size() + key.linkRegexKey.size() + key.inlineCodeLinkRegexKey.size());
++  }
++  size_t keyBytes_ = 0;
+   mutable std::mutex mutex_;
+ 
+   std::list<CacheEntry> list_;
+diff --git a/ios/utils/ENRMAsyncRenderCoordinator.h b/ios/utils/ENRMAsyncRenderCoordinator.h
+index aabece2af5e7cc682252e533103220d8b15386d7..3776902a8b1572990f0da3f58c97bc1255bd4c52 100644
+--- a/ios/utils/ENRMAsyncRenderCoordinator.h
++++ b/ios/utils/ENRMAsyncRenderCoordinator.h
+@@ -11,12 +11,12 @@
+ - (instancetype)initWithQueueLabel:(const char *)label NS_DESIGNATED_INITIALIZER;
+ - (instancetype)init NS_UNAVAILABLE;
+ 
+-/// Dispatches renderBlock on the serial queue.
++/// Keeps only the newest pending renderBlock on the serial queue.
+ /// If renderBlock returns YES, applyBlock is dispatched on the main queue,
+ /// provided the render ID has not been superseded by a newer call.
+ - (void)scheduleRender:(BOOL (^)(void))renderBlock apply:(dispatch_block_t)applyBlock;
+ 
+-/// Advances the render ID so any in-flight render's apply block is discarded
++/// Drops pending work and advances the render ID so any in-flight render's apply block is discarded
+ /// by the renderId == currentRenderId check when it lands on the main queue.
+ /// Use before recycling or otherwise resetting a host that owns this coordinator.
+ - (void)invalidate;
+diff --git a/ios/utils/ENRMAsyncRenderCoordinator.m b/ios/utils/ENRMAsyncRenderCoordinator.m
+index ab16e698032486628c393bdcb7c6e77b835f6bd8..7539a0a3d9a0e3d342ca4b9367315fe3f9d25e06 100644
+--- a/ios/utils/ENRMAsyncRenderCoordinator.m
++++ b/ios/utils/ENRMAsyncRenderCoordinator.m
+@@ -3,6 +3,9 @@
+ @implementation ENRMAsyncRenderCoordinator {
+   dispatch_queue_t _queue;
+   NSUInteger _currentRenderId;
++  BOOL _workerScheduled;
++  BOOL (^_pendingRender)(void);
++  dispatch_block_t _pendingApply;
+ }
+ 
+ - (instancetype)initWithQueueLabel:(const char *)label
+@@ -17,21 +20,53 @@ - (void)scheduleRender:(BOOL (^)(void))renderBlock apply:(dispatch_block_t)apply
+ {
+   if (_blockAsyncRender)
+     return;
+-  NSUInteger renderId = ++_currentRenderId;
+-  dispatch_async(_queue, ^{
+-    if (!renderBlock())
++  @synchronized(self) {
++    ++_currentRenderId;
++    _pendingRender = [renderBlock copy];
++    _pendingApply = [applyBlock copy];
++    if (_workerScheduled)
+       return;
+-    dispatch_async(dispatch_get_main_queue(), ^{
+-      if (renderId == self->_currentRenderId) {
+-        applyBlock();
++    _workerScheduled = YES;
++  }
++  dispatch_async(_queue, ^{
++    while (YES) {
++      @autoreleasepool {
++        BOOL (^nextRender)(void);
++        dispatch_block_t nextApply;
++        NSUInteger renderId;
++        @synchronized(self) {
++          if (!self->_pendingRender) {
++            self->_workerScheduled = NO;
++            return;
++          }
++          nextRender = self->_pendingRender;
++          nextApply = self->_pendingApply;
++          renderId = self->_currentRenderId;
++          self->_pendingRender = nil;
++          self->_pendingApply = nil;
++        }
++        // Keep at most one in-flight render and one replaceable pending revision.
++        if (!nextRender())
++          continue;
++        dispatch_async(dispatch_get_main_queue(), ^{
++          @synchronized(self) {
++            if (renderId != self->_currentRenderId)
++              return;
++          }
++          nextApply();
++        });
+       }
+-    });
++    }
+   });
+ }
+ 
+ - (void)invalidate
+ {
+-  ++_currentRenderId;
++  @synchronized(self) {
++    ++_currentRenderId;
++    _pendingRender = nil;
++    _pendingApply = nil;
++  }
+ }
+ 
+ @end

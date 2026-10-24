@@ -389,6 +389,7 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  react-native-enriched-markdown@1.2.0-t3.15: patches/react-native-enriched-markdown@1.2.0-t3.15.patch
 
 peerDependencyRules:
   allowAny:
