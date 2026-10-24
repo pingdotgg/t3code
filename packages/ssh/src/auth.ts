@@ -205,6 +205,10 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
 export function isSshAuthFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
+  // Surface the agent signing error instead of hiding it behind a password prompt.
+  if (/(?:^|\n)sign_and_send_pubkey: signing failed [^\n]* from agent: /u.test(normalized)) {
+    return false;
+  }
   return (
     /permission denied \((?:publickey|password|keyboard-interactive|hostbased|gssapi-with-mic)[^)]*\)/u.test(
       normalized,
