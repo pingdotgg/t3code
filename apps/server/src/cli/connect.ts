@@ -2,6 +2,7 @@ import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
   type AuthEnvironmentScope,
+  connectReachableMcpUrl,
   type EnvironmentConnectReachability,
   EnvironmentHttpApi,
   formatConnectReachable,
@@ -199,6 +200,10 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
         : !status.linked
           ? "Start T3 to provision the environment link and launch its managed tunnel."
           : undefined;
+  const mcpUrl =
+    status.reachability?.status === "reachable"
+      ? connectReachableMcpUrl(status.reachability)
+      : null;
 
   return [
     "T3 Connect",
@@ -219,6 +224,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
           ? [
               "",
               `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+              ...(mcpUrl ? [`  MCP URL for outside agents: ${mcpUrl}`] : []),
             ]
           : ["", formatReachabilityFailure(status.reachability)]),
     ...(nextStep ? ["", `Next: ${nextStep}`] : []),

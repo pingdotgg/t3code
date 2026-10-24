@@ -5,12 +5,13 @@ import {
   EllipsisIcon,
   RouteIcon,
 } from "lucide-react";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
   AuthRelayWriteScope,
   type EnvironmentId,
   connectReachabilityHelpUrl,
+  connectReachableMcpUrl,
   formatConnectReachable,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -48,7 +49,8 @@ import {
   supportsServerUpdateThreadContinuation,
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
-import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { primaryCloudLinkMutationAtom } from "~/cloud/primaryCloudLinkState";
+import { useCloudLinkController, type CloudLinkDesiredState } from "~/cloud/useCloudLinkController";
 import { environmentCatalog } from "~/connection/catalog";
 import { readEnvironmentScope } from "~/state/session";
 import {
@@ -105,6 +107,44 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
   }
 }
 
+function useCopyMcpUrl() {
+  return useCopyToClipboard<{ url: string }>({
+    target: "MCP URL",
+    onCopy: ({ url }) => {
+      toastManager.add({
+        type: "success",
+        title: "MCP URL copied",
+        description: `Add it to an agent, e.g. claude mcp add --transport http t3 ${url}`,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy MCP URL",
+          description: error.message,
+        }),
+      );
+    },
+  }).copyToClipboard;
+}
+
+export function PrimaryMcpUrlMenuItem() {
+  const {
+    linkState: { data, isPending },
+    managedTunnelActive,
+  } = useCloudLinkController();
+  const copyMcpUrl = useCopyMcpUrl();
+  const reachability =
+    data && !isPending && managedTunnelActive && data.linkRevoked !== true
+      ? data.reachability
+      : undefined;
+  const mcpUrl = reachability?.status === "reachable" ? connectReachableMcpUrl(reachability) : null;
+  return mcpUrl ? (
+    <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
+  ) : null;
+}
+
 export function SavedBackendListRow({
   environment,
   removingEnvironmentId,
@@ -144,25 +184,7 @@ export function SavedBackendListRow({
   const copyTraceId = (traceId: string) => {
     copyTraceIdToClipboard(traceId, { traceId });
   };
-  const { copyToClipboard: copyMcpUrl } = useCopyToClipboard<{ url: string }>({
-    target: "MCP URL",
-    onCopy: ({ url }) => {
-      toastManager.add({
-        type: "success",
-        title: "MCP URL copied",
-        description: `Add it to an agent, e.g. claude mcp add --transport http t3 ${url}`,
-      });
-    },
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not copy MCP URL",
-          description: error.message,
-        }),
-      );
-    },
-  });
+  const copyMcpUrl = useCopyMcpUrl();
   const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
   const serverUpdateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
   const resumingServerUpdate =
@@ -474,17 +496,19 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     publishAgentActivity,
     holdWebhooksWhileOffline,
     operationError,
-    reconcileCloudState,
+    reconcileCloudState: reconcileLink,
   } = useCloudLinkController();
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
+  const [isBusy, setIsBusy] = useAtom(primaryCloudLinkMutationAtom(primaryEnvironmentId));
+  const reconcileCloudState = (desired: CloudLinkDesiredState) => {
+    setIsBusy(true);
+    return reconcileLink(desired).finally(() => setIsBusy(false));
+  };
 
   const disabledReason = !isSignedIn
     ? "Sign in to T3 Connect to manage this environment."
     : !canManageRelay
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
-  const isBusy = isUpdating || isUpdatingPreference;
   const refreshLinkState = useEffectEvent(primaryCloudLinkState.refresh);
   // The server rechecks reachability when the tunnel's 30 s readiness poll changes.
   // Poll while mounted, so a failed read does not stop later ones.
@@ -518,7 +542,6 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
     )
       return;
-    setIsUpdating(true);
     const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
     if (ok) {
       toastManager.add({
@@ -535,7 +558,6 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
             : "This environment is no longer available through T3 Connect.",
       });
     }
-    setIsUpdating(false);
   };
 
   const updatePublishAgentActivity = async (enabled: boolean) => {
@@ -544,7 +566,6 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
     )
       return;
-    setIsUpdatingPreference(true);
     const ok = await reconcileCloudState({ managedTunnel: managedTunnelActive, publish: enabled });
     if (ok) {
       toastManager.add({
@@ -555,11 +576,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           : "This environment will stop publishing agent activity.",
       });
     }
-    setIsUpdatingPreference(false);
   };
 
   const updateHoldWebhooks = async (enabled: boolean) => {
-    setIsUpdatingPreference(true);
     const ok = await reconcileCloudState({
       managedTunnel: managedTunnelActive,
       publish: publishAgentActivity,
@@ -574,7 +593,6 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           : "Requests to an offline environment now fail. Anything already held is still delivered.",
       });
     }
-    setIsUpdatingPreference(false);
   };
 
   return (

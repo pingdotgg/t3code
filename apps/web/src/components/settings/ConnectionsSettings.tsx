@@ -130,6 +130,7 @@ import {
 import {
   CloudLinkRow,
   CloudRemoteEnvironmentRows,
+  PrimaryMcpUrlMenuItem,
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
@@ -1069,6 +1070,7 @@ export function ConnectionsSettings() {
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
                     />
+                    {hasCloudPublicConfig() ? <PrimaryMcpUrlMenuItem /> : null}
                   </MenuPopup>
                 </Menu>
               ) : null
