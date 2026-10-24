@@ -43,7 +43,7 @@ const COMPOSER_PATH_SEARCH_LIMIT = 20;
 const THREAD_SEARCH_DEBOUNCE_MS = 200;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
-const INITIAL_BRANCH_CURSORS = [undefined] as const;
+const INITIAL_BRANCH_CURSORS = [null] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
@@ -202,6 +202,37 @@ export function useBranches(input: {
   );
 }
 
+const branchPageAtom = (
+  environmentId: EnvironmentId,
+  cwd: string,
+  query: string,
+  cursor: number | null,
+) =>
+  vcsEnvironment.listRefs({
+    environmentId,
+    input: {
+      cwd,
+      ...(query.length > 0 ? { query } : {}),
+      ...(cursor === null ? {} : { cursor }),
+      limit: VCS_REF_LIST_LIMIT,
+    },
+  });
+const branchPagesAtom = Atom.family((key: string) => {
+  const [environmentId, cwd, query, cursors] = JSON.parse(key) as [
+    EnvironmentId,
+    string,
+    string,
+    ReadonlyArray<number | null>,
+  ];
+  const pageAtoms = cursors.map((cursor) => branchPageAtom(environmentId, cwd, query, cursor));
+  return Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
+    Atom.withLabel(`mobile:vcs-ref-pages:${key}`),
+  );
+});
+const EMPTY_BRANCH_PAGES_ATOM = Atom.make(
+  (): ReadonlyArray<Atom.Type<ReturnType<typeof branchPageAtom>>> => [],
+).pipe(Atom.withLabel("mobile:vcs-ref-pages:empty"));
+
 export function usePaginatedBranches(target: VcsRefTarget) {
   const query = target.query?.trim() ?? "";
   const targetKey =
@@ -210,30 +241,17 @@ export function usePaginatedBranches(target: VcsRefTarget) {
       : null;
   const [pagination, setPagination] = useState<{
     readonly targetKey: string | null;
-    readonly cursors: ReadonlyArray<number | undefined>;
+    readonly cursors: ReadonlyArray<number | null>;
   }>({
     targetKey,
     cursors: INITIAL_BRANCH_CURSORS,
   });
   const cursors = pagination.targetKey === targetKey ? pagination.cursors : INITIAL_BRANCH_CURSORS;
-  const pageAtoms =
-    target.environmentId !== null && target.cwd !== null
-      ? cursors.map((cursor) =>
-          vcsEnvironment.listRefs({
-            environmentId: target.environmentId!,
-            input: {
-              cwd: target.cwd!,
-              ...(query.length > 0 ? { query } : {}),
-              ...(cursor === undefined ? {} : { cursor }),
-              limit: VCS_REF_LIST_LIMIT,
-            },
-          }),
-        )
-      : [];
-  const pagesAtom = Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
-    Atom.withLabel(`mobile:vcs-ref-pages:${targetKey ?? "empty"}`),
+  const pagesKey =
+    targetKey === null ? null : JSON.stringify([target.environmentId, target.cwd, query, cursors]);
+  const results = useAtomValue(
+    pagesKey === null ? EMPTY_BRANCH_PAGES_ATOM : branchPagesAtom(pagesKey),
   );
-  const results = useAtomValue(pagesAtom);
   const values = results.flatMap((result) => {
     const value = Option.getOrNull(AsyncResult.value(result));
     return value === null ? [] : [value];
@@ -272,10 +290,9 @@ export function usePaginatedBranches(target: VcsRefTarget) {
         })()
       : null;
   const refresh = () => {
-    const firstPage = pageAtoms[0];
     setPagination({ targetKey, cursors: INITIAL_BRANCH_CURSORS });
-    if (firstPage !== undefined) {
-      appAtomRegistry.refresh(firstPage);
+    if (target.environmentId !== null && target.cwd !== null) {
+      appAtomRegistry.refresh(branchPageAtom(target.environmentId, target.cwd, query, null));
     }
   };
   const loadNext = () => {
