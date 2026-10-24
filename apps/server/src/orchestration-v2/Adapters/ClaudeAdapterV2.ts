@@ -3461,6 +3461,13 @@ interface ActiveClaudeTurnContext {
   // Usage of the results that steers ended, oldest first. The final result's
   // usage covers only its own segment, so the turn bills these as well.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
+  // Steer text by prompt uuid until a reply frame echoes the uuid. A steer the
+  // CLI still holds in its queue (behind a foreground tool call) is dropped
+  // when Stop closes the query, so the turn says which ones may not have arrived.
+  readonly unreadSteers: Map<string, string>;
+  // Set as finalization starts: a steer admitted later would miss the
+  // unread-steer snapshot, so it fails and the orchestrator follows up instead.
+  steersClosed: boolean;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -6639,6 +6646,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
             yield* emitProviderEvent({
@@ -6774,6 +6782,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt: input.completedAt,
               }),
             });
+          }
+
+          const unreadSteers = [...input.context.unreadSteers];
+          input.context.unreadSteers.clear();
+          if (input.status === "interrupted") {
+            for (const [uuid, text] of unreadSteers) {
+              const nativeItemId = `unread-steer:${uuid}`;
+              const notice = `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  nodeId: input.context.input.rootNodeId,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: nativeItemId,
+                    strength: "weak",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(input.context, nativeItemId),
+                  type: "system_notice",
+                  status: "completed",
+                  title: "Steer delivery not confirmed",
+                  message: notice,
+                  startedAt: input.completedAt,
+                  completedAt: input.completedAt,
+                  updatedAt: input.completedAt,
+                },
+              });
+            }
           }
 
           const threadDisposition = input.threadDisposition ?? "reusable";
@@ -8696,6 +8742,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
+          // Only a reply frame proves the model read a steer: the CLI echoes
+          // a queued message once it folds it into the turn's next request.
+          // Assistant frames echo only the request that began a reply, so a
+          // steer consumed between tool rounds shows up on the result alone.
+          if (
+            context !== null &&
+            context.unreadSteers.size > 0 &&
+            liveQuery?.query === input.query &&
+            (message.type === "assistant" ||
+              message.type === "stream_event" ||
+              message.type === "result")
+          ) {
+            for (const uuid of claudeEchoedPromptUuids(message)) {
+              context.unreadSteers.delete(uuid);
+            }
+          }
           if (
             context?.promptUuid === null &&
             liveQuery?.query === input.query &&
@@ -9537,6 +9599,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               latestAssistantRateLimit: null,
               compactionFailure: null,
               steeredSegmentUsage: [],
+              unreadSteers: new Map(),
+              steersClosed: false,
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
@@ -9926,6 +9990,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            const steerUuid = yield* crypto.randomUUIDv4().pipe(
+              Effect.filterOrFail(isClaudePromptUuid),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "Failed to allocate a Claude prompt uuid.",
+                    cause,
+                  }),
+              ),
+            );
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
@@ -9936,6 +10011,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              uuid: steerUuid,
             });
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             // The turn can end while the moves are answered. A steer offered
@@ -9943,19 +10019,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // the steer fails and the orchestrator starts the follow-up turn.
             if (
               (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
-              (yield* Ref.get(queryContext)) !== existing
+              (yield* Ref.get(queryContext)) !== existing ||
+              // No yield between this check and the set below.
+              currentTurn.steersClosed
             ) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
               });
             }
+            currentTurn.unreadSteers.set(steerUuid, turnInput.message.text);
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.offer(userMessage);
+            // A rejected offer reports the steer as failed, so Stop must not
+            // warn about it too.
+            yield* existing.query
+              .offer(userMessage)
+              .pipe(
+                Effect.onError(() => Effect.sync(() => currentTurn.unreadSteers.delete(steerUuid))),
+              );
           },
           (effect, turnInput) =>
             effect.pipe(

@@ -2040,6 +2040,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly apiErrorStatus?: number;
     // null omits the field, as the CLI does on a zero-turn result.
     readonly terminalReason?: SDKResultMessage["terminal_reason"] | null;
+    readonly userMessageUuids?: ReadonlyArray<string>;
     readonly usage?: {
       readonly input_tokens: number;
       readonly output_tokens: number;
@@ -2070,6 +2071,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.errors === undefined ? {} : { errors: input.errors }),
       ...(input.apiErrorStatus === undefined ? {} : { api_error_status: input.apiErrorStatus }),
+      ...(input.userMessageUuids === undefined
+        ? {}
+        : { user_message_uuids: input.userMessageUuids }),
       ...(input.terminalReason === null
         ? {}
         : { terminal_reason: input.terminalReason ?? "completed" }),
@@ -3118,6 +3122,166 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  // regression: #15708 Stop must not silently drop a steer Claude queued behind a foreground task
+  it.effect.each([
+    {
+      readBy: "none",
+      title: "warns that a steer Claude never read before Stop was not delivered",
+    },
+    { readBy: "assistant", title: "does not warn about a steer Claude read before Stop" },
+    { readBy: "stream", title: "does not warn about a steer a stream event echoed before Stop" },
+    {
+      readBy: "result",
+      title: "does not warn about a steer only a steering result echoed before Stop",
+    },
+  ] as const)("$title", ({ readBy }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const firstInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-unread-steer-1"),
+        text: "Run the slow curl in the foreground.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(firstInput);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${firstInput.attemptId}`,
+      });
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "00000000-0000-4000-8000-000000015701",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "msg_unread_steer_bash",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-unread-steer-bash",
+                name: "Bash",
+                input: { command: "curl http://127.0.0.1:9/hang" },
+              },
+            ],
+          },
+        }),
+      );
+      // Past task_started the CLI queues a "now" steer until the call returns.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-unread-steer-bash",
+          tool_use_id: "toolu-unread-steer-bash",
+          description: "Slow curl",
+          is_backgrounded: false,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000015702",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const steerText = "Codeword: PELICAN. Remember it, I will ask for it later.";
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: firstInput.runId,
+        providerThread: harness.providerThread,
+        providerTurnId,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("unread-steer"),
+          text: steerText,
+          attachments: [],
+        },
+      });
+      const steerUuid = harness.offeredMessages.at(-1)?.uuid;
+      assert.isDefined(steerUuid);
+      if (readBy === "result") {
+        // Consumed between tool rounds: no assistant frame echoes it.
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000015704",
+            result: "",
+            terminalReason: "aborted_tools",
+            userMessageUuids: [steerUuid],
+          }),
+        );
+      }
+      if (readBy === "stream") {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "stream_event",
+            event: { type: "message_start", message: { id: "msg_unread_steer_stream" } },
+            parent_tool_use_id: null,
+            user_message_uuids: [steerUuid],
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "00000000-0000-4000-8000-000000015705",
+          }),
+        );
+      }
+      if (readBy === "assistant") {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "00000000-0000-4000-8000-000000015703",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            user_message_uuids: [steerUuid],
+            message: {
+              id: "msg_unread_steer_reply",
+              type: "message",
+              role: "assistant",
+              model: "claude-sonnet-4-6",
+              content: [{ type: "text", text: "Noted." }],
+            },
+          }),
+        );
+      }
+      const noticesBefore = harness.events.length;
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId,
+      });
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+
+      const notices = harness.events
+        .slice(noticesBefore)
+        .flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        );
+      const undelivered = notices.find((message) =>
+        /not (have )?(been )?delivered|never (reached|delivered)/i.test(message ?? ""),
+      );
+      if (readBy !== "none") {
+        assert.isUndefined(undelivered);
+        return;
+      }
+      assert.isDefined(
+        undelivered,
+        `expected an undelivered-steer notice, got ${JSON.stringify(notices)}`,
+      );
+      assert.match(undelivered ?? "", /resend|send it again|re-send/i);
+      assert.include(undelivered, "PELICAN");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   // regression: #15475 MCP title arriving after the tool starts must survive to completion
