@@ -429,7 +429,7 @@ describe("toChecks", () => {
           check("completed", "success", "Build"),
           check("completed", "cancelled"),
           check("completed", "action_required"),
-          check("completed", "timed_out", "Build"),
+          check("completed", "timed_out", "Lint"),
         ],
         next: null,
       }),
@@ -438,12 +438,41 @@ describe("toChecks", () => {
       checks.map((item) => [item.name, item.status]),
       [
         ["completed-cancelled", "cancelled"],
-        ["Build", "failure"],
+        ["Lint", "failure"],
         ["queued-null", "pending"],
         ["in_progress-null", "pending"],
         ["Build", "success"],
         ["completed-action_required", "action-required"],
       ],
     );
+  });
+
+  it("keeps only the newest run of a re-run check", () => {
+    const run = (id: string, conclusion: string, githubApp = "github-actions") => ({
+      id,
+      provider: "github",
+      githubApp,
+      name: "Check",
+      status: "completed",
+      conclusion,
+      summary: null,
+      detailsUrl: null,
+    });
+    const statusOf = (items: ReadonlyArray<ReturnType<typeof run>>) =>
+      GitCafePullRequestJson.toChecks(decodeChecks({ items, next: null })).map(
+        (check) => check.status,
+      );
+    assert.deepStrictEqual(statusOf([run("99", "failure"), run("100", "success")]), ["success"]);
+    assert.deepStrictEqual(statusOf([run("101", "failure"), run("100", "success")]), ["failure"]);
+    // Another app's run of the same name is a separate check, not a re-run.
+    assert.deepStrictEqual(statusOf([run("100", "failure", "a"), run("101", "success", "b")]), [
+      "failure",
+      "success",
+    ]);
+    // Commit statuses carry no run order, so neither is taken for the other's re-run.
+    assert.deepStrictEqual(statusOf([run("status:2", "failure"), run("status:1", "success")]), [
+      "failure",
+      "success",
+    ]);
   });
 });

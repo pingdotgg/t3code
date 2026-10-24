@@ -796,6 +796,19 @@ export const make = Effect.gen(function* () {
         { concurrency: 5 },
       );
       const listed = { ...pull, reviewers: reviewers.items, labels: labels.items };
+      const checkList = checks === null ? [] : Json.toChecks(checks);
+      // GitCafe's own counts include runs a re-run replaced, so the newest runs are the state. A
+      // truncated listing may be missing a failure; the counts never call failing checks passing.
+      const checksState =
+        checks !== null && checks.next === null
+          ? Json.checksStateOf(checkList)
+          : status.checks.total === 0
+            ? null
+            : status.checks.failing > 0
+              ? ("failing" as const)
+              : status.checks.pending > 0
+                ? ("pending" as const)
+                : ("passing" as const);
       const permissions = Json.toViewerPermissions(pull);
       const merging = status.merge.reasons?.some((reason) => MERGE_IN_FLIGHT.has(reason)) ?? false;
       return {
@@ -813,17 +826,8 @@ export const make = Effect.gen(function* () {
         mergedAt: pull.mergedAt,
         ...settledMerge(pull),
         reviewers: Json.toReviewers(listed, input.host),
-        checks: checks === null ? [] : Json.toChecks(checks),
-        ...(status.checks.total === 0
-          ? {}
-          : {
-              checksState:
-                status.checks.failing > 0
-                  ? ("failing" as const)
-                  : status.checks.pending > 0
-                    ? ("pending" as const)
-                    : ("passing" as const),
-            }),
+        checks: checkList,
+        ...(checksState === null ? {} : { checksState }),
         mergeability:
           status.merge.conflicts === "conflicting"
             ? ("conflicting" as const)
