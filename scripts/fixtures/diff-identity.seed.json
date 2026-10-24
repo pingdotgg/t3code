@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "date": "2026-01-01T00:00:00Z",
+  "copies": 6,
+  "lineWidth": 112,
+  "amplifiedLines": 400,
+  "smallLines": 3,
+  "longPath": "f-changed-rename-with-a-deliberately-long-name-for-responsive-path-wrapping.txt",
+  "variants": ["amplified", "small", "119999", "120000", "120001", "duplicate", "zero"]
+}

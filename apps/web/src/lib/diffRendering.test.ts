@@ -1,9 +1,10 @@
-import { hydratePartialDiff } from "@pierre/diffs";
+import { hydratePartialDiff, type FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveDiffReviewPosition } from "../reviewCommentContext";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
+  buildFileDiffIdentityKeys,
   buildFileDiffRenderKey,
   getDiffLineStat,
   getRenderablePatch,
@@ -166,7 +167,8 @@ describe("getRenderablePatch", () => {
     if (!file) return;
     expect(resolveFileDiffPath(file)).toBe(path);
     expect(resolveFileDiffPreviousPath(file)).toBe(previousPath);
-    expect(buildFileDiffIdentityKey(file)).toBe(`${previousPath}\0${path}\0${type}`);
+    expect(file.type).toBe(type);
+    expect(buildFileDiffIdentityKey(file)).toBe(`${previousPath}\0${path}`);
   });
 
   it("compacts partial hunk render offsets for virtualized review diffs", () => {
@@ -267,8 +269,131 @@ describe("diff file reconciliation", () => {
     expect(added?.type).toBe("new");
     if (!deleted || !added) return;
 
-    expect(buildFileDiffIdentityKey(deleted)).not.toBe(buildFileDiffIdentityKey(added));
-    expect(new Set(parsed.files.map(buildFileDiffIdentityKey)).size).toBe(parsed.files.length);
+    expect(new Set(buildFileDiffIdentityKeys(parsed.files)).size).toBe(parsed.files.length);
+  });
+
+  describe("collapse identity across review modes", () => {
+    const patch = [
+      "diff --git a/a-modified.txt b/a-modified.txt",
+      "--- a/a-modified.txt",
+      "+++ b/a-modified.txt",
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+      "diff --git a/b-added.txt b/b-added.txt",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/b-added.txt",
+      "@@ -0,0 +1 @@",
+      "+added",
+      "diff --git a/c-deleted.txt b/c-deleted.txt",
+      "deleted file mode 100644",
+      "--- a/c-deleted.txt",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-deleted",
+      "diff --git a/d-old.txt b/d-renamed.txt",
+      "similarity index 100%",
+      "rename from d-old.txt",
+      "rename to d-renamed.txt",
+      "diff --git a/e-link b/e-link",
+      "deleted file mode 100644",
+      "--- a/e-link",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-regular",
+      "diff --git a/e-link b/e-link",
+      "new file mode 120000",
+      "--- /dev/null",
+      "+++ b/e-link",
+      "@@ -0,0 +1 @@",
+      "+a-modified.txt",
+    ].join("\n");
+    const parsed = getRenderablePatch(patch, "modes");
+    const full = parsed?.kind === "files" ? parsed.files : [];
+    const paths = ["a-modified.txt", "b-added.txt", "c-deleted.txt", "d-renamed.txt", "e-link"];
+    const previousPaths = new Map([["d-renamed.txt", "d-old.txt"]]);
+    // Mirrors useReviewFilePatches: one entry per path stat, a provisional placeholder until
+    // that path's own patch loads, then the first parsed block for the path.
+    const lazy = (loadedPaths: ReadonlySet<string>) =>
+      paths.map((path): FileDiffMetadata => {
+        const loaded = full.find((file) => resolveFileDiffPath(file) === path);
+        if (loaded && loadedPaths.has(path)) return loaded;
+        const previousPath = previousPaths.get(path);
+        return {
+          name: path,
+          ...(previousPath ? { prevName: previousPath } : {}),
+          type: previousPath ? "rename-changed" : "change",
+          hunks: [],
+          additionLines: [],
+          deletionLines: [],
+          splitLineCount: 0,
+          unifiedLineCount: 0,
+          isPartial: true,
+          cacheKey: `scope:${path}:pending`,
+        };
+      });
+    const collapsedPaths = (
+      files: ReadonlyArray<FileDiffMetadata>,
+      collapsed: ReadonlySet<string>,
+    ) => {
+      const keys = buildFileDiffIdentityKeys(files);
+      return files
+        .filter((_, index) => collapsed.has(keys[index] ?? ""))
+        .map((file) => `${resolveFileDiffPath(file)}:${file.type}`);
+    };
+
+    it("parses every change type", () => {
+      expect(full.map((file) => file.type)).toEqual([
+        "change",
+        "new",
+        "deleted",
+        "rename-pure",
+        "deleted",
+        "new",
+      ]);
+    });
+
+    it("keeps folds made on placeholders once their patches arrive", () => {
+      const collapsed = new Set(buildFileDiffIdentityKeys(lazy(new Set())));
+      expect(collapsedPaths(lazy(new Set(paths)), collapsed)).toEqual([
+        "a-modified.txt:change",
+        "b-added.txt:new",
+        "c-deleted.txt:deleted",
+        "d-renamed.txt:rename-pure",
+        "e-link:deleted",
+      ]);
+    });
+
+    it("keeps folds when a refresh moves the review between lazy and full parsing", () => {
+      const lazyLoaded = lazy(new Set(paths));
+      const lazyKeys = buildFileDiffIdentityKeys(lazyLoaded);
+      const lazyCollapsed = new Set([lazyKeys[0] ?? "", lazyKeys[3] ?? ""]);
+      expect(collapsedPaths(full, lazyCollapsed)).toEqual([
+        "a-modified.txt:change",
+        "d-renamed.txt:rename-pure",
+      ]);
+
+      const fullKeys = buildFileDiffIdentityKeys(full);
+      const fullCollapsed = new Set([fullKeys[0] ?? "", fullKeys[1] ?? "", fullKeys[2] ?? ""]);
+      expect(collapsedPaths(lazy(new Set()), fullCollapsed)).toEqual([
+        "a-modified.txt:change",
+        "b-added.txt:change",
+        "c-deleted.txt:change",
+      ]);
+      expect(collapsedPaths(lazyLoaded, fullCollapsed)).toEqual([
+        "a-modified.txt:change",
+        "b-added.txt:new",
+        "c-deleted.txt:deleted",
+      ]);
+    });
+
+    it("folds each block of a same-path type change on its own", () => {
+      const keys = buildFileDiffIdentityKeys(full);
+      expect(new Set(keys).size).toBe(full.length);
+      expect(collapsedPaths(full, new Set([keys[5] ?? ""]))).toEqual(["e-link:new"]);
+      expect(collapsedPaths(full, new Set([keys[4] ?? ""]))).toEqual(["e-link:deleted"]);
+    });
   });
 
   it("keeps identities stable and versions local to the changed file", () => {
