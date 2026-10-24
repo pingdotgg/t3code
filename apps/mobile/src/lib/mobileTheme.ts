@@ -321,6 +321,30 @@ export function themeColorWithAlpha(color: string, alpha: number): string {
   return rgb ? `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})` : color;
 }
 
+/**
+ * A translucent colour that looks like opaque `color` laid over `surface`, so whatever is drawn
+ * beneath it shows through. Exact whenever `color` is reachable at an opacity of at most 0.5;
+ * otherwise (a box lighter than a light page) it is as close as half opacity allows.
+ */
+export function seeThroughThemeColor(color: string, surface: string): string {
+  const target = rgbChannels(color);
+  const behind = rgbChannels(surface);
+  if (!target || !behind) return color;
+  // The least opacity that still reaches each channel exactly from the surface behind it.
+  const exact = Math.max(
+    ...target.map((channel, index) => {
+      const base = behind[index]!;
+      if (channel === base) return 0;
+      return channel > base ? (channel - base) / (255 - base) : (base - channel) / base;
+    }),
+  );
+  const alpha = Number(Math.min(0.5, Math.max(0.25, exact)).toFixed(3));
+  const channels = target.map((channel, index) =>
+    Math.max(0, Math.min(255, Math.round((channel - behind[index]! * (1 - alpha)) / alpha))),
+  );
+  return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`;
+}
+
 export function createMobileThemeVariables(
   colors: ThemeColors,
   appearance: MobileThemeAppearance,
