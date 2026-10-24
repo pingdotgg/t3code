@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
@@ -41,12 +41,30 @@ function accountName(account: LimitAccount) {
   return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Account";
 }
 
+/** The account's mark in the strip and legend: provider glyph, with initials when it has a name or email. */
+function AccountMark({ account, size }: { readonly account: LimitAccount; readonly size: number }) {
+  return (
+    <ProviderInstanceIcon
+      provider={account.driver}
+      size={size}
+      displayName={accountName(account)}
+      accentColor={account.accentColor}
+      showBadge={Boolean(account.displayName || account.email)}
+      // The badge sits on fills, hatching, and list rows, with no single surface for its ring.
+      surfaceColor="transparent"
+    />
+  );
+}
+
 // Same gap-and-tick as the Limits rows: two clipped copies of the segment leave a see-through gap.
 function PaceGap({
   timeLeft,
+  overlay,
   children,
 }: {
   readonly timeLeft: number | null;
+  // Unsplit by the gap and painted under the tick, so a mark never hides the pace.
+  readonly overlay?: ReactNode;
   readonly children: ReactNode;
 }) {
   const [width, setWidth] = useState(0);
@@ -78,6 +96,7 @@ function PaceGap({
               </View>
             </View>
           ))}
+      {overlay}
       {tickX !== null ? (
         <View
           className="absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-foreground"
@@ -190,7 +209,7 @@ function PoolWindowCard({
         </Text>
       ) : null}
       <View className="flex-row gap-1">
-        {pool.columns.map((member, index) => {
+        {pool.columns.map((member) => {
           if (!member.window)
             return <View key={member.account.key} className="h-7 min-w-0 flex-1" />;
           const { account, window } = member;
@@ -199,12 +218,19 @@ function PoolWindowCard({
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
+              accessibilityLabel={`${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
               className="h-7 min-w-0 flex-1 rounded-md"
             >
-              <PaceGap timeLeft={timeLeft}>
+              <PaceGap
+                timeLeft={timeLeft}
+                overlay={
+                  <View className="absolute inset-0 items-center justify-center overflow-hidden rounded-md">
+                    <AccountMark account={account} size={16} />
+                  </View>
+                }
+              >
                 <View className="absolute inset-0 rounded-md bg-subtle" />
                 <View className="absolute inset-0 overflow-hidden rounded-md">
                   <AccountSegment
@@ -214,23 +240,12 @@ function PoolWindowCard({
                   />
                 </View>
               </PaceGap>
-              <View
-                pointerEvents="none"
-                className="absolute inset-0 items-center justify-center overflow-hidden rounded-md"
-              >
-                <Text
-                  numberOfLines={1}
-                  className="max-w-full shrink text-xs font-t3-medium tabular-nums text-foreground"
-                >
-                  {index + 1}
-                </Text>
-              </View>
             </Pressable>
           );
         })}
       </View>
       <View>
-        {pool.columns.map(({ account, window }, index) => {
+        {pool.columns.map(({ account, window }) => {
           if (!window) return null;
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
@@ -238,15 +253,13 @@ function PoolWindowCard({
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+              accessibilityLabel={`${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
               className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
             >
-              <View className="size-5 items-center justify-center overflow-hidden rounded-md bg-subtle-strong">
-                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                  {index + 1}
-                </Text>
+              <View className="size-5 items-center justify-center">
+                <AccountMark account={account} size={18} />
               </View>
               <Text
                 numberOfLines={1}

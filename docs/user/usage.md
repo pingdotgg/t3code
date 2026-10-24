@@ -90,8 +90,8 @@ part of a segment is what that reset restores. Tap a segment or account row for 
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
-Keychain. On narrow screens, numbered rows below
-the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+Keychain. On narrow screens, each segment shows its account's
+mark, and rows below the bar list each account's mark with its quota, countdown, and credits. Tap a row to open its details.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.

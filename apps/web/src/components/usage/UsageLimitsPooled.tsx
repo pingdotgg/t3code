@@ -74,6 +74,14 @@ function AccountChip({ email }: { readonly email: string }) {
   );
 }
 
+function accountLabel(account: LimitAccount): string {
+  return account.displayName || providerClients.get(account.driver)?.label || account.driver;
+}
+
+/**
+ * Same precedence as `AccountName`: a named account gets the provider glyph with its
+ * initials badge, an email-only account the two-letter chip, anything else the bare glyph.
+ */
 function AccountAvatar({
   account,
   className,
@@ -81,24 +89,18 @@ function AccountAvatar({
   readonly account: LimitAccount;
   readonly className?: string;
 }) {
-  if (account.redeem) {
-    return (
-      <ProviderInstanceIcon
-        driverKind={account.driver}
-        displayName={
-          account.displayName ??
-          providerClients.get(account.driver)?.label ??
-          String(account.driver)
-        }
-        accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
-        indicatorBackground="var(--popover)"
-        className={cn("size-5", className)}
-        iconClassName="size-4 text-foreground/80"
-      />
-    );
-  }
-  return account.email ? <AccountChip email={account.email} /> : null;
+  if (!account.displayName && account.email) return <AccountChip email={account.email} />;
+  return (
+    <ProviderInstanceIcon
+      driverKind={account.driver}
+      displayName={accountLabel(account)}
+      accentColor={account.accentColor}
+      showBadge={Boolean(account.displayName)}
+      indicatorBackground="var(--popover)"
+      className={cn("size-5", className)}
+      iconClassName="size-4 text-foreground/80"
+    />
+  );
 }
 
 function AccountName({
@@ -116,11 +118,7 @@ function AccountName({
       </span>
     );
   }
-  return (
-    <span className={className}>
-      {providerClients.get(account.driver)?.label ?? String(account.driver)}
-    </span>
-  );
+  return <span className={className}>{accountLabel(account)}</span>;
 }
 
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -162,9 +160,7 @@ function SegmentPopover({
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="flex items-center gap-2 text-sm font-medium text-foreground">
           <AccountAvatar account={account} />
-          <span className="truncate">
-            {account.displayName ?? providerClients.get(account.driver)?.label ?? account.driver}
-          </span>
+          <span className="truncate">{accountLabel(account)}</span>
         </span>
         {account.email ? (
           <RedactedSensitiveText
@@ -382,6 +378,13 @@ function SegmentTriggers({
             ) : null}
           </div>
         </div>
+        <span
+          aria-hidden
+          className="absolute inset-0 isolate flex items-center justify-center overflow-hidden rounded-md @2xl/pool:hidden"
+        >
+          <AccountAvatar account={account} />
+        </span>
+        {/* After the mark so a narrow segment's mark never hides the pace. */}
         {paceMark ? (
           <span
             aria-hidden
@@ -389,12 +392,6 @@ function SegmentTriggers({
             style={paceMark.tick}
           />
         ) : null}
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
-        >
-          {index}
-        </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
           {showAccountName ? (
             <AccountName
@@ -444,6 +441,7 @@ function LegendRow({
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const name = account.displayName || (account.email ? null : accountLabel(account));
   return (
     <PopoverTrigger
       handle={popover}
@@ -452,16 +450,19 @@ function LegendRow({
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
     >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
+      <span className="relative inline-flex size-5 shrink-0 items-center justify-center rounded-sm">
         <span
           aria-hidden
           className="absolute inset-0 rounded-sm opacity-35"
           style={{ backgroundColor: color }}
         />
-        <span className="sr-only">Segment </span>
-        <span className="relative">{index}</span>
+        {/* Positioned to paint above the tint; isolated so the icon's z-index stays in the row. */}
+        <span className="relative isolate inline-flex">
+          <AccountAvatar account={account} />
+        </span>
       </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+      {/* An email account's chip already names it; a bare provider glyph does not. */}
+      {name ? <span className="min-w-0 truncate font-medium text-foreground">{name}</span> : null}
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
