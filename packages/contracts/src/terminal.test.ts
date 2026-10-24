@@ -5,6 +5,8 @@ import {
   DEFAULT_TERMINAL_ID,
   TerminalError,
   TerminalOpenInput,
+  TerminalAttachInput,
+  TerminalRestartInput,
   TerminalProviderEnvironmentError,
 } from "./terminal.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -39,6 +41,20 @@ describe("TerminalProviderEnvironmentError", () => {
 });
 
 describe("TerminalOpenInput", () => {
+  it.each([TerminalOpenInput, TerminalAttachInput, TerminalRestartInput])(
+    "preserves optional draft project context on launch requests",
+    (schema) => {
+      const input = {
+        threadId: "draft-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        cwd: "/repo",
+        cols: 80,
+        rows: 24,
+      };
+      expect(decodeSync(schema, { ...input, projectId: "project-1" }).projectId).toBe("project-1");
+      expect(decodeSync(schema, input).projectId).toBeUndefined();
+    },
+  );
   it("drops invalid env keys while retaining valid overrides", () => {
     const parsed = decodeSync(TerminalOpenInput, {
       threadId: "thread-1",

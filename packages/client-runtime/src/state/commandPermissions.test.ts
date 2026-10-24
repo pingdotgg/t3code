@@ -12,6 +12,7 @@ import {
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ThreadId,
   EnvironmentId,
   ScheduledTaskId,
@@ -60,6 +61,31 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination terminal grant to discover shells", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const discovery = createCommandPermissions(runtime, WS_METHODS.terminalListShells);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(discovery.permissionAtom(env))).toBe(false);
+        expect((yield* discovery.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthTerminalOperateScope],
+            permissions: [AuthTerminalOperateScope],
+          }),
+        );
+        expect(registry.get(discovery.permissionAtom(env))).toBe(true);
+        yield* discovery.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(discovery.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {

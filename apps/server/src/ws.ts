@@ -2922,6 +2922,7 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
+        [WS_METHODS.terminalListShells]: () => terminalManager.listShells(),
         [WS_METHODS.terminalAttach]: (input) =>
           terminalOutputStream(
             (listener, registerCleanup) =>

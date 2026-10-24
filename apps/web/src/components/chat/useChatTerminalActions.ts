@@ -14,6 +14,7 @@ import {
   type EnvironmentId,
   type ProjectScript,
   type ScopedThreadRef,
+  type TerminalShellSetting,
   type ThreadId,
 } from "@t3tools/contracts";
 import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
@@ -311,17 +312,20 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);
-  const addTerminalSurface = () => {
+  const addTerminalSurface = (shell?: TerminalShellSetting) => {
     if (!activeThreadRef) return;
     const launched = terminalActions.launchTerminal({
       place: (terminalId) =>
         useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId),
+      ...(shell !== undefined ? { shell } : {}),
     });
     if (!launched) return;
     setTerminalFocusRequestId((value) => value + 1);
     void launched.result;
   };
-  const addTerminalSurfaceStable = useStableCallback(addTerminalSurface);
+  // Tab buttons pass click events to this, so only the shell-aware variant takes an argument.
+  const addTerminalSurfaceStable = useStableCallback(() => addTerminalSurface());
+  const addTerminalSurfaceWithShellStable = useStableCallback(addTerminalSurface);
   const splitPanelTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
     if (
       !activeThreadRef ||
@@ -435,6 +439,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     activatePanelTerminalStable,
     addTerminalContextToDraftStable,
     addTerminalSurfaceStable,
+    addTerminalSurfaceWithShellStable,
     closePanelTerminalStable,
     createNewTerminalStable,
     lastInvokedScriptByProjectId,

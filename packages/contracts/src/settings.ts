@@ -20,6 +20,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
+import { TerminalShellSetting } from "./terminal.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -975,6 +976,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultModelSelection",
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
+  "terminalShell",
   "newWorktreesStartFromOrigin",
   "worktreeSubmodules",
   "defaultAutoPull",
@@ -1019,6 +1021,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  terminalShell: Schema.optionalKey(TerminalShellSetting),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: ForwardCompatibleOptional(WorktreeSubmodules),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
@@ -1244,6 +1247,11 @@ export const ServerSettings = Schema.Struct({
    * so older clients, which require a literal here, keep decoding.
    */
   defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
+  /**
+   * Null means inherit: the repository's t3.json, then "auto" (the platform default shell).
+   * Null stays off the wire like defaultThreadEnvMode.
+   */
+  terminalShell: OmittedWhenNull(TerminalShellSetting),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -1589,6 +1597,7 @@ export const ServerSettingsPatch = Schema.Struct({
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
+  terminalShell: Schema.optionalKey(Schema.NullOr(TerminalShellSetting)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),

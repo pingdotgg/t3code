@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Shell detection probes a handful of candidate paths synchronously; the pure detector takes a sync predicate.
+import * as NodeFS from "node:fs";
 
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
@@ -28,14 +30,24 @@ import {
   type TerminalResizeInput,
   type ResourceMonitorProcessTableEntry,
   type TerminalRestartInput,
+  type TerminalListShellsResult,
   type TerminalSessionSnapshot,
+  type TerminalShellProfile,
+  type TerminalShellSetting,
   type TerminalSessionStatus,
   type TerminalSummary,
   type TerminalWriteInput,
   ClaudeSettings,
   CodexSettings,
   ProviderInstanceId,
+  type ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
+import {
+  hasProjectSettingsOverrides,
+  resolveProjectFileBackedSetting,
+  resolveProjectSettings,
+} from "@t3tools/shared/projectSettings";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -76,6 +88,17 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import {
+  basenameForPlatform,
+  candidateFromProfile,
+  detectShellProfiles,
+  shellCandidateFromCommand,
+  windowsCmdPath,
+  windowsPowerShellPath,
+  type ShellCandidate,
+} from "./ShellProfiles.ts";
 
 export {
   TerminalCwdError,
@@ -214,6 +237,9 @@ export class TerminalManager extends Context.Service<
     readonly subscribeMetadata: (
       listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void>;
+
+    /** Shells installed on this environment, in the order clients should offer them. */
+    readonly listShells: () => Effect.Effect<TerminalListShellsResult>;
   }
 >()("t3/terminal/Manager/TerminalManager") {}
 
@@ -248,17 +274,13 @@ const resizePtyProcess = (
       }),
   });
 
-export interface ShellCandidate {
-  shell: string;
-  args?: string[];
-}
-
 export interface TerminalStartInput extends TerminalOpenInput {
   cols: number;
   rows: number;
 }
 
 interface TerminalSessionState {
+  projectId: ProjectId | undefined;
   threadId: string;
   terminalId: string;
   cwd: string;
@@ -283,6 +305,12 @@ interface TerminalSessionState {
   hasRunningSubprocess: boolean;
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  /** Requested profile, resolved from settings on first launch when omitted. */
+  shell: TerminalShellSetting | undefined;
+  /** Label of the shell actually running. */
+  shellLabel: string | null;
+  /** Label of the requested shell that failed to spawn; null when it started. */
+  shellFallbackFrom: string | null;
 }
 
 interface PersistHistoryRequest {
@@ -381,6 +409,8 @@ function summary(session: TerminalSessionState): TerminalSummary {
     exitSignal: session.exitSignal,
     hasRunningSubprocess: session.hasRunningSubprocess,
     label: terminalWireLabel(session),
+    ...(session.shellLabel !== null ? { shell: session.shellLabel } : {}),
+    ...(session.shellFallbackFrom !== null ? { shellFallbackFrom: session.shellFallbackFrom } : {}),
     updatedAt: session.updatedAt,
   };
 }
@@ -499,58 +529,6 @@ function normalizeShellCommand(
   return firstToken.replace(/^['"]|['"]$/g, "");
 }
 
-function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
-  const normalized =
-    platform === "win32" ? command.replaceAll("/", "\\") : command.replaceAll("\\", "/");
-  const parts = normalized
-    .split(platform === "win32" ? /\\+/ : /\/+/)
-    .filter((part) => part.length > 0);
-  return parts.at(-1) ?? normalized;
-}
-
-function joinWindowsPath(...parts: ReadonlyArray<string>): string {
-  return parts
-    .map((part, index) => {
-      if (index === 0) return part.replace(/[\\/]+$/g, "");
-      return part.replace(/^[\\/]+|[\\/]+$/g, "");
-    })
-    .filter((part) => part.length > 0)
-    .join("\\");
-}
-
-function shellCandidateFromCommand(
-  command: string | null,
-  platform: NodeJS.Platform,
-): ShellCandidate | null {
-  if (!command || command.length === 0) return null;
-  const shellName = basenameForPlatform(command, platform).toLowerCase();
-  if (platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
-    return { shell: command, args: ["-NoLogo"] };
-  }
-  if (platform !== "win32" && shellName === "zsh") {
-    return { shell: command, args: ["-o", "nopromptsp"] };
-  }
-  return { shell: command };
-}
-
-function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
-  return env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
-}
-
-function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
-  return joinWindowsPath(
-    windowsSystemRoot(env),
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  );
-}
-
-function windowsCmdPath(env: NodeJS.ProcessEnv): string {
-  return joinWindowsPath(windowsSystemRoot(env), "System32", "cmd.exe");
-}
-
 function formatShellCandidate(candidate: ShellCandidate): string {
   if (!candidate.args || candidate.args.length === 0) return candidate.shell;
   return `${candidate.shell} ${candidate.args.join(" ")}`;
@@ -570,6 +548,7 @@ function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellC
 }
 
 function resolveShellCandidates(
+  preferred: ShellCandidate | null,
   shellResolver: () => string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -581,6 +560,7 @@ function resolveShellCandidates(
 
   if (platform === "win32") {
     return uniqueShellCandidates([
+      preferred,
       requested,
       shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
@@ -592,6 +572,7 @@ function resolveShellCandidates(
   }
 
   return uniqueShellCandidates([
+    preferred,
     requested,
     shellCandidateFromCommand(normalizeShellCommand(env.SHELL, platform), platform),
     shellCandidateFromCommand("/bin/zsh", platform),
@@ -601,6 +582,35 @@ function resolveShellCandidates(
     shellCandidateFromCommand("bash", platform),
     shellCandidateFromCommand("sh", platform),
   ]);
+}
+
+function preferredShellCandidate(
+  setting: TerminalShellSetting,
+  profiles: ReadonlyArray<TerminalShellProfile>,
+): ShellCandidate | null {
+  if (setting === "auto") return null;
+  // An id this machine does not have (say a t3.json written on another OS) means auto.
+  const profile = profiles.find((candidate) => candidate.id === setting);
+  return profile === undefined ? null : candidateFromProfile(profile);
+}
+
+const WINDOWS_SHELL_LABELS: Readonly<Record<string, string>> = {
+  "pwsh.exe": "PowerShell 7",
+  "powershell.exe": "Windows PowerShell",
+  "cmd.exe": "Command Prompt",
+};
+
+function shellCandidateLabel(
+  candidate: ShellCandidate,
+  profiles: ReadonlyArray<TerminalShellProfile>,
+  platform: NodeJS.Platform,
+): string {
+  if (candidate.label !== undefined) return candidate.label;
+  const command = candidate.shell.toLowerCase();
+  const profile = profiles.find((entry) => entry.command.toLowerCase() === command);
+  if (profile !== undefined) return profile.label;
+  const name = basenameForPlatform(candidate.shell, platform);
+  return (platform === "win32" ? WINDOWS_SHELL_LABELS[name.toLowerCase()] : undefined) ?? name;
 }
 
 function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
@@ -1406,6 +1416,17 @@ interface TerminalManagerOptions {
   historyByteLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
+  /** Overrides host detection of installed shells. */
+  shellProfiles?: Effect.Effect<ReadonlyArray<TerminalShellProfile>>;
+  /**
+   * The shell configured for the terminal's project: project override, environment default,
+   * then t3.json. "auto" when nothing is configured.
+   */
+  resolveConfiguredShell?: (input: {
+    readonly threadId: string;
+    readonly cwd: string;
+    readonly projectId?: ProjectId;
+  }) => Effect.Effect<TerminalShellSetting>;
   env?: NodeJS.ProcessEnv;
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
@@ -1476,6 +1497,35 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   );
 });
 
+/**
+ * Precedence below a terminal's own choice: project override, environment default, then the
+ * repository's t3.json. "auto" when nothing is configured or the lookup fails.
+ */
+export const resolveConfiguredTerminalShell = Effect.fn("terminal.resolveConfiguredShell")(
+  function* (input: {
+    readonly serverSettings: Pick<ServerSettings.ServerSettingsService["Service"], "getSettings">;
+    readonly projectFiles: T3ProjectFileLoader.T3ProjectFileLoader["Service"];
+    readonly threads: Pick<ProjectionStore.ProjectionStoreV2Shape, "getThreadShell">;
+    readonly threadId: string;
+    readonly cwd: string;
+    readonly projectId?: ProjectId;
+  }) {
+    const settings = yield* input.serverSettings.getSettings;
+    const projectId = hasProjectSettingsOverrides(settings)
+      ? yield* input.threads.getThreadShell(ThreadId.make(input.threadId)).pipe(
+          Effect.map((thread) => thread?.projectId ?? input.projectId ?? null),
+          Effect.orElseSucceed(() => input.projectId ?? null),
+        )
+      : null;
+    const resolved = resolveProjectSettings(settings, projectId).settings.terminalShell;
+    if (resolved !== null) return resolved;
+    const projectFile = yield* input.projectFiles.load(input.cwd);
+    return resolveProjectFileBackedSetting("terminalShell", null, Option.getOrNull(projectFile))
+      .value;
+  },
+  Effect.orElseSucceed((): TerminalShellSetting => "auto"),
+);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("TerminalManager.make")(function* () {
   const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
@@ -1483,7 +1533,14 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const projectFiles = yield* T3ProjectFileLoader.T3ProjectFileLoader;
+  const threads = yield* ProjectionStore.ProjectionStoreV2;
   const path = yield* Path.Path;
+  const resolveConfiguredShell = (input: {
+    readonly threadId: string;
+    readonly cwd: string;
+    readonly projectId?: ProjectId;
+  }) => resolveConfiguredTerminalShell({ serverSettings, projectFiles, threads, ...input });
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
   )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
@@ -1507,6 +1564,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
+    resolveConfiguredShell,
   });
 });
 
@@ -1530,6 +1588,35 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  // Bound discovery work across terminal launches without hiding host changes indefinitely.
+  const detectedShellProfiles = yield* Effect.cachedWithTTL(
+    options.shellProfiles ??
+      Effect.gen(function* () {
+        const etcShells =
+          platform === "win32"
+            ? null
+            : yield* fileSystem
+                .readFileString("/etc/shells")
+                .pipe(Effect.orElseSucceed(() => null));
+        return detectShellProfiles({
+          platform,
+          env: baseEnv,
+          // Microsoft Store installs (e.g. PowerShell 7) expose app execution aliases
+          // under WindowsApps; stat fails on them with EACCES, so existsSync says no.
+          fileExists: (candidate) => {
+            try {
+              return NodeFS.lstatSync(candidate, { throwIfNoEntry: false }) !== undefined;
+            } catch {
+              return false;
+            }
+          },
+          etcShells,
+        });
+      }),
+    "5 seconds",
+  );
+  const listShells: TerminalManager["Service"]["listShells"] = () =>
+    detectedShellProfiles.pipe(Effect.map((shells) => ({ shells })));
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
     function* <Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput>(
       input: Input,
@@ -2233,7 +2320,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     index = 0,
     lastError: PtyAdapter.PtySpawnError | null = null,
   ): Effect.fn.Return<
-    { process: PtyAdapter.PtyProcess; shellLabel: string },
+    { process: PtyAdapter.PtyProcess; candidate: ShellCandidate; index: number },
     PtyAdapter.PtySpawnError
   > {
     if (index >= shellCandidates.length) {
@@ -2274,10 +2361,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (attempt._tag === "Success") {
-      return {
-        process: attempt.success,
-        shellLabel: formatShellCandidate(candidate),
-      };
+      return { process: attempt.success, candidate, index };
     }
 
     const spawnError = attempt.failure;
@@ -2304,6 +2388,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const startingAt = yield* nowIso;
     yield* modifyManagerState((state) => {
       session.status = "starting";
+      session.shellLabel = null;
+      session.shellFallbackFrom = null;
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
       session.cols = input.cols;
@@ -2326,7 +2412,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            const profiles = yield* detectedShellProfiles;
+            const setting =
+              session.shell ??
+              (options.resolveConfiguredShell === undefined
+                ? "auto"
+                : yield* options.resolveConfiguredShell({
+                    threadId: session.threadId,
+                    cwd: session.worktreePath ?? session.cwd,
+                    ...(session.projectId !== undefined ? { projectId: session.projectId } : {}),
+                  }));
+            const preferred = preferredShellCandidate(setting, profiles);
+            const shellCandidates = resolveShellCandidates(
+              preferred,
+              shellResolver,
+              platform,
+              baseEnv,
+            );
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               session.runtimeEnv,
@@ -2369,7 +2471,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             }
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
-            startedShell = spawnResult.shellLabel;
+            startedShell = formatShellCandidate(spawnResult.candidate);
+            const shellLabel = shellCandidateLabel(spawnResult.candidate, profiles, platform);
 
             const processPid = ptyProcess.pid;
             let eventsActivated = false;
@@ -2382,6 +2485,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.process = ptyProcess;
               session.pid = processPid;
               session.status = "running";
+              session.shell = setting;
+              session.shellLabel = shellLabel;
+              session.shellFallbackFrom =
+                preferred === null
+                  ? setting === "auto"
+                    ? null
+                    : setting
+                  : spawnResult.index > 0
+                    ? shellCandidateLabel(preferred, profiles, platform)
+                    : null;
               // onExit may replay an exit immediately; accept it before subscribing.
               session.unsubscribeData = spawnResult.process.onData((data) => {
                 if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
@@ -2745,6 +2858,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;
       const session: TerminalSessionState = {
+        projectId: input.projectId,
         threadId: input.threadId,
         terminalId,
         cwd: input.cwd,
@@ -2769,6 +2883,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        shell: input.shell,
+        shellLabel: null,
+        shellFallbackFrom: null,
       };
 
       const createdSession = session;
@@ -2797,6 +2914,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const liveSession = existing.value;
+    if (input.projectId !== undefined) liveSession.projectId = input.projectId;
+    // Attach may create the session before a queued open supplies the selected shell.
+    const shellChanged = input.shell !== undefined && input.shell !== liveSession.shell;
+    if (input.shell !== undefined) liveSession.shell = input.shell;
     const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
     const currentRuntimeEnv = liveSession.runtimeEnv;
     const targetCols = input.cols ?? liveSession.cols;
@@ -2807,6 +2928,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const launchContextChanged =
       liveSession.cwd !== input.cwd ||
       runtimeEnvChanged ||
+      shellChanged ||
       liveSession.worktreePath !== nextWorktreePath;
 
     if (launchContextChanged) {
@@ -3230,6 +3352,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;
       session = {
+        projectId: input.projectId,
         threadId: input.threadId,
         terminalId,
         cwd: input.cwd,
@@ -3254,6 +3377,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        shell: input.shell,
+        shellLabel: null,
+        shellFallbackFrom: null,
       };
       const createdSession = session;
       yield* modifyManagerState((state) => {
@@ -3265,6 +3391,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* evictInactiveSessionsIfNeeded();
     } else {
       session = existingSession.value;
+      if (input.projectId !== undefined) session.projectId = input.projectId;
+      if (input.shell !== undefined) session.shell = input.shell;
       yield* stopProcess(session);
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
@@ -3384,7 +3512,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     closeIdle,
     subscribe,
     subscribeMetadata,
+    listShells,
   });
 });
 
-export const layer = Layer.effect(TerminalManager, make()).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(TerminalManager, make()).pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(T3ProjectFileLoader.layer),
+);

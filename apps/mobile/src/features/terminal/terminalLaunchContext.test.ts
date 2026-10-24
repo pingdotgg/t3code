@@ -81,4 +81,19 @@ describe("pending terminal launches", () => {
     });
     expect(takePendingTerminalLaunch(target)).toBeNull();
   });
+
+  it("keeps the shell chosen for a new terminal", () => {
+    const target = {
+      environmentId: EnvironmentId.make("env-1"),
+      threadId: ThreadId.make("thread-1"),
+      terminalId: "term-3",
+    };
+
+    stagePendingTerminalLaunch({
+      target,
+      launch: { cwd: "/repo", worktreePath: null, shell: "bash" },
+    });
+
+    expect(takePendingTerminalLaunch(target)?.shell).toBe("bash");
+  });
 });

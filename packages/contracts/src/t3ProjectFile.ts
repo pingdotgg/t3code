@@ -91,6 +91,12 @@ export const T3ProjectFile = Schema.Struct({
         'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in T3 Code overrides this; when neither is set, the global default applies.',
     }),
   ),
+  terminalShell: Schema.optionalKey(
+    trimmedNonEmpty({
+      description:
+        'Shell new terminals open with for this repository, by profile id such as "pwsh", "powershell", "cmd", "zsh", or "bash" (Git Bash on Windows, so one value works across platforms). A per-project setting in T3 Code overrides this; an id that is not installed falls back to the default shell.',
+    }),
+  ),
   worktreeSubmodules: Schema.optionalKey(
     WorktreeSubmodules.annotate({
       description:
@@ -119,6 +125,7 @@ export type T3ProjectFile = typeof T3ProjectFile.Type;
  */
 export const PROJECT_FILE_BACKED_SETTINGS = {
   defaultThreadEnvMode: { field: "defaultThreadEnvMode", builtIn: "local" },
+  terminalShell: { field: "terminalShell", builtIn: "auto" },
   worktreeSubmodules: { field: "worktreeSubmodules", builtIn: "recursive" },
 } as const satisfies {
   // `providerInstances` is scoped per project but overrides field by field

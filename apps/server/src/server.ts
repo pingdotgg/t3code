@@ -427,6 +427,7 @@ const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPtyAdapter),
   Layer.provide(layerPortScanner),
   Layer.provide(layerNativeTelemetry),
+  Layer.provide(ProjectionStoreV2.layer),
 );
 
 const layerPreview = Layer.empty.pipe(

@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, TerminalShellSetting, ThreadId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 interface TerminalLocationLike {
@@ -17,6 +17,7 @@ export interface PendingTerminalLaunch {
   readonly worktreePath: string | null;
   readonly env?: Record<string, string>;
   readonly initialInput?: string;
+  readonly shell?: TerminalShellSetting;
 }
 
 const pendingTerminalLaunches = new Map<string, PendingTerminalLaunch>();
@@ -34,6 +35,7 @@ export function stagePendingTerminalLaunch(input: {
     worktreePath: input.launch.worktreePath,
     env: input.launch.env ? { ...input.launch.env } : undefined,
     initialInput: input.launch.initialInput,
+    shell: input.launch.shell,
   });
 }
 

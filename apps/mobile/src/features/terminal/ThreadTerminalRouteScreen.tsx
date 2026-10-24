@@ -5,6 +5,7 @@ import {
   DEFAULT_TERMINAL_ID,
   EnvironmentId,
   ThreadId,
+  type TerminalShellProfile,
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
@@ -71,6 +72,7 @@ import {
 } from "./terminalBufferReplay";
 import {
   useInitialTerminalLaunchLocation,
+  stagePendingTerminalLaunch,
   takePendingTerminalLaunch,
   type PendingTerminalLaunch,
 } from "./terminalLaunchContext";
@@ -98,6 +100,7 @@ function TerminalHeader(props: {
   readonly subtitle: string;
   readonly isEnvironmentReady: boolean;
   readonly canOperateTerminal: boolean;
+  readonly canSelectShell: boolean;
   readonly fontSize: number;
   readonly terminalId: string;
   readonly sessions: ReadonlyArray<TerminalMenuSession>;
@@ -106,7 +109,8 @@ function TerminalHeader(props: {
   readonly onCloseTerminal: () => void;
   readonly onDecreaseFontSize: () => void;
   readonly onIncreaseFontSize: () => void;
-  readonly onOpenNewTerminal: () => void;
+  readonly shells: ReadonlyArray<TerminalShellProfile>;
+  readonly onOpenNewTerminal: (shell?: string) => void;
   readonly onSelectTerminal: (terminalId: string) => void;
 }) {
   return (
@@ -168,8 +172,24 @@ function TerminalHeader(props: {
                     title: "Open new terminal",
                     icon: "plus",
                     subtitle: `Start another shell in ${basename(props.workspaceRoot) ?? "this workspace"}`,
-                    onPress: props.onOpenNewTerminal,
+                    onPress: () => props.onOpenNewTerminal(),
                   },
+                  ...(props.shells.length > 0
+                    ? [
+                        {
+                          id: "terminal-new-with-shell",
+                          title: "New terminal with…",
+                          icon: "plus",
+                          disabled: !props.canSelectShell,
+                          items: props.shells.map((shell) => ({
+                            id: `terminal-new-shell:${shell.id}`,
+                            title: shell.label,
+                            disabled: !props.canSelectShell,
+                            onPress: () => props.onOpenNewTerminal(shell.id),
+                          })),
+                        },
+                      ]
+                    : []),
                 ],
               },
             ]
@@ -261,6 +281,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
+  const listShells = useAtomCommand(terminalEnvironment.listShells, "terminal list shells");
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const connectionsReady = useConnectionsReady();
   const params = props.route.params;
@@ -433,6 +454,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             cols: initialAttachGridSize.cols,
             rows: initialAttachGridSize.rows,
             ...(pendingLaunch?.env ? { env: pendingLaunch.env } : {}),
+            ...(pendingLaunch?.shell ? { shell: pendingLaunch.shell } : {}),
             ...(pendingLaunch ? { restartIfNotRunning: true } : {}),
           }
         : null,
@@ -964,6 +986,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           cols: terminalAttachInput.cols,
           rows: terminalAttachInput.rows,
           ...(terminalAttachInput.env ? { env: terminalAttachInput.env } : {}),
+          ...(terminalAttachInput.shell ? { shell: terminalAttachInput.shell } : {}),
         },
       });
       return result._tag === "Success";
@@ -1001,29 +1024,63 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [navigateAwayAfterExit, navigation, terminalKey],
   );
 
-  const handleOpenNewTerminal = useCallback(() => {
-    if (
-      !selectedThread ||
-      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
-    ) {
+  const [shells, setShells] = useState<ReadonlyArray<TerminalShellProfile>>([]);
+  const shellsEnvironmentId = selectedThread?.environmentId ?? null;
+  useEffect(() => {
+    setShells([]);
+    if (shellsEnvironmentId === null || !canOperateTerminal || !isEnvironmentReady) {
       return;
     }
+    let cancelled = false;
+    void listShells({ environmentId: shellsEnvironmentId, input: {} }).then((result) => {
+      if (!cancelled && result._tag === "Success") {
+        setShells(result.value.shells);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canOperateTerminal, isEnvironmentReady, listShells, shellsEnvironmentId]);
 
-    navigation.dispatch(
-      StackActions.replace("ThreadTerminal", {
-        environmentId: String(selectedThread.environmentId),
-        threadId: String(selectedThread.id),
-        terminalId: nextOpenTerminalId({
-          listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
-          activeRouteTerminalId: terminalId,
-          ...(knownSessions === null ||
-          !readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope)
-            ? { uniqueSuffix: uuidv4() }
-            : {}),
+  const handleOpenNewTerminal = useCallback(
+    (shell?: string) => {
+      if (
+        !selectedThread ||
+        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope) ||
+        (shell !== undefined && launchLocation === null)
+      ) {
+        return;
+      }
+
+      const nextTerminalId = nextOpenTerminalId({
+        listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
+        activeRouteTerminalId: terminalId,
+        ...(knownSessions === null ||
+        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope)
+          ? { uniqueSuffix: uuidv4() }
+          : {}),
+      });
+      if (shell !== undefined && launchLocation !== null) {
+        stagePendingTerminalLaunch({
+          target: {
+            environmentId: selectedThread.environmentId,
+            threadId: selectedThread.id,
+            terminalId: nextTerminalId,
+          },
+          launch: { ...launchLocation, shell },
+        });
+      }
+
+      navigation.dispatch(
+        StackActions.replace("ThreadTerminal", {
+          environmentId: String(selectedThread.environmentId),
+          threadId: String(selectedThread.id),
+          terminalId: nextTerminalId,
         }),
-      }),
-    );
-  }, [knownSessions, navigation, selectedThread, terminalId, terminalMenuSessions]);
+      );
+    },
+    [knownSessions, launchLocation, navigation, selectedThread, terminalId, terminalMenuSessions],
+  );
 
   const handleDecreaseFontSize = useCallback(() => {
     setTerminalFontSize(stepTerminalFontSize(fontSize, -1));
@@ -1144,6 +1201,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       ) : null}
       <TerminalHeader
         canOperateTerminal={canOperateTerminal}
+        canSelectShell={canOperateTerminal && launchLocation !== null}
         subtitle={headerSubtitle}
         isEnvironmentReady={isEnvironmentReady}
         fontSize={fontSize}
@@ -1157,6 +1215,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         onCloseTerminal={handleCloseTerminal}
         onDecreaseFontSize={handleDecreaseFontSize}
         onIncreaseFontSize={handleIncreaseFontSize}
+        shells={shells}
         onOpenNewTerminal={handleOpenNewTerminal}
         onSelectTerminal={handleSelectTerminal}
       />

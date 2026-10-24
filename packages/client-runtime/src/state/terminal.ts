@@ -111,6 +111,10 @@ export function createTerminalEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    listShells: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:list-shells",
+      tag: WS_METHODS.terminalListShells,
+    }),
   };
 }
 

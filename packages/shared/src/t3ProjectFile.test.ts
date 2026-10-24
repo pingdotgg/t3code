@@ -29,4 +29,9 @@ describe("parseT3ProjectFile", () => {
       }`),
     ).toEqual({ defaultThreadEnvMode: "worktree" });
   });
+
+  it("accepts a terminal shell profile id but not a custom executable", () => {
+    expect(parseT3ProjectFile('{ "terminalShell": " bash " }')).toEqual({ terminalShell: "bash" });
+    expect(parseT3ProjectFile('{ "terminalShell": { "command": "C:\\x.exe" } }')).toBeNull();
+  });
 });

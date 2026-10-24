@@ -31,6 +31,7 @@ import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
+import { TerminalShellSettingRow } from "./TerminalShellSettingRow";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -264,6 +265,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         <>
           {modelRow}
           {workspaceRow}
+          <TerminalShellSettingRow />
         </>
       ) : category === "general" ? (
         <>
@@ -330,6 +332,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             }
           />
           {workspaceRow}
+          <TerminalShellSettingRow />
           <SettingsRow
             serverScoped
             settingKeys={["worktreeSubmodules"]}

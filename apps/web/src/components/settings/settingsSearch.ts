@@ -479,6 +479,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["git submodule init recursive top-level none worktree t3.json"],
   },
   {
+    id: "terminal-shell",
+    title: "Default shell",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: [
+      "terminal shell powershell cmd command prompt git bash zsh fish custom executable t3.json",
+    ],
+  },
+  {
     id: "start-from-origin",
     title: "Start from remote",
     to: "/settings/general",

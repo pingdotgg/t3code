@@ -256,6 +256,26 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings.terminalShell", () => {
+  it("inherits by default and decodes profile ids and auto, not custom executables", () => {
+    expect(decodeServerSettings({}).terminalShell).toBeNull();
+    expect(decodeServerSettings({ terminalShell: "auto" }).terminalShell).toBe("auto");
+    expect(decodeServerSettings({ terminalShell: "pwsh" }).terminalShell).toBe("pwsh");
+    expect(
+      decodeServerSettings({ terminalShell: { command: "/opt/tools/sh", args: ["-l"] } })
+        .terminalShell,
+    ).toBeNull();
+    expect(decodeServerSettings({ terminalShell: "" }).terminalShell).toBeNull();
+    expect(decodeServerSettingsPatch({ terminalShell: null }).terminalShell).toBeNull();
+  });
+
+  it("keeps an inherited shell off the wire for older clients", () => {
+    const encode = Schema.encodeSync(ServerSettings);
+    expect("terminalShell" in encode(decodeServerSettings({}))).toBe(false);
+    expect(encode(decodeServerSettings({ terminalShell: "cmd" })).terminalShell).toBe("cmd");
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it.each([
     { legacy: "", mode: "repo_conventions", customInstructions: "" },

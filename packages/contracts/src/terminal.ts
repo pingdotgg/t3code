@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const DEFAULT_TERMINAL_ID = "term-1";
@@ -13,6 +13,7 @@ const TerminalRowsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).ch
   Schema.isLessThanOrEqualTo(500),
 );
 const TerminalIdSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
+const TerminalShellProfileIdSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
 const TerminalEnvKeySchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
 ).check(Schema.isMaxLength(128));
@@ -20,6 +21,23 @@ const TerminalEnvValueSchema = Schema.String.check(Schema.isMaxLength(8_192));
 const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSchema).check(
   Schema.isMaxProperties(128),
 );
+
+export const TerminalShellProfile = Schema.Struct({
+  id: TerminalShellProfileIdSchema,
+  label: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(128)),
+  command: TrimmedNonEmptyStringSchema,
+  args: Schema.Array(Schema.String),
+});
+export type TerminalShellProfile = typeof TerminalShellProfile.Type;
+
+export const TerminalListShellsResult = Schema.Struct({
+  shells: Schema.Array(TerminalShellProfile),
+});
+export type TerminalListShellsResult = typeof TerminalListShellsResult.Type;
+
+/** "auto" picks the platform default; any other value names a detected shell profile id. */
+export const TerminalShellSetting = TerminalShellProfileIdSchema;
+export type TerminalShellSetting = typeof TerminalShellSetting.Type;
 
 export const TerminalThreadInput = Schema.Struct({
   threadId: TrimmedNonEmptyStringSchema,
@@ -35,23 +53,27 @@ export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionIn
 
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
+  projectId: Schema.optional(ProjectId),
   cwd: TrimmedNonEmptyStringSchema,
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  shell: Schema.optional(TerminalShellSetting),
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
 export const TerminalAttachInput = Schema.Struct({
   ...TerminalSessionInput.fields,
+  projectId: Schema.optional(ProjectId),
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  shell: Schema.optional(TerminalShellSetting),
   restartIfNotRunning: Schema.optional(Schema.Boolean),
   // Resubscriptions preserve stopped terminals; unknown IDs recover after a server restart.
   resume: Schema.optional(Schema.Boolean),
@@ -79,12 +101,14 @@ export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>
 
 export const TerminalRestartInput = Schema.Struct({
   ...TerminalSessionInput.fields,
+  projectId: Schema.optional(ProjectId),
   cwd: TrimmedNonEmptyStringSchema,
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  shell: Schema.optional(TerminalShellSetting),
 });
 export type TerminalRestartInput = typeof TerminalRestartInput.Type;
 
@@ -125,6 +149,11 @@ export const TerminalSummary = Schema.Struct({
   exitSignal: Schema.NullOr(Schema.Int),
   hasRunningSubprocess: Schema.Boolean,
   label: Schema.String.check(Schema.isMaxLength(128)),
+  // Label of the shell actually running; absent from servers that predate shell choice.
+  shell: Schema.optional(Schema.String),
+  // Label of the requested shell that couldn't start. ConPTY clears the screen when the fallback
+  // starts, so a notice in the output stream would vanish; it is surfaced in metadata instead.
+  shellFallbackFrom: Schema.optional(Schema.String),
   updatedAt: Schema.String,
 });
 export type TerminalSummary = typeof TerminalSummary.Type;

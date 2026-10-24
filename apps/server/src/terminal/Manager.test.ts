@@ -6,10 +6,18 @@ import {
   type TerminalEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  type TerminalShellProfile,
+  type TerminalShellSetting,
+  type TerminalSummary,
   ProviderDriverKind,
   ProviderInstanceId,
   TerminalProviderInstanceNotFoundError,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ThreadId,
+  type T3ProjectFile,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -24,6 +32,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { expect, vi } from "vite-plus/test";
 
@@ -225,6 +234,10 @@ const historyLogPath = (logsDir: string, threadId = "thread-1") =>
 
 interface CreateManagerOptions {
   shellResolver?: () => string;
+  shellProfiles?: ReadonlyArray<TerminalShellProfile>;
+  resolveConfiguredShell?: Parameters<
+    typeof TerminalManager.makeWithOptions
+  >[0]["resolveConfiguredShell"];
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
     readonly hasRunningSubprocess: boolean;
@@ -281,6 +294,12 @@ const createManager = (
           ? { historyByteLimit: options.historyByteLimit }
           : {}),
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
+        ...(options.shellProfiles !== undefined
+          ? { shellProfiles: Effect.succeed(options.shellProfiles) }
+          : {}),
+        ...(options.resolveConfiguredShell !== undefined
+          ? { resolveConfiguredShell: options.resolveConfiguredShell }
+          : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
@@ -941,6 +960,341 @@ it.layer(
       expect(yield* pathExists(nextPath)).toBe(true);
       expect(yield* readFileString(nextPath)).toBe("legacy-line\n");
       expect(yield* pathExists(legacyPath)).toBe(false);
+    }),
+  );
+
+  const zsh: TerminalShellProfile = {
+    id: "zsh",
+    label: "zsh",
+    command: "/bin/zsh",
+    args: ["-o", "nopromptsp"],
+  };
+  const fish: TerminalShellProfile = { id: "fish", label: "fish", command: "/bin/fish", args: [] };
+  const shellProfiles = [zsh, fish];
+  const configured = (setting: TerminalShellSetting) => () => Effect.succeed(setting);
+
+  it.effect("refreshes discovered shells after the cache expires", () =>
+    Effect.gen(function* () {
+      const { logsDir, ptyAdapter } = yield* createManager();
+      let profiles = [zsh];
+      let discoveries = 0;
+      const manager = yield* TerminalManager.makeWithOptions({
+        logsDir,
+        historyLineLimit: 5,
+        ptyAdapter,
+        shellProfiles: Effect.sync(() => {
+          discoveries++;
+          return profiles;
+        }),
+      });
+      expect((yield* manager.listShells()).shells).toEqual([zsh]);
+      profiles = [zsh, fish];
+      expect((yield* manager.listShells()).shells).toEqual([zsh]);
+      expect(discoveries).toBe(1);
+      yield* TestClock.adjust("5 seconds");
+      expect((yield* manager.listShells()).shells).toEqual([zsh, fish]);
+      profiles = [fish];
+      yield* TestClock.adjust("5 seconds");
+      expect((yield* manager.listShells()).shells).toEqual([fish]);
+      expect(discoveries).toBe(3);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("clears previous shell metadata when a restart fails", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      ptyAdapter.spawnFailures.push(new Error("spawn /bin/fish ENOENT"));
+      yield* manager.open(openInput({ shell: "fish" }));
+      let terminals: ReadonlyArray<TerminalSummary> = [];
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "snapshot") terminals = event.terminals;
+        }),
+      );
+      unsubscribe();
+      expect(terminals[0]).toMatchObject({ shell: "sh", shellFallbackFrom: "fish" });
+      ptyAdapter.spawnFailures.push(new Error("spawn EACCES"));
+      yield* manager.restart(restartInput());
+      const unsubscribeAfter = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "snapshot") terminals = event.terminals;
+        }),
+      );
+      unsubscribeAfter();
+      expect(terminals[0]?.status).toBe("error");
+      expect(terminals[0]?.shell).toBeUndefined();
+      expect(terminals[0]?.shellFallbackFrom).toBeUndefined();
+    }),
+  );
+
+  it.effect("prefers the explicit shell over the configured one", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+
+      const snapshot = yield* manager.open(openInput({ shell: "fish" }));
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/fish");
+      expect(snapshot.history).toBe("");
+      const metadata = yield* manager.subscribeMetadata((event) =>
+        event.type === "snapshot"
+          ? Effect.sync(() => {
+              expect(event.terminals[0]?.shell).toBe("fish");
+            })
+          : Effect.void,
+      );
+      metadata();
+    }),
+  );
+
+  it.effect("uses the configured shell, and auto when nothing is configured", () =>
+    Effect.gen(function* () {
+      const first = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* first.manager.open(openInput());
+      expect(first.ptyAdapter.spawnInputs[0]).toMatchObject({
+        shell: "/bin/zsh",
+        args: ["-o", "nopromptsp"],
+      });
+
+      const second = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("auto"),
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* second.manager.open(openInput());
+      expect(second.ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/sh");
+    }),
+  );
+
+  it.effect("reports an unavailable configured profile when falling back to auto", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("nushell"),
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+
+      const snapshot = yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/sh");
+      expect(snapshot.history).toBe("");
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "snapshot") {
+            expect(event.terminals[0]).toMatchObject({
+              shell: "sh",
+              shellFallbackFrom: "nushell",
+            });
+          }
+        }),
+      );
+      unsubscribe();
+    }),
+  );
+
+  it.effect("reports the fallback in metadata when a detected shell cannot start", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      ptyAdapter.spawnFailures.push(new Error("spawn /bin/fish ENOENT"));
+      const summaries = Effect.gen(function* () {
+        let terminals: ReadonlyArray<TerminalSummary> = [];
+        const unsubscribe = yield* manager.subscribeMetadata((event) =>
+          Effect.sync(() => {
+            if (event.type === "snapshot") terminals = event.terminals;
+          }),
+        );
+        unsubscribe();
+        return terminals;
+      });
+
+      const snapshot = yield* manager.open(openInput({ shell: "fish" }));
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/fish");
+      expect(snapshot.status).toBe("running");
+      expect(snapshot.history).toBe("");
+      const [fellBack] = yield* summaries;
+      expect(fellBack).toMatchObject({ shell: "sh", shellFallbackFrom: "fish" });
+
+      yield* manager.restart(restartInput());
+      const [recovered] = yield* summaries;
+      expect(recovered?.shell).toBe("fish");
+      expect(recovered?.shellFallbackFrom).toBeUndefined();
+    }),
+  );
+
+  it.effect("restart and respawn keep the terminal's shell", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+
+      yield* manager.open(openInput({ shell: "fish" }));
+      yield* manager.restart(restartInput());
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/bin/fish",
+        "/bin/fish",
+      ]);
+
+      yield* manager.restart(restartInput({ shell: "zsh" }));
+      yield* manager.restart(restartInput());
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell).slice(2)).toEqual([
+        "/bin/zsh",
+        "/bin/zsh",
+      ]);
+    }),
+  );
+
+  const projectId = ProjectId.make("project-a");
+  const threads = {
+    getThreadShell: () => Effect.succeed({ projectId } as never),
+  };
+  const resolve = (input: {
+    readonly environment?: TerminalShellSetting;
+    readonly project?: TerminalShellSetting;
+    readonly file?: T3ProjectFile;
+    readonly draftProjectId?: ProjectId;
+    readonly projected?: boolean;
+  }) =>
+    TerminalManager.resolveConfiguredTerminalShell({
+      serverSettings: {
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          terminalShell: input.environment ?? null,
+          projectSettingsOverrides:
+            input.project === undefined ? {} : { [projectId]: { terminalShell: input.project } },
+        }),
+      },
+      projectFiles: {
+        load: () => Effect.succeed(input.file ? Option.some(input.file) : Option.none()),
+      },
+      threads: input.projected === false ? { getThreadShell: () => Effect.succeed(null) } : threads,
+      threadId: ThreadId.make("thread-1"),
+      cwd: "/repo",
+      ...(input.draftProjectId ? { projectId: input.draftProjectId } : {}),
+    });
+
+  it.effect("orders project override, environment default, t3.json, then auto", () =>
+    Effect.gen(function* () {
+      const file = { terminalShell: "cmd" } satisfies T3ProjectFile;
+      expect(yield* resolve({ project: "zsh", environment: "bash", file })).toBe("zsh");
+      expect(yield* resolve({ environment: "bash", file })).toBe("bash");
+      expect(yield* resolve({ file })).toBe("cmd");
+      expect(yield* resolve({})).toBe("auto");
+      expect(yield* resolve({ project: "auto", file })).toBe("auto");
+      expect(yield* resolve({ environment: "auto", file })).toBe("auto");
+    }),
+  );
+
+  it.effect("resolves draft project overrides without a projected thread", () =>
+    Effect.gen(function* () {
+      const file = { terminalShell: "cmd" } satisfies T3ProjectFile;
+      expect(
+        yield* resolve({
+          project: "fish",
+          environment: "bash",
+          file,
+          draftProjectId: projectId,
+          projected: false,
+        }),
+      ).toBe("fish");
+      expect(
+        yield* resolve({
+          project: "auto",
+          environment: "bash",
+          file,
+          draftProjectId: projectId,
+          projected: false,
+        }),
+      ).toBe("auto");
+      expect(
+        yield* resolve({
+          project: "fish",
+          environment: "bash",
+          file,
+          draftProjectId: ProjectId.make("other"),
+          projected: false,
+        }),
+      ).toBe("bash");
+      expect(
+        yield* resolve({
+          project: "fish",
+          environment: "bash",
+          file,
+          draftProjectId: ProjectId.make("other"),
+        }),
+      ).toBe("fish");
+    }),
+  );
+
+  it.effect("keeps the inherited shell on restart after settings change", () =>
+    Effect.gen(function* () {
+      let setting: TerminalShellSetting = "fish";
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: () => Effect.sync(() => setting),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+      setting = "zsh";
+      yield* manager.restart(restartInput());
+      yield* manager.open(openInput({ terminalId: "term-2" }));
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/bin/fish",
+        "/bin/fish",
+        "/bin/zsh",
+      ]);
+    }),
+  );
+
+  it.effect("honors an explicit shell when attach creates the terminal before open", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const stop = yield* manager.attachStream(openInput(), () => Effect.void);
+      stop();
+      yield* manager.open(openInput({ shell: "fish" }));
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["/bin/zsh", "/bin/fish"]);
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
+      yield* manager.open(openInput({ shell: "fish" }));
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("retains draft project context through open, attach recovery and restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: (input) =>
+          Effect.succeed(input.projectId === projectId ? "fish" : "zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput({ projectId }));
+      yield* manager.restart(restartInput());
+      const stop = yield* manager.attachStream(
+        openInput({ terminalId: "term-2", projectId }),
+        () => Effect.void,
+      );
+      stop();
+      yield* manager.restart(restartInput({ terminalId: "term-2" }));
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/bin/fish",
+        "/bin/fish",
+        "/bin/fish",
+        "/bin/fish",
+      ]);
     }),
   );
 
