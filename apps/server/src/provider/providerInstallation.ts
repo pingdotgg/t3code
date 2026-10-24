@@ -103,7 +103,7 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
         | AntigravityInstallation.AntigravityInstallationError
         | CodexInstallation.CodexInstallationError,
     ) =>
-      new ProviderSetupError({ instanceId, operation: error.operation, detail: error.detail });
+      new ProviderSetupError({ instanceId, operation: error.operation, detail: error.message });
 
   const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
     const { installation } = yield* requireInstance(input.instanceId, "install", true);
