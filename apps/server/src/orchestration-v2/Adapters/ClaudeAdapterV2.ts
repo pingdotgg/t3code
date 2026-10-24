@@ -44,6 +44,7 @@ import {
   type SDKRateLimitInfo,
   type SDKResultMessage,
   type SDKUserMessage,
+  type UserDialogRequest,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskUserQuestionInput,
@@ -56,11 +57,15 @@ import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import { applyClaudePromptEffortPrefix, formatModelSlugName } from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
+import {
+  CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER,
+  formatClaudeRefusalFallbackQuestion,
+} from "@t3tools/shared/claudeRefusalFallback";
 import {
   type ChatAttachment,
   ClaudeSettings,
@@ -9065,12 +9070,75 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
           runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
 
+        const askDialogQuestion = (
+          request: UserDialogRequest,
+          callbackOptions: { readonly signal: AbortSignal; readonly requestId: string },
+          prompt: {
+            readonly header: string;
+            readonly question: string;
+            readonly options: ReadonlyArray<{
+              readonly label: string;
+              readonly description: string;
+            }>;
+          },
+        ) =>
+          canUseToolEffect(
+            "AskUserQuestion",
+            { questions: [{ ...prompt, multiSelect: false }] },
+            {
+              signal: callbackOptions.signal,
+              requestId: callbackOptions.requestId,
+              toolUseID: request.toolUseID ?? callbackOptions.requestId,
+            },
+          ).pipe(
+            Effect.map((result) => {
+              if (result.behavior !== "allow") return Option.none();
+              const answers =
+                result.updatedInput === undefined
+                  ? undefined
+                  : Reflect.get(result.updatedInput, "answers");
+              return Option.some(
+                typeof answers === "object" && answers !== null
+                  ? Reflect.get(answers, prompt.question)
+                  : undefined,
+              );
+            }),
+          );
+
         const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
           request,
           callbackOptions,
         ) =>
           runPromise(
             Effect.gen(function* () {
+              if (request.dialogKind === "refusal_fallback_prompt") {
+                const { originalModel, fallbackModel } = request.payload;
+                if (typeof originalModel !== "string" || typeof fallbackModel !== "string") {
+                  return { behavior: "cancelled" as const };
+                }
+                const originalModelName = formatModelSlugName(originalModel);
+                const switchLabel = `Switch to ${formatModelSlugName(fallbackModel)}`;
+                const selection = yield* askDialogQuestion(request, callbackOptions, {
+                  header: "Message flagged",
+                  question: formatClaudeRefusalFallbackQuestion(originalModelName),
+                  options: [
+                    {
+                      label: switchLabel,
+                      description: "Send the same message again on the fallback model.",
+                    },
+                    {
+                      label: CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER,
+                      description: `Change it, then send it again on ${originalModelName}.`,
+                    },
+                  ],
+                });
+                if (Option.isNone(selection)) return { behavior: "cancelled" as const };
+                return selection.value === switchLabel
+                  ? { behavior: "completed" as const, result: "retry_fallback" as const }
+                  : selection.value === CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER
+                    ? { behavior: "completed" as const, result: "edit_prompt" as const }
+                    : { behavior: "cancelled" as const };
+              }
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
               }
@@ -9099,52 +9167,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ageMinutes,
                 estimatedTokens,
               });
-              const result = yield* canUseToolEffect(
-                "AskUserQuestion",
-                {
-                  questions: [
-                    {
-                      header: "Resume session",
-                      question,
-                      options: [
-                        {
-                          label: "Compact and continue",
-                          description: "Resume with a summary and use fewer tokens.",
-                        },
-                        {
-                          label: "Keep full history",
-                          description: "Resume without changing the conversation.",
-                        },
-                        {
-                          label: CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
-                          description: "Keep full history and skip future resume prompts.",
-                        },
-                      ],
-                      multiSelect: false,
-                    },
-                  ],
-                },
-                {
-                  signal: callbackOptions.signal,
-                  requestId: callbackOptions.requestId,
-                  toolUseID: request.toolUseID ?? callbackOptions.requestId,
-                },
-              );
-              if (result.behavior !== "allow") return { behavior: "cancelled" as const };
-              const answers =
-                result.updatedInput === undefined
-                  ? undefined
-                  : Reflect.get(result.updatedInput, "answers");
-              const selection =
-                typeof answers === "object" && answers !== null
-                  ? Reflect.get(answers, question)
-                  : undefined;
+              const selection = yield* askDialogQuestion(request, callbackOptions, {
+                header: "Resume session",
+                question,
+                options: [
+                  {
+                    label: "Compact and continue",
+                    description: "Resume with a summary and use fewer tokens.",
+                  },
+                  {
+                    label: "Keep full history",
+                    description: "Resume without changing the conversation.",
+                  },
+                  {
+                    label: CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+                    description: "Keep full history and skip future resume prompts.",
+                  },
+                ],
+              });
+              if (Option.isNone(selection)) return { behavior: "cancelled" as const };
               return {
                 behavior: "completed" as const,
                 result:
-                  selection === "Compact and continue"
+                  selection.value === "Compact and continue"
                     ? ("compact" as const)
-                    : selection === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
+                    : selection.value === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
                       ? ("never" as const)
                       : ("continue" as const),
               };
@@ -9327,7 +9374,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
             canUseTool,
             onUserDialog,
-            supportedDialogKinds: ["resume_return"],
+            supportedDialogKinds: ["resume_return", "refusal_fallback_prompt"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
           });
           const querySession = yield* queryRunner

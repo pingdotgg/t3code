@@ -2,6 +2,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type MessageId,
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ScopedThreadRef,
@@ -16,6 +17,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { isClaudeRefusalFallbackEditAnswer } from "@t3tools/shared/claudeRefusalFallback";
 import { create } from "zustand";
 import {
   useLayoutEffect,
@@ -144,6 +146,11 @@ export function usePendingThreadRequests(input: {
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     RuntimeRequestId[]
   >([]);
+  // Set by this client only, so other clients on the thread do not also rewind it.
+  const [flaggedMessageEdit, setFlaggedMessageEdit] = useState<{
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+  } | null>(null);
   const setPendingUserInputAnswersByRequestId = usePendingUserInputAnswers.setState;
   const setPendingUserInputQuestionIndexByRequestId = usePendingUserInputQuestionIndex.setState;
   const projectedThreadId = serverProjection?.thread.id;
@@ -394,6 +401,18 @@ export function usePendingThreadRequests(input: {
         error instanceof Error ? error.message : "Failed to submit user input.",
       );
     }
+    if (
+      result._tag !== "Failure" &&
+      Object.entries(answers).some(([question, answer]) =>
+        isClaudeRefusalFallbackEditAnswer(question, answer),
+      )
+    ) {
+      const runId = serverProjection?.turnItems.findLast(
+        (item) => item.type === "user_input_request" && item.requestId === requestId,
+      )?.runId;
+      const messageId = serverProjection?.runs.find((run) => run.id === runId)?.userMessageId;
+      if (messageId !== undefined) setFlaggedMessageEdit({ threadId: activeThreadId, messageId });
+    }
     userInputResponsesInFlight.current.delete(responseKey);
     setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
     return result;
@@ -422,6 +441,7 @@ export function usePendingThreadRequests(input: {
     return result;
   };
   const onDismissUserInputStable = useStableCallback(onDismissUserInput);
+  const onFlaggedMessageEditStartedStable = useStableCallback(() => setFlaggedMessageEdit(null));
 
   const setActivePendingUserInputQuestionIndex = (nextQuestionIndex: number) => {
     if (!activePendingUserInput) {
@@ -540,6 +560,11 @@ export function usePendingThreadRequests(input: {
     activePendingResolvedAnswers,
     activePendingIsResponding,
     respondingRequestIds,
+    flaggedMessageToEdit:
+      flaggedMessageEdit !== null && flaggedMessageEdit.threadId === activeThreadId
+        ? flaggedMessageEdit.messageId
+        : null,
+    onFlaggedMessageEditStarted: onFlaggedMessageEditStartedStable,
     onRespondToApproval: onRespondToApprovalStable,
     onDismissUserInput: onDismissUserInputStable,
     onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,

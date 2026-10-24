@@ -13,13 +13,18 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
-import { findRevertCheckpoint } from "../../session-logic";
-import { type ChatMessage } from "../../types";
+import {
+  deriveRevertTurnCountByUserMessageId,
+  findRevertCheckpoint,
+  type TimelineEntry,
+} from "../../session-logic";
+import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import { newThreadId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -40,7 +45,14 @@ interface TimelineRewindInput {
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly serverProjection: ThreadStructure | null;
   readonly activeThread: EnvironmentThreadShell | undefined;
+  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
+  readonly turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
+  readonly threadStartCheckpointReady: boolean;
+  readonly availableRevertTurnCounts: ReadonlySet<number>;
+  readonly latestRunSettled: boolean;
+  readonly flaggedMessageToEdit: MessageId | null;
+  readonly onFlaggedMessageEditStarted: () => void;
   readonly paintOnlyDisplayedTimeline: boolean;
   readonly phase: SessionPhase;
   readonly isConnecting: boolean;
@@ -67,7 +79,14 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     currentRouteThreadKeyRef,
     serverProjection,
     activeThread,
+    timelineEntries,
     timelineMessages,
+    turnDiffSummaries,
+    threadStartCheckpointReady,
+    availableRevertTurnCounts,
+    latestRunSettled,
+    flaggedMessageToEdit,
+    onFlaggedMessageEditStarted,
     paintOnlyDisplayedTimeline,
     phase,
     isConnecting,
@@ -170,6 +189,39 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     }
   };
   const onRevertToTurnCountStable = useStableCallback(onRevertToTurnCount);
+
+  // Claude Code rewinds a message the user chose to edit after a refusal. The rollback waits for
+  // the turn to end and for the checkpoint before that message to reach this client.
+  useEffect(() => {
+    if (flaggedMessageToEdit === null || !latestRunSettled) return;
+    if (
+      timelineMessages.findLast((message) => message.role === "user")?.id !== flaggedMessageToEdit
+    ) {
+      onFlaggedMessageEditStarted();
+      return;
+    }
+    const turnCount = deriveRevertTurnCountByUserMessageId({
+      timelineEntries,
+      checkpoints: turnDiffSummaries,
+      threadStartCheckpointReady,
+      availableRevertTurnCounts,
+    }).get(flaggedMessageToEdit);
+    if (turnCount === undefined) return;
+    onFlaggedMessageEditStarted();
+    // Files stay as they are, like Claude Code's own edit.
+    void onRevertToTurnCountStable(turnCount, flaggedMessageToEdit, false);
+  }, [
+    flaggedMessageToEdit,
+    latestRunSettled,
+    onFlaggedMessageEditStarted,
+    timelineMessages,
+    timelineEntries,
+    turnDiffSummaries,
+    threadStartCheckpointReady,
+    availableRevertTurnCounts,
+    onRevertToTurnCountStable,
+  ]);
+
   const onConfirmRevert = (turnCount: number, messageId: MessageId, restoreFiles: boolean) => {
     void onRevertToTurnCount(turnCount, messageId, restoreFiles);
   };

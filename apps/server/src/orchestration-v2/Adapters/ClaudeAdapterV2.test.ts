@@ -1352,6 +1352,57 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         });
         assert.deepEqual(yield* Fiber.join(dialog), { behavior: "completed", result: "compact" });
 
+        assert.deepEqual(openedOptions?.supportedDialogKinds, [
+          "resume_return",
+          "refusal_fallback_prompt",
+        ]);
+        const answerRefusalDialog = (requestId: string, answer: string) =>
+          Effect.gen(function* () {
+            const refusalRequestEvent = yield* runtime.events.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "runtime_request.updated" &&
+                  event.runtimeRequest.status === "pending",
+              ),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+            const refusalDialog = yield* Effect.promise(() =>
+              callback!(
+                {
+                  dialogKind: "refusal_fallback_prompt",
+                  payload: {
+                    originalModel: "claude-opus-5-5",
+                    fallbackModel: "claude-opus-4-8",
+                    apiRefusalCategory: "cyber",
+                  },
+                },
+                { signal: new AbortController().signal, requestId },
+              ),
+            ).pipe(Effect.forkScoped);
+            const refusalEvent = yield* Fiber.join(refusalRequestEvent);
+            assert.isTrue(Option.isSome(refusalEvent));
+            if (
+              Option.isNone(refusalEvent) ||
+              refusalEvent.value.type !== "runtime_request.updated"
+            ) {
+              return yield* Effect.die("missing refusal question");
+            }
+            yield* runtime.respondToRuntimeRequest({
+              requestId: refusalEvent.value.runtimeRequest.id,
+              answers: { "Claude Opus 5.5's safeguards flagged this message.": answer },
+            });
+            return yield* Fiber.join(refusalDialog);
+          });
+        assert.deepEqual(
+          yield* answerRefusalDialog("dialog-refusal-1", "Switch to Claude Opus 4.8"),
+          { behavior: "completed", result: "retry_fallback" },
+        );
+        assert.deepEqual(yield* answerRefusalDialog("dialog-refusal-2", "Edit message"), {
+          behavior: "completed",
+          result: "edit_prompt",
+        });
+
         const cancelledController = new AbortController();
         cancelledController.abort();
         assert.deepEqual(
