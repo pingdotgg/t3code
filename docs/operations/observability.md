@@ -9,8 +9,18 @@ T3 Code has one server-side observability model:
 - traces, metrics, and logs can also be exported over OTLP to a real backend like Grafana LGTM
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
-write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+write a separate server log file, but SSH-managed launches persist the remote process's
+stdout/stderr in a `server.log.<suffix>` file under `~/.t3/ssh-launch/<state>/`. The two-line
+`current-log` file identifies the most recent managed attempt by PID and log basename. Older
+clients use `server.log` instead. Each managed attempt leaves its log for later diagnosis;
+see the SSH log cleanup note below.
+
+The log reader uses `current-log` for a complete valid pointer when its PID matches the managed
+PID, or when no PID remains after a stopped attempt. It falls back to `server.log` for an older
+client's replacement PID, an external server, or a malformed pointer. A launch publishes its
+ownership files before `current-log`, so a disconnect in that gap can leave the pointer stale.
+Concurrent launchers and PID reuse can also make later attribution stale; a failing launch reads
+its own attempt log directly.
 
 ## Where To Find Things
 
@@ -21,8 +31,16 @@ Logs are human-facing:
 - destination: stdout
 - format: `Logger.consolePretty()`
 - normal local persistence: none
-- SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log`
+- SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log.<suffix>` (or
+  `server.log` for older clients); `current-log` points to the latest managed attempt
 - remote export: OTLP only, when configured
+
+Each new managed launch adds one log file and keeps its output without a size or count limit.
+For example, 10,000 attempts leave 10,000 files; disk use is the sum of their output and file
+metadata. For offline cleanup, disconnect all SSH clients using that state and stop its managed
+server, then remove only `server.log.*` and `current-log` from that state's `ssh-launch`
+directory. Keep the legacy `server.log` if an older client may still use it. Do not clean these
+files while a launch or server is active; an open log descriptor can survive path removal.
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
 
