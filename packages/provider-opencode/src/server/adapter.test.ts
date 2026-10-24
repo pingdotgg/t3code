@@ -15,6 +15,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
@@ -144,15 +145,22 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  selection: {
+    readonly options?: ModelSelection["options"];
+    readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
+  } = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
     instanceId,
     model: "anthropic/claude-sonnet",
-    options: [],
+    options: selection.options ?? [],
   };
-  const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+  const policy = runtimePolicy("full-access", {
+    cwd: "/workspace",
+    interactionMode: selection.interactionMode ?? "default",
+  });
   const adapter = yield* makeOpenCodeAdapterV2({
     instanceId,
     settings: OPEN_CODE_TEST_SETTINGS,
@@ -191,7 +199,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
         runtimeMode: "full-access",
-        interactionMode: "default",
+        interactionMode: policy.interactionMode,
         branch: null,
         worktreePath: null,
         activeProviderThreadId: providerThread.id,
@@ -237,6 +245,72 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect.each(["custom", "plan", "default"] as const)(
+    "keeps %s agent and reasoning options when steering",
+    (scenario) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const prompts: Array<Parameters<OpencodeClient["session"]["promptAsync"]>[0]> = [];
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          `steer-options-${scenario}`,
+          "root",
+          {
+            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+            session: {
+              create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+              get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+              messages: async () => ({ data: [] }),
+              promptAsync: async (input: (typeof prompts)[number]) => {
+                prompts.push(input);
+                return { data: true };
+              },
+              abort: async () => ({ data: true }),
+              children: async () => ({ data: [] }),
+            },
+          },
+          {
+            interactionMode: scenario === "default" ? "default" : "plan",
+            options:
+              scenario === "custom"
+                ? [
+                    { id: "agent", value: "agent-b" },
+                    { id: "variant", value: "high" },
+                  ]
+                : [],
+          },
+        );
+        yield* harness.startTurn();
+        const snapshot = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: snapshot.providerTurns.at(-1)!.id,
+          message: {
+            messageId: MessageId.make("message-steer-options"),
+            text: "Continue with the same agent",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+        assert.lengthOf(prompts, 2);
+        assert.equal(
+          prompts[1]?.agent,
+          scenario === "custom" ? "agent-b" : scenario === "plan" ? "plan" : undefined,
+        );
+        assert.equal(prompts[1]?.variant, scenario === "custom" ? "high" : undefined);
+        assert.isNotEmpty(prompts[0]?.system);
+        assert.equal(prompts[1]?.system, prompts[0]?.system);
+        assert.notEqual(prompts[1]?.messageID, prompts[0]?.messageID);
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
   it.effect.each(["completed", "failed", "unavailable"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>
