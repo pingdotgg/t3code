@@ -473,6 +473,20 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   };
 });
 
+function firstNonEmptyLine(value: string): string | undefined {
+  const line = value.split(/\r?\n/u).map((part) => part.trim()).find(Boolean);
+  if (!line) {
+    return undefined;
+  }
+
+  const normalized = line.replace(/[\u0000-\u001f\u007f]/gu, " ").replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.length > 200 ? `${normalized.slice(0, 197)}...` : normalized;
+}
+
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -562,6 +576,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const version = versionProbe.success.value;
   const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
   if (version.code !== 0) {
+    const detail = firstNonEmptyLine(version.stderr) ?? firstNonEmptyLine(version.stdout);
     yield* Effect.logWarning("Claude Agent CLI version probe exited with a non-zero status.", {
       exitCode: version.code,
       stdoutLength: version.stdout.length,
@@ -577,7 +592,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unknown" },
-        message: "Claude Agent CLI is installed but failed to run.",
+        message: detail
+          ? `Claude Agent CLI is installed but failed to run: ${detail}`
+          : "Claude Agent CLI is installed but failed to run.",
       },
     });
   }

@@ -2148,6 +2148,51 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("includes the first non-empty stderr line when the CLI version probe fails", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(defaultClaudeSettings, claudeCapabilities());
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(
+          status.message,
+          "Claude Agent CLI is installed but failed to run: Error: claude native binary not installed.",
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") {
+              return {
+                stdout: "",
+                stderr: "\nError: claude native binary not installed.\nRun postinstall to fix it.\n",
+                code: 1,
+              };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("falls back to stdout when a failed CLI version probe has no stderr", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(defaultClaudeSettings, claudeCapabilities());
+        assert.strictEqual(
+          status.message,
+          "Claude Agent CLI is installed but failed to run: CLI wrapper failed.",
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") {
+              return { stdout: "CLI wrapper failed.\nMore detail.\n", stderr: "", code: 1 };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         // The capability probe resolves for a logged-out CLI, so `tokenSource:
