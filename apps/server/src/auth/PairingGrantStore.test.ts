@@ -62,6 +62,18 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
+  it.effect("accepts a one-time token typed in lowercase", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken();
+      const first = yield* bootstrapCredentials.consume(issued.credential.toLowerCase());
+      const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
+
+      expect(first.method).toBe("one-time-token");
+      expect(second._tag).toBe("UnknownBootstrapCredentialError");
+    }).pipe(Effect.provide(layerPairingGrantStore())),
+  );
+
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -122,6 +134,23 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(forbiddenScope._tag).toBe("BootstrapCredentialScopeNotGrantedError");
       expect(consumed.proofKeyThumbprint).toBe("client-proof-key-thumbprint");
     }).pipe(Effect.provide(layerPairingGrantStore())),
+  );
+
+  it.effect("matches a seeded desktop bootstrap credential exactly", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const exact = yield* bootstrapCredentials.consume("abcdefghjkmn");
+      const otherCase = yield* Effect.flip(bootstrapCredentials.consume("ABCDEFGHJKMN"));
+
+      expect(exact.method).toBe("desktop-bootstrap");
+      expect(otherCase._tag).toBe("UnknownBootstrapCredentialError");
+    }).pipe(
+      Effect.provide(
+        layerPairingGrantStore({
+          desktopBootstrapToken: "abcdefghjkmn",
+        }),
+      ),
+    ),
   );
 
   it.effect("reports seeded desktop bootstrap credentials as expired after their ttl", () =>

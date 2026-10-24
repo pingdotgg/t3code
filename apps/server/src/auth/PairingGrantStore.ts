@@ -253,6 +253,10 @@ const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
   Math.floor(256 / PAIRING_TOKEN_ALPHABET.length) * PAIRING_TOKEN_ALPHABET.length;
+const PAIRING_TOKEN_PATTERN = new RegExp(
+  `^[${PAIRING_TOKEN_ALPHABET}]{${PAIRING_TOKEN_LENGTH}}$`,
+  "i",
+);
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -538,12 +542,19 @@ const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
+      // Pairing codes are issued in uppercase, but a phone keyboard types
+      // them in lowercase. Only codes in the issued format are folded, so
+      // other credentials still have to match exactly.
+      const pairingCredential = PAIRING_TOKEN_PATTERN.test(credential)
+        ? credential.toUpperCase()
+        : credential;
+
       // The scope check is part of the UPDATE's WHERE clause so a rejected
       // request cannot consume a one-time link. The re-check below only
       // explains why nothing matched.
       const consumed = yield* pairingLinks
         .consumeAvailable({
-          credential,
+          credential: pairingCredential,
           proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
           ...(input?.requestedScopes !== undefined
             ? { requestedScopes: input.requestedScopes }
@@ -568,7 +579,7 @@ const make = Effect.gen(function* () {
       }
 
       const matching = yield* pairingLinks
-        .getByCredential({ credential })
+        .getByCredential({ credential: pairingCredential })
         .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
       if (Option.isNone(matching)) {
         return yield* new UnknownBootstrapCredentialError({});
