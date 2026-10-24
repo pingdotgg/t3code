@@ -98,6 +98,27 @@ describe("server browser element refs", () => {
     expect(await page.locator("li").count()).toBe(5);
   });
 
+  it("tells a click target that matches nothing from one that never becomes clickable", async () => {
+    await page.setContent(`<button hidden>hidden</button>`);
+    const failure = (selector: string) =>
+      ServerBrowserPage.click(page, { selector, timeoutMs: 500 }).then(
+        () => expect.unreachable(),
+        ServerBrowserPage.toOperationError,
+      );
+
+    const absent = await failure(".definitely-no-such-t3-target");
+    expect(absent.tag).toBe("PreviewAutomationTimeoutError");
+    expect(absent.message).toBe(
+      'No element matches ".definitely-no-such-t3-target" after the timeout. The click may have happened and removed its target or navigated; check the page before retrying, then take a fresh snapshot and use its locator.',
+    );
+    expect(absent.cause).toMatchObject({ name: "TimeoutError" });
+    const hidden = await failure("button");
+    expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
+    expect(hidden.message).toBe(
+      '"button" still matches an element after the timeout. The click may have happened; check the page before retrying.',
+    );
+  });
+
   it("does not retarget a removed ref to a replacement node", async () => {
     await page.setContent("<button onclick=\"this.textContent='clicked'\">original</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "original");
