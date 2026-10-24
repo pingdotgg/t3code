@@ -197,6 +197,7 @@ import {
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import {
   ComposerAttachButton,
+  ComposerAttachInput,
   ComposerAttachmentFileList,
   ComposerAttachmentMediaRow,
   ComposerFilePreviewDialog,
@@ -1114,6 +1115,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
@@ -3409,10 +3411,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       />
     ) : null;
   const composerAttachButton = showComposerAttachAction ? (
-    <ComposerAttachButton
-      addComposerAttachments={addComposerAttachments}
-      focusComposer={focusComposer}
-    />
+    <ComposerAttachButton onClick={() => attachmentInputRef.current?.click()} />
   ) : null;
   return (
     <form
@@ -3868,6 +3867,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
+
+            {/* Outside the footer: opening the OS picker blurs the editor, which
+                collapses the mobile composer and unmounts the footer. A detached
+                input never delivers its change event, so the pick would be lost. */}
+            {showComposerAttachAction ? (
+              <ComposerAttachInput
+                ref={attachmentInputRef}
+                addComposerAttachments={addComposerAttachments}
+                focusComposer={focusComposer}
+              />
+            ) : null}
 
             {isComposerCollapsedMobile ? null : (
               <div
