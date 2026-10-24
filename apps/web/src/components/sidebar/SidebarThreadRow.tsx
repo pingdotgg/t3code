@@ -1342,14 +1342,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           ) : topStatus.icon === "done" ? (
                             <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
                           ) : null}
-                          {/* The label alone is the live region: a role="status"
-                            wrapper around the ticking duration would make
-                            screen readers announce every second. The open
-                            thread announces its own status, so its row stays
-                            quiet instead of saying everything twice. */}
-                          <span role={props.isRouteThread ? undefined : "status"}>
-                            {topStatus.label}
-                          </span>
+                          {/* Not a live region: a collapsed sidebar is inert, so
+                            BackgroundThreadAnnouncer and the open thread's
+                            timeline speak status changes instead. */}
+                          {topStatus.label}
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
