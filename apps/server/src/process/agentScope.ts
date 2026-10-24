@@ -10,7 +10,9 @@ import {
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -152,7 +154,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const systemd = yield* Effect.cached(
+  const detectSystemd = yield* Effect.cachedWithTTL(
     Effect.gen(function* () {
       const runtimeDir = hostEnvironment.XDG_RUNTIME_DIR;
       if (runtimeDir === undefined || runtimeDir.length === 0) return undefined;
@@ -160,17 +162,25 @@ export const make = Effect.gen(function* () {
       const systemctl = yield* resolve("systemctl", hostEnvironment);
       if (systemdRun === null || systemctl === null) return undefined;
       yield* stopLeftoverAgents(systemctl);
+      // Only a probe systemd answered decides. A busy user manager can miss the
+      // timeout, and that failure must not turn scopes off for the server's life.
       const probe = (options: ReadonlyArray<string>) =>
-        run(systemdRun, [
-          "--user",
-          "--scope",
-          "--quiet",
-          "--collect",
-          `--slice=${AGENT_SLICE}`,
-          ...options,
-          "--",
-          "true",
-        ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
+        runner
+          .run({
+            command: systemdRun,
+            args: [
+              "--user",
+              "--scope",
+              "--quiet",
+              "--collect",
+              `--slice=${AGENT_SLICE}`,
+              ...options,
+              "--",
+              "true",
+            ],
+            timeout: "5 seconds",
+          })
+          .pipe(Effect.map((result) => result.code === 0));
       // Scopes take OOMPolicy from systemd 253; older managers still get scopes.
       const supportsOomPolicy = yield* probe([STOP_TIMEOUT_OPTION, "--property=OOMPolicy=stop"]);
       if (!supportsOomPolicy && !(yield* probe([STOP_TIMEOUT_OPTION]))) {
@@ -203,6 +213,16 @@ export const make = Effect.gen(function* () {
         supportsOomPolicy,
       };
     }),
+    // Callers sharing a failed probe hear it at different times, so the cache
+    // expires failures itself; a late caller cannot clear a newer success.
+    (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+  );
+  const systemd = detectSystemd.pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("Agent scopes are off until systemd answers", { cause }).pipe(
+        Effect.as(undefined),
+      ),
+    ),
   );
 
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
