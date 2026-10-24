@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -43,6 +44,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
+  const daemonHealthy = yield* Ref.make(true);
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -87,15 +89,56 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+        Ref.get(daemonHealthy).pipe(
+          Effect.map((healthy) =>
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("ok", {
+                status: request.url.endsWith("/health") && !healthy ? 503 : 200,
+              }),
+            ),
+          ),
+        ),
       ),
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir };
+  return { host, fs, stateDir, daemonHealthy };
 });
 
 describe("AgentDevice startup", () => {
+  it.effect("restarts a cached daemon that no longer answers its health check", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let attempts = 0;
+      const { host, daemonHealthy } = yield* agentFixture((stateDir) =>
+        Effect.gen(function* () {
+          attempts++;
+          yield* fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+            )
+            .pipe(Effect.orDie);
+          return processOutput(0);
+        }),
+      );
+      const first = yield* host.ensureAgentReady(() => Effect.void);
+      expect((yield* host.ensureAgentReady(() => Effect.void)).agentDevice).toEqual(
+        first.agentDevice,
+      );
+      expect(attempts).toBe(1);
+
+      yield* Ref.set(daemonHealthy, false);
+      const restarted = yield* host.ensureAgentReady(() => Effect.void);
+      expect(attempts).toBe(2);
+      expect(restarted.agentDevice).toMatchObject({
+        baseUrl: "http://127.0.0.1:12347",
+        token: "token-2",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports an incompatible lock immediately and retains it for manual repair", () =>
     Effect.gen(function* () {
       const result = processOutput(
