@@ -132,10 +132,11 @@ export function museApprovalMode(runtimeMode: RuntimeMode) {
 /**
  * The permission profile `session/start` and `session/resume` select. Without
  * one Muse applies its own default, which can be `:auto-review`, where an AI
- * reviewer decides eligible approvals instead of the user.
+ * reviewer decides eligible approvals instead of the user. Only Auto asks for it.
  */
 export function musePermissionProfile(runtimeMode: RuntimeMode) {
-  return runtimeMode === "full-access" ? ":unrestricted" : ":ask-me";
+  if (runtimeMode === "full-access") return ":unrestricted";
+  return runtimeMode === "auto" ? ":auto-review" : ":ask-me";
 }
 
 export function museServeArgs(

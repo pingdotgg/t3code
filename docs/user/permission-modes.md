@@ -21,12 +21,11 @@ not prevent the agent from asking questions about the task.
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
-**Auto** uses automatic review on Codex, Claude, Cursor, and Grok; providers without an equivalent,
-including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
-to you for approval.
+**Auto** uses automatic review on Codex, Claude, Cursor, Grok, and Muse Code; providers without an
+equivalent, including OpenCode and Antigravity, fall back to asking. On Grok, commands its review
+blocks come to you for approval.
 
-Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
-runs in **Supervised**.
+Muse Code offers no **Auto-accept edits**. A Muse thread already set to it runs in **Supervised**.
 
 Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Grok
 file-change approvals offer **Allow all edits this session**. Its command approvals have no
