@@ -15,7 +15,7 @@ import { AsyncResult } from "effect/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { InfoIcon, Trash2Icon } from "lucide-react";
+import { DownloadIcon, InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -25,6 +25,8 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
+import { agentSessionImport, agentSessionRescan } from "../../state/agentSessions";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
@@ -185,6 +187,8 @@ function ProjectDetail({
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
+  const rescanSessions = useAtomCommand(agentSessionRescan, { reportFailure: false });
+  const importSessions = useOrchestrationCommand(agentSessionImport, { reportFailure: false });
   const projectNameEditedRef = useRef(false);
 
   const faviconPath = representative.faviconPath ?? null;
@@ -291,6 +295,77 @@ function ProjectDetail({
       return;
     }
     await updateAllMembers({ title }, "Failed to rename project");
+  };
+
+  // Onboarding imports in bulk; this reruns the same idempotent import for a project that
+  // already exists, e.g. to pick up sessions started in a terminal after setup.
+  // Checkouts import independently, so one this connection cannot change does not block the rest.
+  const importableMembers = group.memberProjects.filter((member) =>
+    editableIds.has(member.environmentId),
+  );
+  const [isImportingSessions, setIsImportingSessions] = useState(false);
+  const importMemberSessions = async () => {
+    setIsImportingSessions(true);
+    let importedCount = 0;
+    let skippedCount = 0;
+    let succeededCount = 0;
+    let scanIncomplete = false;
+    try {
+      for (const member of importableMembers) {
+        // A failed rescan may still have refreshed what import reads, so import anyway and say the
+        // result may be missing sessions rather than claiming there were none.
+        const scanned = await rescanSessions({ environmentId: member.environmentId, input: {} });
+        if (scanned._tag === "Failure" || scanned.value.truncated === true) scanIncomplete = true;
+        const result = await importSessions({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, expectedWorkspaceRoot: member.workspaceRoot },
+        });
+        if (result._tag === "Failure") {
+          reportFailure(
+            importableMembers.length > 1
+              ? `Failed to import sessions on ${member.environmentLabel ?? "the current environment"}`
+              : "Failed to import sessions",
+            mapAtomCommandResult(result, () => undefined),
+          );
+          continue;
+        }
+        succeededCount += 1;
+        importedCount += result.value.importedCount;
+        skippedCount += result.value.skippedCount;
+      }
+    } finally {
+      setIsImportingSessions(false);
+    }
+    if (succeededCount === 0) return;
+    // importedCount includes sessions an earlier run already imported.
+    const notes = [
+      `${importedCount} ${importedCount === 1 ? "session" : "sessions"} from the last 30 days ${importedCount === 1 ? "is" : "are"} imported.`,
+      ...(skippedCount > 0
+        ? [
+            `${skippedCount} ${skippedCount === 1 ? "was" : "were"} not; import again to continue a large batch.`,
+          ]
+        : []),
+      ...(scanIncomplete
+        ? ["The scan for new conversations did not finish, so some may be missing."]
+        : []),
+    ].join(" ");
+    toastManager.add(
+      skippedCount > 0 || scanIncomplete
+        ? {
+            type: "warning",
+            title:
+              skippedCount > 0 ? "Some sessions were not imported" : "Some sessions may be missing",
+            description: notes,
+          }
+        : importedCount === 0
+          ? {
+              type: "info",
+              title: "No sessions to import",
+              description:
+                "No Claude Code or Codex conversations from the last 30 days ran in this folder.",
+            }
+          : { type: "success", title: "Sessions imported", description: notes },
+    );
   };
 
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
@@ -544,6 +619,22 @@ function ProjectDetail({
                   Choose file
                 </Button>
               </div>
+            }
+          />
+          <SettingsRow
+            title="Import sessions"
+            description="Adds Claude Code and Codex conversations from the last 30 days that ran in this project's folder. Already imported conversations are skipped."
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                disabled={isImportingSessions || importableMembers.length === 0}
+                onClick={() => void importMemberSessions()}
+              >
+                <DownloadIcon />
+                {isImportingSessions ? "Importing…" : "Import"}
+              </Button>
             }
           />
         </SettingsSection>

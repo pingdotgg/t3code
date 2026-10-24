@@ -13,6 +13,12 @@ export const agentSessionScan = createEnvironmentRpcQueryAtomFamily(connectionAt
   idleTtlMs: 5 * 60_000,
 });
 
+// Import reads the server's last scan, so a standalone import rescans first to see new sessions.
+export const agentSessionRescan = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:rescan",
+  tag: WS_METHODS.agentSessionsScan,
+});
+
 export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,
