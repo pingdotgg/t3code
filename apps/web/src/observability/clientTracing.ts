@@ -18,6 +18,7 @@ const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
   attributes: {
     "service.namespace": "t3code",
+    "deployment.environment.name": import.meta.env.DEV ? "development" : "production",
     "service.runtime": "t3-web",
     "service.mode": isElectron ? "electron" : "browser",
     "service.version": APP_VERSION,
