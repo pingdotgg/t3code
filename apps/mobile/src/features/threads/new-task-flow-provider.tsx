@@ -778,6 +778,9 @@ export function NewTaskFlowProvider(
         projectId: selectedProject.id,
         projectTitle: selectedProject.title,
         projectCwd: selectedProject.workspaceRoot,
+        ...(selectedProject.groupingIdentity !== undefined
+          ? { groupingIdentity: selectedProject.groupingIdentity }
+          : {}),
         workspaceMode: mode,
         ...(mode === "worktree" && workspaceSelection?.pullRequestReference
           ? { pullRequestReference: workspaceSelection.pullRequestReference }

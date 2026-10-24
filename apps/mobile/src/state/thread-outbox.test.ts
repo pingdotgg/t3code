@@ -1187,6 +1187,23 @@ describe("thread outbox", () => {
     ).toBe("remove");
   });
 
+  it.each([null, "39c61a1b-8a64-43a6-9da5-65c15da93d52"])(
+    "round-trips queued project grouping identity %s",
+    (groupingIdentity) => {
+      const message = {
+        ...queuedMessage({ messageId: "grouped", createdAt: "2026-06-08T10:00:01.000Z" }),
+        creation: {
+          projectId: ProjectId.make("sdk"),
+          groupingIdentity,
+          workspaceMode: "local" as const,
+          branch: null,
+          worktreePath: null,
+        },
+      };
+      expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(message))).toEqual(message);
+    },
+  );
+
   it("round-trips queued PR checkout sources and gates incomplete creations from sending", () => {
     const base = queuedMessage({
       messageId: "message-1",

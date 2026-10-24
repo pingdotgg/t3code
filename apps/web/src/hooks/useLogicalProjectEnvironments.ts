@@ -9,7 +9,7 @@ import {
 
 import type { EnvironmentOption } from "../components/BranchToolbar.logic";
 import {
-  deriveLogicalProjectKeyFromSettings,
+  resolveProjectGroup,
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useProjects } from "../state/entities";
@@ -58,11 +58,10 @@ export function useLogicalProjectEnvironments(
       pushEnvironment(environment.environmentId, scratchProject?.id ?? null);
     }
   } else {
-    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
+    const group = resolveProjectGroup(activeProject, allProjects, projectGroupingSettings);
     const seen = new Set<string>();
-    for (const p of allProjects) {
+    for (const { project: p } of group?.members ?? []) {
       if (seen.has(p.environmentId)) continue;
-      if (deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey) continue;
       seen.add(p.environmentId);
       pushEnvironment(p.environmentId, p.id);
     }

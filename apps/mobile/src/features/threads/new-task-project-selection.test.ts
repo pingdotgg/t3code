@@ -124,6 +124,41 @@ describe("resolveNewTaskEnvironmentProject", () => {
     sidebarProjectGroupingOverrides: {},
   };
 
+  it("routes duplicate physical records using the same inherited Git identity as project grouping", () => {
+    const older = makeProject("older", "mac", {
+      workspaceRoot: "/sdk",
+      repositoryKey: "github.com/g/sdk",
+    });
+    const selectedProject = {
+      ...makeProject("newer", "mac", { workspaceRoot: "/sdk" }),
+      groupingIdentity: "39c61a1b-8a64-43a6-9da5-65c15da93d52",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    };
+    const remote = makeProject("copy", "server", { repositoryKey: "github.com/g/sdk" });
+    const projects = [selectedProject, older, remote];
+    expect(
+      resolveNewTaskEnvironmentProject({
+        environmentId: remote.environmentId,
+        projects,
+        selectedProject,
+        pendingProject: null,
+        settings,
+      }),
+    ).toBe(remote);
+    expect(
+      resolveNewTaskEnvironments({
+        projects,
+        selectedProject,
+        settings,
+        pendingTaskEnvironmentId: null,
+        savedConnectionsById: {
+          mac: { environmentLabel: "Mac" },
+          server: { environmentLabel: "Server" },
+        },
+      }).map((environment) => environment.environmentId),
+    ).toEqual(["mac", "server"]);
+  });
+
   it("preserves the queued project's identity when its host has no loaded projects", () => {
     const pendingProject = makeProject("queued-project", "offline");
     const unrelated = makeProject("unrelated", "server");
