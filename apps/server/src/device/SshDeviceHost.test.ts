@@ -26,6 +26,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    let iosAvailable = true;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -71,7 +72,10 @@ it.effect("preserves installed status after probes and cleans failed agent activ
           owners.push(/const owner = "([^"]+)"/.exec(script)?.[1] ?? "");
           output = JSON.stringify({
             nodePath: "/node",
-            platforms: [{ platform: "ios", available: true }],
+            platforms: [
+              { platform: "ios", available: iosAvailable },
+              { platform: "android", available: false },
+            ],
             hubPort: 1234,
             helpers: { serveSimAxSettings: null, serveSimCli: null },
             ...(mode === "agent-start"
@@ -118,7 +122,14 @@ it.effect("preserves installed status after probes and cleans failed agent activ
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url.endsWith("/api/devices")
+                ? Response.json({ simulators: [], emulators: [] })
+                : new Response("ok"),
+            ),
+          ),
         ),
       ),
     );
@@ -139,6 +150,13 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     const ready = yield* host.current;
     expect(ready).not.toBeNull();
     if (ready) {
+      iosAvailable = false;
+      for (let refresh = 0; refresh < 2; refresh++) {
+        const before = modes.length;
+        expect((yield* ready.devices.list).devices).toEqual([]);
+        // One fresh probe for both platforms, not the startup snapshot or two SSH sessions.
+        expect(modes.slice(before)).toEqual(["probe"]);
+      }
       const failed = yield* ready.run("emulator", ["-list-avds"]);
       expect(failed.code).toBe(1);
       expect(failed.stdout).toMatch(/^\[truncated\]/);
