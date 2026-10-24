@@ -124,7 +124,8 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
   it.effect("installs a verified download with its file modes and then reuses it", () =>
     Effect.gen(function* () {
       const { browser, fs, path, installRoot, requests } = yield* makeHarness();
-      yield* fs.makeDirectory(path.join(installRoot, "1.0.0"), { recursive: true });
+      yield* fs.makeDirectory(path.join(installRoot, "0.9.0"), { recursive: true });
+      yield* fs.makeDirectory(path.join(installRoot, "0.10.0"));
       const active = path.join(installRoot, ".install-other");
       const abandoned = path.join(installRoot, ".install-abandoned");
       yield* fs.makeDirectory(active);
@@ -147,6 +148,7 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       }
       expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual([
         ".install-other",
+        "0.10.0",
         "1.2.3",
       ]);
       expect(yield* browser.executable).toBe(executable);
