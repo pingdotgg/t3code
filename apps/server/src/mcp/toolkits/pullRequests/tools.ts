@@ -32,7 +32,7 @@ const guideDependencies = [
 ];
 
 const REGISTER_EVERY_PR =
-  "Register every pull request you open for this thread, including each layer of a stack, right after creating it.";
+  "Register every pull request you create for this thread, including each layer of a stack, right after creating it. Do not link pull requests you only read or review.";
 
 export const PullRequestTargetInput = Schema.Struct({
   threadId: Schema.optional(

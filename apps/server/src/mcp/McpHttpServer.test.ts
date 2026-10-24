@@ -438,7 +438,10 @@ it.effect(
       const linkTool = server.tools.find(({ tool }) => tool.name === "link_pull_request");
       expect(linkTool?.tool.annotations?.idempotentHint).toBe(true);
       expect(linkTool?.tool.annotations?.openWorldHint).toBe(false);
-      expect(linkTool?.tool.description).toContain("Register every pull request you open");
+      expect(linkTool?.tool.description).toContain("Register every pull request you create");
+      expect(linkTool?.tool.description).toContain(
+        "Do not link pull requests you only read or review.",
+      );
 
       const denied = yield* server
         .callTool({ name: "list_thread_pull_requests", arguments: {} })
