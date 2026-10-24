@@ -4,12 +4,14 @@
  * the relay shares it.
  */
 import {
+  DESKTOP_PREVIEW_CAPTURE_SURFACE_TRIGGER,
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserEvent as DesktopBrowserEventType,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -26,6 +28,8 @@ const lineEncoder = new TextEncoder();
 const AGENT_INPUT_COMMAND =
   /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
 const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
+// The renderer gives up on readiness after 1s; this only catches a renderer that never answers.
+const CAPTURE_SURFACE_READY_TIMEOUT = "2 seconds";
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -84,6 +88,7 @@ export const make = Effect.gen(function* () {
     readonly y: number;
   }>(16);
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const tabs = new Map<string, AttachedTab>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
@@ -112,7 +117,7 @@ export const make = Effect.gen(function* () {
         }
         const turn = {};
         tab.screenshotTurn = turn;
-        capture()
+        withCaptureSurface(tab, relay, turn, capture)
           .finally(() => {
             if (tab.screenshotTurn === turn) nextScreenshot(tab);
           })
@@ -121,6 +126,42 @@ export const make = Effect.gen(function* () {
       if (tab.screenshotTurn === null) start();
       else tab.waitingScreenshots.push(start);
     });
+
+  const withCaptureSurface = async (
+    tab: AttachedTab,
+    relay: CdpRelayConnection,
+    turn: object,
+    capture: () => Promise<unknown>,
+  ) => {
+    const wc = tab.debuggee.webContents;
+    const host = wc.hostWebContents;
+    if (!host || host.isDestroyed() || wc.isDestroyed()) return capture();
+    const captureId = NodeCrypto.randomUUID();
+    const setSurface = (active: boolean) =>
+      host.executeJavaScript(
+        `globalThis[${JSON.stringify(DESKTOP_PREVIEW_CAPTURE_SURFACE_TRIGGER)}]?.(${wc.id}, ${JSON.stringify(captureId)}, ${active})`,
+      );
+    try {
+      // The guest stays offscreen until React commits the activity lease and Electron
+      // receives its new bounds. CDP can otherwise wait forever for a composited frame.
+      // A window that isn't painting, like a minimized one, never reports ready, yet its
+      // on-screen tab can still be captured, so the screenshot is sent either way.
+      // A renderer that never answers would hold this screenshot and every one queued behind it.
+      await runPromise(
+        Effect.tryPromise(() => setSurface(true)).pipe(
+          Effect.timeoutOption(CAPTURE_SURFACE_READY_TIMEOUT),
+          Effect.ignore,
+        ),
+      );
+      if (tab.relay !== relay || tab.screenshotTurn !== turn || wc.isDestroyed()) {
+        throw new Error("The preview connection that asked for this screenshot closed.");
+      }
+      return await capture();
+    } finally {
+      // The renderer bounds its own lease, so the result needn't wait for its answer.
+      if (!host.isDestroyed()) void setSurface(false).catch(() => undefined);
+    }
+  };
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;

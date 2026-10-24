@@ -19,6 +19,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
+import { installBrowserCaptureSurface } from "./browserCaptureSurface";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
@@ -26,6 +27,7 @@ import { rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 export function ElectronBrowserHost() {
+  useEffect(() => (isElectron ? installBrowserCaptureSurface() : undefined), []);
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
