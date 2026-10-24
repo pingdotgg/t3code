@@ -7,6 +7,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import { releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import {
   parsePersistedServerObservabilitySettings,
   type PersistedServerObservabilitySettings,
@@ -597,14 +598,22 @@ const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const endpoints = yield* resolveOtlpEndpoints;
+    // Unpackaged runs launch a script, so Electron reports its own version.
+    const serviceVersion = environment.isPackaged
+      ? environment.appVersion
+      : desktopPackageJson.version;
     const resource = {
       serviceName: "t3code-desktop",
-      // Unpackaged runs launch a script, so Electron reports its own version.
-      serviceVersion: environment.isPackaged ? environment.appVersion : desktopPackageJson.version,
+      serviceVersion,
       attributes: {
         "service.namespace": "t3code",
         "service.runtime": "desktop",
         "service.mode": environment.isDevelopment ? "development" : "packaged",
+        ...releaseResourceAttributes({
+          version: serviceVersion,
+          operatorAttributes: endpoints.resourceAttributes,
+          isDevelopment: environment.isDevelopment,
+        }),
         "host.name": endpoints.resourceAttributes["host.name"] || (yield* HostProcess.Hostname),
       },
     };

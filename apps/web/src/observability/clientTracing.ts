@@ -9,21 +9,18 @@ import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-run
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import * as ClientTracer from "./clientTracer";
+import { clientTracingResource } from "./clientResource";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
-const CLIENT_TRACING_RESOURCE = {
-  serviceName: "t3code-web",
-  attributes: {
-    "service.namespace": "t3code",
-    "deployment.environment.name": import.meta.env.DEV ? "development" : "production",
-    "service.runtime": "t3-web",
-    "t3code.client.surface": isElectron ? "desktop" : "web",
-    "service.version": APP_VERSION,
-  },
-} as const;
+const CLIENT_TRACING_RESOURCE = clientTracingResource({
+  version: APP_VERSION,
+  isDevelopment: import.meta.env.DEV,
+  releaseChannel: import.meta.env.VITE_RELEASE_CHANNEL,
+  surface: isElectron ? "desktop" : "web",
+});
 
 const layerDelegateRuntime = Layer.mergeAll(
   PrimaryEnvironmentHttpLayer.layer,

@@ -281,6 +281,43 @@ describe("DesktopObservability", () => {
     ),
   );
 
+  it.effect("reports its own release channel and keeps an operator environment", () => {
+    const requests: Array<ExportedRequest> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-observability-test-",
+      });
+      const layerEnvironment = layerEnvironmentFor(baseDir, true, {
+        T3CODE_OTLP_LOGS_URL: "https://collector.example.com/v1/logs",
+      });
+
+      yield* Effect.scoped(
+        Effect.logInfo("desktop operator environment").pipe(
+          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(layerEnvironment))),
+        ),
+      );
+
+      assert.lengthOf(requests, 1);
+      const body = requests[0]?.body ?? "";
+      assert.include(body, '"key":"deployment.environment.name","value":{"stringValue":"staging"}');
+      assert.include(body, '"key":"t3code.release.channel","value":{"stringValue":"dev"}');
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerCollector(requests),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: { OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=staging" },
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("stops every export when the OpenTelemetry SDK is disabled", () => {
     const requests: Array<ExportedRequest> = [];
     return Effect.gen(function* () {
@@ -311,6 +348,36 @@ describe("DesktopObservability", () => {
           ConfigProvider.layer(ConfigProvider.fromEnv({ env: { OTEL_SDK_DISABLED: "true" } })),
         ),
       ),
+    );
+  });
+
+  it.effect("reports the app's own release identity for a non-development run", () => {
+    const requests: Array<ExportedRequest> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-observability-test-",
+      });
+      const layerEnvironment = layerEnvironmentFor(baseDir, false);
+      yield* writeObservabilitySettings(layerEnvironment, {
+        otlpLogsUrl: "https://settings.example.com/v1/logs",
+      });
+
+      yield* Effect.scoped(
+        Effect.logInfo("desktop identity under test").pipe(
+          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(layerEnvironment))),
+        ),
+      );
+
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(
+        body,
+        '"key":"deployment.environment.name","value":{"stringValue":"production"}',
+      );
+      assert.include(body, '"key":"t3code.release.channel","value":{"stringValue":"stable"}');
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, layerCollector(requests), layerEmptyEnv)),
     );
   });
 
