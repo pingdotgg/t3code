@@ -2695,6 +2695,44 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("uses an explicit project's provider settings for generated commit text", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nproject\n");
+      const projectId = ProjectId.make("project:git-action-settings");
+      const disabledInstanceId = DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId;
+      let generatedModelSelection:
+        | TextGeneration.CommitMessageGenerationInput["modelSelection"]
+        | undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          projectSettingsOverrides: {
+            [projectId]: {
+              providerInstances: { [disabledInstanceId]: { enabled: false } },
+            },
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedModelSelection = input.modelSelection;
+            return Effect.succeed({ subject: "Use the project writer", body: "" });
+          },
+        },
+      });
+
+      yield* manager.runStackedAction({
+        actionId: "test-project-action-settings",
+        cwd: repoDir,
+        action: "commit",
+        projectId,
+      });
+
+      expect(generatedModelSelection?.instanceId).toBe(ProviderInstanceId.make("claudeAgent"));
+    }),
+  );
+
   it.effect("applies a V2-native thread's project settings to generated commit text", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
