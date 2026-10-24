@@ -1650,6 +1650,12 @@ body {
   padding: 0;
 }
 
+/* Coding fonts chosen as the interface font ligate `://` and `//`, which
+   reads as a dropped slash while typing a URL. */
+[data-preview-url-input] {
+  font-variant-ligatures: none;
+}
+
 html,
 body {
   min-height: calc(100svh + env(safe-area-inset-top));
