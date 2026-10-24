@@ -691,12 +691,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  const refreshAfterShutdown = (ready: DeviceReadiness) =>
+    refresh(ready).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
+      ),
+    );
+
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
     hostId: DeviceHostId,
     deviceId: DeviceId,
     platform: DevicePlatform,
+    readyOverride?: DeviceReadiness,
   ) {
-    const ready = yield* readiness(hostId);
+    const ready = readyOverride ?? (yield* readiness(hostId));
     yield* ready.devices.shutdown({ id: deviceId, platform });
     yield* publish((state) => ({
       ...state,
@@ -705,40 +713,79 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ? { ...device, booted: false }
           : device,
       ),
-      sessions: state.sessions.filter(
-        (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
-      ),
+      // Close removes each record only after its own release, so other
+      // threads keep theirs for their own close.
+      sessions: readyOverride
+        ? state.sessions
+        : state.sessions.filter(
+            (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
+          ),
     }));
     // Discovery can stall while an emulator saves its snapshot. A failed
     // refresh must not turn an accepted shutdown into an action failure.
-    yield* refresh(ready).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
-      ),
-    );
+    if (!readyOverride) yield* refreshAfterShutdown(ready);
   });
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
     function* (input) {
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      const closing = state.sessions.filter(
-        (session) =>
-          session.threadId === input.threadId &&
-          (input.hostId === undefined || session.hostId === input.hostId) &&
-          (input.deviceId === undefined || session.deviceId === input.deviceId),
+      // Open publishes under the same lock; an old close must not release a reopened claim.
+      const closing = yield* lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          const { state } = yield* SynchronizedRef.get(stateRef);
+          const closing = state.sessions.filter(
+            (session) =>
+              session.threadId === input.threadId &&
+              (input.hostId === undefined || session.hostId === input.hostId) &&
+              (input.deviceId === undefined || session.deviceId === input.deviceId),
+          );
+          for (const session of closing) {
+            const host = yield* resolveHost(session.hostId);
+            const ready = yield* host.current;
+            // A lost SSH tunnel does not establish that the remote daemon stopped.
+            if (!ready && (yield* host.summary).kind === "ssh")
+              return yield* new DeviceHostUnavailableError({
+                hostId: session.hostId,
+                hostLabel: host.label,
+                reason: "Device host is reconnecting. Retry close after it reconnects.",
+              });
+            if (ready?.releaseAgentSession) {
+              const name = yield* agentDeviceSession(
+                session.threadId,
+                session.hostId,
+                session.deviceId,
+              ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+              yield* ready.releaseAgentSession(name, session.deviceId);
+            }
+            // Keep the record until cleanup succeeds so a failed remote close can be retried.
+            if (input.shutdown) {
+              if (!ready)
+                return yield* new DeviceHostUnavailableError({
+                  hostId: session.hostId,
+                  hostLabel: host.label,
+                  reason: "Device host is not running. Reconnect before retrying close.",
+                });
+              yield* shutdownDevice(session.hostId, session.deviceId, session.platform, {
+                hostId: session.hostId,
+                ...ready,
+              });
+            }
+            yield* publish((current) => ({
+              ...current,
+              sessions: current.sessions.filter((existing) => existing !== session),
+            }));
+          }
+          return closing;
+        }),
       );
-      if (closing.length === 0) return;
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter((session) => !closing.includes(session)),
-      }));
-      if (input.shutdown) {
+      if (input.shutdown)
         yield* Effect.forEach(
           closing,
-          (session) => shutdownDevice(session.hostId, session.deviceId, session.platform),
+          (session) =>
+            currentReadiness(session.hostId).pipe(
+              Effect.flatMap((ready) => (ready ? refreshAfterShutdown(ready) : Effect.void)),
+            ),
           { discard: true },
         );
-      }
     },
   );
 

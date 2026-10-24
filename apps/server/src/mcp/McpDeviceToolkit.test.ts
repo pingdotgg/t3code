@@ -235,3 +235,62 @@ it.effect("rejects unavailable agent access before booting or opening a device",
     ),
   );
 });
+
+it.effect("returns agent arguments for the booted Android serial", () => {
+  const targets: string[] = [];
+  const cold = {
+    ...device,
+    id: "Cold_AVD",
+    name: "Cold_AVD",
+    platform: "android" as const,
+    booted: false,
+  };
+  const layer = Layer.mock(DeviceService.DeviceService)({
+    list: Effect.succeed({ ...state, devices: [cold] }),
+    state: Effect.succeed({ ...state, devices: [{ ...cold, id: "emulator-5554", booted: true }] }),
+    agentCli: Effect.succeed("/cli"),
+    agentReadinessIfSupported: () => Effect.succeed(readiness),
+    agentTarget: (input) =>
+      Effect.sync(() => {
+        targets.push(input.deviceId);
+        return {
+          agentDeviceId: input.deviceId,
+          args: ["--config", "/host.json", "--session", input.deviceId],
+        };
+      }),
+    open: () =>
+      Effect.succeed({
+        threadId,
+        hostId: "local",
+        deviceId: "emulator-5554",
+        platform: "android" as const,
+        openedAt: "2026-09-08T00:00:00.000Z",
+      }),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "device_open", arguments: { platform: "android" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(targets).toEqual(["emulator-5554"]);
+    expect(result.structuredContent).toMatchObject({
+      agentDevice: { targetArgs: expect.arrayContaining(["--session", "emulator-5554"]) },
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.layerDeviceToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(layer),
+        Layer.provide(layerProjectsMock),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-cold-avd-" })),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});

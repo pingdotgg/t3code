@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { EasDeviceHostConfig } from "@t3tools/contracts";
+import { type EasDeviceHostConfig, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,6 +15,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as DeviceService from "./DeviceService.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 
 const APP_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
@@ -56,9 +59,12 @@ const fakeExpo = (
     readonly activeIncludesCreated?: boolean;
     readonly failPreview?: boolean;
     readonly omitCreatedFromActive?: boolean;
+    /** The session's agent-device daemon answers with a server error. */
+    readonly failAgent?: () => boolean;
   } = {},
 ) => {
   const calls: Array<{ operation: string; variables: Record<string, unknown> }> = [];
+  const releases: Array<unknown> = [];
   let created = 0;
   let createdName = "";
   let previewFails = options.failPreview ?? false;
@@ -77,6 +83,18 @@ const fakeExpo = (
           return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
         }
         return HttpClientResponse.fromWeb(request, Response.json({ device: "UDID-1" }));
+      }
+      if (url.origin === "https://agent.test") {
+        expect(request.headers.authorization).toBe("Bearer agent-token");
+        if (request.body._tag === "Uint8Array") {
+          const rpc = JSON.parse(new TextDecoder().decode(request.body.body)) as {
+            params: { command: string; session: string };
+          };
+          if (rpc.params.command === "close") releases.push(rpc.params.session);
+        }
+        if (options.failAgent?.())
+          return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
+        return HttpClientResponse.fromWeb(request, Response.json({ result: { ok: true } }));
       }
       const body =
         request.body._tag === "Uint8Array"
@@ -194,7 +212,7 @@ const fakeExpo = (
   const allowCreate = () => {
     createFails = false;
   };
-  return { http, named, stopped, allowPreview, allowCreate };
+  return { http, named, stopped, allowPreview, allowCreate, releases };
 };
 
 const layer = Layer.mergeAll(
@@ -471,5 +489,64 @@ describe("EAS Simulator host", () => {
       expect(failure.message).toContain("was stopped while the session started");
       expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("releases each thread's agent session on close and keeps the session running", () =>
+    Effect.gen(function* () {
+      let agentFails = false;
+      const expo = fakeExpo({ failAgent: () => agentFails });
+      const host = yield* makeHost(expo, config(), yield* Scope.make());
+      const service = yield* DeviceService.makeWithHosts(new Map([["eas", host]]), undefined, () =>
+        Effect.succeed("/eas-agent.json"),
+      );
+      const first = ThreadId.make("first");
+      const second = ThreadId.make("second");
+      const opened = yield* service.open({
+        threadId: first,
+        hostId: "eas",
+        deviceId: "eas-ios",
+        platform: "ios",
+      });
+      expect(opened.deviceId).toBe("session-1");
+      yield* service.open({
+        threadId: second,
+        hostId: "eas",
+        deviceId: opened.deviceId,
+        platform: "ios",
+      });
+      const sessionOf = (threadId: ThreadId) =>
+        service
+          .agentTarget({ threadId, hostId: "eas", deviceId: opened.deviceId })
+          .pipe(Effect.map((target) => target.args[3]));
+      const firstSession = yield* sessionOf(first);
+      const secondSession = yield* sessionOf(second);
+
+      yield* service.close({ threadId: first });
+      expect(expo.releases).toEqual([firstSession]);
+      expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([second]);
+
+      agentFails = true;
+      const failed = yield* Effect.exit(service.close({ threadId: second, shutdown: false }));
+      expect(Exit.isFailure(failed)).toBe(true);
+      expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([second]);
+
+      agentFails = false;
+      yield* service.close({ threadId: second, shutdown: false });
+      expect(expo.releases).toEqual([firstSession, secondSession, secondSession]);
+      expect((yield* service.state).sessions).toEqual([]);
+      expect(expo.stopped()).not.toContain("session-1");
+      expect(
+        (yield* service.state).devices.find((device) => device.id === "session-1")?.booted,
+      ).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          NodeCrypto.layer,
+          ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+        ),
+      ),
+    ),
   );
 });
