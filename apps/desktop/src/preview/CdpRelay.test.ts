@@ -14,6 +14,9 @@ const makeTarget = (
   setDownloadDirectory,
 });
 
+const makeRelay = (target: CdpRelayTarget, write: (raw: string) => void) =>
+  createCdpRelayConnection(target, write, () => {});
+
 // Each relay reply resolves after a few microtasks; one macrotask lets them all land.
 // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary, not a wait for time
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -21,9 +24,7 @@ const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 describe("CDP relay", () => {
   it("announces only the tab's page, under its real target id", async () => {
     const written: Array<Record<string, unknown>> = [];
-    const relay = createCdpRelayConnection(makeTarget(vi.fn()), (raw) =>
-      written.push(JSON.parse(raw)),
-    );
+    const relay = makeRelay(makeTarget(vi.fn()), (raw) => written.push(JSON.parse(raw)));
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
     relay.receive(JSON.stringify({ id: 2, method: "Target.createTarget", params: {} }));
     await settle();
@@ -51,9 +52,7 @@ describe("CDP relay", () => {
         new Promise<unknown>((resolve) => pending.push(() => resolve({ method }))),
     );
     const written: Array<Record<string, unknown>> = [];
-    const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
-      written.push(JSON.parse(raw)),
-    );
+    const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
     relay.receive(
       JSON.stringify({ id: 5, method: "Page.captureScreenshot", sessionId: "t3-preview-page" }),
     );
@@ -76,7 +75,7 @@ describe("CDP relay", () => {
 
   it("resumes paused child frames, so cross-site iframes run", async () => {
     const send = vi.fn(async () => ({}));
-    const relay = createCdpRelayConnection(makeTarget(send), () => {});
+    const relay = makeRelay(makeTarget(send), () => {});
     relay.receive(
       JSON.stringify({
         id: 1,
@@ -97,9 +96,7 @@ describe("CDP relay", () => {
 
   it("routes tab events to the page session once the page is announced", async () => {
     const written: Array<Record<string, unknown>> = [];
-    const relay = createCdpRelayConnection(makeTarget(vi.fn()), (raw) =>
-      written.push(JSON.parse(raw)),
-    );
+    const relay = makeRelay(makeTarget(vi.fn()), (raw) => written.push(JSON.parse(raw)));
     relay.event("Page.loadEventFired", {}, undefined);
     expect(written).toEqual([]);
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
@@ -118,9 +115,7 @@ describe("CDP relay extra sessions", () => {
   it("gives a second page session the page's commands and events", async () => {
     const send = vi.fn(async () => ({}));
     const written: Array<Record<string, unknown>> = [];
-    const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
-      written.push(JSON.parse(raw)),
-    );
+    const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
     relay.receive(JSON.stringify({ id: 2, method: "Target.attachToBrowserTarget" }));
     await settle();
@@ -160,7 +155,7 @@ describe("CDP relay downloads", () => {
     const send = vi.fn(async () => ({}));
     const directories: Array<string | null> = [];
     const written: Array<Record<string, unknown>> = [];
-    const relay = createCdpRelayConnection(
+    const relay = makeRelay(
       makeTarget(send, (directory) => directories.push(directory)),
       (raw) => written.push(JSON.parse(raw)),
     );
@@ -189,5 +184,55 @@ describe("CDP relay downloads", () => {
     expect(written).toEqual([
       { method: "Browser.downloadWillBegin", params: { guid: "g1", suggestedFilename: "r.csv" } },
     ]);
+  });
+});
+
+describe("CDP relay payload budget", () => {
+  // 2,048 references to one 40 KiB string: about 80 MiB once serialized, little memory here.
+  const oversized = Array(2048).fill("x".repeat(40 * 1024));
+
+  it("fails only an oversized reply and still returns a large screenshot", async () => {
+    const screenshot = "A".repeat(16 * 1024 * 1024);
+    const send = vi.fn(async (method: string) =>
+      method === "DOM.getDocument" ? { nodes: oversized } : { data: screenshot },
+    );
+    const written: Array<Record<string, unknown>> = [];
+    const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+    relay.receive(
+      JSON.stringify({ id: 1, method: "DOM.getDocument", sessionId: "t3-preview-page" }),
+    );
+    relay.receive(
+      JSON.stringify({ id: 2, method: "Page.captureScreenshot", sessionId: "t3-preview-page" }),
+    );
+    await settle();
+
+    const replies = written.map(({ id, error, result }) => ({
+      id,
+      error,
+      size: (result as { data?: string } | undefined)?.data?.length,
+    }));
+    expect(replies).toEqual([
+      { id: 1, error: { code: -32000, message: "CDP payload too large" }, size: undefined },
+      { id: 2, error: undefined, size: screenshot.length },
+    ]);
+  });
+
+  it("closes instead of dropping an oversized event", async () => {
+    const written: Array<Record<string, unknown>> = [];
+    const close = vi.fn();
+    const relay = createCdpRelayConnection(
+      makeTarget(vi.fn()),
+      (raw) => written.push(JSON.parse(raw)),
+      close,
+    );
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+    await settle();
+    written.length = 0;
+
+    relay.event("Runtime.consoleAPICalled", { args: oversized }, "");
+    relay.event("Page.loadEventFired", { timestamp: 1 }, "");
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(written.map((message) => message["method"])).toEqual([]);
   });
 });

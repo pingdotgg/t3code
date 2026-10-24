@@ -151,6 +151,11 @@ export const make = Effect.gen(function* () {
           emit({ type: "cdp", ...tab.key, message });
         }
       },
+      // Announcing the tab again would reconnect Playwright, and the page could
+      // replay the same oversized event, so the tab stays detached.
+      () => {
+        if (tab.relay === relay && tabs.get(keyOf(tab.key)) === tab) detach(tab.key);
+      },
     );
     tab.relay = relay;
     return relay;

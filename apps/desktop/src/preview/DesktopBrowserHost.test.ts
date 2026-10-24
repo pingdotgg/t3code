@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as NodeEvents from "node:events";
 
@@ -247,5 +248,46 @@ describe("DesktopBrowserHost", () => {
       );
       expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
     }),
+  );
+
+  it.effect("detaches only the tab whose CDP event is too large to relay", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const tabs = [makeDebuggee(), makeDebuggee()];
+      const keys = [key, { threadId: "thread-2", tabId: "tab-2" }];
+      const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
+        ),
+        Effect.forkScoped,
+      );
+      for (const [index, tabKey] of keys.entries()) {
+        host.attach(tabKey, tabs[index]!.tab);
+        expect(yield* Queue.take(events)).toEqual({ type: "attached", ...tabKey });
+        yield* host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...tabKey,
+            message: encodeJson({ id: 1, method: "Target.setAutoAttach" }),
+          }),
+        );
+        // The command's reply and the page announcement.
+        yield* Queue.takeN(events, 2);
+      }
+
+      tabs[0]!.emit("Runtime.consoleAPICalled", {
+        args: Array(2048).fill("x".repeat(40 * 1024)),
+      });
+      tabs[1]!.emit("Page.loadEventFired", { timestamp: 1 });
+      const [detached, next] = yield* Queue.takeN(events, 2);
+
+      const { type, threadId, tabId } = detached!;
+      expect({ type, threadId, tabId }).toEqual({ type: "detached", ...key });
+      expect(next).toMatchObject({ type: "cdp", ...keys[1] });
+      expect(JSON.parse((next as { message: string }).message)).toMatchObject({
+        method: "Page.loadEventFired",
+      });
+    }).pipe(Effect.scoped),
   );
 });
