@@ -1405,7 +1405,7 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
         sandboxPolicy: { type: "dangerFullAccess" },
         cwd: process.cwd(),
         model,
-        summary: "detailed",
+        summary: "auto",
         approvalsReviewer: "user",
         ...(run.interactionMode === "plan"
           ? { collaborationMode: planCollaborationMode(model) }

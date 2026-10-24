@@ -5,6 +5,8 @@ import { type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import type * as CodexRpc from "effect-codex-app-server/rpc";
+import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -42,6 +44,47 @@ export const CodexOrchestratorReplayHarnessError = Schema.Union([
   ProviderAdapterDriverCreateError,
 ]);
 export type CodexOrchestratorReplayHarnessError = typeof CodexOrchestratorReplayHarnessError.Type;
+
+const decodeConfigReadParams = Schema.decodeUnknownSync(CodexSchema.V2ConfigReadParams);
+
+export function withCodexReplayConfig(
+  client: CodexClient.CodexAppServerClient["Service"],
+  transcript: CodexReplay.CodexAppServerReplayTranscript,
+  readConfig: (
+    params: CodexSchema.V2ConfigReadParams,
+  ) => Effect.Effect<CodexSchema.V2ConfigReadResponse> = () =>
+    Effect.succeed({ config: {}, origins: {}, layers: [] }),
+): CodexClient.CodexAppServerClient["Service"] {
+  if (
+    transcript.entries.some(
+      (entry) =>
+        entry.type === "expect_outbound" &&
+        Predicate.isObject(entry.frame) &&
+        entry.frame.method === "config/read",
+    )
+  ) {
+    return client;
+  }
+  // Older recordings have no config/read frames. Preserve their request IDs.
+  return {
+    ...client,
+    request: (method, params) =>
+      method === "config/read"
+        ? readConfig(decodeConfigReadParams(params)).pipe(
+            Effect.map(
+              (response) => response as CodexRpc.ClientRequestResponsesByMethod[typeof method],
+            ),
+          )
+        : client.request(method, params),
+    raw: {
+      ...client.raw,
+      request: (method, params) =>
+        method === "config/read"
+          ? readConfig(decodeConfigReadParams(params))
+          : client.raw.request(method, params),
+    },
+  };
+}
 
 export function withCodexReplayChildMetadata(
   client: CodexClient.CodexAppServerClient["Service"],
@@ -203,7 +246,12 @@ export function layer(input: {
           ),
         );
         return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
-          Effect.map((client) => withCodexReplayChildMetadata(client, input.transcript)),
+          Effect.map((client) =>
+            withCodexReplayChildMetadata(
+              withCodexReplayConfig(client, input.transcript),
+              input.transcript,
+            ),
+          ),
           Effect.provide(context),
         );
       }),

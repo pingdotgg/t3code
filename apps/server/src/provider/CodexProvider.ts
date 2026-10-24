@@ -466,6 +466,15 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
+export function codexTurnReasoningSummary(response: CodexSchema.V2ConfigReadResponse) {
+  const origin = response.origins.model_reasoning_summary;
+  // Catalog defaults can disable summaries; only an explicit config preference
+  // should override T3's model-compatible default.
+  return origin !== undefined && origin.name.type !== "packagedDefaults"
+    ? (response.config.model_reasoning_summary ?? "auto")
+    : "auto";
+}
+
 export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string | undefined;

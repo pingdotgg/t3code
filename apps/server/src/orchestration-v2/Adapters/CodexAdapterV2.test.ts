@@ -60,7 +60,11 @@ import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import {
+  makeReplayServerConfig,
+  withCodexReplayChildMetadata,
+  withCodexReplayConfig,
+} from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
@@ -619,7 +623,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: "auto",
         },
       },
     },
@@ -686,7 +690,10 @@ describe("CodexAdapterV2 session initialize", () => {
           open: (openInput) =>
             Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
               Effect.flatMap((context) =>
-                Effect.service(CodexClient.CodexAppServerClient).pipe(Effect.provide(context)),
+                Effect.service(CodexClient.CodexAppServerClient).pipe(
+                  Effect.map((client) => withCodexReplayConfig(client, transcript)),
+                  Effect.provide(context),
+                ),
               ),
               Effect.map(
                 (client) =>
@@ -881,6 +888,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    readConfig?: Parameters<typeof withCodexReplayConfig>[2],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -903,7 +911,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.flatMap((context) =>
               Effect.service(CodexClient.CodexAppServerClient).pipe(
                 Effect.map((client) =>
-                  withCodexReplayChildMetadata(client, transcript, readChildMetadata),
+                  withCodexReplayChildMetadata(
+                    withCodexReplayConfig(client, transcript, readConfig),
+                    transcript,
+                    readChildMetadata,
+                  ),
                 ),
                 Effect.map(
                   (client) =>
@@ -1001,6 +1013,173 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect.each(
+    (
+      [
+        ["unset", "first", null, null, "auto"],
+        ["catalog none", "first", null, "none", "auto"],
+        ["user detailed", "first", "user", "detailed", "detailed"],
+        ["project concise", "first", "project", "concise", "concise"],
+        ["packaged defaults", "first", "packagedDefaults", "none", "auto"],
+        ["resumed session none", "resume", "sessionFlags", "none", "none"],
+        ["forked project concise", "fork", "project", "concise", "concise"],
+      ] as const
+    ).map(([name, lifecycle, source, configured, expected]) => ({
+      name,
+      lifecycle,
+      source,
+      configured,
+      expected,
+    })),
+  )(
+    "honors reasoning summary preferences: $name",
+    ({ name, lifecycle, source, configured, expected }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "summary-source";
+        const targetNativeThreadId = lifecycle === "fork" ? "summary-fork" : nativeThreadId;
+        const targetThreadId = ThreadId.make("summary-fork-target");
+        const prompt = "Explain the result";
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "summary-turn",
+          prompt,
+        });
+        const threadResult = codexReplayThreadResult({
+          nativeThreadId: targetNativeThreadId,
+          forkedFromId: lifecycle === "fork" ? nativeThreadId : null,
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: `reasoning-summary-${name}`,
+          entries: [
+            ...preamble.slice(0, 5),
+            ...(lifecycle === "first"
+              ? []
+              : ([
+                  {
+                    type: "expect_outbound",
+                    label: `thread/${lifecycle}`,
+                    frame: {
+                      id: 3,
+                      method: `thread/${lifecycle}`,
+                      params: {
+                        threadId: nativeThreadId,
+                        ...(lifecycle === "resume" ? { excludeTurns: true } : {}),
+                        config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                      },
+                    },
+                  },
+                  {
+                    type: "emit_inbound",
+                    label: `thread/${lifecycle}`,
+                    frame: { id: 3, result: threadResult },
+                  },
+                ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>)),
+            ...preamble.slice(5, 7).map((entry) => {
+              const shifted = lifecycle === "first" ? entry : withReplayRequestId(entry, 4);
+              if (
+                shifted.type !== "expect_outbound" ||
+                !Predicate.isObject(shifted.frame) ||
+                !Predicate.isObject(shifted.frame.params)
+              )
+                return shifted;
+              return {
+                ...shifted,
+                frame: {
+                  ...shifted.frame,
+                  params: {
+                    ...shifted.frame.params,
+                    threadId: targetNativeThreadId,
+                    summary: expected,
+                  },
+                },
+              };
+            }),
+          ],
+        });
+        const config: CodexSchema.V2ConfigReadResponse = {
+          config: { model_reasoning_summary: configured },
+          origins:
+            source === null
+              ? {}
+              : {
+                  model_reasoning_summary: {
+                    name:
+                      source === "user"
+                        ? { type: "user", file: "/tmp/codex-home/config.toml" }
+                        : source === "project"
+                          ? { type: "project", dotCodexFolder: "/workspace/.codex" }
+                          : source === "packagedDefaults"
+                            ? { type: source, file: "/tmp/codex-package/config.toml" }
+                            : { type: source },
+                    version: "effective",
+                  },
+                },
+        };
+        const harness = yield* makeCodexReplayHarness(
+          name === "user detailed"
+            ? {
+                ...transcript,
+                entries: [
+                  ...transcript.entries.slice(0, 5),
+                  {
+                    type: "expect_outbound",
+                    label: "config/read",
+                    frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
+                  },
+                  {
+                    type: "emit_inbound",
+                    label: "config/read",
+                    frame: { id: 3, result: config },
+                  },
+                  ...transcript.entries.slice(5).map((entry) => withReplayRequestId(entry, 4)),
+                ],
+              }
+            : transcript,
+          undefined,
+          undefined,
+          undefined,
+          (params) =>
+            Effect.sync(() => {
+              assert.equal(
+                params.cwd,
+                "/workspace",
+                "project preferences require the turn working directory",
+              );
+              return config;
+            }),
+        );
+        const providerThread =
+          lifecycle === "resume"
+            ? yield* harness.runtime.resumeThread({
+                providerThread: harness.providerThread,
+                modelSelection: CODEX_TEST_MODEL_SELECTION,
+                runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+              })
+            : lifecycle === "fork"
+              ? yield* harness.runtime.forkThread({
+                  sourceProviderThread: harness.providerThread,
+                  targetThreadId,
+                  modelSelection: CODEX_TEST_MODEL_SELECTION,
+                  runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+                })
+              : harness.providerThread;
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: lifecycle === "fork" ? targetThreadId : harness.threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("summary-attempt"),
+            text: prompt,
+          }),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
@@ -1514,7 +1693,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 cwd: "/workspace",
                 model: "gpt-5.4",
                 ...turnPolicies[turnModes[index]!],
-                summary: "detailed",
+                summary: "auto",
               },
             },
           },
