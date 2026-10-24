@@ -1397,6 +1397,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
             )}
           >
             <ThreadFeed
+              threadDetailReady={props.selectedThreadDetailRef !== null}
               environmentId={props.environmentId}
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}
