@@ -260,6 +260,62 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
+  it.effect("tells the user to verify an unknown host key in a terminal instead of prompting", () =>
+    Effect.gen(function* () {
+      const diagnostic = "Host key verification failed.";
+      let passwordPrompts = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.succeed(
+          commandArgs(command).includes("-G")
+            ? makeSuccessfulProcess("hostname 127.0.0.1\nuser ubuntu\nport 22269\n")
+            : {
+                ...makeSuccessfulProcess(""),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
+                stderr: Stream.make(new TextEncoder().encode(`${diagnostic}\r\n`)),
+              },
+        ),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        Layer.succeed(
+          SshAuth.SshPasswordPrompt,
+          SshAuth.SshPasswordPrompt.of({
+            isAvailable: true,
+            request: () =>
+              Effect.sync(() => {
+                passwordPrompts += 1;
+                return null;
+              }),
+          }),
+        ),
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const result = yield* Effect.result(
+          manager.ensureEnvironment({
+            alias: "127.0.0.1",
+            hostname: "127.0.0.1",
+            username: "ubuntu",
+            port: 22269,
+          }),
+        );
+        assert.equal(passwordPrompts, 0);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, SshCommandError);
+          if (result.failure instanceof SshCommandError) {
+            assert.include(result.failure.stderr, diagnostic);
+            assert.include(result.failure.message, "ssh -p 22269 ubuntu@127.0.0.1");
+          }
+        }
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.effect.each(["local tunnel", "remote server"] as const)(
     "waits for %s shutdown before reconnecting the same target",
     (stalledStep) =>

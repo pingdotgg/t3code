@@ -171,4 +171,28 @@ describe("ssh command", () => {
       }
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect.each([
+    [{ alias: "my host", username: "o'brien" }, "ssh 'o'\\''brien@my host'"],
+    [{ alias: "-oProxyCommand=false", username: null }, "ssh -- -oProxyCommand=false"],
+  ] as const)("quotes the terminal command for a failed host key check", ([target, command]) => {
+    const stderr = "Host key verification failed.\r\n";
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeFailedProcess({ stdout: "", stderr })),
+    );
+    return runSshCommand({ ...target, hostname: "devbox", port: null }).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        assert.instanceOf(error, SshCommandError);
+        assert.include(error.message, `\`${command}\``);
+        if (error instanceof SshCommandError) assert.equal(error.stderr, stderr);
+      }),
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
 });

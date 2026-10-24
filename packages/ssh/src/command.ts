@@ -146,6 +146,34 @@ function redactSshErrorOutput(output: string, keepTail = false): string {
     : `${redacted.slice(0, MAX_SSH_ERROR_OUTPUT_LENGTH)}\n[truncated]`;
 }
 
+export function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function shellArg(value: string): string {
+  return /^[\w@%+=:,./-]+$/u.test(value) ? value : shellSingleQuote(value);
+}
+
+// ssh prints this for both unknown and changed host keys when it cannot ask.
+// The app never answers host key prompts, so the user has to check the
+// fingerprint themselves in a terminal before the key is trusted.
+function hostKeyVerificationMessage(
+  target: DesktopSshEnvironmentTarget,
+  hostSpec: string,
+  stderr: string,
+): string | null {
+  if (!stderr.includes("Host key verification failed")) return null;
+  const command = [
+    "ssh",
+    ...(target.port !== null ? ["-p", String(target.port)] : []),
+    ...(hostSpec.startsWith("-") ? ["--"] : []),
+    hostSpec,
+  ]
+    .map(shellArg)
+    .join(" ");
+  return `SSH could not verify the host key for ${hostSpec}. Run \`${command}\` in a terminal, check that the host key fingerprint is the one you expect, then try again.\n\n${stderr.trim()}`;
+}
+
 function normalizeSshErrorMessage(input: {
   readonly stdout?: string;
   readonly stderr: string;
@@ -278,11 +306,13 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       exitCode,
       stdout: diagnosticStdout,
       stderr,
-      message: normalizeSshErrorMessage({
-        stdout: diagnosticStdout,
-        stderr,
-        fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
-      }),
+      message:
+        hostKeyVerificationMessage(target, hostSpec, stderr) ??
+        normalizeSshErrorMessage({
+          stdout: diagnosticStdout,
+          stderr,
+          fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
+        }),
     });
   }
 
