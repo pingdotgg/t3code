@@ -80,6 +80,39 @@ const T3_FILE_ICON_SPRITE = `
   </symbol>
 </svg>`;
 
+const LANGUAGE_ICONS_BY_EXTENSION = {
+  cs: "t3-file-icon-csharp",
+  csx: "t3-file-icon-csharp",
+  dart: "t3-file-icon-dart",
+  diff: "t3-file-icon-diff",
+  patch: "t3-file-icon-diff",
+  ex: "t3-file-icon-elixir",
+  exs: "t3-file-icon-elixir",
+  hs: "t3-file-icon-haskell",
+  lhs: "t3-file-icon-haskell",
+  java: "t3-file-icon-java",
+  kt: "t3-file-icon-kotlin",
+  kts: "t3-file-icon-kotlin",
+  lua: "t3-file-icon-lua",
+  php: "t3-file-icon-php",
+  ps1: "t3-file-icon-powershell",
+  psm1: "t3-file-icon-powershell",
+  psd1: "t3-file-icon-powershell",
+  r: "t3-file-icon-r",
+  scala: "t3-file-icon-scala",
+  toml: "t3-file-icon-toml",
+  xml: "t3-file-icon-xml",
+};
+
+// Dialects with no logo of their own use their base language's, rather than
+// the blank file icon. Keys double as fence language ids (```luau).
+const DIALECT_BASE_EXTENSIONS = {
+  luau: "lua",
+  xsd: "xml",
+  xsl: "xml",
+  xslt: "xml",
+} satisfies Record<string, keyof typeof LANGUAGE_ICONS_BY_EXTENSION>;
+
 export const T3_PIERRE_ICONS = {
   set: "complete",
   colored: true,
@@ -95,27 +128,13 @@ export const T3_PIERRE_ICONS = {
     ...Object.fromEntries(
       VIDEO_FILE_EXTENSIONS.map((extension) => [extension, "t3-file-icon-video"]),
     ),
-    cs: "t3-file-icon-csharp",
-    csx: "t3-file-icon-csharp",
-    dart: "t3-file-icon-dart",
-    diff: "t3-file-icon-diff",
-    patch: "t3-file-icon-diff",
-    ex: "t3-file-icon-elixir",
-    exs: "t3-file-icon-elixir",
-    hs: "t3-file-icon-haskell",
-    lhs: "t3-file-icon-haskell",
-    java: "t3-file-icon-java",
-    kt: "t3-file-icon-kotlin",
-    kts: "t3-file-icon-kotlin",
-    lua: "t3-file-icon-lua",
-    php: "t3-file-icon-php",
-    ps1: "t3-file-icon-powershell",
-    psm1: "t3-file-icon-powershell",
-    psd1: "t3-file-icon-powershell",
-    r: "t3-file-icon-r",
-    scala: "t3-file-icon-scala",
-    toml: "t3-file-icon-toml",
-    xml: "t3-file-icon-xml",
+    ...LANGUAGE_ICONS_BY_EXTENSION,
+    ...Object.fromEntries(
+      Object.entries(DIALECT_BASE_EXTENSIONS).map(([dialect, base]) => [
+        dialect,
+        LANGUAGE_ICONS_BY_EXTENSION[base],
+      ]),
+    ),
   },
 } satisfies FileTreeIcons;
 

@@ -1,6 +1,10 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { resolvePierreIconForEntry, T3_PIERRE_ICONS } from "./pierre-icons";
+import {
+  resolvePierreIconForEntry,
+  syntheticFileNameForLanguageId,
+  T3_PIERRE_ICONS,
+} from "./pierre-icons";
 
 describe("Pierre file icons", () => {
   it("uses detected types for extensionless files while keeping known filename icons", () => {
@@ -30,5 +34,17 @@ describe("Pierre file icons", () => {
     for (const iconName of customIconNames) {
       assert.include(T3_PIERRE_ICONS.spriteSheet, `id="${iconName}"`);
     }
+  });
+
+  it.each([
+    ["luau", "lua"],
+    ["xsl", "xml"],
+  ])("gives %s files and fences the %s icon", (dialect, base) => {
+    const baseIcon = resolvePierreIconForEntry(`file.${base}`, "file")?.name;
+    assert.equal(resolvePierreIconForEntry(`src/init.${dialect}`, "file")?.name, baseIcon);
+    assert.equal(
+      resolvePierreIconForEntry(syntheticFileNameForLanguageId(dialect), "file")?.name,
+      baseIcon,
+    );
   });
 });
