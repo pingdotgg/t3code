@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -28,10 +30,14 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -183,6 +189,60 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
 
   return threadId;
 });
+
+it.live("windowed snapshots return committed data while the writer is held", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-snapshot-reader-" });
+    const connections: Array<unknown> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          if (span.name === "sql.transaction") {
+            connections.push(span.attributes.get("db.connection"));
+          }
+        };
+        return span;
+      },
+    });
+    yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("snapshot-reader");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 0`;
+      const writer = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(path.join(directory, "state.sqlite"))),
+        (connection) => Effect.sync(() => connection.close()),
+      );
+      yield* Effect.sync(() => writer.exec("BEGIN IMMEDIATE"));
+      const snapshot = yield* store
+        .getThreadSnapshotWindow(threadId, { rowLimit: 76 })
+        .pipe(
+          Effect.withTracer(tracer),
+          Effect.provideService(Statement.SpanPropagationEnabled, true),
+          Effect.exit,
+        );
+      yield* Effect.sync(() => writer.exec("ROLLBACK"));
+      assert(
+        Exit.isSuccess(snapshot),
+        "snapshot must return while another connection holds the writer",
+      );
+      assert.equal(snapshot.value.projection.thread.id, threadId);
+      assert.equal(snapshot.value.projection.thread.title, "Rolled-back recovery candidate");
+      assert.deepEqual(connections, ["reader"]);
+    }).pipe(
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),
+        ),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect.each([
   ["memory", ProjectionStore.layerMemory],

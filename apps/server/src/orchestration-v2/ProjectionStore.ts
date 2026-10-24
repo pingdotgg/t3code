@@ -1,3 +1,4 @@
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -5657,6 +5658,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         )
         .pipe(
+          NodeSqliteClient.readOnly,
           Effect.mapError((cause) =>
             isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
               ? cause
