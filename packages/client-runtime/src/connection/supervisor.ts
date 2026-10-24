@@ -47,6 +47,10 @@ const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_T
 const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
+// A socket that has delivered nothing for this long after a resume probe,
+// while a fresh request to the same address answers, has died, typically
+// suspended by iOS without a close event.
+const RESUME_PROBE_ROUTE_CHECK_AFTER = "500 millis";
 const BACKOFF_RESET_AFTER_MS = 30_000;
 const BETTER_ROUTE_CHECK_INTERVAL = "60 seconds";
 // A better route that answered the check but then failed to connect is not
@@ -584,6 +588,33 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   };
 
+  const checkLeaseRoute = Effect.fnUntraced(function* (
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+    framesAtProbe: number | undefined,
+  ) {
+    const inboundFrames = lease.session.inboundFrames;
+    if (inboundFrames === undefined || framesAtProbe === undefined) return "unchecked" as const;
+    // An older host answers probes with its full config, which can be slow
+    // enough to lose to a fresh descriptor request on a healthy socket.
+    const answersCheapProbe = yield* lease.session.initialConfig.pipe(
+      Effect.map((config) => config.environment.capabilities.connectionProbe === true),
+      Effect.catchCause(() => Effect.succeed(false)),
+    );
+    if (!answersCheapProbe) return "unchecked" as const;
+    const latest = yield* Ref.get(currentEntry);
+    const route = connectionRoutes(latest).find(
+      (candidate) =>
+        connectionRouteId(candidate.target) === connectionRouteId(lease.prepared.target),
+    );
+    if (route === undefined) return "unchecked" as const;
+    const check = yield* driver.checkRoute(latest, route);
+    // Any frame since the probe started, even one buffered before the path
+    // died, vetoes the shortcut; the probe's own reply or timeout decides.
+    return check === "answered" && (yield* inboundFrames) === framesAtProbe
+      ? ("answered" as const)
+      : ("unchecked" as const);
+  });
+
   // Returning to the app, an explicit retry, and the network reporting offline
   // all probe the live session instead of replacing it, so a healthy socket is
   // not torn down (the offline report is often wrong, for example for a
@@ -622,7 +653,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       yield* Ref.set(probeUnanswered, true);
+      const framesAtProbe =
+        lease.session.inboundFrames === undefined ? undefined : yield* lease.session.inboundFrames;
       const probe = yield* Effect.forkChild(lease.session.probe);
+      // iOS can kill a suspended socket without a close event, so a resume
+      // probe would otherwise wait out its whole timeout before reconnecting.
+      // Only the signal that starts a probe can start this check: a resume
+      // that arrives during another probe just shortens its deadline below.
+      const routeCheck = yield* Effect.forkChild(
+        next._tag === "Wakeup" && next.reason === "application-active-probe"
+          ? Effect.sleep(RESUME_PROBE_ROUTE_CHECK_AFTER).pipe(
+              Effect.andThen(checkLeaseRoute(lease, framesAtProbe)),
+            )
+          : Effect.never,
+      );
+      const stopProbe = Effect.all([Fiber.interrupt(probe), Fiber.interrupt(routeCheck)], {
+        discard: true,
+      });
       let deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
       for (;;) {
         const remaining = deadline - (yield* Clock.monotonicTimeNanos);
@@ -634,15 +681,28 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           Effect.sleep(Duration.nanos(remaining > 0n ? remaining : 0n)).pipe(
             Effect.as({ _tag: "TimedOut" as const }),
           ),
+          // A check that answers after the deadline changes nothing: the
+          // probe has already failed with the timeout.
+          Fiber.join(routeCheck).pipe(
+            Effect.flatMap((check) =>
+              check === "answered"
+                ? Effect.succeed({ _tag: "SocketSilent" as const })
+                : Effect.never,
+            ),
+          ),
         ]);
-        if (probeEvent._tag === "TimedOut") {
-          yield* Fiber.interrupt(probe);
+        if (probeEvent._tag === "TimedOut" || probeEvent._tag === "SocketSilent") {
+          yield* stopProbe;
           return yield* new ConnectionTransientError({
             reason: "timeout",
-            detail: `${target.label} did not respond to a connection health check.`,
+            detail:
+              probeEvent._tag === "SocketSilent"
+                ? `${target.label} answered a fresh request but not over its connection.`
+                : `${target.label} did not respond to a connection health check.`,
           });
         }
         if (probeEvent._tag === "ProbeCompleted") {
+          yield* Fiber.interrupt(routeCheck);
           if (Exit.isSuccess(probeEvent.exit)) {
             yield* Ref.set(probeUnanswered, false);
           }
@@ -651,7 +711,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }
         const endDuringProbe = yield* connectedLeaseEnd(probeEvent.signal, lease);
         if (endDuringProbe !== undefined) {
-          yield* Fiber.interrupt(probe);
+          yield* stopProbe;
           return endDuringProbe === "reset";
         }
         const signalTimeout = probeTimeoutFor(probeEvent.signal);

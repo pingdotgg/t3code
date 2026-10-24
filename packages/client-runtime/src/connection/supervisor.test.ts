@@ -98,6 +98,11 @@ const LAN_THEN_RELAY_ENTRY: ConnectionCatalogEntry = {
   enabled: true,
 };
 
+const PROBE_CAPABLE_CONFIG = {
+  environment: { capabilities: { connectionProbe: true } },
+} as ServerConfig;
+const LEGACY_PROBE_CONFIG = { environment: { capabilities: {} } } as ServerConfig;
+
 function preparedFor(target: ConnectionTarget): PreparedConnection {
   return { ...PREPARED_CONNECTION, target };
 }
@@ -154,6 +159,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
   readonly ready?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
   readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
+  readonly inboundFrames?: (attempt: number) => Effect.Effect<number>;
   readonly initialConfig?: (attempt: number) => Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly checkRoute?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RouteCheck>;
 }) {
@@ -210,6 +216,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         subscribeServerConfig: (input) => TEST_RPC_CLIENT.subscribeServerConfig(input),
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
+        inboundFrames: options?.inboundFrames?.(attempt) ?? Effect.succeed(0),
         closed: Deferred.await(closed),
       } satisfies RpcSession.RpcSession),
       () => Ref.update(releaseCount, (count) => count + 1),
@@ -717,6 +724,165 @@ describe("EnvironmentSupervisor", () => {
       expect(reconnected.attempt).toBe(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reconnects without waiting out a resume probe when the host answers afresh", () =>
+    Effect.gen(function* () {
+      const routeChecks = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        checkRoute: () => Ref.update(routeChecks, (count) => count + 1).pipe(Effect.as("answered")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(yield* Ref.get(routeChecks)).toBe(0);
+      yield* harness.wake("application-active-probe");
+      yield* TestClock.adjust("500 millis");
+
+      yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(routeChecks)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    { name: "before the route check starts", probeMs: 100, checkMs: 0 },
+    { name: "while the route check is in flight", probeMs: 700, checkMs: 1_000 },
+  ])("keeps a socket that answers its resume probe $name", ({ probeMs, checkMs }) =>
+    Effect.gen(function* () {
+      const routeChecks = yield* Ref.make(0);
+      const probeAnswered = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+        probe: () =>
+          Effect.sleep(probeMs).pipe(Effect.andThen(Deferred.succeed(probeAnswered, undefined))),
+        checkRoute: () =>
+          Ref.update(routeChecks, (count) => count + 1).pipe(
+            Effect.andThen(Effect.sleep(checkMs)),
+            Effect.as("answered"),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+      yield* TestClock.adjust(probeMs);
+      yield* Deferred.await(probeAnswered);
+      yield* TestClock.adjust("5 seconds");
+
+      expect(yield* Ref.get(routeChecks)).toBe(probeMs > 500 ? 1 : 0);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "keeps waiting for the probe when the socket delivers a frame before the check answers",
+    () =>
+      Effect.gen(function* () {
+        const routeChecks = yield* Ref.make(0);
+        const frames = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+          probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+          inboundFrames: () => Ref.get(frames),
+          checkRoute: () =>
+            Ref.update(routeChecks, (count) => count + 1).pipe(Effect.as("answered")),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake("application-active-probe");
+        yield* TestClock.adjust("50 millis");
+        // A frame the kernel buffered before the path died still drains after resume.
+        yield* Ref.update(frames, (count) => count + 1);
+        yield* TestClock.adjust("2850 millis");
+        expect(yield* Ref.get(routeChecks)).toBe(1);
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+        expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+
+        yield* TestClock.adjust("100 millis");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2,
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    { name: "the host does not answer afresh either", check: "silent", capable: true },
+    { name: "the route cannot be checked, as over a relay", check: "unchecked", capable: true },
+    {
+      name: "an older host answers probes with its full config",
+      check: "answered",
+      capable: false,
+    },
+  ] as const)("waits out a resume probe when $name", ({ check, capable }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialConfig: () => Effect.succeed(capable ? PROBE_CAPABLE_CONFIG : LEGACY_PROBE_CONFIG),
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        checkRoute: () => Effect.succeed(check),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+      yield* TestClock.adjust("2900 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+
+      yield* TestClock.adjust("100 millis");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["network-changed", "retry"] as const)(
+    "does not check the route during a %s probe",
+    (trigger) =>
+      Effect.gen(function* () {
+        const routeChecks = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+          probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+          checkRoute: () =>
+            Ref.update(routeChecks, (count) => count + 1).pipe(Effect.as("answered")),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        if (trigger === "retry") yield* supervisor.retryNow;
+        else yield* harness.wake("network-changed");
+        yield* TestClock.adjust("2900 millis");
+        expect(yield* Ref.get(routeChecks)).toBe(0);
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("reconnects immediately when the foreground liveness probe fails", () =>

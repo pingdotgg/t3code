@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -340,6 +341,31 @@ describe("RpcSessionFactory", () => {
       expect(configStreamError).toMatchObject({ _tag: "RpcClientError" });
       yield* Effect.yieldNow;
       expect(sockets).toHaveLength(1);
+    }),
+  );
+
+  it.effect("counts inbound frames without letting them answer a probe", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+      const inboundFrames = session.inboundFrames ?? Effect.die("missing inbound frame count");
+
+      const probeFiber = yield* Effect.forkChild(session.probe);
+      yield* awaitRequest(socket, 1);
+      const before = yield* inboundFrames;
+      socket.serverMessage(encodeJson({ _tag: "Pong" }));
+      expect(yield* inboundFrames).toBe(before + 1);
+
+      const outcome = yield* Effect.forkChild(
+        Fiber.join(probeFiber).pipe(Effect.timeoutOption("3 seconds")),
+      );
+      yield* TestClock.adjust("3 seconds");
+      expect(Option.isNone(yield* Fiber.join(outcome))).toBe(true);
     }),
   );
 
