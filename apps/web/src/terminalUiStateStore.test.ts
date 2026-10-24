@@ -7,6 +7,7 @@ import {
   selectThreadTerminalUiState,
   useTerminalUiStateStore,
 } from "./terminalUiStateStore";
+import { DEFAULT_THREAD_TERMINAL_ID } from "./types";
 
 const THREAD_ID = ThreadId.make("thread-1");
 const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
@@ -136,6 +137,39 @@ describe("terminalUiStateStore actions", () => {
     expect(terminalUiState.terminalGroups).toEqual([
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
+  });
+
+  it("keeps the split's tab active after closing one of its panes", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.newTerminal(THREAD_REF, "terminal-2");
+    store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
+    store.splitTerminal(THREAD_REF, "terminal-3");
+    store.closeTerminal(THREAD_REF, "terminal-3");
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
+    expect(terminalUiState.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
+  });
+
+  it("activates the remaining split pane after closing the first pane", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.newTerminal(THREAD_REF, "terminal-2");
+    store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
+    store.splitTerminal(THREAD_REF, "terminal-3");
+    store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
+    store.closeTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.activeTerminalId).toBe("terminal-3");
+    expect(terminalUiState.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
   });
 
   it("does not import a closed panel terminal from stale metadata", () => {
