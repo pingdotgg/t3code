@@ -113,6 +113,9 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+// Under the 60-second tool-call limit of the Claude app and other MCP clients, so a
+// t3_thread_wait without timeoutMs returns timedOut=true instead of failing in the client.
+const DEFAULT_THREAD_WAIT_TIMEOUT_MS = 50_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
@@ -2885,7 +2888,7 @@ const make = Effect.gen(function* () {
           ...(input.runId === undefined ? {} : { runId: input.runId }),
           timeoutMs: Math.min(
             MAX_WAIT_TIMEOUT_MS,
-            Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+            Math.max(1, input.timeoutMs ?? DEFAULT_THREAD_WAIT_TIMEOUT_MS),
           ),
         })
         .pipe(Effect.mapError(threadManagementFailure));
