@@ -1028,6 +1028,56 @@ describe("inline code entry", () => {
     }
   }
 
+  it.each(["", "this is a "])(
+    "formats code after %j when the opening backtick is typed last",
+    (prefix) => {
+      const editor = editorFor();
+      type(editor, `${prefix}test\` after`);
+      editor.commands.setTextSelection(prefix.length + 1);
+      type(editor, "`");
+
+      expect(editor.state.doc.textContent).toBe(`${prefix}test after`);
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}\`test\` after`);
+      expect(editor.state.selection.from).toBe(prefix.length + 1);
+      type(editor, "new ");
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}\`new test\` after`);
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+      type(editor, " plain");
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}\`new test\` after plain`);
+      const formatted = editor.state.doc.toJSON();
+      let undos = 0;
+      while (editor.commands.undo()) undos += 1;
+      expect(undos).toBeGreaterThan(0);
+      expect(editor.state.doc.textContent).toBe("");
+      for (let i = 0; i < undos; i += 1) expect(editor.commands.redo()).toBe(true);
+      expect(editor.state.doc.toJSON()).toEqual(formatted);
+    },
+  );
+
+  it.each([
+    { name: "doubled closing ticks", text: "test``" },
+    { name: "a code block", text: "test`", block: "codeBlock" },
+    { name: "bold text", text: "test`", mark: "bold" },
+    { name: "existing inline code", text: "test`", mark: "code" },
+  ])("keeps an opening tick literal before $name", ({ text, block, mark }) => {
+    const editor = editorFor(block, mark);
+    type(editor, text);
+    editor.commands.setTextSelection(1);
+    type(editor, "`");
+    expect(editor.state.doc.textContent).toBe(`\`${text}`);
+  });
+
+  it.each(["hardBreak", "composer-mention"])("does not pair ticks across a %s", (nodeType) => {
+    const editor = editorFor();
+    type(editor, "before");
+    editor.commands.insertContent({ type: nodeType });
+    type(editor, "after`");
+    editor.commands.setTextSelection(1);
+    type(editor, "`");
+    expect(editor.state.doc.firstChild?.firstChild?.marks).toEqual([]);
+    expect(editor.state.doc.textContent).toBe("`beforeafter`");
+  });
+
   it.each(["", "prefix ", "@README.md"])(
     "formats a filled pair after %j, leaves following text plain, and keeps the normal input rule",
     (prefix) => {
