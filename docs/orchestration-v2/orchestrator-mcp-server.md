@@ -481,13 +481,19 @@ unanswered. When a child opens a pending `user_input` request, the parent gets
 a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
 async question, still working. If the question is answered or dismissed before
-the notification starts a turn, that queued turn is cancelled. Approvals are not
-routed, because those tools cannot answer them.
-A parent still blocked in a `delegate_task` wait gets the blocking question
-through that wait instead.
-If the provider cuts that wait short, a still-pending live question wakes the
-parent when its launching run completes, fails, or waits for post-turn work.
-Stopping or interrupting the parent prevents this catch-up.
+the notification starts a turn, that queued turn is cancelled. Approval requests
+also notify the parent, but tell it to ask the user to open the child thread and
+handle the request there. The pending request tools cannot approve for the user.
+A parent still blocked in a `delegate_task` wait gets the blocking question or
+live approval through that wait instead, as `hasPendingQuestion` or
+`pendingApproval`.
+If the provider cuts that wait short, a still-pending live question or approval
+wakes the parent when its launching run completes, fails, or waits for post-turn
+work.
+Stopping or interrupting the parent, or cancelling a queued completion delivery,
+disposes the affected delegated cohort. Disposing an individual task suppresses
+that task's notices. These paths cancel queued question and approval notices and
+suppress future ones, even if the child keeps running.
 
 A failed run exposes its provider error before any progress text. Successful
 results use the latest assistant content from the final work turn.

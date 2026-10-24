@@ -2159,6 +2159,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
   );
 
+  // The enclosing dispatch span owns this cancellation work; a helper span would duplicate it.
+  const cancelQueuedDelegatedRequests = Effect.fnUntraced(function* (input: {
+    readonly command: OrchestrationV2ServerCommand;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "runs" | "messages" | "nodes" | "attempts"
+    >;
+    readonly taskIds: ReadonlyArray<NodeId>;
+    readonly now: DateTime.Utc;
+  }) {
+    const messageIds = new Set(
+      input.projection.messages
+        .filter((message) => {
+          const notice = message.notification;
+          return (
+            message.delegatedCompletion === undefined &&
+            notice?.source.kind === "delegated_task" &&
+            notice.source.childThreadId !== undefined &&
+            notice.outcome === "updated" &&
+            notice.source.taskIds.some((taskId) => input.taskIds.includes(taskId))
+          );
+        })
+        .map((message) => message.id),
+    );
+    for (const run of input.projection.runs) {
+      if (run.status === "queued" && messageIds.has(run.userMessageId)) {
+        yield* emitQueuedRunCancellation({ ...input, run });
+      }
+    }
+  });
+
   const dispatchDelegatedTaskCompletionDeliveryResolution = Effect.fn(
     "Orchestrator.dispatchDelegatedTaskCompletionDeliveryResolution",
   )(function* (
@@ -2223,6 +2255,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: task,
       });
       return;
+    }
+    if (state === "disposed") {
+      yield* cancelQueuedDelegatedRequests({
+        command,
+        events,
+        projection,
+        taskIds: [task.id],
+        now,
+      });
     }
     const updatedTask: OrchestrationV2Subagent = {
       ...task,
@@ -2351,6 +2392,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (cohort === undefined && tasks.length === 0) {
       return;
     }
+    yield* cancelQueuedDelegatedRequests({ ...input, taskIds: tasks.map((task) => task.id) });
     const emitEvent = emit(input.events, input.command);
     const nextDisposition = cohort?.disposition === "disposed" ? "disposed" : input.disposition;
     const nextCohort = {
@@ -4832,6 +4874,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const notice = command.notification;
+    if (
+      command.delegatedCompletion === undefined &&
+      notice?.source.kind === "delegated_task" &&
+      notice.source.childThreadId !== undefined &&
+      notice.outcome === "updated"
+    ) {
+      const source = notice.source;
+      // Stop and disposal can win the parent lock after the reactor reads the task.
+      if (
+        !source.taskIds.every((taskId) =>
+          projection.subagents.some(
+            (task) =>
+              task.id === taskId &&
+              task.origin === "app_owned" &&
+              task.childThreadId === source.childThreadId &&
+              task.completionDelivery?.state !== "disposed" &&
+              !isTerminalDelegatedTaskStatus(task.status),
+          ),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The delegated task no longer accepts request notices.",
+        });
+      }
+    }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
