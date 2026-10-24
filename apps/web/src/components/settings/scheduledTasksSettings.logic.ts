@@ -5,6 +5,7 @@ import {
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
+  type ScheduledTaskSchedule,
   type ScheduledTaskUpsertSchedule,
   type ModelSelection,
   type RuntimeMode,
@@ -26,6 +27,48 @@ import {
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/**
+ * Fixed-time schedules run in the server's zone. Show a short label (UTC, PDT,
+ * GMT+5:30) so list rows stay compact — full IANA names overflow the
+ * automations panel (see #18632 / reverted #18653).
+ */
+export function scheduleTimeZoneLabel(timeZone: string | undefined): string | undefined {
+  if (timeZone === undefined) return undefined;
+  if (timeZone === "Etc/UTC" || timeZone === "UTC" || timeZone === "GMT") return "UTC";
+  for (const timeZoneName of ["short", "shortOffset"] as const) {
+    try {
+      const name = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName })
+        .formatToParts(new Date())
+        .find((part) => part.type === "timeZoneName")?.value;
+      if (name && name !== timeZone) return name;
+    } catch {
+      // Invalid IANA zone — try the next style, then fall through.
+    }
+  }
+  return timeZone;
+}
+
+export function scheduleLabel(schedule: ScheduledTaskSchedule, timeZone?: string): string {
+  if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "interval") {
+    const minutes = schedule.everyMs / 60_000;
+    return Number.isInteger(minutes)
+      ? `Every ${minutes} min`
+      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+  }
+  const weekdays = schedule.weekdays ?? [];
+  const days =
+    weekdays.length === 0
+      ? "Daily"
+      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
+        ? "Weekdays"
+        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
+  const zone = scheduleTimeZoneLabel(timeZone);
+  return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
+}
 
 export function matchesScheduledTaskScope(
   scope: ResolvedSettingsScope,
