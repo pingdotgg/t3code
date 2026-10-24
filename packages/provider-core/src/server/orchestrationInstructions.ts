@@ -54,10 +54,9 @@ For browser work, first call \`preview_status\`. If no automation-capable previe
 
 \`preview_status\` lists every browser tab in this thread, including tabs the user opened. When the user asks about "this page" or a page they have open, read their tab: pass its \`tabId\` to \`preview_snapshot\` or \`preview_wait_for\`, or omit \`tabId\` when you have no tab of your own. You may act on the user's tab, including \`preview_evaluate\`, only while its owner is \`unclaimed\`; while it is \`human\`, the user is driving, so read it with \`preview_snapshot\` or open your own tab. To use a browser profile (a set of saved logins), pass \`profileId\` from \`preview_status\` profiles to \`preview_open\`.
 
-Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Inspect a failed preview call and retry with corrected arguments when the error is actionable. Use another browser system when:
-- the T3 preview tools are absent, or \`preview_open\` returns an explicit unsupported/unavailable error;
-- the user asks for another browser, or invokes a skill or documented repository workflow that names one; follow that workflow and report any prerequisite it is missing;
-- preview calls on an open tab have failed twice on the same step (timeouts, \`chrome-error://\` pages, a different client answering). Quote the raw error and switch without asking the user which browser to use.
+An operation timeout or a missing locator does not mean the browser is unavailable. Inspect the error, correct actionable inputs, and check \`preview_status\` on the same tab. If a snapshot times out while status remains available, use \`preview_evaluate\` for DOM inspection when you control the tab. After repeated failures, report the exact error and the recovery checks that succeeded or failed.
+
+Keep recovery inside the collaborative browser. Preview failures do not authorize opening Chrome, another native browser, or incognito windows, activating apps, or changing the user's focus. Use another browser system only when the user explicitly requests or authorizes it, or invokes a skill or documented repository workflow that names one; follow that workflow and report any prerequisite it is missing. If preview tools are absent or no host is available after \`preview_status\` and \`preview_open\`, report that prerequisite instead of switching browser systems automatically.
 `;
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
