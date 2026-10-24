@@ -1,6 +1,8 @@
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
@@ -44,6 +46,57 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
   };
 });
 
+const STDERR_TAIL_MAX_CHARS = 8_192;
+const STDERR_EXCERPT_MAX_CHARS = 512;
+// eslint-disable-next-line no-control-regex -- ANSI escape sequences start with ESC.
+const TERMINAL_CONTROL_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+// `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `error: …`, `ERROR: …`, `fatal: …`
+const ERROR_LINE_PATTERN = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
+
+export const appendStderrTail = (current: string, chunk: string): string => {
+  const next = `${current}${chunk}`;
+  return next.length <= STDERR_TAIL_MAX_CHARS ? next : next.slice(-STDERR_TAIL_MAX_CHARS);
+};
+
+/**
+ * The stderr line that names the failure: the last error-labelled line, else the last line.
+ * A Node launcher prints its thrown error between a source excerpt and the stack frames.
+ */
+export const stderrExcerpt = (tail: string): string | undefined => {
+  const lines = tail
+    .replace(TERMINAL_CONTROL_PATTERN, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter((line) => line.length > 0);
+  const line = lines.findLast((candidate) => ERROR_LINE_PATTERN.test(candidate)) ?? lines.at(-1);
+  if (line === undefined) {
+    return undefined;
+  }
+  return line.length <= STDERR_EXCERPT_MAX_CHARS
+    ? line
+    : `${line.slice(0, STDERR_EXCERPT_MAX_CHARS - 1)}…`;
+};
+
+export const makeStderrTail = Effect.fn("makeStderrTail")(function* (
+  stderr: ChildProcessSpawner.ChildProcessHandle["stderr"],
+) {
+  const tail = yield* Ref.make("");
+  const drained = yield* Deferred.make<void>();
+  yield* stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) => Ref.update(tail, (current) => appendStderrTail(current, chunk))),
+    Effect.ignore,
+    Effect.ensuring(Deferred.succeed(drained, undefined)),
+    Effect.forkScoped,
+  );
+  // The exit status can arrive before the last stderr chunk has been read.
+  return Deferred.await(drained).pipe(
+    Effect.timeout("250 millis"),
+    Effect.ignore,
+    Effect.andThen(Ref.get(tail)),
+  );
+});
+
 type ChildProcessTerminationHandle = Pick<
   ChildProcessSpawner.ChildProcessHandle,
   "exitCode" | "pid"
@@ -51,13 +104,24 @@ type ChildProcessTerminationHandle = Pick<
 
 export const makeTerminationError = (
   handle: ChildProcessTerminationHandle,
+  stderrTail: Effect.Effect<string>,
 ): Effect.Effect<CodexError.CodexAppServerError> =>
-  Effect.match(handle.exitCode, {
+  Effect.matchEffect(handle.exitCode, {
     onFailure: (cause) =>
-      new CodexError.CodexAppServerTransportError({
-        operation: "read-process-exit-status",
-        pid: handle.pid,
-        cause,
+      Effect.succeed(
+        new CodexError.CodexAppServerTransportError({
+          operation: "read-process-exit-status",
+          pid: handle.pid,
+          cause,
+        }),
+      ),
+    onSuccess: (code) =>
+      Effect.map(stderrTail, (tail) => {
+        const stderr = stderrExcerpt(tail);
+        return new CodexError.CodexAppServerProcessExitedError({
+          code,
+          pid: handle.pid,
+          ...(stderr ? { stderr } : {}),
+        });
       }),
-    onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code, pid: handle.pid }),
   });
