@@ -19,8 +19,8 @@ import {
 } from "@t3tools/contracts";
 import {
   audioMimeTypeFromExtension,
+  filePreviewKind,
   hostPreviewMimeTypeFromExtension,
-  isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -487,8 +487,11 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     )
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
+    // Only an HTML page needs its folder, for relatively linked styles, scripts
+    // and images. A PDF or image link grants that one file.
+    const exactFile = filePreviewKind({ name: resolved.relativePath }) !== "html";
     return {
-      claims: isWorkspaceImagePreviewPath(resolved.relativePath)
+      claims: exactFile
         ? {
             version: 1 as const,
             kind: "workspace-file-exact" as const,

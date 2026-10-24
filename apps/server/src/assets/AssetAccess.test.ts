@@ -765,6 +765,45 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("issues exact workspace URLs for PDF previews", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-pdf-workspace-",
+      });
+      const docsDirectory = path.join(root, "docs");
+      const pdfPath = path.join(docsDirectory, "report.pdf");
+      yield* fileSystem.makeDirectory(path.join(docsDirectory, "nested"), { recursive: true });
+      yield* fileSystem.writeFileString(pdfPath, "%PDF-1.7");
+      yield* fileSystem.writeFileString(path.join(docsDirectory, "other.pdf"), "%PDF-1.7");
+      yield* fileSystem.writeFileString(
+        path.join(docsDirectory, "nested", "inner.pdf"),
+        "%PDF-1.7",
+      );
+      const canonicalPdfPath = yield* fileSystem.realPath(pdfPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: pdfPath,
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "report.pdf")).toEqual({
+        kind: "file",
+        path: canonicalPdfPath,
+      });
+      expect(yield* resolveAsset(token, "other.pdf")).toBeNull();
+      expect(yield* resolveAsset(token, "nested/inner.pdf")).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("previews workspace files with literal fragment characters in their paths", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
