@@ -60,6 +60,52 @@ describe("runDeviceAction", () => {
         expect(calls.at(-1)?.args.at(-1)).toBe(expected);
       }),
   );
+
+  it.effect.each([
+    ["camera", "grant", "android.permission.CAMERA"],
+    ["photos", "revoke", "android.permission.READ_MEDIA_IMAGES"],
+  ] as const)(
+    "reports an Android %s %s that no pm command applied",
+    ([permission, decision, firstPermission]) =>
+      Effect.gen(function* () {
+        const { ready } = makeReady((call) => ({
+          code: 1,
+          stderr: `Unknown package: ${call.args.at(-1)}`,
+        }));
+        const error = yield* Effect.flip(
+          runDeviceAction(ready, "android", {
+            type: "setPermission",
+            deviceId: "emulator-5554",
+            appId: "com.example.missing",
+            permission,
+            decision,
+          }),
+        );
+        expect(error._tag).toBe("DeviceOperationError");
+        expect(error.operation).toBe("permission");
+        expect(error._tag === "DeviceOperationError" && error.cause).toMatchObject({
+          stderr: `Unknown package: ${firstPermission}`,
+        });
+      }),
+  );
+
+  it.effect("keeps a permission change that one compatibility permission applied", () =>
+    Effect.gen(function* () {
+      // Images before Android 13 only allow the older storage permission.
+      const { ready } = makeReady((call) => {
+        if (call.args.at(-1) !== "android.permission.READ_EXTERNAL_STORAGE") return { code: 1 };
+        return {};
+      });
+      const result = yield* runDeviceAction(ready, "android", {
+        type: "setPermission",
+        deviceId: "emulator-5554",
+        appId: "com.example.app",
+        permission: "photos",
+        decision: "grant",
+      });
+      expect(result).toBeUndefined();
+    }),
+  );
 });
 
 describe("readDeviceDetail", () => {
