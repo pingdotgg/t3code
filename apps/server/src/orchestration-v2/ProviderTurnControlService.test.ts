@@ -1,8 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ComposerContextId,
+  EnvironmentId,
+  MessageId,
   type ModelSelection,
   NodeId,
   type OrchestrationV2ProviderThread,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
@@ -14,6 +18,10 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -329,4 +337,183 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+const citationText = (excerpt: string) =>
+  serializeAssistantCitation({
+    version: 1,
+    environmentId: EnvironmentId.make("environment-citation"),
+    threadId: ThreadId.make("thread:steer-citation"),
+    messageId: MessageId.make("assistant-message-citation"),
+    text: excerpt,
+    start: 0,
+    end: excerpt.length,
+    prefix: "",
+    suffix: "",
+  });
+
+const steerCitationMessage = (
+  text: string,
+  context?: OrchestrationV2ThreadProjection["messages"][number]["context"],
+) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:steer-citation");
+    const providerSessionId = ProviderSessionId.make("provider-session:steer-citation");
+    const providerThreadId = ProviderThreadId.make("provider-thread:steer-citation");
+    const providerTurnId = ProviderTurnId.make("provider-turn:steer-citation");
+    const attemptId = RunAttemptId.make("run-attempt:steer-citation");
+    const messageId = MessageId.make("message:steer-citation");
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver, nativeId: "native-thread:steer-citation", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const projection = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
+    const message = {
+      id: messageId,
+      text,
+      context,
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    } as unknown as OrchestrationV2ThreadProjection["messages"][number];
+    const run = {
+      id: RunId.make("run:restart-session"),
+    } as OrchestrationV2ThreadProjection["runs"][number];
+    const steered = yield* Ref.make<string | null>(null);
+    const runtime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId,
+      steerTurn: ({ message: steerMessage }) => Ref.set(steered, steerMessage.text),
+    } as Pick<
+      ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      "steerTurn"
+    > as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.merge(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getProviderControlContext: () =>
+              Effect.succeed({
+                providerThread,
+                providerTurn: projection.providerTurns[0],
+                attempt: projection.attempts[0],
+                message,
+                run,
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            get: () => Effect.succeedSome(runtime),
+          }),
+        ),
+      ),
+    );
+
+    const exit = yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      yield* control.steer({
+        threadId,
+        providerSessionId,
+        providerThreadId,
+        providerTurnId,
+        messageId,
+      });
+    }).pipe(Effect.provide(layerControl), Effect.exit);
+
+    return { exit, steered: yield* Ref.get(steered) };
+  });
+
+// regression: #16327 assistant citations reached providers as raw links
+it.effect("expands assistant citations before steering the provider turn", () =>
+  Effect.gen(function* () {
+    const text = `${citationText("The café opens at noon.")} Echo my input exactly.`;
+
+    const { exit, steered } = yield* steerCitationMessage(text);
+
+    assert.isTrue(Exit.isSuccess(exit));
+    assert.equal(steered, expandAssistantCitationsForProvider(text));
+  }),
+);
+
+it.effect("keeps context links quoted inside a steered citation literal", () =>
+  Effect.gen(function* () {
+    const excerpt = "Use [Thread: label](t3-context://v1/thread/demo) here.";
+    const text = `${serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment-citation"),
+      threadId: ThreadId.make("thread:steer-citation"),
+      messageId: MessageId.make("assistant-message-citation"),
+      text: excerpt,
+      start: 0,
+      end: excerpt.length,
+      prefix: "",
+      suffix: "",
+      comment: excerpt,
+    })} Echo my input exactly.`;
+
+    const { exit, steered } = yield* steerCitationMessage(text);
+
+    assert.isTrue(Exit.isSuccess(exit));
+    assert.equal(steered, expandAssistantCitationsForProvider(text));
+    assert.notInclude(steered, "<t3_context");
+  }),
+);
+
+it.effect("rejects a steer whose expanded citations exceed the provider input limit", () =>
+  Effect.gen(function* () {
+    const followUp = `${citationText("The café opens at noon.")} Echo my input exactly.`;
+    const text = `${"x".repeat(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS - expandAssistantCitationsForProvider(followUp).length + 1,
+    )}${followUp}`;
+    assert.isBelow(text.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+
+    const { exit, steered } = yield* steerCitationMessage(text);
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.isNull(steered);
+  }),
+);
+
+it.effect("rejects a steer whose citations and context together exceed the input limit", () =>
+  Effect.gen(function* () {
+    const text = `${citationText("hello")} [Terminal 1](t3-context://v1/terminal/ctx_terminal)`;
+    assert.isBelow(
+      expandAssistantCitationsForProvider(text).length,
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+    );
+
+    const { exit, steered } = yield* steerCitationMessage(text, {
+      version: 1,
+      records: [
+        {
+          version: 1,
+          contextId: ComposerContextId.make("ctx_terminal"),
+          kind: "terminal",
+          label: "Terminal 1",
+          terminalId: "term-1",
+          terminalLabel: "Terminal 1",
+          lineStart: 1,
+          lineEnd: 1,
+          text: "r".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+        },
+      ],
+    });
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.isNull(steered);
+  }),
 );

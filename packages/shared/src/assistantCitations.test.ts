@@ -219,6 +219,19 @@ describe("assistant citation references", () => {
     expect(expanded).not.toContain("t3-citation://");
   });
 
+  it("projects only the prompt body, leaving quoted text in the citation data literal", () => {
+    const quoted = { ...citation, text: "[ref]", comment: "[ref]" };
+    const expanded = expandAssistantCitationsForProvider(
+      `[ref] ${serializeAssistantCitation(quoted)}`,
+      (body) => body.replaceAll("[ref]", "<projected>"),
+    );
+
+    expect(expanded).toMatch(/^<projected> \[assistant-quote-1\]\n/);
+    expect(readProviderContext(expanded)).toStrictEqual([
+      { id: "assistant-quote-1", citation: quoted },
+    ]);
+  });
+
   it("includes bound comments in plain-text titles and stash previews without escaping", () => {
     const commented = { ...citation, comment: 'Why "this"?\nKeep <tags> & `code` $& $1 $$.' };
     const marker = serializeAssistantCitation(commented);

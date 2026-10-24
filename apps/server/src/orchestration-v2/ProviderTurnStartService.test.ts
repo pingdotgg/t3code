@@ -3,6 +3,9 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ComposerContextId,
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -18,6 +21,10 @@ import {
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import {
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -259,6 +266,7 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly context?: OrchestrationV2ThreadProjection["messages"][number]["context"];
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly fileSystem?: FileSystem.FileSystem;
@@ -334,6 +342,7 @@ function makeLocalCommandHarness(input: {
     nodeId: rootNodeId,
     role: "user",
     text: input.text,
+    ...(input.context === undefined ? {} : { context: input.context }),
     attachments: [],
     streaming: false,
     createdBy: "user",
@@ -988,6 +997,133 @@ effectIt.effect("reads current startup state after waiting for the workspace lea
     yield* Fiber.join(startup);
     expect(harness.open).not.toHaveBeenCalled();
     expect(harness.startRootRun).not.toHaveBeenCalled();
+  }),
+);
+
+// regression: #16327 assistant citations reached providers as raw links
+effectIt.effect("expands assistant citations before the provider turn starts", () =>
+  Effect.gen(function* () {
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment-citation"),
+      threadId: ThreadId.make("thread-citation"),
+      messageId: MessageId.make("assistant-message-citation"),
+      text: "The café opens at noon.",
+      start: 0,
+      end: 23,
+      prefix: "",
+      suffix: "",
+    });
+    const text = `${citation} Echo my input exactly.`;
+    const harness = makeLocalCommandHarness({ text, failReadsAfterRunning: true });
+
+    yield* harness.start;
+
+    expect(harness.startRootRun).toHaveBeenCalledTimes(1);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(
+      expandAssistantCitationsForProvider(text),
+    );
+    expect(harness.projection().messages.at(-1)?.text).toBe(text);
+  }),
+);
+
+effectIt.effect("keeps context links quoted inside a citation literal", () =>
+  Effect.gen(function* () {
+    const excerpt = "Use [Thread: label](t3-context://v1/thread/demo) here.";
+    const text = `${serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment-citation"),
+      threadId: ThreadId.make("thread-citation"),
+      messageId: MessageId.make("assistant-message-citation"),
+      text: excerpt,
+      start: 0,
+      end: excerpt.length,
+      prefix: "",
+      suffix: "",
+      comment: excerpt,
+    })} Echo my input exactly.`;
+    const harness = makeLocalCommandHarness({ text, failReadsAfterRunning: true });
+
+    yield* harness.start;
+
+    const providerText = harness.startRootRun.mock.calls[0]![0].message.text;
+    expect(providerText).toBe(expandAssistantCitationsForProvider(text));
+    expect(providerText).not.toContain("<t3_context");
+  }),
+);
+
+effectIt.effect("fails the run when expanded citations exceed the provider input limit", () =>
+  Effect.gen(function* () {
+    const followUp = `${serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment-citation"),
+      threadId: ThreadId.make("thread-citation"),
+      messageId: MessageId.make("assistant-message-citation"),
+      text: "The café opens at noon.",
+      start: 0,
+      end: 23,
+      prefix: "",
+      suffix: "",
+    })} Echo my input exactly.`;
+    const text = `${"x".repeat(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS - expandAssistantCitationsForProvider(followUp).length + 1,
+    )}${followUp}`;
+    expect(text.length).toBeLessThan(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    const harness = makeLocalCommandHarness({ text });
+
+    yield* harness.start;
+
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { class: "validation_error" } },
+    ]);
+  }),
+);
+
+effectIt.effect("fails the run when citations and context together exceed the input limit", () =>
+  Effect.gen(function* () {
+    const citedText = `${serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment-citation"),
+      threadId: ThreadId.make("thread-citation"),
+      messageId: MessageId.make("assistant-message-citation"),
+      text: "hello",
+      start: 0,
+      end: 5,
+      prefix: "",
+      suffix: "",
+    })} [Terminal 1](t3-context://v1/terminal/ctx_terminal)`;
+    expect(expandAssistantCitationsForProvider(citedText).length).toBeLessThan(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+    );
+    const harness = makeLocalCommandHarness({
+      text: citedText,
+      context: {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: ComposerContextId.make("ctx_terminal"),
+            kind: "terminal",
+            label: "Terminal 1",
+            terminalId: "term-1",
+            terminalLabel: "Terminal 1",
+            lineStart: 1,
+            lineEnd: 1,
+            text: "r".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+          },
+        ],
+      },
+    });
+
+    yield* harness.start;
+
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { class: "validation_error" } },
+    ]);
   }),
 );
 

@@ -1,7 +1,9 @@
+import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
   type NodeId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -353,6 +355,22 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          // Encoded links fit the input limit at send time; the expanded excerpts may not.
+          const hasCitations = expandAssistantCitationsForProvider(message.text) !== message.text;
+          const text = expandAssistantCitationsForProvider(message.text, (body) =>
+            projectComposerContextForProvider({
+              text: body,
+              records: message.context?.records ?? [],
+            }),
+          );
+          if (hasCitations && text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+            return yield* new ProviderTurnControlError({
+              threadId: input.threadId,
+              operation: "steer",
+              providerTurnId: input.providerTurnId,
+              cause: `Quoted citations expand this message past the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")}-character limit. Quote less or split the message.`,
+            });
+          }
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -361,10 +379,7 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
+                text,
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,

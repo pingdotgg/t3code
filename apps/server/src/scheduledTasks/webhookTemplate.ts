@@ -61,13 +61,15 @@ const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
  * prompt: `$name` skill mentions (any currency sign, after any character in
  * Codex and Pi), `@` file, agent and plugin mentions (after punctuation or
  * letters in some CLIs), a `/name` command word mid-text, and `t3-context:`
- * links. A word joiner goes after every currency sign and `@`, after a `/`
- * that starts a single-segment word, and inside the `t3-context` scheme and
- * any `webhook-data` name, so a value can't forge a frame tag.
+ * and `t3-citation:` links (the server expands citations into user-authored
+ * data outside this frame). A word joiner goes after every currency sign and
+ * `@`, after a `/` that starts a single-segment word, and inside those schemes
+ * and any `webhook-data` name, so a value can't forge a frame tag.
  * Checked against Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0 and dsh
  * 0.2.0-rc.2; other agents may parse more.
  */
-const MENTION = /[\p{Sc}@]|(?<=^|\s)\/(?=[^\s/]+(?:\s|$))|t3-context(?=:)|webhook(?=-data)/giu;
+const MENTION =
+  /[\p{Sc}@]|(?<=^|\s)\/(?=[^\s/]+(?:\s|$))|t3-c(?:ontext|itation)(?=:)|webhook(?=-data)/giu;
 
 function parseBody(request: WebhookRequest): unknown {
   const contentType = (request.headers["content-type"] ?? "").toLowerCase();

@@ -1,8 +1,10 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
   latestProviderTurnForAttempt,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -484,6 +486,31 @@ export const layer: Layer.Layer<
           });
           return;
         }
+      }
+      // Encoded links fit the input limit at send time; the expanded excerpts may not.
+      const hasCitations = expandAssistantCitationsForProvider(message.text) !== message.text;
+      const userText = expandAssistantCitationsForProvider(message.text, (text) =>
+        projectComposerContextForProvider({ text, records: message.context?.records ?? [] }),
+      );
+      if (hasCitations && userText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        const now = yield* DateTime.now;
+        yield* settleRunBeforeStart({
+          signal: "citation-input-limit",
+          status: "failed",
+          now,
+          startedAt: now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Message too long",
+            failure: makeProviderFailure({
+              class: "validation_error",
+              message: `Quoted citations expand this message past the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")}-character limit. Quote less or split the message.`,
+            }),
+          },
+        });
+        return;
       }
       const { worktreePath, branch } = projection.thread;
       if (worktreePath !== null && branch !== null) {
@@ -1032,10 +1059,6 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(
