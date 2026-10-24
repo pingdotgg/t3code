@@ -76,13 +76,7 @@ export function BrowserDocumentFrame(props: {
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
-    <embed
-      key={props.src}
-      src={props.src}
-      type="application/pdf"
-      title={props.title}
-      className="min-h-0 w-full flex-1 border-0"
-    />
+    <PdfDocument key={key} src={props.src} title={props.title} />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
       key={key}
@@ -93,6 +87,19 @@ export function BrowserDocumentFrame(props: {
     />
   ) : (
     <FileDocument key={key} src={props.src} title={props.title} />
+  );
+}
+
+// A renewed URL would reopen the PDF at page 1; a new key loads the changed file.
+function PdfDocument(props: { readonly src: string; readonly title: string }) {
+  const [src] = useState(props.src);
+  return (
+    <embed
+      src={src}
+      type="application/pdf"
+      title={props.title}
+      className="min-h-0 w-full flex-1 border-0"
+    />
   );
 }
 

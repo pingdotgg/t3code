@@ -235,10 +235,25 @@ function WorkspaceBrowserPreview(props: {
     absolutePath: props.absolutePath,
   });
   const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const pdf = isPdfPreviewFile(props.absolutePath);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  // A PDF is one file, so its own revision says whether it changed and an agent's other
+  // commands leave the reader's page alone. HTML loads its siblings, so it follows every
+  // workspace mutation, as do PDFs from servers that do not report a revision.
+  useWorkspaceMutationRefresh({
+    enabled: pdf,
+    mutationId: props.workspaceMutationId,
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+    refresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
+  const fileRevision = pdf && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
-    props.workspaceMutationId === null
+    revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -257,9 +272,9 @@ function WorkspaceBrowserPreview(props: {
   return (
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${props.workspaceMutationId}`}
+      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${revision}`}
       title={props.title}
-      pdf={isPdfPreviewFile(props.absolutePath)}
+      pdf={pdf}
     />
   );
 }

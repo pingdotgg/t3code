@@ -596,6 +596,37 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("versions a workspace PDF by its file changes rather than by re-signing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-workspace-revision-" });
+      const filePath = path.join(root, "paper.pdf");
+      yield* fs.writeFileString(filePath, "%PDF-original");
+      yield* Effect.promise(() => NodeFSP.utimes(filePath, 1_000, 1_000));
+      const input = {
+        resource: {
+          _tag: "workspace-file" as const,
+          threadId: ThreadId.make("thread-1"),
+          path: filePath,
+        },
+        workspaceRoot: root,
+      };
+      const original = yield* issueAssetUrl(input);
+      expect(original.fileRevision).toEqual(expect.any(String));
+
+      yield* TestClock.adjust("1 minute");
+      const renewed = yield* issueAssetUrl(input);
+      expect(renewed.relativeUrl).not.toBe(original.relativeUrl);
+      expect(renewed.fileRevision).toBe(original.fileRevision);
+
+      yield* fs.writeFileString(filePath, "%PDF-modified");
+      yield* Effect.promise(() => NodeFSP.utimes(filePath, 2_000, 2_000));
+      const edited = yield* issueAssetUrl(input);
+      expect(edited.fileRevision).not.toBe(original.fileRevision);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
