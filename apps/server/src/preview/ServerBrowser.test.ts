@@ -121,6 +121,18 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
   };
 }
 
+function fileChooserElement(accept: string) {
+  return {
+    getAttribute: async () => accept,
+    evaluate: (probe: (element: { ownerDocument: unknown }) => boolean) =>
+      Promise.resolve(
+        probe({
+          ownerDocument: (globalThis as typeof globalThis & { document?: unknown }).document,
+        }),
+      ),
+  };
+}
+
 function makeContext(onClose?: (context: BrowserContext) => void) {
   const events = new NodeEvents.EventEmitter();
   const nativeFileChooser = vi.fn();
@@ -141,7 +153,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
       if (
         !events.emit("filechooser", {
           isMultiple: () => false,
-          element: () => ({ getAttribute: async () => ".csv" }),
+          element: () => fileChooserElement(".csv"),
           setFiles: setChooserFiles,
         })
       ) {
@@ -1013,7 +1025,7 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
       const setFiles = vi.fn(async (_files: unknown) => {});
       page.emit("filechooser", {
         isMultiple: () => false,
-        element: () => ({ getAttribute: async () => ".csv" }),
+        element: () => fileChooserElement(".csv"),
         setFiles,
       });
       let offered = yield* Queue.take(viewer.output);
@@ -1038,6 +1050,211 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a file picker from a detached input stays open across its own DCL", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const pageDocument = {};
+      vi.stubGlobal("document", pageDocument);
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllGlobals()));
+      const detachedInput = { isConnected: false, ownerDocument: pageDocument };
+      const dclProbe = Promise.withResolvers<boolean>();
+      const dclProbeStarted = Promise.withResolvers<void>();
+      const dclProbeFinished = Promise.withResolvers<void>();
+      let probeCount = 0;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => ({
+          getAttribute: async () => "",
+          evaluate: (probe: (element: typeof detachedInput) => boolean) => {
+            probeCount++;
+            if (probeCount === 1) return Promise.resolve(probe(detachedInput));
+            dclProbeStarted.resolve();
+            return dclProbe.promise.then((current) => {
+              const result = probe(detachedInput);
+              dclProbeFinished.resolve();
+              return current && result;
+            });
+          },
+        }),
+        setFiles: vi.fn(async (_files: unknown) => {}),
+      });
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
+
+      page.emit("domcontentloaded");
+      yield* Effect.promise(() => dclProbeStarted.promise);
+      dclProbe.resolve(true);
+      yield* Effect.promise(() => dclProbeFinished.promise);
+      yield* viewer.input({ type: "releaseControl" });
+      let closedAfterDcl = false;
+      let control = yield* Queue.take(viewer.output);
+      while (control._tag !== "control" || control.controller === "you") {
+        if (control._tag === "fileChooserClosed") closedAfterDcl = true;
+        control = yield* Queue.take(viewer.output);
+      }
+      expect(closedAfterDcl).toBe(false);
+      yield* viewer.input({ type: "takeControl" });
+      let restoredControl = yield* Queue.take(viewer.output);
+      while (restoredControl._tag !== "control" || restoredControl.controller !== "you") {
+        restoredControl = yield* Queue.take(viewer.output);
+      }
+
+      expect(
+        yield* browser.answerFileChooser({
+          threadId: scope.thread.threadId,
+          tabId,
+          chooserId: offered.id,
+          files: [{ name: "a.csv", mimeType: "text/csv", buffer: Buffer.from("a") }],
+        }),
+      ).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a file picker closes when its page is replaced by a new document", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const setFiles = vi.fn(async (_files: unknown) => {});
+      const probeStarted = Promise.withResolvers<void>();
+      const probeSettled = Promise.withResolvers<void>();
+      let probeCount = 0;
+      page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => ({
+          getAttribute: async () => "",
+          evaluate: () => {
+            probeCount++;
+            if (probeCount === 1) return Promise.resolve(true);
+            probeStarted.resolve();
+            return Promise.reject(new Error("Execution context was destroyed")).finally(() =>
+              probeSettled.resolve(),
+            );
+          },
+        }),
+        setFiles,
+      });
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
+
+      page.emit("domcontentloaded");
+      yield* Effect.promise(() => probeStarted.promise);
+      yield* Effect.promise(() => probeSettled.promise);
+      let closed = yield* Queue.take(viewer.output);
+      while (closed._tag !== "fileChooserClosed") closed = yield* Queue.take(viewer.output);
+      expect(closed.id).toBe(offered.id);
+      expect(
+        yield* browser.answerFileChooser({
+          threadId: scope.thread.threadId,
+          tabId,
+          chooserId: offered.id,
+          files: [{ name: "a.csv", mimeType: "text/csv", buffer: Buffer.from("a") }],
+        }),
+      ).toBe(false);
+      expect(setFiles).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a file picker closes when its page is replaced while control changes hands", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const first = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* first.input({ type: "takeControl" });
+      const current = Promise.withResolvers<boolean>();
+      const probeStarted = Promise.withResolvers<void>();
+      let probeCount = 0;
+      page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => ({
+          getAttribute: async () => "",
+          evaluate: () => {
+            probeCount++;
+            if (probeCount === 1) return Promise.resolve(true);
+            probeStarted.resolve();
+            return current.promise;
+          },
+        }),
+        setFiles: vi.fn(async (_files: unknown) => {}),
+      });
+      let offered = yield* Queue.take(first.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(first.output);
+
+      page.emit("domcontentloaded");
+      yield* Effect.promise(() => probeStarted.promise);
+      const second = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* first.input({ type: "releaseControl" });
+      yield* second.input({ type: "takeControl" });
+      let reoffered = yield* Queue.take(second.output);
+      while (reoffered._tag !== "fileChooser") reoffered = yield* Queue.take(second.output);
+      current.resolve(false);
+      let closed = yield* Queue.take(second.output);
+      while (closed._tag !== "fileChooserClosed") closed = yield* Queue.take(second.output);
+      expect(closed.id).toBe(reoffered.id);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.fileChooser).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a file picker is not offered after its document changes while reading accept", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const accept = Promise.withResolvers<string | null>();
+      const acceptRead = Promise.withResolvers<void>();
+      const current = Promise.withResolvers<boolean>();
+      const probeStarted = Promise.withResolvers<void>();
+      page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => ({
+          getAttribute: () => {
+            acceptRead.resolve();
+            return accept.promise;
+          },
+          evaluate: () => {
+            probeStarted.resolve();
+            return current.promise;
+          },
+        }),
+        setFiles: vi.fn(async (_files: unknown) => {}),
+      });
+
+      yield* Effect.promise(() => acceptRead.promise);
+      page.emit("domcontentloaded");
+      accept.resolve("");
+      yield* Effect.promise(() => accept.promise);
+      yield* Effect.promise(() => probeStarted.promise);
+      current.resolve(false);
+      yield* Effect.promise(() => current.promise);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.fileChooser).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("only the current controller can answer a file picker", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1047,7 +1264,7 @@ it.live("only the current controller can answer a file picker", () =>
       const setFiles = vi.fn(async (_files: unknown) => {});
       contexts[0]!.page.emit("filechooser", {
         isMultiple: () => false,
-        element: () => ({ getAttribute: async () => "" }),
+        element: () => fileChooserElement(""),
         setFiles,
       });
       let offered = yield* Queue.take(first.output);
