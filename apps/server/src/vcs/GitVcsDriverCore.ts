@@ -55,6 +55,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
+// Covers file timestamps that lag the wall clock by a kernel tick.
+const INDEX_SECOND_MARGIN_MS = 25;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -3712,6 +3714,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // Git only trusts an index entry's cached stat when the file is older than the index file's own
+  // second, and `worktree add` writes the index last, so the files it wrote in that second stay
+  // racily clean: every status, diff and checkpoint `add` re-hashes them. Nothing T3 runs writes a
+  // worktree's index (status polling and capture deliberately never do), so refresh it once here,
+  // after that second has passed. Index mtimes are wall-clock time, hence the live clock.
+  const refreshWorktreeIndex = Effect.fn("refreshWorktreeIndex")(function* (worktreePath: string) {
+    const indexValue = yield* runGitStdout("GitVcsDriver.createWorktree.indexPath", worktreePath, [
+      "rev-parse",
+      "--git-path",
+      "index",
+    ]);
+    const { mtime } = yield* fileSystem.stat(path.resolve(worktreePath, indexValue.trim()));
+    if (Option.isSome(mtime)) {
+      const settledAt =
+        (Math.floor(mtime.value.getTime() / 1000) + 1) * 1000 + INDEX_SECOND_MARGIN_MS;
+      yield* Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) => (now < settledAt ? Effect.sleep(settledAt - now) : Effect.void)),
+        Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+      );
+    }
+    yield* runGit("GitVcsDriver.createWorktree.refreshIndex", worktreePath, [
+      "update-index",
+      "-q",
+      "--refresh",
+    ]);
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -3868,6 +3897,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
       }
     }
+
+    yield* refreshWorktreeIndex(worktreePath).pipe(Effect.ignore({ log: "Warn" }));
 
     return {
       worktree: {
