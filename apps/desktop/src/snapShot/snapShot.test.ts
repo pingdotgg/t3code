@@ -1,5 +1,6 @@
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -11,6 +12,7 @@ import {
   findCaptureSource,
   hideAndWaitForBlur,
   isWaylandSession,
+  toElectronAccelerator,
 } from "./snapShot.ts";
 
 describe("accessibleWindowText", () => {
@@ -509,6 +511,21 @@ describe("findCaptureSource", () => {
         },
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("toElectronAccelerator", () => {
+  // The settings recorder stores shortcuts through parseKeybindingShortcut, which lowercases keys.
+  it.each([
+    ["mod+shift+arrowup", "CommandOrControl+Shift+Up"],
+    ["mod+shift+arrowdown", "CommandOrControl+Shift+Down"],
+    ["ctrl+alt+arrowleft", "Control+Alt+Left"],
+    ["ctrl+alt+arrowright", "Control+Alt+Right"],
+    ["mod+shift+esc", "CommandOrControl+Shift+Esc"],
+    ["mod+shift+space", "CommandOrControl+Shift+Space"],
+    ["mod+shift+2", "CommandOrControl+Shift+2"],
+  ])("maps a recorded %s to an Electron accelerator", (recorded, accelerator) => {
+    expect(toElectronAccelerator(parseKeybindingShortcut(recorded)!)).toBe(accelerator);
   });
 });
 
