@@ -2332,6 +2332,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               completedAt,
               updatedAt: completedAt,
               type: "command_execution",
+              ...(context.subagent === null && continuationRequests !== undefined
+                ? { completionWake: "always" as const }
+                : {}),
               input: tracked.command,
               ...(tracked.aggregatedOutput === undefined
                 ? {}
@@ -3593,6 +3596,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             completedAt,
             updatedAt,
             type: "command_execution",
+            ...(context.subagent === null && continuationRequests !== undefined
+              ? { completionWake: "always" as const }
+              : {}),
             input: item.command,
             ...(item.aggregatedOutput === null || item.aggregatedOutput === undefined
               ? {}

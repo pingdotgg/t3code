@@ -12,6 +12,7 @@ import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
   isAwaitedWork,
+  runOutcome,
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
   restartContinuationNote,
@@ -234,5 +235,37 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
       attempts,
     }),
     [],
+  );
+});
+
+it("retains command completion ownership through cancellation and duplicate note merges", () => {
+  const command = {
+    id: "command:owned",
+    type: "command_execution",
+    input: "pnpm test",
+    completionWake: "always" as const,
+  };
+  const owned = cancelledTurnItemWork(command as never)!;
+  const plain = { kind: "shell" as const, label: "pnpm test", id: command.id };
+  assert.deepEqual(owned, { ...plain, completionWake: "always" });
+  assert.isTrue(isAwaitedWork(owned));
+  assert.isFalse(isAwaitedWork(plain));
+  for (const merged of [
+    mergeRestartCancelledBackgroundWork([plain], [owned, plain]),
+    mergeRestartCancelledBackgroundWork([owned], [plain, owned]),
+  ]) {
+    assert.deepEqual(merged, [owned]);
+    assert.equal(
+      runOutcome({ status: "completed", restartCancelledBackgroundWork: merged }),
+      "interrupted",
+    );
+    assert.equal(
+      runOutcome({ status: "cancelled", restartCancelledBackgroundWork: merged }),
+      "interrupted",
+    );
+  }
+  assert.equal(
+    runOutcome({ status: "completed", restartCancelledBackgroundWork: [plain] }),
+    "completed",
   );
 });

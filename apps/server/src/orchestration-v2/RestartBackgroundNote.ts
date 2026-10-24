@@ -54,6 +54,7 @@ export function cancelledTurnItemWork(
         kind: "shell",
         label: compactLabel(item.input) ?? compactLabel(item.title) ?? "background command",
         id: item.id,
+        ...(item.completionWake === undefined ? {} : { completionWake: item.completionWake }),
       };
     case "dynamic_tool": {
       const monitor =
@@ -157,12 +158,8 @@ export function isRestartNoteSource(
   );
 }
 
-/**
- * A shell does not wake it: most are dev servers that nobody waits on, so their
- * note waits for the next user message.
- */
-export function isAwaitedWork(work: Pick<Work, "kind">): boolean {
-  return work.kind !== "shell";
+export function isAwaitedWork(work: Pick<Work, "kind" | "completionWake">): boolean {
+  return work.kind !== "shell" || work.completionWake === "always";
 }
 
 export function runOutcome(
@@ -332,12 +329,18 @@ export function mergeRestartCancelledBackgroundWork(
   added: ReadonlyArray<Work>,
 ): ReadonlyArray<Work> {
   const identity = (entry: Work) => entry.id ?? `${entry.kind}\u0000${entry.label}`;
-  const seen = new Set(current.map(identity));
+  const seen = new Map(current.map((entry, index) => [identity(entry), index]));
   const merged = [...current];
   for (const entry of added) {
     const key = identity(entry);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const index = seen.get(key);
+    if (index !== undefined) {
+      if (entry.completionWake === "always" && merged[index]!.completionWake !== "always") {
+        merged[index] = { ...merged[index]!, completionWake: "always" };
+      }
+      continue;
+    }
+    seen.set(key, merged.length);
     merged.push(entry);
   }
   return merged;

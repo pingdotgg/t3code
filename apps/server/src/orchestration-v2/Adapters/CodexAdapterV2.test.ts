@@ -881,6 +881,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    installContinuation = true,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -929,12 +930,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         fileSystem,
         idAllocator,
         serverConfig,
-        continuationRequests: {
-          offer: (request) =>
-            Effect.sync(() => {
-              continuationRequests.push(request);
-            }).pipe(Effect.andThen(changes.notify)),
-        },
+        ...(installContinuation
+          ? {
+              continuationRequests: {
+                offer: (request: ProviderContinuationRequests.ProviderContinuationRequest) =>
+                  Effect.sync(() => {
+                    continuationRequests.push(request);
+                  }).pipe(Effect.andThen(changes.notify)),
+              },
+            }
+          : {}),
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -2721,6 +2726,67 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  it.effect.each([true, false])(
+    "persists native command completion ownership only with continuation support (%s)",
+    (installContinuation) =>
+      Effect.gen(function* () {
+        const completed = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          {
+            ...backgroundExecTranscript,
+            entries: backgroundExecTranscript.entries.map((entry) =>
+              entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+                ? { ...entry, afterMs: 0 }
+                : entry,
+            ),
+          },
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status === "completed"
+              ? Deferred.succeed(completed, undefined)
+              : Effect.void,
+          undefined,
+          undefined,
+          installContinuation,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-completion-ownership"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        yield* Deferred.await(completed);
+        if (installContinuation)
+          yield* harness.until(() => harness.continuationRequests.length === 1);
+        const commands = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          commands.map((item) => item.status),
+          ["running", "completed"],
+        );
+        assert.isTrue(
+          commands.every(
+            (item) => item.completionWake === (installContinuation ? "always" : undefined),
+          ),
+        );
+        assert.lengthOf(harness.continuationRequests, installContinuation ? 1 : 0);
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect.each([false, true])(
     "keeps commands interrupted after native thread closure (persistent tool: %s)",
     (retainContext) =>
@@ -2837,6 +2903,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             continuations: 0,
           },
         );
+        const commands = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.isTrue(commands.every((item) => item.completionWake === "always"));
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.isFalse(
           yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
@@ -3754,6 +3826,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM,
         );
         assert.equal(childCommandUpdates.at(-1)?.turnItem.status, "interrupted");
+        assert.isTrue(
+          childCommandUpdates.every(
+            ({ turnItem }) =>
+              turnItem.type === "command_execution" && turnItem.completionWake === undefined,
+          ),
+        );
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);

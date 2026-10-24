@@ -9,6 +9,7 @@ import {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2RpcSchemas,
+  OrchestrationV2RestartCancelledBackgroundWork,
   OrchestrationV2Subagent,
   OrchestrationV2SubagentJson,
   OrchestrationV2ThreadHistoryPage,
@@ -18,6 +19,9 @@ import {
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 
+const decodeRestartCancelledBackgroundWork = Schema.decodeUnknownSync(
+  OrchestrationV2RestartCancelledBackgroundWork,
+);
 const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
@@ -34,6 +38,41 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("round-trips command completion ownership through stored and wire schemas", () => {
+    const base = {
+      id: "command:owned",
+      threadId: "thread:owned",
+      runId: "run:owned",
+      nodeId: null,
+      providerThreadId: "provider-thread:owned",
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.formatIso(now),
+      type: "command_execution",
+      input: "pnpm test",
+    };
+    for (const ownership of [{}, { completionWake: "always" }] as const) {
+      const stored = { ...base, ...ownership };
+      const item = decodeOrchestrationV2TurnItemJson(stored);
+      expect(encodeOrchestrationV2TurnItemJson(item)).toEqual(stored);
+      const wire = Schema.toCodecJson(OrchestrationV2TurnItem);
+      expect(Schema.decodeUnknownSync(wire)(Schema.encodeSync(wire)(item))).toEqual(item);
+      const cancelled = { kind: "shell", label: "pnpm test", id: base.id, ...ownership };
+      const codec = Schema.toCodecJson(OrchestrationV2RestartCancelledBackgroundWork);
+      expect(
+        Schema.decodeUnknownSync(codec)(
+          Schema.encodeSync(codec)(decodeRestartCancelledBackgroundWork(cancelled)),
+        ),
+      ).toEqual(cancelled);
+    }
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
