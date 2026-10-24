@@ -92,5 +92,7 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   expect(drafts()?.prompt).toBe(
     `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
   );
-  await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "Edit citation comment: check this" }))
+    .toBeInTheDocument();
 });

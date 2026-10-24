@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import {
   findAssistantCitationSourceAnchor,
@@ -34,11 +35,10 @@ import { observeResize } from "~/lib/observeResize";
 
 export function AssistantCitationChip({
   citation,
-  composer = false,
   commentEditor,
 }: {
   citation: AssistantCitation;
-  composer?: boolean;
+  /** Present in the composer draft, where the comment can still change. */
   commentEditor?: {
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
@@ -50,7 +50,6 @@ export function AssistantCitationChip({
     onRestoreFocus?: () => void;
   };
 }) {
-  const navigate = useNavigate();
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
@@ -107,31 +106,7 @@ export function AssistantCitationChip({
       }
     : undefined;
   const label = assistantCitationLabel(citation);
-  const sourceLinkProps = {
-    to: "/$environmentId/$threadId" as const,
-    params: { environmentId: citation.environmentId, threadId: citation.threadId },
-    hash: assistantCitationHash(citation),
-    "data-markdown-copy": serializeAssistantCitation(citation),
-    resetScroll: false,
-    onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        return;
-      }
-      event.preventDefault();
-      void navigate(assistantCitationNavigation(citation));
-    },
-  };
-  const composerSourceLink = (
-    <Link
-      {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
-      aria-label={`View cited assistant text: ${label}`}
-    >
-      <QuoteIcon aria-hidden="true" />
-      <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
-    </Link>
-  );
-  if (!composer) {
+  if (!commentEditor) {
     return (
       <ContextChipPopover
         kind="citation"
@@ -140,113 +115,208 @@ export function AssistantCitationChip({
         accessibleLabel={`Quoted assistant text: ${label}`}
         copyMarkdown={serializeAssistantCitation(citation)}
       >
-        <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
-          <AssistantCitationQuote citation={citation} />
-          <PopoverClose
-            render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
-          >
-            <ArrowUpRightIcon aria-hidden="true" />
-            Go to source
-          </PopoverClose>
-        </div>
+        <AssistantCitationDetails citation={citation} />
       </ContextChipPopover>
     );
   }
+  const cancelComment = () => {
+    if (commentEditor.onCancel) {
+      commentEditor.onCancel();
+    } else {
+      commentEditor.onOpenChange(false);
+    }
+  };
+  const editor = (
+    <AssistantCitationCommentEditor
+      key={serializeAssistantCitation(citation)}
+      citation={citation}
+      inline={!activeSourceAnchor}
+      inputRef={commentInputRef}
+      onDraftChange={(comment) => {
+        draftCommentRef.current = comment;
+        commentEditor.onDraftChange?.(comment);
+      }}
+      onSubmit={(comment) => {
+        if (!commentEditor.onSave(comment)) return false;
+        commentEditor.onOpenChange(false);
+        return true;
+      }}
+      {...(commentEditor.onSaveAndSend
+        ? {
+            onSubmitAndSend: (comment: string) => {
+              if (!commentEditor.onSaveAndSend?.(comment)) return false;
+              commentEditor.onOpenChange(false);
+              return true;
+            },
+          }
+        : {})}
+      onCancel={cancelComment}
+    />
+  );
   return (
-    <ContextChip
-      kind="citation"
-      contentEditable={false}
-      data-assistant-citation-chip="true"
-      data-markdown-copy={serializeAssistantCitation(citation)}
+    <Popover
+      open={commentEditor.open}
+      onOpenChange={(open, eventDetails) => {
+        if (!open && !settleDraftOnClose(eventDetails.reason)) {
+          eventDetails.cancel();
+          return;
+        }
+        commentEditor.onOpenChange(open);
+      }}
     >
-      {composerSourceLink}
-      {commentEditor ? (
-        <Popover
-          open={commentEditor.open}
-          onOpenChange={(open, eventDetails) => {
-            if (!open && !settleDraftOnClose(eventDetails.reason)) {
-              eventDetails.cancel();
-              return;
+      <PopoverTrigger
+        render={
+          <ContextChip
+            kind="citation"
+            render={<button type="button" />}
+            contentEditable={false}
+            data-assistant-citation-chip="true"
+            data-markdown-copy={serializeAssistantCitation(citation)}
+            data-citation-comment-trigger="true"
+            aria-label={`${citation.comment ? "Edit citation comment" : "Add comment to citation"}: ${label}`}
+          />
+        }
+      >
+        <QuoteIcon aria-hidden="true" />
+        <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
+        <ContextChipAction render={<span aria-hidden="true" />}>
+          <PencilIcon />
+        </ContextChipAction>
+      </PopoverTrigger>
+      {commentEditor.open ? (
+        <PopoverPopup
+          {...composerFloatingLayerProps}
+          side={activeSourceAnchor ? "bottom" : "top"}
+          align="end"
+          anchor={popupAnchor}
+          initialFocus={() => {
+            const input = commentInputRef.current;
+            input?.focus({ preventScroll: true });
+            if (input) {
+              input.setSelectionRange(input.value.length, input.value.length);
+              input.scrollTop = input.scrollHeight;
             }
-            commentEditor.onOpenChange(open);
+            return false;
+          }}
+          finalFocus={
+            commentEditor.onRestoreFocus
+              ? () => {
+                  const activeElement = document.activeElement;
+                  if (
+                    activeElement === document.body ||
+                    (activeElement !== null && commentPopupRef.current?.contains(activeElement))
+                  ) {
+                    commentEditor.onRestoreFocus?.();
+                  }
+                  return false;
+                }
+              : undefined
+          }
+          ref={commentPopupRef}
+          aria-label={`Edit citation comment: ${label}`}
+          width={activeSourceAnchor ? "md" : "lg"}
+          padding="compact"
+          onPointerDown={(event) => event.stopPropagation()}
+          // On the whole popup, so Escape from Go to source also removes a just-inserted quote.
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape") {
+              event.preventDefault();
+              cancelComment();
+            }
           }}
         >
-          <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
-            data-citation-comment-trigger="true"
-            render={<ContextChipAction />}
-          >
-            <PencilIcon aria-hidden="true" />
-          </PopoverTrigger>
-          {commentEditor.open ? (
-            <PopoverPopup
-              {...composerFloatingLayerProps}
-              side={activeSourceAnchor ? "bottom" : "top"}
-              align="end"
-              anchor={popupAnchor}
-              initialFocus={() => {
-                commentInputRef.current?.focus({ preventScroll: true });
-                return false;
-              }}
-              finalFocus={
-                commentEditor.onRestoreFocus
-                  ? () => {
-                      const activeElement = document.activeElement;
-                      if (
-                        activeElement === document.body ||
-                        (activeElement !== null && commentPopupRef.current?.contains(activeElement))
-                      ) {
-                        commentEditor.onRestoreFocus?.();
-                      }
-                      return false;
-                    }
-                  : undefined
-              }
-              ref={commentPopupRef}
-              aria-label="Edit citation comment"
-              width="md"
-              padding="compact"
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <AssistantCitationCommentEditor
-                key={serializeAssistantCitation(citation)}
-                citation={citation}
-                inputRef={commentInputRef}
-                onDraftChange={(comment) => {
-                  draftCommentRef.current = comment;
-                  commentEditor.onDraftChange?.(comment);
-                }}
-                onSubmit={(comment) => {
-                  if (!commentEditor.onSave(comment)) return false;
-                  commentEditor.onOpenChange(false);
-                  return true;
-                }}
-                {...(commentEditor.onSaveAndSend
-                  ? {
-                      onSubmitAndSend: (comment: string) => {
-                        if (!commentEditor.onSaveAndSend?.(comment)) return false;
-                        commentEditor.onOpenChange(false);
-                        return true;
-                      },
-                    }
-                  : {})}
-                onCancel={() => {
-                  if (commentEditor.onCancel) {
-                    commentEditor.onCancel();
-                  } else {
-                    commentEditor.onOpenChange(false);
-                  }
-                }}
-              />
-            </PopoverPopup>
-          ) : null}
-        </Popover>
+          {/* Right after a selection the popup sits under the highlighted text, so the quote
+              and its source link would repeat it. The editor keeps its place in the tree either
+              way, so a draft survives the source scrolling away. */}
+          <AssistantCitationDetails
+            citation={citation}
+            editor={editor}
+            // Save before leaving. A draft that cannot be saved keeps the popup open, so the
+            // page must stay too.
+            canLeave={() => {
+              const settled = settleDraftOnClose("close-press");
+              if (settled) draftCommentRef.current = null;
+              return settled;
+            }}
+            showQuote={!activeSourceAnchor}
+          />
+        </PopoverPopup>
       ) : null}
-    </ContextChip>
+    </Popover>
   );
 }
 
-function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
+function AssistantCitationDetails({
+  citation,
+  editor,
+  showQuote = true,
+  canLeave,
+}: {
+  citation: AssistantCitation;
+  editor?: ReactNode;
+  showQuote?: boolean;
+  canLeave?: () => boolean;
+}) {
+  const navigate = useNavigate();
+  return (
+    <div
+      className={cn(
+        "flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start",
+        showQuote && "gap-3 p-1 text-sm",
+      )}
+    >
+      {showQuote ? <AssistantCitationQuote citation={citation} showComment={!editor} /> : null}
+      {/* Outside the quote's scroll area, so a long quote cannot hide the focused field. */}
+      {editor ? <div className="self-stretch">{editor}</div> : null}
+      {showQuote ? (
+        <PopoverClose
+          render={
+            <Button
+              variant="outline"
+              size="sm"
+              render={
+                <Link
+                  to="/$environmentId/$threadId"
+                  params={{ environmentId: citation.environmentId, threadId: citation.threadId }}
+                  hash={assistantCitationHash(citation)}
+                  data-markdown-copy={serializeAssistantCitation(citation)}
+                  resetScroll={false}
+                  onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+                    if (
+                      event.button !== 0 ||
+                      event.metaKey ||
+                      event.ctrlKey ||
+                      event.shiftKey ||
+                      event.altKey
+                    ) {
+                      return;
+                    }
+                    event.preventDefault();
+                    if (canLeave && !canLeave()) return;
+                    void navigate(assistantCitationNavigation(citation));
+                  }}
+                />
+              }
+            />
+          }
+        >
+          <ArrowUpRightIcon aria-hidden="true" />
+          Go to source
+        </PopoverClose>
+      ) : null}
+    </div>
+  );
+}
+
+function AssistantCitationQuote({
+  citation,
+  showComment,
+}: {
+  citation: AssistantCitation;
+  showComment: boolean;
+}) {
   const [fade, setFade] = useState({ top: false, bottom: false });
   const updateFade = (element: HTMLElement) => {
     const top = element.scrollTop > 1;
@@ -269,7 +339,7 @@ function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
       <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">
         {citation.text}
       </blockquote>
-      {citation.comment ? <p>{citation.comment}</p> : null}
+      {showComment && citation.comment ? <p>{citation.comment}</p> : null}
     </div>
   );
 }
