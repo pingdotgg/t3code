@@ -17,6 +17,16 @@ const runtimeVersionPolicy =
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
+// expo-observe sends crashes, errors, and startup metrics here; the relay
+// forwards them to Axiom (infra/relay/src/mobileTelemetry). Observe compiles
+// this into the native project, so changing it takes a new build. Without a
+// relay the app keeps its telemetry (see src/features/observability/observe.ts),
+// but Observe's native side can dispatch before that code runs, to Expo's own
+// ingest when no endpoint is set. `.invalid` never resolves (RFC 6761).
+const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
+  ? new URL("/v1/mobile/observe", repoEnv.T3CODE_RELAY_URL.trim()).toString()
+  : "https://observe.invalid";
+
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
 
@@ -488,6 +498,7 @@ const config: ExpoConfig = {
     },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      observe: { endpointUrl: observeEndpointUrl },
     },
   },
   owner: "pingdotgg",

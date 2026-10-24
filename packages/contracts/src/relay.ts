@@ -1262,6 +1262,23 @@ const RelayHooksGroup = HttpApiGroup.make("hooks")
   )
   .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
 
+/**
+ * Where the mobile app's `expo-observe` sends OTLP/JSON. Observe appends
+ * `<easProjectId>/v1/<signal>` to its configured endpoint URL and sends no
+ * credentials, so the endpoint is public and raw; the relay forwards to Axiom.
+ */
+const RelayMobileTelemetryParams = Schema.Struct({
+  projectId: Schema.String,
+  signal: Schema.Literals(["logs", "metrics", "traces"]),
+});
+const RelayMobileTelemetryGroup = HttpApiGroup.make("mobileTelemetry")
+  .add(
+    HttpApiEndpoint.post("ingest", "/v1/mobile/observe/:projectId/v1/:signal", {
+      params: RelayMobileTelemetryParams,
+    }),
+  )
+  .annotate(OpenApi.Description, "Receive mobile app telemetry from expo-observe.");
+
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
@@ -1272,6 +1289,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayDpopClientGroup,
     RelayServerGroup,
     RelayHooksGroup,
+    RelayMobileTelemetryGroup,
   )
   .annotate(OpenApi.Title, "T3 Code Relay API")
   .annotate(OpenApi.Version, "1.0.0")
