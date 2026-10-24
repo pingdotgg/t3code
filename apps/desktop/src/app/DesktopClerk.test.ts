@@ -290,6 +290,8 @@ it.effect(
     const revealed = Promise.withResolvers<void>();
     const loadURL = vi.fn(async (_url: string) => undefined);
     const window = { loadURL };
+    // During startup the splash is the first window; it must never load app routes.
+    const splash = { loadURL: vi.fn(async (_url: string) => undefined) };
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
         Effect.sync(() => {
@@ -297,7 +299,8 @@ it.effect(
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const electronWindow = {
-      currentMainOrFirst: Effect.succeed(Option.some(window)),
+      main: Effect.succeed(Option.some(window)),
+      currentMainOrFirst: Effect.succeed(Option.some(splash)),
       reveal: () => Effect.sync(() => revealed.resolve()),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
     return Effect.gen(function* () {
@@ -316,6 +319,7 @@ it.effect(
       assert.deepEqual(loadURL.mock.calls, [
         ["t3code-dev://app/settings/providers?instanceId=work"],
       ]);
+      assert.equal(splash.loadURL.mock.calls.length, 0);
       listeners.get("open-url")!(event, "t3code-dev://app/welcome#agents:machine-id");
       assert.equal(event.preventDefault.mock.calls.length, 1);
     }).pipe(

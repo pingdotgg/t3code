@@ -183,7 +183,8 @@ export const make = Effect.gen(function* () {
         if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
+            // Not currentMainOrFirst: during startup the first window is the splash.
+            const mainWindow = yield* electronWindow.main;
             if (Option.isNone(mainWindow)) return;
             yield* Effect.promise(() => mainWindow.value.loadURL(destination));
             yield* electronWindow.reveal(mainWindow.value);
