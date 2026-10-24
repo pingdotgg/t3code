@@ -50,9 +50,9 @@ export function useGuideDiffFiles({
       : null,
   );
 
-  // Each page is folded in once, during the render that first sees it.
+  // Cached pages stay subscribed until revalidation finishes. Fold each settled page once.
   const data = query.data;
-  if (data !== null && !current.done && current.folded !== data) {
+  if (data !== null && !query.isPending && !current.done && current.folded !== data) {
     const parsed = getRenderablePatch(
       data.patch,
       `pull-request-guide:${key}:${current.cursor ?? "first"}`,
