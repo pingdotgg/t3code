@@ -1774,6 +1774,8 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
      */
     environmentThemes: Schema.optional(Schema.Boolean),
     usageLimitSources: Schema.optional(Schema.Boolean),
+    /** Client understands currency cards and credit-source settings. */
+    creditBalances: Schema.optional(Schema.Boolean),
     /**
      * Whether this client answers `/usage-limits` itself. The server injects
      * that command into provider catalogs only for such clients; an older

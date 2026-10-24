@@ -260,6 +260,7 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import { legacyCreditSettings, legacyCreditSources } from "./usage/creditClientCompatibility.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -1705,6 +1706,7 @@ export const layerWsRpc = (
 
       const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
         readonly usageLimitsCommand: boolean;
+        readonly creditBalances?: boolean;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const currentProviders = yield* providerRegistry.getProviders;
@@ -1764,7 +1766,7 @@ export const layerWsRpc = (
               : {}),
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
           },
-          settings,
+          settings: options.creditBalances === true ? settings : legacyCreditSettings(settings),
           shellResumeCompletionMarker: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
@@ -3018,7 +3020,10 @@ export const layerWsRpc = (
               // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
-              const config = yield* loadServerConfig({ usageLimitsCommand });
+              const config = yield* loadServerConfig({
+                usageLimitsCommand,
+                creditBalances: input.creditBalances === true,
+              });
               const keybindingsUpdates = keybindingsChanges.pipe(
                 Stream.map((event) => ({
                   version: 1 as const,
@@ -3081,12 +3086,18 @@ export const layerWsRpc = (
                       Stream.map((sources) => ({
                         version: 1 as const,
                         type: "usageLimitSourcesUpdated" as const,
-                        payload: { sources },
+                        payload: {
+                          sources:
+                            input.creditBalances === true ? sources : legacyCreditSources(sources),
+                        },
                       })),
                     )
                   : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
-                Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
+                Stream.map((settings) => {
+                  const redacted = ServerSettings.redactServerSettingsForClient(settings);
+                  return input.creditBalances === true ? redacted : legacyCreditSettings(redacted);
+                }),
                 Stream.map((settings) => ({
                   version: 1 as const,
                   type: "settingsUpdated" as const,

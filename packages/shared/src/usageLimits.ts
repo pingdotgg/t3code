@@ -78,6 +78,18 @@ export type LimitPresentations = ReadonlyMap<
   }
 >;
 
+export function collectCreditBalances(presentations: LimitPresentations) {
+  return [...presentations].flatMap(([environmentId, presentation]) =>
+    (presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) =>
+      (source.balances ?? []).map((balance) => ({
+        ...balance,
+        key: `${environmentId}:${source.id}:${balance.id}`,
+        environmentLabel: presentation.entry.target.label,
+      })),
+    ),
+  );
+}
+
 export function collectExternalUsageLinks(presentations: LimitPresentations) {
   const links = new Map<
     string,
@@ -307,7 +319,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0) {
+      } else if (source.accounts.length === 0 && !source.balances?.length) {
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
     }

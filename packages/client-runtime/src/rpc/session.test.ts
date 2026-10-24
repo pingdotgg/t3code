@@ -258,6 +258,10 @@ const completeInitialConfig = Effect.fn("TestRpcSessionFactory.completeInitialCo
     tag: WS_METHODS.subscribeServerConfig,
     payload,
   });
+  expect(request.payload).toHaveProperty(
+    "creditBalances",
+    Boolean((payload as { usageLimitSources?: boolean }).usageLimitSources),
+  );
   socket.serverMessage(
     encodeJson({
       _tag: "Chunk",

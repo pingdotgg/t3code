@@ -247,9 +247,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       reason: "remote-unavailable",
       detail: `${connection.label} config subscription ended.`,
     });
-    const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig](
-      serverConfigInput,
-    ).pipe(
+    const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig]({
+      ...serverConfigInput,
+      creditBalances: serverConfigInput.usageLimitSources === true,
+    }).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           const buffered = yield* Ref.modify(serverConfigState, (current) => {
@@ -387,7 +388,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           Effect.as(
             Equal.equals(input, serverConfigInput)
               ? serverConfigEvents
-              : protocolClient[WS_METHODS.subscribeServerConfig](input),
+              : protocolClient[WS_METHODS.subscribeServerConfig]({
+                  ...input,
+                  creditBalances: input.usageLimitSources === true,
+                }),
           ),
         ),
       );
