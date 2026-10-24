@@ -58,6 +58,13 @@ const browserHelperSource =
   `process.stderr.on("error",()=>process.exit(0)).write(` +
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
   `()=>process.exit(0))`;
+
+// A cold or busy machine can take several seconds to start Node, so the
+// preflight gets generous headroom rather than failing the session open.
+const browserHelperPreflightTimeout = "30 seconds";
+// Only successes are remembered: the result depends on the runtime executable,
+// so later session opens skip the spawn while a failure is re-checked each time.
+const verifiedBrowserHelpers = new Set<string>();
 const browserPreflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
 
 const removedEnvironmentKeys = new Set([
@@ -392,7 +399,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   }).pipe(
     Effect.scoped,
     Effect.timeoutOrElse({
-      duration: "5 seconds",
+      duration: browserHelperPreflightTimeout,
       orElse: () =>
         Effect.fail(authSupportError("Antigravity browser suppression verification timed out.")),
     }),
@@ -401,6 +408,8 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         ? error
         : authSupportError("Antigravity browser suppression could not be verified."),
     ),
+    Effect.tap(() => Effect.sync(() => verifiedBrowserHelpers.add(helperExecutable))),
+    Effect.when(Effect.sync(() => !verifiedBrowserHelpers.has(helperExecutable))),
   );
 
   for (const directory of [geminiHome, acpDirectory, tempDirectory]) {

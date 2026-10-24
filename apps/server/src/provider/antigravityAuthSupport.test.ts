@@ -10,8 +10,13 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Ndjson from "effect/encoding/Ndjson";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -636,6 +641,90 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       expect(decodeJson(yield* fs.readFileString(settingsPath))).toEqual({
         auth: { type: "oauth-personal" },
       });
+    }),
+  );
+
+  // Stands in for the helper process: it prints the expected marker, then exits after
+  // `exitDelay`. `started` completes once the exit wait begins, so the TestClock is only
+  // advanced after the preflight timer and the delay are both registered.
+  const preflightHelper = (exitDelay: Effect.Effect<void>) => {
+    const spawns = { count: 0 };
+    const started = Deferred.makeUnsafe<void>();
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.sync(() => {
+        spawns.count += 1;
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(exitDelay),
+            Effect.as(ChildProcessSpawner.ExitCode(0)),
+          ),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.encodeText(
+            Stream.make(
+              `${ANTIGRAVITY_AUTH_BROWSER_MARKER}"https://example.invalid/t3-antigravity-browser-preflight"\n`,
+            ),
+          ),
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    return { spawner, spawns, started };
+  };
+
+  const prepareWithHelper = Effect.fn(function* (
+    runtimeExecutablePath: string,
+    spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    return yield* prepareAntigravityProfile({
+      profileDirectory: path.join(directory, "profile"),
+      userHome: path.join(directory, "home"),
+      runtimeExecutablePath,
+      platform: "linux",
+      baseEnv: {},
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+  });
+
+  it.effect("waits out a slow preflight and skips it once the helper was verified", () =>
+    Effect.gen(function* () {
+      const helper = preflightHelper(Effect.sleep("20 seconds"));
+      const fiber = yield* prepareWithHelper("/fake/slow-node", helper.spawner).pipe(
+        Effect.forkChild,
+      );
+      yield* Deferred.await(helper.started);
+      yield* TestClock.adjust("20 seconds");
+      yield* Fiber.join(fiber);
+
+      yield* prepareWithHelper("/fake/slow-node", helper.spawner);
+      expect(helper.spawns.count).toBe(1);
+    }),
+  );
+
+  it.effect("fails a hung preflight after 30 seconds and verifies again on the next open", () =>
+    Effect.gen(function* () {
+      const hung = preflightHelper(Effect.never);
+      const fiber = yield* prepareWithHelper("/fake/hung-node", hung.spawner).pipe(
+        Effect.result,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(hung.started);
+      yield* TestClock.adjust("29 seconds");
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+      expect(Result.isFailure(yield* Fiber.join(fiber))).toBe(true);
+
+      const recovered = preflightHelper(Effect.void);
+      yield* prepareWithHelper("/fake/hung-node", recovered.spawner);
+      expect(recovered.spawns.count).toBe(1);
     }),
   );
 
