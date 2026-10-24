@@ -121,6 +121,9 @@ interface AccountReport {
   readonly email?: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
+  /** Identifies one credential in a usage-limit source. Native providers omit it. */
+  readonly sourceId?: string | undefined;
+  readonly sourceAccountId?: string | undefined;
 }
 
 const nativeReport = (provider: ServerProvider): AccountReport => ({
@@ -130,24 +133,78 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
   usageLimits: provider.usageLimits,
 });
 
+const sourceReport = (
+  sourceId: string,
+  account: Pick<AccountReport, "driver" | "email" | "workspaceId" | "usageLimits"> & {
+    readonly id: string;
+  },
+): AccountReport => ({
+  driver: account.driver,
+  email: account.email,
+  workspaceId: account.workspaceId,
+  usageLimits: account.usageLimits,
+  sourceId,
+  sourceAccountId: account.id,
+});
+
 /**
  * Pass every enabled login, read or not, so an unreadable workspace still
  * counts as one.
  */
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
+  const sourceAccounts = new Map<string, Set<string>>();
+  const sourceWorkspaceAccounts = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
+    if (key && report.sourceId && report.sourceAccountId) {
+      const sourceIdentity = `${report.sourceId}:${report.sourceAccountId}`;
+      if (report.workspaceId) {
+        const workspaceKey = `${key}:${report.workspaceId}`;
+        sourceWorkspaceAccounts.set(
+          workspaceKey,
+          (sourceWorkspaceAccounts.get(workspaceKey) ?? new Set()).add(sourceIdentity),
+        );
+      } else {
+        sourceAccounts.set(key, (sourceAccounts.get(key) ?? new Set()).add(sourceIdentity));
+      }
+    }
   }
   return (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (!key) return null;
-    if (report.workspaceId) return `${key}:${report.workspaceId}`;
+    const sourceIdentity =
+      report.sourceId && report.sourceAccountId
+        ? `${report.sourceId}:${report.sourceAccountId}`
+        : undefined;
+    if (report.workspaceId) {
+      const workspaceKey = `${key}:${report.workspaceId}`;
+      if (sourceIdentity && (sourceWorkspaceAccounts.get(workspaceKey)?.size ?? 0) > 1) {
+        return `${workspaceKey}:source:${sourceIdentity}`;
+      }
+      return workspaceKey;
+    }
+    if (sourceIdentity && (sourceAccounts.get(key)?.size ?? 0) > 1) {
+      return `${key}:source:${sourceIdentity}`;
+    }
+    // Multiple source credentials share this email but are distinct accounts. Keep a
+    // native provider without a workspace separate instead of attaching it to all of them.
+    if (!sourceIdentity && (sourceAccounts.get(key)?.size ?? 0) > 1) return `${key}:native`;
     const known = workspaces.get(key);
     if (!known) return key;
+    if (sourceIdentity && known.size === 1) {
+      const workspaceId = [...known][0];
+      const workspaceSources = sourceWorkspaceAccounts.get(`${key}:${workspaceId}`);
+      if (workspaceSources && workspaceSources.size > 1 && workspaceSources.has(sourceIdentity)) {
+        return `${key}:${workspaceId}:source:${sourceIdentity}`;
+      }
+      if (workspaceSources && !workspaceSources.has(sourceIdentity)) {
+        return `${key}:source:${sourceIdentity}`;
+      }
+    }
     return known.size === 1 ? `${key}:${[...known][0]}` : null;
   };
 }
@@ -235,7 +292,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       ...(presentation.serverConfig?.providers ?? [])
         .filter((provider) => provider.enabled)
         .map(nativeReport),
-      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
+      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) =>
+        source.accounts.map((account) => sourceReport(source.id, account)),
+      ),
     ]),
   );
   for (const [environmentId, presentation] of presentations) {
@@ -265,7 +324,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
+        merge(resolveKey(sourceReport(source.id, account)) ?? key, {
           key,
           driver: account.driver,
           displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
@@ -669,7 +728,9 @@ export function collectProviderUsageLimits(
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
   const resolveKey = accountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
-    ...sources.flatMap((source) => source.accounts),
+    ...sources.flatMap((source) =>
+      source.accounts.map((account) => sourceReport(source.id, account)),
+    ),
   ]);
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
@@ -717,9 +778,9 @@ export function collectProviderUsageLimits(
     const hubCredits = sources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
-        ({ account }) =>
+        ({ source, account }) =>
           key !== null &&
-          resolveKey(account) === key &&
+          resolveKey(sourceReport(source.id, account)) === key &&
           account.usageLimits.resetCredits &&
           !limitsNotice(account.usageLimits),
       )
@@ -759,7 +820,7 @@ export function collectProviderUsageLimits(
   for (const source of sources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
-      const key = resolveKey(account);
+      const key = resolveKey(sourceReport(source.id, account));
       if (key && nativeAccountKeys.has(key)) continue;
       accounts.push({
         id: `${source.id}:${account.id}`,

@@ -133,6 +133,180 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("keeps duplicate hub credentials with one email as separate pool members", () => {
+    const accounts = ["first.json", "second.json"].map((id, index) => ({
+      id,
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, usedPercent: index === 0 ? 10 : 80 }],
+      },
+    }));
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+    ]);
+
+    const limitAccounts = collectLimitAccounts(input);
+    expect(limitAccounts.map((account) => account.key)).toEqual([
+      "hub:first.json",
+      "hub:second.json",
+    ]);
+    expect(collectLimitPools(limitAccounts, now)[0]?.windows[0]).toMatchObject({
+      usedPercent: 45,
+      members: [{ account: { key: "hub:first.json" } }, { account: { key: "hub:second.json" } }],
+    });
+  });
+
+  it("keeps a workspace-less hub credential apart from a different workspace credential", () => {
+    const accounts = [
+      {
+        id: "workspace.json",
+        driver: claude,
+        email: "same@example.com",
+        workspaceId: "workspace-a",
+        usageLimits: {
+          checkedAt,
+          windows: [{ ...window, usedPercent: 20 }],
+        },
+      },
+      {
+        id: "personal.json",
+        driver: claude,
+        email: "same@example.com",
+        usageLimits: {
+          checkedAt,
+          windows: [{ ...window, usedPercent: 70 }],
+        },
+      },
+    ];
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+    ]);
+
+    const limitAccounts = collectLimitAccounts(input);
+    expect(limitAccounts.map((account) => account.key)).toEqual([
+      "hub:workspace.json:workspace-a",
+      "hub:personal.json",
+    ]);
+    expect(limitAccounts.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([
+      20, 70,
+    ]);
+  });
+
+  it("merges mixed workspace reports for one source credential across environments", () => {
+    const account = (
+      id: string,
+      workspaceId?: string,
+      usedPercent = 20,
+      reportCheckedAt = checkedAt,
+    ) => ({
+      id,
+      driver: claude,
+      email: "same@example.com",
+      ...(workspaceId ? { workspaceId } : {}),
+      usageLimits: { checkedAt: reportCheckedAt, windows: [{ ...window, usedPercent }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  account("first.json", "workspace-a"),
+                  account("second.json", "workspace-a", 80),
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [account("first.json", undefined, 30, "2026-09-03T11:30:00.000Z")],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((limitAccount) => limitAccount.key)).toEqual([
+      "hub:first.json:workspace-a",
+      "hub:second.json:workspace-a",
+    ]);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
+    expect(accounts[1]?.limits.windows[0]?.usedPercent).toBe(80);
+  });
+
+  it("deduplicates native reports without joining source credentials", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 30 }] },
+    });
+    const accounts = ["first.json", "second.json"].map((id, index) => ({
+      id,
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: index === 0 ? 10 : 90 }] },
+    }));
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [native], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [{ ...native, instanceId: ProviderInstanceId.make("codex-2") }],
+          },
+        },
+      ],
+    ]);
+
+    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual([
+      "env-a:claude",
+      "hub:first.json",
+      "hub:second.json",
+    ]);
+    expect(collectLimitAccounts(input)[0]?.environments).toEqual([
+      { environmentId: "env-a", label: "Laptop" },
+      { environmentId: "env-b", label: "Desktop" },
+    ]);
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
