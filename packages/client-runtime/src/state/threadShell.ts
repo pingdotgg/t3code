@@ -7,6 +7,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isProviderNativeSubagentThread, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
@@ -45,6 +46,16 @@ const isChildRunLive = (
       thread.status === "running" ||
       thread.status === "waiting";
 
+// Compare against the work start: wakes and restarts may continue a pending
+// question, whereas a fresh run must not revive one from an earlier run.
+const isStaleQuestion = (
+  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest" | "activityRunStartedAt">,
+) =>
+  thread.pendingRuntimeRequest?.kind === "user_input" &&
+  thread.activityRunStartedAt != null &&
+  DateTime.toEpochMillis(thread.pendingRuntimeRequest.createdAt) <
+    DateTime.toEpochMillis(thread.activityRunStartedAt);
+
 /** Provider-native
     subagents ask on their parent, so they are skipped. */
 function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
@@ -54,7 +65,8 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
     kind === "auth_refresh" ||
     thread.lineage.relationshipToParent !== "subagent" ||
     isProviderNativeSubagentThread(thread) ||
-    !isChildRunLive(thread)
+    !isChildRunLive(thread) ||
+    isStaleQuestion(thread)
   ) {
     return null;
   }

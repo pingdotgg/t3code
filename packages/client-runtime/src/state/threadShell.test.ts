@@ -152,6 +152,55 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("ignores a subagent question left over from a run that already finished", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const child = {
+      ...v2ThreadShell,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      activityRunStartedAt: DateTime.add(v2Now, { minutes: 5 }),
+      lineage: {
+        ...v2ThreadShell.lineage,
+        parentThreadId: v2ThreadShell.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("question"),
+        kind: "user_input" as const,
+        createdAt: v2Now,
+      },
+    };
+    const root = {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("root-run"),
+      status: "completed" as const,
+      pendingBackgroundTasks: [
+        { taskId: "lint", kind: "subagent" as const, childThreadId: child.id },
+      ],
+    };
+    const parent = threads.threadShellAtom({ environmentId, threadId: root.id });
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: root.id });
+    const disposeParent = registry.mount(parent);
+    const disposeInputs = registry.mount(inputs);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
+    expect(registry.get(inputs)).toEqual([]);
+    expect(registry.get(parent)?.pendingSubagentRequest).toBeNull();
+    expect(isThreadWorking(registry.get(parent)!)).toBe(true);
+
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, { ...child, activityRunStartedAt: DateTime.subtract(v2Now, { minutes: 5 }) }],
+    });
+    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
+    expect(registry.get(parent)?.pendingSubagentRequest).toBe("user_input");
+    expect(isThreadWorking(registry.get(parent)!)).toBe(false);
+    disposeInputs();
+    disposeParent();
+    registry.dispose();
+  });
+
   it("brings a parent back from Working while a nested subagent waits for approval", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const child = {
