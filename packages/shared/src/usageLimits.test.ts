@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type LimitAccount,
   collectProviderUsageLimits,
+  collectCreditBalances,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -1391,5 +1392,47 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("API credit balances", () => {
+  it("shows partial credit independently of subscription pools without empty-account notices", () => {
+    const balances = [
+      {
+        id: "openrouter",
+        label: "OpenRouter",
+        currency: "USD" as const,
+        available: 12.34,
+        checkedAt: "2026-10-24T11:00:00Z",
+        partial: true,
+        accounts: [{ label: "Unknown account", available: null, status: "unknown" as const }],
+      },
+    ];
+    const presentations = new Map([
+      [
+        EnvironmentId.make("credits-env"),
+        {
+          entry: { target: { label: "Mac" } },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                id: UsageLimitSourceId.make("credits"),
+                kind: "credits" as const,
+                label: "API credits",
+                checkedAt: "2026-10-24T11:00:00Z",
+                accounts: [],
+                balances,
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectCreditBalances(presentations)).toEqual([
+      { ...balances[0], environmentLabel: "Mac", key: "credits-env:credits:openrouter" },
+    ]);
+    expect(collectLimitNotices(presentations)).toEqual([]);
+    expect(collectLimitAccounts(presentations)).toEqual([]);
   });
 });

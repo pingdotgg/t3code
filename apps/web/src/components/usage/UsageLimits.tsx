@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  collectCreditBalances,
   formatDuration,
   formatResetsIn,
   type LimitPace,
@@ -399,5 +400,60 @@ export function UsageLimitsSection({
       ];
     }),
   );
-  return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
+  const balances = collectCreditBalances(selected);
+  return (
+    <div className="flex flex-col gap-6">
+      {balances.length > 0 ? (
+        <section aria-label="API credit balances" className="grid gap-3 sm:grid-cols-2">
+          {balances.map((balance) => (
+            <div key={balance.key} className="rounded-xl border p-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="font-medium">{balance.label}</h3>
+                <span className="text-xl font-semibold tabular-nums">
+                  {balance.available === null
+                    ? "Unknown"
+                    : new Intl.NumberFormat(undefined, {
+                        style: "currency",
+                        currency: balance.currency,
+                      }).format(balance.available)}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {balance.environmentLabel} ·{" "}
+                {balance.partial ? "Partial known balance" : "Available credit"}
+              </p>
+              {balance.detail ? (
+                <p className="mt-2 text-sm text-muted-foreground">{balance.detail}</p>
+              ) : null}
+              <p className="mt-2 text-xs text-muted-foreground">
+                Checked {new Date(balance.checkedAt).toLocaleString()}
+              </p>
+              {balance.accounts.length > 0 ? (
+                <details className="mt-3 text-sm">
+                  <summary className="cursor-pointer">{balance.accounts.length} accounts</summary>
+                  <ul className="mt-2 space-y-2">
+                    {balance.accounts.map((account) => (
+                      <li key={account.label} className="flex flex-wrap justify-between gap-2">
+                        <span>{account.label}</span>
+                        <span className="tabular-nums">
+                          {account.available === null
+                            ? "Unknown"
+                            : new Intl.NumberFormat(undefined, {
+                                style: "currency",
+                                currency: balance.currency,
+                              }).format(account.available)}{" "}
+                          · {account.status}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </div>
+          ))}
+        </section>
+      ) : null}
+      <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+    </div>
+  );
 }

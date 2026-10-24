@@ -156,6 +156,12 @@ This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
 
+## API credit balances
+
+A server can also read a credit balance endpoint. Add a usage source in **Settings → Providers → Usage providers**, select **API credit balance endpoint**, and enter the endpoint URL and bearer credential. The credential stays on the selected server.
+
+**Usage → Limits** shows each balance in its own currency, the time it was checked, and an expandable account list. A partial balance includes only verified accounts; unknown accounts are not counted as zero. Refresh Usage to request another reading. Remote web and mobile clients receive the readings from the environment, so credentials are not copied to the device. Native mobile clients need a version that supports credit balances; older clients can use the environment's web interface.
+
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and

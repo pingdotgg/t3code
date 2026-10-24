@@ -65,9 +65,30 @@ export const UsageLimitSourceAccount = Schema.Struct({
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 
+export const UsageCreditBalance = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  currency: Schema.Literals(["USD", "CNY"]),
+  available: Schema.NullOr(Schema.Number.check(Schema.isFinite())),
+  checkedAt: IsoDateTime,
+  partial: Schema.Boolean,
+  detail: Schema.optional(TrimmedNonEmptyString),
+  accounts: Schema.Array(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      available: Schema.NullOr(Schema.Number.check(Schema.isFinite())),
+      status: Schema.Literals(["usable", "unfunded", "unknown"]),
+    }),
+  ),
+});
+export type UsageCreditBalance = typeof UsageCreditBalance.Type;
+
+export const UsageCreditBalances = Schema.Struct({ balances: Schema.Array(UsageCreditBalance) });
+
 export const UsageLimitSourceSnapshot = Schema.Struct({
   id: UsageLimitSourceId,
-  kind: Schema.Literal("cliproxy"),
+  kind: Schema.Literals(["cliproxy", "credits"]),
+  balances: Schema.optional(Schema.Array(UsageCreditBalance)),
   label: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),

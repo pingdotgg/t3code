@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { sourceIdFromUrl } from "./AddUsageLimitSourceDialog.logic";
 import { SecretInput } from "./SecretInput";
 import { Label } from "../ui/label";
@@ -32,6 +33,7 @@ export function AddUsageLimitSourceDialog({
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const [kind, setKind] = useState<"cliproxy" | "credits">("cliproxy");
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const [managementKey, setManagementKey] = useState("");
@@ -46,11 +48,11 @@ export function AddUsageLimitSourceDialog({
 
   const save = () => {
     if (!canSave) return;
-    const id = sourceIdFromUrl(trimmedUrl, sources);
+    const id = sourceIdFromUrl(trimmedUrl, sources, kind);
     updateSettings({
       usageLimitSources: {
         [id]: {
-          kind: "cliproxy",
+          kind,
           ...(label.trim() ? { label: label.trim() } : {}),
           url: trimmedUrl,
           managementKey: managementKey.trim(),
@@ -72,10 +74,10 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a CLIProxyAPI hub</DialogTitle>
+          <DialogTitle>Add a usage source</DialogTitle>
           <DialogDescription>
-            Show the quota of every account the hub pools, next to the providers on{" "}
-            {environmentLabel}. The key stays on that server.
+            Show account quotas or API credit balances next to the providers on {environmentLabel}.
+            The key stays on that server.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -86,6 +88,21 @@ export function AddUsageLimitSourceDialog({
               save();
             }}
           >
+            <div className="grid gap-1.5">
+              <Label htmlFor="usage-source-kind">Source type</Label>
+              <Select
+                value={kind}
+                onValueChange={(value) => setKind(value === "credits" ? "credits" : "cliproxy")}
+              >
+                <SelectTrigger id="usage-source-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="cliproxy">CLIProxyAPI hub</SelectItem>
+                  <SelectItem value="credits">API credit balance endpoint</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-url">Hub URL</Label>
               <Input
@@ -126,7 +143,7 @@ export function AddUsageLimitSourceDialog({
             Cancel
           </Button>
           <Button onClick={save} disabled={!canSave}>
-            Add hub
+            Add source
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -3,6 +3,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { EnvironmentId } from "@t3tools/contracts";
 import {
   collectLimitAccounts,
+  collectCreditBalances,
   collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
@@ -397,6 +398,49 @@ function PoolWindowCard({
   );
 }
 
+function CreditAccounts({
+  accounts,
+  currency,
+}: {
+  readonly accounts: readonly {
+    readonly label: string;
+    readonly available: number | null;
+    readonly status: string;
+  }[];
+  readonly currency: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View className="gap-2">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded(!expanded)}
+        className="min-h-11 justify-center"
+      >
+        <Text className="text-sm font-t3-medium text-primary">
+          {expanded ? "Hide" : "Show"} {accounts.length} accounts
+        </Text>
+      </Pressable>
+      {expanded
+        ? accounts.map((account) => (
+            <View key={account.label} className="gap-1">
+              <Text className="text-sm text-foreground">{account.label}</Text>
+              <Text className="text-sm tabular-nums text-foreground-muted">
+                {account.available === null
+                  ? "Unknown"
+                  : new Intl.NumberFormat(undefined, { style: "currency", currency }).format(
+                      account.available,
+                    )}{" "}
+                · {account.status}
+              </Text>
+            </View>
+          ))
+        : null}
+    </View>
+  );
+}
+
 export function UsageLimitsSection({
   now,
   failedLabels,
@@ -415,6 +459,7 @@ export function UsageLimitsSection({
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
+  const balances = collectCreditBalances(selected);
   const pools = collectLimitPools(collectLimitAccounts(selected), now);
   const notices = collectLimitNotices(selected);
   const externalLinks = collectExternalUsageLinks(selected);
@@ -426,7 +471,34 @@ export function UsageLimitsSection({
     ) + 1;
   return (
     <View className="gap-6">
-      {pools.length === 0 &&
+      {balances.map((balance) => (
+        <View key={balance.key} className="gap-2 rounded-xl border border-border-subtle p-4">
+          <Text className="text-base font-t3-medium text-foreground">{balance.label}</Text>
+          <Text className="text-2xl font-t3-medium tabular-nums text-foreground">
+            {balance.available === null
+              ? "Unknown"
+              : new Intl.NumberFormat(undefined, {
+                  style: "currency",
+                  currency: balance.currency,
+                }).format(balance.available)}
+          </Text>
+          <Text className="text-sm text-foreground-muted">
+            {balance.environmentLabel} ·{" "}
+            {balance.partial ? "Partial known balance" : "Available credit"}
+          </Text>
+          {balance.detail ? (
+            <Text className="text-sm text-foreground-muted">{balance.detail}</Text>
+          ) : null}
+          <Text className="text-xs text-foreground-muted">
+            Checked {new Date(balance.checkedAt).toLocaleString()}
+          </Text>
+          {balance.accounts.length > 0 ? (
+            <CreditAccounts accounts={balance.accounts} currency={balance.currency} />
+          ) : null}
+        </View>
+      ))}
+      {balances.length === 0 &&
+      pools.length === 0 &&
       notices.length === 0 &&
       failedLabels.length === 0 &&
       !cursorPrompt &&

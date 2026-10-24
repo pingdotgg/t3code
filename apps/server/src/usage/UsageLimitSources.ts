@@ -1,5 +1,6 @@
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  UsageCreditBalances,
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
@@ -19,6 +20,8 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as Settings from "../serverSettings.ts";
@@ -49,6 +52,7 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const client = yield* HttpClient.HttpClient;
   const settingsService = yield* Settings.ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
@@ -65,6 +69,24 @@ export const make = Effect.gen(function* () {
     const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
     if (config.managementKey.length === 0) {
       return { ...base, accounts: [], error: "No management key configured." };
+    }
+    if (config.kind === "credits") {
+      const result = yield* client
+        .execute(
+          HttpClientRequest.get(config.url).pipe(
+            HttpClientRequest.setHeader("Authorization", `Bearer ${config.managementKey}`),
+          ),
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap((response) => response.json),
+          Effect.flatMap(Schema.decodeUnknownEffect(UsageCreditBalances)),
+          Effect.timeout("40 seconds"),
+          Effect.result,
+        );
+      return result._tag === "Success"
+        ? { ...base, accounts: [], balances: result.success.balances }
+        : { ...base, accounts: [], error: "Could not read credit balances. Balances are unknown." };
     }
     const accounts = yield* api.readAccounts(config).pipe(Effect.result);
     if (accounts._tag === "Failure") {
@@ -108,7 +130,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
     );
     const config = settings.usageLimitSources[input.sourceId];
-    if (!config?.enabled || !config.managementKey) {
+    if (!config?.enabled || !config.managementKey || config.kind !== "cliproxy") {
       return yield* new UsageLimitSourceError({
         detail: "The usage limit source is missing or disabled.",
       });
