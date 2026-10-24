@@ -141,6 +141,19 @@ export class SourceControlProvider extends Context.Service<
         readonly context: SourceControlProviderContext;
       }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
     }) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+    /**
+     * The web host serving a remote, for a host whose remote URL may not name it (an SSH alias
+     * for one of several servers). It answers for the context's `requestedHost` when the caller
+     * narrows to one. Absent, or null, means the remote's own host is the web host.
+     */
+    readonly resolveRemoteWebHost?: (input: {
+      readonly cwd: string;
+      readonly context: SourceControlProviderContext;
+      readonly resolveContext: (input: {
+        readonly cwd: string;
+        readonly context: SourceControlProviderContext;
+      }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
+    }) => Effect.Effect<string | null, SourceControlProviderError>;
     readonly resolveLink?: ResolveSourceControlLink;
     /**
      * Whether `createChangeRequest` from `cwd` targets `repository`, the `owner/name` of the

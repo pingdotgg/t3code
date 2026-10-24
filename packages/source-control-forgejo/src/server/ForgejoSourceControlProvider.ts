@@ -234,6 +234,27 @@ const refineRepositoryIdentity: NonNullable<
   };
 });
 
+// An SSH remote names an alias rather than the web server, so the login that serves it says which.
+const resolveRemoteWebHost: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["resolveRemoteWebHost"]
+> = Effect.fn("ForgejoSourceControlProvider.resolveRemoteWebHost")(function* ({
+  cwd,
+  context,
+  resolveContext,
+}) {
+  if (!ForgejoCli.parseForgejoRemote(context.remoteUrl)?.ssh) return null;
+  const resolved = yield* resolveContext({
+    cwd,
+    context: {
+      ...context,
+      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+    },
+  });
+  return resolved?.provider.kind === "forgejo"
+    ? new URL(resolved.provider.baseUrl).host.toLowerCase()
+    : null;
+});
+
 const RepositorySchema = Schema.Struct({
   full_name: Schema.String,
   clone_url: Schema.String,
@@ -306,6 +327,7 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
+    resolveRemoteWebHost,
     listChangeRequests: Effect.fn("ForgejoSourceControlProvider.listChangeRequests")(
       function* (input) {
         const repo = yield* cli.resolveRepository(input);

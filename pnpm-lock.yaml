@@ -891,6 +891,9 @@ importers:
       '@t3tools/source-control-core':
         specifier: workspace:*
         version: link:../../packages/source-control-core
+      '@t3tools/source-control-definitions':
+        specifier: workspace:*
+        version: link:../../packages/source-control-definitions
       '@t3tools/source-control-forgejo':
         specifier: workspace:*
         version: link:../../packages/source-control-forgejo
@@ -1339,27 +1342,12 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
-      '@t3tools/source-control-azure-devops':
-        specifier: workspace:*
-        version: link:../source-control-azure-devops
-      '@t3tools/source-control-bitbucket':
-        specifier: workspace:*
-        version: link:../source-control-bitbucket
       '@t3tools/source-control-core':
         specifier: workspace:*
         version: link:../source-control-core
-      '@t3tools/source-control-forgejo':
+      '@t3tools/source-control-definitions':
         specifier: workspace:*
-        version: link:../source-control-forgejo
-      '@t3tools/source-control-gitcafe':
-        specifier: workspace:*
-        version: link:../source-control-gitcafe
-      '@t3tools/source-control-github':
-        specifier: workspace:*
-        version: link:../source-control-github
-      '@t3tools/source-control-gitlab':
-        specifier: workspace:*
-        version: link:../source-control-gitlab
+        version: link:../source-control-definitions
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -1905,6 +1893,30 @@ importers:
       vite-plus:
         specifier: 1.3.0
         version: 1.3.0(@astrojs/compiler-rs@0.5.1)(@tsc-rs/typescript@0.8.0)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(@tsc-rs/typescript@0.8.0))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.60.0)(terser@5.48.0)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+
+  packages/source-control-definitions:
+    dependencies:
+      '@t3tools/source-control-azure-devops':
+        specifier: workspace:*
+        version: link:../source-control-azure-devops
+      '@t3tools/source-control-bitbucket':
+        specifier: workspace:*
+        version: link:../source-control-bitbucket
+      '@t3tools/source-control-core':
+        specifier: workspace:*
+        version: link:../source-control-core
+      '@t3tools/source-control-forgejo':
+        specifier: workspace:*
+        version: link:../source-control-forgejo
+      '@t3tools/source-control-gitcafe':
+        specifier: workspace:*
+        version: link:../source-control-gitcafe
+      '@t3tools/source-control-github':
+        specifier: workspace:*
+        version: link:../source-control-github
+      '@t3tools/source-control-gitlab':
+        specifier: workspace:*
+        version: link:../source-control-gitlab
 
   packages/source-control-forgejo:
     dependencies:

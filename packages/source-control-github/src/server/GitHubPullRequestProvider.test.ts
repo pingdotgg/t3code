@@ -2,12 +2,16 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 import type { PullRequestReaction } from "@t3tools/contracts";
 
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
-import type { GitHubPullRequestCore } from "./gitHubPullRequestJson.ts";
+import type {
+  GitHubPullRequestCore,
+  GitHubPullRequestSearchItem,
+} from "./gitHubPullRequestJson.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
@@ -769,4 +773,168 @@ describe("loginAvatarUrl", () => {
       expect(loginAvatarUrl(login, "github.com")).toBeNull();
     }
   });
+});
+
+describe("listChangeRequestsAcross", () => {
+  const searched = (repository: string): GitHubPullRequestSearchItem => ({
+    repository,
+    number: 1,
+    title: "Change",
+    url: `https://github.com/${repository}/pull/1`,
+    author: null,
+    authorId: null,
+    headBranch: "feature",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    additions: 0,
+    deletions: 0,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    reviewRequestLogins: [],
+    hasTeamReviewRequest: false,
+    labels: [],
+    reviewDecision: null,
+    checksState: null,
+  });
+  const across = {
+    cwd: "/w",
+    host: "github.com",
+    repositories: ["acme/web", "acme/docs"],
+    state: "open" as const,
+    involvement: "all" as const,
+    viewer: "viewer",
+    limit: 50,
+  };
+  type Search = Parameters<
+    GitHubPullRequestApi.GitHubPullRequestApi["Service"]["searchPullRequests"]
+  >[0];
+  // Pages answer in turn; a one-repository check for any pull request answers from `covered`.
+  const providerAnswering = (input: {
+    readonly pages: Array<GitHubPullRequestApi.GitHubPullRequestSearchBatch>;
+    readonly covered?: (repository: string) => boolean;
+    readonly checks?: Array<string>;
+  }) =>
+    make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          searchPullRequests: (search: Search) => {
+            if (search.state !== "all") return Effect.succeed(input.pages.shift()!);
+            const repository = search.repositories[0]!;
+            input.checks?.push(repository);
+            return input.covered === undefined
+              ? Effect.fail(
+                  new GitHubPullRequestApi.GitHubViewerLoginUnavailableError({ cwd: search.cwd }),
+                )
+              : Effect.succeed({
+                  items: input.covered(repository) ? [searched(repository)] : [],
+                  truncated: false,
+                });
+          },
+        }),
+      ),
+      Effect.map((provider) => provider.listChangeRequestsAcross!),
+    );
+
+  it.effect("believes silence about a repository search covers, and checks it once", () =>
+    Effect.gen(function* () {
+      const checks: Array<string> = [];
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        covered: () => true,
+        checks,
+      });
+      expect((yield* read(across)).unresolved).toEqual([]);
+      expect((yield* read(across)).unresolved).toEqual([]);
+      expect(checks).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("leaves a repository search does not cover to be read on its own", () =>
+    Effect.gen(function* () {
+      const read = yield* providerAnswering({
+        pages: [{ items: [searched("acme/web")], truncated: false }],
+        covered: (repository) => repository !== "acme/docs",
+      });
+      expect((yield* read(across)).unresolved).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("does not check a repository a page had rows for", () =>
+    Effect.gen(function* () {
+      const checks: Array<string> = [];
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web"), searched("acme/docs")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        covered: () => true,
+        checks,
+      });
+      yield* read(across);
+      expect((yield* read(across)).unresolved).toEqual([]);
+      expect(checks).toEqual([]);
+    }),
+  );
+
+  it.effect("vouches for no silent repository in a truncated first slice", () =>
+    Effect.gen(function* () {
+      const read = yield* providerAnswering({
+        pages: [{ items: [searched("acme/web")], truncated: true }],
+        covered: () => true,
+      });
+      expect((yield* read(across)).unresolved).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("past the first slice, believes a covered repository and not an uncovered one", () =>
+    Effect.gen(function* () {
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: true },
+          { items: [searched("acme/web")], truncated: true },
+        ],
+        covered: (repository) => repository !== "acme/renamed",
+      });
+      const later = { ...across, cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 1 } };
+      expect((yield* read(later)).unresolved).toEqual([]);
+      expect(
+        (yield* read({ ...later, repositories: ["acme/web", "acme/renamed"] })).unresolved,
+      ).toEqual(["acme/renamed"]);
+    }),
+  );
+
+  it.effect("asks again after a failed check, and after coverage has had time to change", () =>
+    Effect.gen(function* () {
+      const checks: Array<string> = [];
+      const failing = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        checks,
+      });
+      expect((yield* failing(across)).unresolved).toEqual(["acme/docs"]);
+      expect((yield* failing(across)).unresolved).toEqual(["acme/docs"]);
+      expect(checks).toEqual(["acme/docs", "acme/docs"]);
+
+      checks.length = 0;
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        covered: () => true,
+        checks,
+      });
+      yield* read(across);
+      yield* TestClock.adjust("61 minutes");
+      yield* read(across);
+      expect(checks).toEqual(["acme/docs", "acme/docs"]);
+    }),
+  );
 });

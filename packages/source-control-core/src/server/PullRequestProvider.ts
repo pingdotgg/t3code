@@ -176,6 +176,11 @@ export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {
 export interface ProviderBatchedChangeRequestPage {
   readonly items: ReadonlyArray<ProviderBatchedChangeRequest>;
   readonly truncated: boolean;
+  /**
+   * Repositories asked about that the page cannot vouch for: its silence about them may be an
+   * omission rather than an empty answer, so the caller reads each on its own.
+   */
+  readonly unresolved?: ReadonlyArray<string>;
 }
 
 export interface ProviderChangeRequestStat {
@@ -343,12 +348,6 @@ export interface PullRequestProviderApi {
    * rows a page ordered by update shows. `cursor` is one boundary for all of them, so a caller
    * with repositories standing at different boundaries asks in groups rather than in one call.
    */
-  /**
-   * Set when `listChangeRequestsAcross` can answer with silence for a repository it does not
-   * cover rather than with an error, so a repository the read said nothing about is read on its
-   * own before it is believed empty.
-   */
-  readonly listsAcrossMayOmitRepositories?: boolean;
   readonly listChangeRequestsAcross?: (input: {
     readonly cwd: string;
     readonly host: string;

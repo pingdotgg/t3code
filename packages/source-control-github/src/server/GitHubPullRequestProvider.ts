@@ -1,5 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as Hash from "effect/Hash";
 import * as Effect from "effect/Effect";
 import type {
   PullRequestActor,
@@ -185,11 +190,97 @@ export function loginAvatarUrl(login: string, host: string): string | null {
   return /^[a-z0-9][a-z0-9-]{0,38}$/iu.test(login) ? `https://${host}/${login}.png?size=80` : null;
 }
 
+// Whether search covers a repository changes only when the repository is renamed or moved.
+const SEARCH_COVERAGE_TTL = Duration.hours(1);
+const SEARCH_COVERAGE_CAPACITY = 4096;
+const SEARCH_COVERAGE_CONCURRENCY = 4;
+
+/**
+ * Whether GitHub search covers a repository. `cwd` only says where to ask, so equality ignores
+ * it and `lookup`, and every checkout of a repository shares one answer.
+ */
+class SearchCoverage {
+  readonly key: string;
+  readonly lookup: Effect.Effect<boolean, GitHubPullRequestApi.GitHubPullRequestApiError>;
+
+  constructor(
+    host: string,
+    repository: string,
+    lookup: Effect.Effect<boolean, GitHubPullRequestApi.GitHubPullRequestApiError>,
+  ) {
+    this.key = `${host.toLowerCase()}\n${repository.trim().toLowerCase()}`;
+    this.lookup = lookup;
+  }
+
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof SearchCoverage && that.key === this.key;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.key);
+  }
+}
+
 const rendersEmpty = (body: string): boolean =>
   body.replace(/<!--[\s\S]*?-->/g, "").trim().length === 0;
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+  // GitHub does not index every repository for search: a renamed one answers for its old name
+  // with silence rather than with an error. Where search has any pull request for a repository it
+  // covers it, so its silence on a page is a real empty answer; any other the caller reads on its
+  // own. A failed check is not kept.
+  const searchCoverage = yield* Cache.makeWith((request: SearchCoverage) => request.lookup, {
+    capacity: SEARCH_COVERAGE_CAPACITY,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? SEARCH_COVERAGE_TTL : Duration.zero),
+  });
+  const coverageOf = (
+    input: Parameters<NonNullable<PullRequestProviderApi["listChangeRequestsAcross"]>>[0],
+    repository: string,
+  ) =>
+    new SearchCoverage(
+      input.host,
+      repository,
+      Effect.suspend(() =>
+        cli.searchPullRequests({
+          cwd: input.cwd,
+          host: input.host,
+          repositories: [repository],
+          state: "all",
+          involvement: "all",
+          viewer: input.viewer,
+          limit: 1,
+        }),
+      ).pipe(Effect.map((batch) => batch.items.length > 0)),
+    );
+  const unresolvedBySearch = Effect.fn("GitHubPullRequestProvider.unresolvedBySearch")(function* (
+    input: Parameters<NonNullable<PullRequestProviderApi["listChangeRequestsAcross"]>>[0],
+    batch: GitHubPullRequestApi.GitHubPullRequestSearchBatch,
+  ) {
+    // A repository a page has rows for is covered without asking.
+    yield* Effect.forEach(
+      batch.items,
+      (item) => Cache.set(searchCoverage, coverageOf(input, item.repository), true),
+      { discard: true },
+    );
+    const answered = new Set(batch.items.map((item) => item.repository.trim().toLowerCase()));
+    const silent = input.repositories.filter(
+      (repository) => !answered.has(repository.trim().toLowerCase()),
+    );
+    // A truncated first slice can be silent about a covered repository whose rows are just
+    // older than the cut, so it vouches for none. Past the first slice silence from a covered
+    // repository means its rows are older rather than absent.
+    if (input.cursor === undefined && batch.truncated) return silent;
+    return yield* Effect.filter(
+      silent,
+      (repository) =>
+        Cache.get(searchCoverage, coverageOf(input, repository)).pipe(
+          Effect.map((covered) => !covered),
+          Effect.orElseSucceed(() => true),
+        ),
+      { concurrency: SEARCH_COVERAGE_CONCURRENCY },
+    );
+  });
 
   const fail = (operation: string) => (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
     new PullRequestProviderError({
@@ -306,9 +397,6 @@ export const make = Effect.gen(function* () {
           ),
         ),
 
-    // GitHub does not index every repository for search: a renamed one answers for its old name
-    // with silence rather than with an error.
-    listsAcrossMayOmitRepositories: true,
     listChangeRequestsAcross: (input) =>
       cli
         .searchPullRequests({
@@ -325,13 +413,16 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequestsAcross")),
-          Effect.map((batch) => ({
-            truncated: batch.truncated,
-            items: batch.items.map((item) => ({
-              ...item,
-              author: withAvatar(item.author, new Map<string, string>(), input.host),
+          Effect.flatMap((batch) =>
+            Effect.map(unresolvedBySearch(input, batch), (unresolved) => ({
+              truncated: batch.truncated,
+              items: batch.items.map((item) => ({
+                ...item,
+                author: withAvatar(item.author, new Map<string, string>(), input.host),
+              })),
+              unresolved,
             })),
-          })),
+          ),
         ),
 
     listChangeRequestStats: (input) =>

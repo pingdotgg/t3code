@@ -107,7 +107,6 @@ export const definition = defineSourceControl({
         }
       : null,
   changeRequestHost,
-  sshRemoteHidesWebHost: true,
   isChangeRequestInRepository: (identity, link) => {
     if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
     const web = resolvedWebUrl(identity);

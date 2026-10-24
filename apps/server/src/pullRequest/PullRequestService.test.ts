@@ -27,6 +27,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { fakePullRequestProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import {
@@ -170,6 +172,26 @@ const keyedByCanonicalKey = {
   repositoryKey: ({ canonicalKey }: { readonly canonicalKey: string }) => canonicalKey,
 };
 
+/** A host whose SSH remotes name an alias, so discovery says which server serves them. */
+const sshAliasHost = {
+  resolveRemoteWebHost: ({ cwd, context, resolveContext }) =>
+    isSshRemoteUrl(context.remoteUrl)
+      ? resolveContext({
+          cwd,
+          context: {
+            ...context,
+            provider: { kind: SourceControlProviderKind.make("unknown"), name: "", baseUrl: "" },
+          },
+        }).pipe(
+          Effect.map((resolved) =>
+            resolved === null || resolved.provider.kind === "unknown"
+              ? null
+              : new URL(resolved.provider.baseUrl).host,
+          ),
+        )
+      : Effect.succeed(null),
+} as SourceControlProvider["Service"];
+
 function makeService(input: {
   readonly settings?: ServerSettings;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
@@ -193,6 +215,10 @@ function makeService(input: {
           resolveLink: () => undefined,
           resolveHandle:
             input.resolveHandle ?? (() => Effect.die("Unexpected provider refinement")),
+          get: (kind) =>
+            Effect.succeed(
+              kind === "forgejo" ? sshAliasHost : ({} as SourceControlProvider["Service"]),
+            ),
         }),
         Layer.mock(ProjectService.ProjectService)({
           listShells: (options) =>
@@ -1526,6 +1552,52 @@ it.effect("routes explicit Forgejo HTTP authorities through SSH checkouts after 
   }),
 );
 
+it.effect("names an SSH remote's web host from a later checkout when the first cannot", () =>
+  Effect.gen(function* () {
+    const hosts: Array<string> = [];
+    const service = yield* makeService({
+      projects: ["/first", "/second"].map((workspaceRoot, index) =>
+        project({
+          id: `p${index}`,
+          title: `checkout ${index}`,
+          workspaceRoot,
+          repository: "team/repo",
+          provider: SourceControlProviderKind.make("forgejo"),
+          host: "ssh.code.example",
+          remoteUrl: "git@ssh.code.example:team/repo.git",
+        }),
+      ),
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("forgejo"), {
+          listChangeRequests: (input) => {
+            hosts.push(input.host);
+            return Effect.succeed({ items: [], truncated: false, continues: true });
+          },
+        }),
+      ],
+      resolveHandle: ({ cwd, context }) =>
+        Effect.succeed({
+          context:
+            cwd === "/first"
+              ? context!
+              : {
+                  ...context!,
+                  provider: {
+                    kind: SourceControlProviderKind.make("forgejo"),
+                    name: "Forgejo",
+                    baseUrl: "http://code.example:3000",
+                  },
+                },
+          provider: undefined as never,
+        }),
+    });
+
+    yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(hosts, ["code.example:3000"]);
+  }),
+);
+
 it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -2191,7 +2263,6 @@ it.effect("carries every repository of a slice on from the oldest row in it", ()
       ],
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          listsAcrossMayOmitRepositories: true,
           listChangeRequestsAcross: () =>
             Effect.succeed({
               items: [
@@ -2200,6 +2271,7 @@ it.effect("carries every repository of a slice on from the oldest row in it", ()
                 batchedChangeRequest(3, "acme/web", "2026-07-02T00:00:00Z"),
               ],
               truncated: true,
+              unresolved: ["acme/docs"],
             }),
         }),
       ],
@@ -2283,51 +2355,49 @@ it.effect("reads a workspace larger than one search in chunks, and merges them",
     assert.strictEqual(result.entries.length, 101);
   }),
 );
-it.effect(
-  "asks on its own for a repository a search answered nothing for, where searches can omit one",
-  () =>
-    Effect.gen(function* () {
-      const separately: string[] = [];
-      const service = yield* makeService({
-        projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-          project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
-        ],
-        providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            listsAcrossMayOmitRepositories: true,
-            listChangeRequests: ({ repository }) => {
-              separately.push(repository);
-              return repository === "acme/docs"
-                ? Effect.fail(requestFailed)
-                : Effect.succeed({ items: [], truncated: false, continues: true });
-            },
-            listChangeRequestsAcross: () =>
-              Effect.succeed({
-                items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
-                truncated: false,
-              }),
-          }),
-        ],
-      });
+it.effect("asks on its own for a repository a search could not vouch for", () =>
+  Effect.gen(function* () {
+    const separately: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            separately.push(repository);
+            return repository === "acme/docs"
+              ? Effect.fail(requestFailed)
+              : Effect.succeed({ items: [], truncated: false, continues: true });
+          },
+          listChangeRequestsAcross: () =>
+            Effect.succeed({
+              items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
+              truncated: false,
+              unresolved: ["acme/docs"],
+            }),
+        }),
+      ],
+    });
 
-      const result = yield* service.list({ state: "open" });
+    const result = yield* service.list({ state: "open" });
 
-      assert.deepStrictEqual(separately, ["acme/docs"]);
-      assert.deepStrictEqual(result.errors, [
-        {
-          projectId: "p2" as ProjectId,
-          projectTitle: "docs",
-          message: "acme/docs could not be read.",
-        },
-      ]);
-      assert.deepStrictEqual(
-        result.entries.map((entry) => entry.number),
-        [1],
-      );
-    }),
+    assert.deepStrictEqual(separately, ["acme/docs"]);
+    assert.deepStrictEqual(result.errors, [
+      {
+        projectId: "p2" as ProjectId,
+        projectTitle: "docs",
+        message: "acme/docs could not be read.",
+      },
+    ]);
+    assert.deepStrictEqual(
+      result.entries.map((entry) => entry.number),
+      [1],
+    );
+  }),
 );
-it.effect("believes a search's silence about a repository where searches cover every one", () =>
+it.effect("believes a search's silence about a repository it vouches for", () =>
   Effect.gen(function* () {
     const separately: string[] = [];
     const service = yield* makeService({

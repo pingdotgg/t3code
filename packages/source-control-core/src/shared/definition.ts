@@ -296,11 +296,6 @@ export interface SourceControlDefinition {
    */
   readonly canonicalRepositoryKey?: (key: string) => string | null;
   /**
-   * An SSH remote names the SSH server only, so the web host, and its port, come from resolving
-   * the provider rather than from the remote.
-   */
-  readonly sshRemoteHidesWebHost?: boolean;
-  /**
    * Null when `url` is not media this host keeps behind a credential. A client cannot load such
    * media itself, so it asks the server, whose driver for this host fetches it.
    */
