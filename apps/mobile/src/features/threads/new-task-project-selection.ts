@@ -1,5 +1,7 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { repositoryGroupingKeyOf, type EnvironmentId } from "@t3tools/contracts";
+import { repositoryGroupingKeyOf, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
@@ -34,6 +36,54 @@ export function filterProjectScopes(
           project.workspaceRoot.toLowerCase().includes(query),
       ),
   );
+}
+
+export interface NewTaskScratchOption {
+  readonly environmentId: EnvironmentId;
+  /** False while the environment is still connecting; the row shows but cannot start yet. */
+  readonly ready: boolean;
+}
+
+/**
+ * Project rows and the server config both restore from cache before the
+ * connection is up, so the "No project" row is decided from the config alone.
+ * Gating it on the connection phase too made it pop in once connected and
+ * shift the rows below it. The phase only decides whether it is enabled. The
+ * two cache reads are separate, so a config that was never cached can still
+ * arrive after the rows; that case is not covered here.
+ */
+export function resolveNewTaskScratchOption(input: {
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly connectionState: EnvironmentConnectionPhase;
+  }>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, Pick<ServerConfig, "scratchWorkspaceRoot">>;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+}): NewTaskScratchOption | null {
+  const offering = input.environments.filter(
+    (environment) =>
+      (input.serverConfigs.get(environment.environmentId)?.scratchWorkspaceRoot ?? null) !== null,
+  );
+  if (offering.length === 0) return null;
+  const ready = offering.filter(
+    (environment) =>
+      availableScratchWorkspaceRoot(
+        environment.connectionState,
+        input.serverConfigs.get(environment.environmentId),
+      ) !== null,
+  );
+  const preferred = (candidates: typeof offering) =>
+    candidates.find((environment) => environment.environmentId === input.selectedEnvironmentId) ??
+    candidates[0] ??
+    null;
+  const readyEnvironment = preferred(ready);
+  if (readyEnvironment !== null) {
+    return { environmentId: readyEnvironment.environmentId, ready: true };
+  }
+  const pendingEnvironment = preferred(offering);
+  return pendingEnvironment === null
+    ? null
+    : { environmentId: pendingEnvironment.environmentId, ready: false };
 }
 
 function getOnlySelectableProject(
