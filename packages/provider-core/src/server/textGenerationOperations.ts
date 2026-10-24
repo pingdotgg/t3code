@@ -5,7 +5,7 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { ProviderTextGeneration, ReviewGuideGenerationInput } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -33,7 +33,11 @@ export interface Request<S extends Schema.Top> {
    * read-only commands there, over as many turns as it needs, and must change nothing. A
    * runner that cannot guarantee read-only tools fails rather than answering blind.
    */
-  readonly investigate?: { readonly timeoutMs: number } | undefined;
+  readonly investigate?:
+    | (Pick<ReviewGuideGenerationInput, "baseCommit" | "stack" | "evidence"> & {
+        readonly timeoutMs: number;
+      })
+    | undefined;
 }
 
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
@@ -165,7 +169,12 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       operation: "generateReviewGuide",
       cwd: input.cwd,
       modelSelection: input.modelSelection,
-      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      investigate: {
+        timeoutMs: INVESTIGATION_TIMEOUT_MS,
+        baseCommit: input.baseCommit,
+        stack: input.stack,
+        evidence: input.evidence,
+      },
       ...buildReviewGuidePrompt(input),
     });
   });

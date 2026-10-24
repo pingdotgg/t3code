@@ -33,11 +33,15 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+import {
+  prepareReviewGuideEvidence,
+  REVIEW_GUIDE_DIFF_ARGS,
+  reviewGuideGitError,
+} from "./pullRequestReviewGuideEvidence.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
 
@@ -288,7 +292,9 @@ const make = Effect.gen(function* () {
       stack?.layers ?? [],
       (layer) => {
         const described = { number: layer.number, title: layer.title ?? null, state: layer.state };
-        if (layer.number === detail.number) return Effect.succeed({ ...described, headSha });
+        if (layer.number === detail.number) {
+          return Effect.succeed({ ...described, headSha: resolvedHead.commitSha });
+        }
         const sha = layer.headSha;
         if (sha === undefined) return Effect.succeed({ ...described, headSha: null });
         return fetchHead(layer.number, sha, layer.headBranch).pipe(
@@ -324,37 +330,41 @@ const make = Effect.gen(function* () {
       cwd: path,
       args: ["merge-base", baseTip.commitSha, "HEAD"],
     });
-    return { path, baseCommit: mergeBase.stdout.trim(), stack: layers };
+    return {
+      directory,
+      path,
+      baseCommit: mergeBase.stdout.trim(),
+      headCommit: resolvedHead.commitSha,
+      stack: layers,
+    };
   });
 
   const readChange = Effect.fn("PullRequestReviewGuideService.readChange")(function* (
     cwd: string,
     baseCommit: string,
+    headCommit: string,
   ) {
     const diff = (args: ReadonlyArray<string>) =>
       git
         .execute({
           operation: "PullRequestReviewGuideService.readChange",
           cwd,
-          // Fixed prefixes: a user's diff.noPrefix or custom prefixes would hide the headers the
-          // parser reads.
-          args: [
-            "-c",
-            "core.quotePath=false",
-            "diff",
-            ...PATCH_RENDER_PREFIX_ARGS,
-            ...args,
-            `${baseCommit}...HEAD`,
-          ],
+          args: [...REVIEW_GUIDE_DIFF_ARGS, ...args, `${baseCommit}...${headCommit}`, "--"],
+          // Shared normalization must still fetch missing promisor blobs in partial clones.
           timeoutMs: 60_000,
           maxOutputBytes: 64 * 1024 * 1024,
         })
-        .pipe(Effect.map((result) => result.stdout));
+        .pipe(
+          Effect.map((result) => result.stdout),
+          Effect.mapError((cause) =>
+            reviewGuideGitError(cause, "Could not read the main change for the review guide."),
+          ),
+        );
     const [nameOnly, patch] = yield* Effect.all(
-      [diff(["--name-only", "-z"]), diff(["--unified=0", "--no-color", "--no-ext-diff"])],
+      [diff(["--name-only", "-z"]), diff(["--unified=0"])],
       { concurrency: "unbounded" },
     );
-    return parseReviewGuideChange(nameOnly, patch);
+    return { nameOnly, patch };
   });
 
   const write = Effect.fn("PullRequestReviewGuideService.write")(function* (
@@ -391,19 +401,33 @@ const make = Effect.gen(function* () {
       runId,
     ).pipe(
       Effect.flatMap((checkout) =>
-        Effect.all(
-          {
-            generated: textGeneration.generateReviewGuide({
-              ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
-              cwd: checkout.path,
-              modelSelection,
-              instructions: projectSettings.reviewGuideInstructions,
-              stack: checkout.stack,
-            }),
-            change: readChange(checkout.path, checkout.baseCommit),
-          },
-          { concurrency: "unbounded" },
-        ),
+        Effect.gen(function* () {
+          const change = yield* Effect.cached(
+            readChange(checkout.path, checkout.baseCommit, checkout.headCommit),
+          );
+          const evidence = yield* Effect.cached(
+            prepareReviewGuideEvidence({ ...checkout, change }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+            ),
+          );
+          return yield* Effect.all(
+            {
+              generated: textGeneration.generateReviewGuide({
+                ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
+                cwd: checkout.path,
+                modelSelection,
+                instructions: projectSettings.reviewGuideInstructions,
+                stack: checkout.stack,
+                evidence,
+              }),
+              change: change.pipe(
+                Effect.map(({ nameOnly, patch }) => parseReviewGuideChange(nameOnly, patch)),
+              ),
+            },
+            { concurrency: "unbounded" },
+          );
+        }),
       ),
       Effect.scoped,
     );
