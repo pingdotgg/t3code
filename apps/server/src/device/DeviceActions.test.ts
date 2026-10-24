@@ -1,4 +1,8 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Runs a real shell to reproduce adb joining arguments before Android executes them.
+import * as NodeChildProcess from "node:child_process";
+
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
@@ -43,6 +47,42 @@ const makeReady = (
 const udid = "SIM-1";
 
 describe("runDeviceAction", () => {
+  it.effect.each([
+    "https://example.com/callback?code=1&state=2",
+    "https://example.com/it's?a=1&b=2",
+    "https://example.com/a b?key=value",
+    "https://example.com/plain",
+  ])("opens the complete Android URL %s", (url) =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const { ready, calls } = makeReady();
+      yield* runDeviceAction(ready, "android", {
+        type: "openUrl",
+        deviceId: "emulator-5554",
+        url,
+      });
+      const args = calls[0]!.args;
+      expect(args.slice(0, 3)).toEqual(["-s", "emulator-5554", "shell"]);
+      // adb joins its shell arguments without escaping before the device runs sh -c.
+      const result = NodeChildProcess.spawnSync(
+        "/bin/sh",
+        [
+          "-c",
+          `am() { printf '%s\\0' "$@"; }
+${args.slice(3).join(" ")}`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout.split("\0").slice(0, -1)).toEqual([
+        "start",
+        "-a",
+        "android.intent.action.VIEW",
+        "-d",
+        url,
+      ]);
+    }),
+  );
   it.effect.each([
     ["emulator-5554", "Physical size: 2560x1600", "portrait", "-9.81:0:0"],
     ["emulator-5554", "Physical size: 2560x1600", "landscape_left", "0:9.81:0"],
