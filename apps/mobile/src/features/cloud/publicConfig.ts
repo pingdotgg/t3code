@@ -57,22 +57,14 @@ function normalizeSecureUrl(value: unknown): string | null {
   }
 }
 
-export class BackgroundRelayUrlInvalidError extends Schema.TaggedError<BackgroundRelayUrlInvalidError>()(
-  "BackgroundRelayUrlInvalidError",
-  {},
-) {
-  override get message(): string {
-    return "T3CODE_BACKGROUND_RELAY_URL must be a secure absolute HTTPS origin.";
-  }
-}
-
 export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig?.extra) {
   const rawBackgroundUrl = trimNonEmpty(extra?.relay?.backgroundUrl);
+  // Keep a malformed override for ManagedRelay to reject on background calls.
+  // Throwing here would also disable the independent primary relay and auth.
   const backgroundUrl =
-    rawBackgroundUrl === null ? null : normalizeSecureRelayUrl(rawBackgroundUrl);
-  if (rawBackgroundUrl !== null && backgroundUrl === null) {
-    throw new BackgroundRelayUrlInvalidError();
-  }
+    rawBackgroundUrl === null
+      ? null
+      : (normalizeSecureRelayUrl(rawBackgroundUrl) ?? rawBackgroundUrl);
   return {
     clerk: {
       publishableKey: trimNonEmpty(extra?.clerk?.publishableKey),
