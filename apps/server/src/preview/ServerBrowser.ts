@@ -1261,10 +1261,12 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const atTabLimit = (agentSessionId: string) =>
-    tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT ||
+  const serverAtTabLimit = () => tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT;
+  const agentAtTabLimit = (agentSessionId: string) =>
     [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length >=
-      AGENT_TAB_LIMIT;
+    AGENT_TAB_LIMIT;
+  const atTabLimit = (agentSessionId: string) =>
+    serverAtTabLimit() || agentAtTabLimit(agentSessionId);
 
   const assertTabCapacity = (agentSessionId: string) => {
     if (atTabLimit(agentSessionId))
@@ -1274,19 +1276,27 @@ const make = Effect.gen(function* () {
       );
   };
 
+  const idleAgentTabs = () => {
+    const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
+    return [...tabs.values()].filter(
+      (tab) => tab.control.agentId !== null && tab.viewers.size === 0 && tab.usedAt < cutoff,
+    );
+  };
+
   // Desktop browsing bypasses streamed viewers and server input tracking,
   // so these idle signals only apply to headless tabs.
   const closeIdleAgentTabs = () => {
-    const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
-    for (const tab of tabs.values()) {
-      if (
-        tab.control.agentId !== null &&
-        tab.desktop === null &&
-        tab.viewers.size === 0 &&
-        tab.usedAt < cutoff
-      )
-        dropTab(tab, true);
-    }
+    for (const tab of idleAgentTabs()) if (tab.desktop === null) dropTab(tab, true);
+  };
+
+  // The server can't see whether someone is looking at a desktop tab, but the
+  // desktop app renders every server tab, so idle desktop agent tabs would
+  // otherwise hold the server's budget forever. They give up their slots,
+  // longest idle first, only when an agent needs one and has room for it.
+  const freeIdleAgentSlot = (agentSessionId: string) => {
+    if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
+    const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
+    if (longestIdle) dropTab(longestIdle, true);
   };
 
   const latestThreadTab = (threadId: string, agentSessionId?: string) => {
@@ -1786,6 +1796,7 @@ const make = Effect.gen(function* () {
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) {
           closeIdleAgentTabs();
+          freeIdleAgentSlot(request.agentSessionId);
           assertTabCapacity(request.agentSessionId);
         }
         const tab =
