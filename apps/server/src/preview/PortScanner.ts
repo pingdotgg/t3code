@@ -21,6 +21,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -54,8 +55,6 @@ const LSOF_TIMEOUT_MS = 5_000;
 const PROC_FD_WALK_LIMIT = 50_000;
 const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
-/** `netstat -ano` lists every connection, not just listeners; ~80 bytes per row, sized for ~200k rows. */
-const WINDOWS_NETSTAT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 /** Bounds how long a cached Windows image name can outlive its process if Windows reuses the PID. */
@@ -228,53 +227,6 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
-const parseWindowsListenerLine = (
-  line: string,
-): {
-  readonly host: string;
-  readonly port: number;
-  readonly pid: number | null;
-  readonly processName: string | null;
-} | null => {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return null;
-
-  if (trimmed.includes("|")) {
-    const [hostRaw, portRaw, pidRaw, processNameRaw] = trimmed.split("|", 4);
-    const host = hostRaw?.trim() ?? "";
-    if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") return null;
-    const port = Number(portRaw);
-    const pid = Number(pidRaw);
-    if (!Number.isInteger(port) || port <= 0 || port >= 65536) return null;
-    return {
-      host,
-      port,
-      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
-      processName: processNameRaw?.trim() || null,
-    };
-  }
-
-  // Foreign port `:0` identifies a listening TCP socket regardless of Windows locale.
-  const fields = trimmed.split(/\s+/);
-  if (fields.length < 4 || fields[0]?.toUpperCase() !== "TCP") return null;
-  const localEndpoint = fields[1] ?? "";
-  const foreignEndpoint = fields[2] ?? "";
-  if (!foreignEndpoint.endsWith(":0")) return null;
-  const lastColon = localEndpoint.lastIndexOf(":");
-  if (lastColon <= 0) return null;
-  const host = localEndpoint.slice(0, lastColon);
-  if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") return null;
-  const port = Number(localEndpoint.slice(lastColon + 1));
-  if (!Number.isInteger(port) || port <= 0 || port >= 65536) return null;
-  const pid = Number(fields.at(-1));
-  return {
-    host,
-    port,
-    pid: Number.isInteger(pid) && pid > 0 ? pid : null,
-    processName: null,
-  };
-};
-
 const exitedWithError = (result: ProcessRunner.ProcessRunOutput): boolean =>
   result.code !== null && result.code !== 0;
 
@@ -286,17 +238,13 @@ const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   return null;
 };
 
-const parseWindowsListenerOutput = (
-  raw: string,
-  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
+const discoveredWindowsListeners = (
+  listeners: ReadonlyArray<WindowsTcpListeners.WindowsTcpListener>,
+  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<number, DiscoveredLocalServer>();
-  for (const line of raw.split(/\r?\n/g)) {
-    const parsed = parseWindowsListenerLine(line);
-    if (!parsed) continue;
-    const { port, pid: normalizedPid, processName } = parsed;
-    const terminal =
-      normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null);
+  for (const { port, pid } of listeners) {
+    const terminal = pid === null ? null : (terminalByProcessId.get(pid) ?? null);
     const existing = seen.get(port);
     if (existing) {
       if (terminal === null) seen.set(port, { ...existing, terminal: null });
@@ -306,8 +254,8 @@ const parseWindowsListenerOutput = (
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
-      processName,
-      pid: normalizedPid,
+      processName: null,
+      pid,
       terminal,
     });
   }
@@ -697,22 +645,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     if (hostPlatform === "win32") {
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const runNetstat = (protocol: "tcp" | "tcpv6") =>
-        processRunner.run({
-          command: "netstat.exe",
-          args: ["-ano", "-p", protocol],
-          timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-          maxOutputBytes: WINDOWS_NETSTAT_MAX_OUTPUT_BYTES,
-        });
-      const listeners = yield* Effect.all([runNetstat("tcp"), runNetstat("tcpv6")], {
-        concurrency: 2,
-      }).pipe(
-        // One failed query leaves a partial snapshot that could hide another process sharing a
-        // port across IPv4/IPv6, so fall back to configured URLs instead.
-        Effect.map(([tcp4, tcp6]) =>
-          exitedWithError(tcp4) || exitedWithError(tcp6)
-            ? null
-            : parseWindowsListenerOutput(`${tcp4.stdout}\n${tcp6.stdout}`, terminalByProcessId),
+      const listeners = yield* WindowsTcpListeners.queryWindowsTcpListeners(
+        processRunner,
+        "netstat.exe",
+      ).pipe(
+        Effect.map((snapshot) =>
+          snapshot === null ? null : discoveredWindowsListeners(snapshot, terminalByProcessId),
         ),
         Effect.catchTags({
           ProcessSpawnError: recoverWindowsProbeFailure,
