@@ -210,6 +210,42 @@ describe("ClientSettings quit confirmation", () => {
   });
 });
 
+describe("ClientSettings pull request timeline", () => {
+  it("hides bots and the @codex review summon by default", () => {
+    expect(decodeClientSettings({})).toMatchObject({
+      pullRequestTimelineHideBots: true,
+      pullRequestHiddenComments: ["@codex review"],
+      pullRequestLatestOnlyBots: [],
+      pullRequestKeepBotApprovals: true,
+      pullRequestKeepBotChangeRequests: true,
+      pullRequestKeepBotReviewComments: false,
+      pullRequestCollapseBotComments: true,
+      pullRequestExtraBots: [],
+      pullRequestHumanAccounts: [],
+      pullRequestBotNameHeuristics: true,
+    });
+    expect(
+      decodeClientSettingsPatch({ pullRequestLatestOnlyBots: ["stamphog"] })
+        .pullRequestLatestOnlyBots,
+    ).toEqual(["stamphog"]);
+    expect(
+      decodeClientSettingsPatch({
+        pullRequestKeepBotReviewComments: true,
+        pullRequestCollapseBotComments: false,
+        pullRequestExtraBots: ["release-tool"],
+        pullRequestHumanAccounts: ["octo-bot"],
+        pullRequestBotNameHeuristics: false,
+      }),
+    ).toEqual({
+      pullRequestKeepBotReviewComments: true,
+      pullRequestCollapseBotComments: false,
+      pullRequestExtraBots: ["release-tool"],
+      pullRequestHumanAccounts: ["octo-bot"],
+      pullRequestBotNameHeuristics: false,
+    });
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");

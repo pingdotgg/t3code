@@ -27,6 +27,8 @@ import {
 import {
   ArrowDownUpIcon,
   ArrowLeftIcon,
+  BotIcon,
+  BotOffIcon,
   CircleDotIcon,
   FileDiffIcon,
   GitCommitHorizontalIcon,
@@ -45,7 +47,11 @@ import {
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
+import {
+  updateClientSettings,
+  useClientSettings,
+  useEnvironmentSettings,
+} from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
@@ -111,7 +117,10 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildPullRequestTimeline,
   buildResolveConflictsPrompt,
+  filterPullRequestTimeline,
+  pullRequestNoiseRulesFromSettings,
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
@@ -327,6 +336,8 @@ export function PullRequestDetailPanel({
     onTabChange?.(next);
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
+  const timelineHideBots = useClientSettings((settings) => settings.pullRequestTimelineHideBots);
+  const noiseRules = useClientSettings(pullRequestNoiseRulesFromSettings);
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
     readonly oid: string | null;
@@ -1185,6 +1196,12 @@ export function PullRequestDetailPanel({
     : detail
       ? summarizePullRequestChecks(detail.checks)
       : null;
+  const timeline = detail
+    ? filterPullRequestTimeline(buildPullRequestTimeline(detail), detail.reviewThreads, {
+        ...noiseRules,
+        hideBots: timelineHideBots,
+      })
+    : null;
   const approvalCount =
     detail && !detail.commentsTruncated
       ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
@@ -1658,6 +1675,27 @@ export function PullRequestDetailPanel({
                   <ArrowDownUpIcon aria-hidden className="size-3" />
                   {timelineOrder === "newest" ? "Newest first" : "Oldest first"}
                 </Button>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  // A toggle's name stays fixed; aria-pressed says whether hiding is on.
+                  aria-label="Hide bot activity"
+                  aria-pressed={timelineHideBots}
+                  onClick={() =>
+                    updateClientSettings({ pullRequestTimelineHideBots: !timelineHideBots })
+                  }
+                >
+                  {timelineHideBots ? (
+                    <BotOffIcon aria-hidden className="size-3" />
+                  ) : (
+                    <BotIcon aria-hidden className="size-3" />
+                  )}
+                  {timelineHideBots
+                    ? timeline !== null && timeline.hiddenCount > 0
+                      ? `Bots hidden (${timeline.hiddenCount.toLocaleString()})`
+                      : "Bots hidden"
+                    : "Bots shown"}
+                </Button>
               </div>
             ) : null}
           </PullRequestDetailTabBar>
@@ -1763,6 +1801,7 @@ export function PullRequestDetailPanel({
                     threadRef={threadRef}
                     reference={reference}
                     order={timelineOrder}
+                    events={timeline?.events ?? []}
                     onOpenCommit={openCommit}
                     onRefresh={refreshDetail}
                   />

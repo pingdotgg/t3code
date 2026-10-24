@@ -28,7 +28,6 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
-  buildPullRequestTimeline,
   groupPullRequestTimelineConversations,
   isPullRequestVerdictStale,
   newestPullRequestCommitAt,
@@ -630,6 +629,7 @@ export function PullRequestTimelineTab({
   threadRef = null,
   reference,
   order,
+  events,
   onOpenCommit,
   onRefresh,
 }: {
@@ -639,10 +639,11 @@ export function PullRequestTimelineTab({
   threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
   order: "newest" | "oldest";
+  /** Already filtered by the panel, which also shows how many events the filter hid. */
+  events: ReadonlyArray<PullRequestTimelineEvent>;
   onOpenCommit: (oid: string) => void;
   onRefresh: () => void;
 }) {
-  const events = buildPullRequestTimeline(detail);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,

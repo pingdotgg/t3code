@@ -22,6 +22,7 @@ import { useRef, useState, type ReactNode } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { RelativeTime } from "~/components/RelativeTime";
@@ -54,17 +55,23 @@ import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
   filterPullRequestConversationItems,
+  foldPullRequestBotRuns,
   isPullRequestCommentFinished,
   latestPullRequestReviewOutcomes,
   orderPullRequestComments,
   pagePullRequestConversationItems,
+  PULL_REQUEST_COMMENT_PREVIEW_LIMIT,
+  pullRequestCommentPreview,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
+  pullRequestConversationNoiseDispositions,
   pullRequestFindingKey,
+  pullRequestNoiseRulesFromSettings,
   pullRequestReviewOutcome,
   visibleBody,
   type PullRequestConversationItem,
   type PullRequestFinding,
+  type PullRequestNoiseDisposition,
 } from "./pullRequestDetail.logic";
 import {
   canEditPullRequestChangeRequest,
@@ -256,14 +263,7 @@ function CollapsedComment({
               className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
               onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
             >
-              {body
-                .replace(/<!--[\s\S]*?-->/gu, "")
-                .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
-                .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
-                .replace(/^[\s>#*-]+/gmu, "")
-                .replace(/[*`]/gu, "")
-                .replace(/\s+/g, " ")
-                .trim()}
+              {pullRequestCommentPreview(body)}
             </CollapsibleTrigger>
           ) : null}
         </div>
@@ -280,6 +280,77 @@ function CollapsedComment({
         {moreReplies ? <div className="px-3 pb-3">{moreReplies}</div> : null}
       </article>
     </Collapsible>
+  );
+}
+
+/**
+ * Back-to-back bot comments the filter folded, as one line: who, the opening of what they said
+ * and how many more follow. Opened, the comments show in full under a Hide that folds them again.
+ */
+function FoldedBotComments({
+  author,
+  items,
+  open,
+  onOpenChange,
+  renderItem,
+}: {
+  author: PullRequestComment["author"];
+  items: ReadonlyArray<PullRequestConversationItem>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  renderItem: (item: PullRequestConversationItem) => ReactNode;
+}) {
+  const firstItem = items[0];
+  if (firstItem === undefined) return null;
+  const first = firstItem.kind === "comment" ? firstItem.comment : firstItem.root;
+  const comments = items.flatMap(pullRequestConversationItemComments);
+  const more = comments.length - 1;
+  if (open) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <PullRequestActorLabel actor={author} tooltip={false} className="max-w-full" />
+          <span className="min-w-0 flex-1 truncate">
+            {comments.length === 1 ? "bot comment" : `${comments.length} bot comments`}
+          </span>
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            className="shrink-0"
+            aria-label={comments.length === 1 ? "Hide this comment" : "Hide these comments"}
+            onClick={() => onOpenChange(false)}
+          >
+            Hide
+          </Button>
+        </div>
+        {items.map(renderItem)}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenChange(true)}
+      className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+    >
+      <PullRequestActorLabel actor={author} tooltip={false} className="max-w-40" />
+      <span className="min-w-0 flex-1 truncate">
+        {pullRequestCommentPreview(
+          first.body,
+          first.kind === "review" ? first.reviewState : null,
+          PULL_REQUEST_COMMENT_PREVIEW_LIMIT,
+        )}
+      </span>
+      {more > 0 ? (
+        <span className="shrink-0 rounded-full bg-muted px-1.5 font-medium text-foreground">
+          +{more} more
+        </span>
+      ) : null}
+      <span className="sr-only">
+        {comments.length === 1 ? "Show this comment" : `Show these ${comments.length} comments`}
+      </span>
+      <ChevronDownIcon aria-hidden className="size-3.5 shrink-0" />
+    </button>
   );
 }
 
@@ -411,24 +482,48 @@ export function PullRequestSummaryTab({
     DEFAULT_COMMENT_FILTER,
     CommentFilterSchema,
   );
-  const items = pullRequestConversationItems(detail.comments, detail.reviewThreads);
-  const filteredItems = filterPullRequestConversationItems(items, commentFilter);
-  const commentCount = items.reduce(
-    (count, item) => count + pullRequestConversationItemComments(item).length,
-    0,
+  const noiseRules = useClientSettings(pullRequestNoiseRulesFromSettings);
+  const collapseBotComments = useClientSettings(
+    (settings) => settings.pullRequestCollapseBotComments,
   );
-  const filteredOutCount =
-    commentCount -
-    filteredItems.reduce(
-      (count, item) => count + pullRequestConversationItemComments(item).length,
-      0,
-    );
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => new Set());
+  const items = pullRequestConversationItems(detail.comments, detail.reviewThreads);
+  // With bot comments unchecked, the Timeline's noise rules decide per conversation, so verdicts
+  // and threads a person started stay while summons and repeated bot updates go. The rest of the
+  // bots' conversations fold into one-line strips, or go too when bot comments do not collapse.
+  const noise: ReadonlyMap<string, PullRequestNoiseDisposition> = commentFilter.bots
+    ? new Map()
+    : pullRequestConversationNoiseDispositions(items, detail.reviewThreads, noiseRules);
+  const filteredItems = filterPullRequestConversationItems(items, {
+    ...commentFilter,
+    bots: true,
+  }).filter((item) => {
+    const disposition = noise.get(item.id);
+    return disposition === undefined || (collapseBotComments && disposition.kind === "fold");
+  });
+  const countComments = (list: ReadonlyArray<PullRequestConversationItem>) =>
+    list.reduce((count, item) => count + pullRequestConversationItemComments(item).length, 0);
+  const commentCount = countComments(items);
+  const filteredOutCount = commentCount - countComments(filteredItems);
+  // Folded counts as hidden: the strip stands in for its comments, it does not show them.
+  const hiddenByFilterCount =
+    filteredOutCount + countComments(filteredItems.filter((item) => noise.has(item.id)));
   const { shown: recentItems, hidden: hiddenConversationCount } = pagePullRequestConversationItems(
     filteredItems,
     shownConversations,
+    noise,
   );
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const visibleItems = orderPullRequestComments(recentItems, commentOrder);
+  const commentRows = foldPullRequestBotRuns(visibleItems, noise);
+  const foldKey = (key: string) => `${detail.url}:${key}`;
+  const setFoldOpen = (key: string, open: boolean) =>
+    setOpenFolds((current) => {
+      const next = new Set(current);
+      if (open) next.add(foldKey(key));
+      else next.delete(foldKey(key));
+      return next;
+    });
   const showOldestCommentsButton =
     hiddenConversationCount > 0 ? (
       <Button
@@ -859,7 +954,7 @@ export function PullRequestSummaryTab({
                 aria-label="Filter comments"
               >
                 <ListFilterIcon aria-hidden className="size-3" />
-                {filteredOutCount > 0 ? `${filteredOutCount} hidden` : "Filter"}
+                {hiddenByFilterCount > 0 ? `${hiddenByFilterCount} hidden` : "Filter"}
               </MenuTrigger>
               <MenuPopup align="end">
                 <MenuGroup>
@@ -922,7 +1017,20 @@ export function PullRequestSummaryTab({
             ) : (
               <div className="space-y-3">
                 {commentOrder === "oldest" ? showOldestCommentsButton : null}
-                {visibleItems.map(renderItem)}
+                {commentRows.map((row) =>
+                  row.kind === "item" ? (
+                    renderItem(row.item)
+                  ) : (
+                    <FoldedBotComments
+                      key={foldKey(`fold:${row.key}`)}
+                      author={row.author}
+                      items={row.items}
+                      open={openFolds.has(foldKey(row.key))}
+                      onOpenChange={(open) => setFoldOpen(row.key, open)}
+                      renderItem={renderItem}
+                    />
+                  ),
+                )}
                 {commentOrder === "newest" ? showOldestCommentsButton : null}
                 {shownConversations > COMMENT_PAGE ? (
                   <Button
