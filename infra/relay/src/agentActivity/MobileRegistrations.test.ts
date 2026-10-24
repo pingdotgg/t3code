@@ -130,6 +130,7 @@ function makeDeliveryAttempts(
   return {
     record: () => Effect.void,
     claimSourceJob: () => Effect.succeed("claimed"),
+    releaseSourceJob: () => Effect.void,
     completeSourceJob: () => Effect.void,
     ...overrides,
   };
