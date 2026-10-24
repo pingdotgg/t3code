@@ -116,15 +116,34 @@ it.effect(
       const insert = database.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?)");
       const window = { percent: 1, resetsAt: "2026-09-17T12:00:00.000Z" };
       const consoleKey = { type: "key", key: "console-key" };
+      const consoleLogin = {
+        type: "oauth",
+        methodID: "device",
+        access: "console-token",
+        refresh: "refresh",
+        expires: 0,
+        metadata: {
+          server: "https://opencode.ai/console",
+          accountID: "acc_1",
+          email: "user@example.com",
+          orgID: "org_1",
+          orgName: "Org",
+        },
+      };
+      const consoleAccount = "4c1ad3b022b414b769bf373c1fa50a36e1704129d036b9d1a9fe4cde9999e87e";
       const fingerprints = new Map([
         ["console-key", "3e45cfde9158185930d4cc7020a4e390895574fd54bd8f9631d23a336bbf94f0"],
         ["go-key", "d0e590e93fc9bd9353f2b993c0c287391cae505da2a78cb698b75418d2f5367e"],
         ["inline-key", "85649de18e63305548b6407e185f708483727ee6189cc4bc9512ddb17e23e776"],
+        // Each device signs in separately, so one account must not split by token.
+        ["console-token", consoleAccount],
+        ["other-device-token", consoleAccount],
       ]);
       for (const {
         consoleRow = consoleKey,
         active = 1,
         consoleStatus = 200,
+        rejected,
         inline = false,
         databaseFile,
         requested,
@@ -137,13 +156,28 @@ it.effect(
         { consoleStatus: 403, requested: ["console-key", "go-key"] },
         { consoleStatus: 500, requested: ["console-key"] },
         { active: 0, requested: ["go-key"] },
+        { consoleRow: consoleLogin, requested: ["console-token"] },
+        {
+          consoleRow: { ...consoleLogin, access: "other-device-token" },
+          requested: ["other-device-token"],
+        },
+        {
+          // Earlier OpenCode 2 releases signed in through this address.
+          consoleRow: {
+            ...consoleLogin,
+            metadata: { ...consoleLogin.metadata, server: "https://console.opencode.ai/" },
+          },
+          requested: ["console-token"],
+        },
+        {
+          consoleRow: consoleLogin,
+          rejected: "console-token",
+          requested: ["console-token", "go-key"],
+        },
         {
           consoleRow: {
-            type: "oauth",
-            methodID: "device",
-            access: "token",
-            refresh: "refresh",
-            expires: 0,
+            ...consoleLogin,
+            metadata: { ...consoleLogin.metadata, server: "https://console.example" },
           },
           requested: ["go-key"],
         },
@@ -198,7 +232,13 @@ it.effect(
               authorizations.push(key);
               // The legacy key is expired in the regression; it only works in fallback scenarios.
               const status =
-                key === "console-key" ? consoleStatus : requested.includes(key) ? 200 : 401;
+                key === rejected
+                  ? 401
+                  : key === "console-key"
+                    ? consoleStatus
+                    : requested.includes(key)
+                      ? 200
+                      : 401;
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
