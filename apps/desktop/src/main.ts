@@ -58,6 +58,7 @@ import * as DesktopSnapShot from "./snapShot/DesktopSnapShot.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
 import * as DesktopPreReadyFileSystem from "./app/DesktopPreReadyFileSystem.ts";
 import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
+import { resolveEarlyMacKeychainName } from "./app/DesktopEarlyElectronStartup.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
@@ -76,6 +77,18 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+
+const earlyMacKeychainName = resolveEarlyMacKeychainName({
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Keychain identity must be set before the Effect runtime starts.
+  platform: NodeOS.platform(),
+  isPackaged: Electron.app.isPackaged,
+  runtimeDirectory: __dirname,
+  isDevelopment: Boolean(process.env.VITE_DEV_SERVER_URL?.trim()),
+});
+if (earlyMacKeychainName !== null) {
+  // Electron captures its Keychain service before async startup can set the visible name.
+  Electron.app.setName(earlyMacKeychainName);
+}
 
 if (process.argv.includes("--version")) {
   try {
