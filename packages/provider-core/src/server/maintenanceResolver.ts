@@ -735,10 +735,12 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: {
     readonly binaryPath?: string | null;
+    readonly maintenanceBinaryPath?: string | null;
     readonly env?: NodeJS.ProcessEnv;
   },
 ) {
-  const binaryPath = nonEmptyString(options?.binaryPath);
+  const binaryPath =
+    nonEmptyString(options?.maintenanceBinaryPath) ?? nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
     return yield* resolver.resolve(null);
   }

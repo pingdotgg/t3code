@@ -147,6 +147,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
+        maintenanceBinaryPath: config.maintenanceBinaryPath
+          ? expandHomePath(config.maintenanceBinaryPath, yield* HostProcess.HomeDirectory)
+          : null,
         env: processEnv,
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

@@ -738,6 +738,33 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "updates the explicit maintenance installation while keeping the runtime wrapper separate",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-wrapper-maintenance");
+        const wrapper = NodePath.join(tempDir, "agentfleet-launcher");
+        const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        writeExecutable(wrapper);
+        writeExecutable(nativePath);
+        const resolve = (maintenanceBinaryPath: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(nativePackageToolUpdate, {
+            binaryPath: wrapper,
+            maintenanceBinaryPath,
+            env: { PATH: "" },
+          }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          );
+        expect((yield* resolve(nativePath)).update).toMatchObject({
+          executable: nativePath,
+          args: ["update"],
+        });
+        expect((yield* resolve(NodePath.join(tempDir, "missing"))).update).toBeNull();
+        expect((yield* resolve(" ")).update?.executable).toBe(wrapper);
+      }),
+  );
+
   it.effect.skipIf(windowsHost)("switches to native updates and runs the resolved executable", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-native-capabilities");
