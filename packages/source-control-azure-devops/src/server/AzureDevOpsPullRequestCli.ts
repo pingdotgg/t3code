@@ -54,7 +54,7 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureD
   },
 ) {
   get detail(): string {
-    return "Azure CLI could not name the signed-in account. Run `az login` and retry.";
+    return "Azure CLI could not name the signed-in account. Run `az devops login` and retry.";
   }
 
   override get message(): string {
@@ -492,9 +492,9 @@ export const make = Effect.gen(function* () {
 
   return AzureDevOpsPullRequestCli.of({
     getViewer: (input) =>
-      executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
+      azure.execute({ cwd: input.cwd, args: AzureDevOpsCli.connectionDataArgs }).pipe(
         Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
+          const decoded = decodeViewerJson(result.stdout);
           if (!Result.isSuccess(decoded)) {
             return Effect.fail(
               new AzureDevOpsPullRequestReadError({
@@ -505,44 +505,11 @@ export const make = Effect.gen(function* () {
               }),
             );
           }
-          return decoded.success === null
-            ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
-            : Effect.succeed(decoded.success);
+          const viewer = decoded.success;
+          return viewer._tag === "SignedIn" && viewer.account !== null
+            ? Effect.succeed(viewer.account)
+            : Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }));
         }),
-        // `az devops login` signs in with a personal access token, which `az account show` knows
-        // nothing about, and nothing in `az` prints whose token it is. `--creator me` is resolved
-        // by the extension itself, so the viewer's own pull request names them.
-        Effect.catchIf(
-          (error) => error._tag !== "AzureDevOpsCliUnavailableError",
-          () =>
-            executeJson({
-              cwd: input.cwd,
-              args: [
-                "repos",
-                "pr",
-                "list",
-                ...detectArgs,
-                "--creator",
-                "me",
-                "--status",
-                "all",
-                "--top",
-                "1",
-              ],
-            }).pipe(
-              Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-                const decoded = decodePullRequestListJson(result.stdout.trim() || "[]");
-                const login = Result.isSuccess(decoded)
-                  ? decoded.success.items[0]?.author?.login
-                  : undefined;
-                return login === undefined
-                  ? Effect.fail(
-                      new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
-                    )
-                  : Effect.succeed(login);
-              }),
-            ),
-        ),
       ),
 
     listPullRequests: (input) =>

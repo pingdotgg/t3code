@@ -148,9 +148,18 @@ Logged in to gitlab.com as gitlab-user
       }
       if (
         input.command === "az" &&
-        input.args.join(" ") === "account show --query user.name -o tsv"
+        input.args.join(" ") === AzureDevOpsCli.connectionDataArgs.join(" ")
       ) {
-        return Effect.succeed(processOutput("azure-user@example.com\n"));
+        return Effect.succeed(
+          processOutput(
+            encodeJson({
+              authenticatedUser: {
+                id: "azure-user-id",
+                properties: { Account: { $value: "azure-user@example.com" } },
+              },
+            }),
+          ),
+        );
       }
       if (input.command === "cafe" && input.args.slice(-3).join(" ") === "auth status --json") {
         return Effect.succeed(

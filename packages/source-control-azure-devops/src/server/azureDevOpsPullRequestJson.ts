@@ -103,8 +103,21 @@ const RawThreadPageSchema = Schema.Struct({
 });
 
 const RawViewerSchema = Schema.Struct({
-  user: Schema.optional(
-    Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
+  authenticatedUser: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        id: Schema.optional(Schema.NullOr(Schema.String)),
+        descriptor: Schema.optional(Schema.NullOr(Schema.String)),
+        isActive: Schema.optional(Schema.Boolean),
+        properties: Schema.optional(
+          Schema.Struct({
+            Account: Schema.optional(
+              Schema.Struct({ $value: Schema.optional(Schema.NullOr(Schema.String)) }),
+            ),
+          }),
+        ),
+      }),
+    ),
   ),
 });
 
@@ -143,7 +156,7 @@ function normalizeRefName(refName: string): string {
   return refName.trim().replace(/^refs\/heads\//, "");
 }
 
-/** A login has to compare against `az account show`, which reports an email. */
+/** A login has to compare against the connectionData account, which is an email. */
 function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | undefined) {
   const login = trimmed(raw?.uniqueName) ?? trimmed(raw?.displayName);
   return login === null
@@ -292,11 +305,25 @@ export function decodePullRequestJson(
     : Result.fail(decoded.failure);
 }
 
-export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
+/** `Anonymous` is a definitive signed-out answer; a signed-in identity may still lack a name. */
+export type AzureDevOpsViewer =
+  | { readonly _tag: "Anonymous" }
+  | { readonly _tag: "SignedIn"; readonly account: string | null };
+
+export function decodeViewerJson(raw: string): Result.Result<AzureDevOpsViewer, DecodeFailure> {
   const decoded = decodeViewer(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(trimmed(decoded.success.user?.name))
-    : Result.fail(decoded.failure);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const user = decoded.success.authenticatedUser;
+  const id = trimmed(user?.id);
+  // Public organizations return an active identity even for a request with no credentials.
+  if (
+    user?.isActive === false ||
+    id === "00000000-0000-0000-0000-000000000000" ||
+    id?.toLowerCase() === "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" ||
+    /^System:PublicAccess(?:;|$)/i.test(user?.descriptor ?? "")
+  )
+    return Result.succeed({ _tag: "Anonymous" });
+  return Result.succeed({ _tag: "SignedIn", account: trimmed(user?.properties?.Account?.$value) });
 }
 
 export function decodeThreadsJson(
