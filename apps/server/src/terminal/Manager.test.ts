@@ -622,6 +622,44 @@ it.layer(
     }),
   );
 
+  it.effect("clear preserves queued process exit", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      yield* manager.open(openInput());
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "blocked"
+          ? Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+            })
+          : Effect.void,
+      );
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("blocked");
+      yield* Deferred.await(entered);
+      process.emitData("discarded");
+      process.emitExit({ exitCode: 7, signal: 0 });
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      // A second output event is a deterministic drain barrier: the original exit must precede it.
+      const drained = yield* Deferred.make<void>();
+      yield* manager.subscribe((event) =>
+        event.type === "exited" || (event.type === "output" && event.data === "barrier")
+          ? Deferred.succeed(drained, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Deferred.succeed(release, undefined);
+      process.emitData("barrier");
+      yield* Deferred.await(drained);
+      const events = yield* getEvents;
+      expect(events.some((event) => event.type === "exited" && event.exitCode === 7)).toBe(true);
+      expect(events.some((event) => event.type === "output" && event.data === "discarded")).toBe(
+        false,
+      );
+    }),
+  );
+
   it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
