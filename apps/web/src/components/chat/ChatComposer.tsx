@@ -148,6 +148,7 @@ import {
 } from "../../lib/terminalContext";
 import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
 import {
+  getCollapsedComposerPromptText,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
   shouldUseRestingComposerLayout,
@@ -1254,6 +1255,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow = isComposerCollapsedMobile;
+  const collapsedPromptText = getCollapsedComposerPromptText(prompt);
   const showComposerAttachAction =
     fileStagingLimit !== null &&
     (!activePendingProgress ||
@@ -3637,13 +3639,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-transition-prompt="true"
                   className={cn(
                     "min-w-0 flex-1 truncate bg-transparent p-0 text-left text-sm focus:outline-none",
-                    prompt.trim() ? "text-foreground" : "text-placeholder",
+                    collapsedPromptText ? "text-foreground" : "text-placeholder",
                   )}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={expandMobileComposerStable}
                   aria-label="Expand composer"
                 >
-                  {prompt.trim() ||
+                  {collapsedPromptText ||
                     (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}

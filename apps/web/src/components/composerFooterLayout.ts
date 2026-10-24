@@ -1,3 +1,5 @@
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+
 const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
 const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
 const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
@@ -11,6 +13,14 @@ export function getRestingComposerImagePreviewCounts(imageCount: number): {
     visibleCount,
     overflowCount: Math.max(0, imageCount - visibleCount),
   };
+}
+
+/**
+ * The collapsed row prints plain text, not the editor's chips, so a serialized
+ * citation link would show up as raw Markdown.
+ */
+export function getCollapsedComposerPromptText(prompt: string): string {
+  return assistantCitationsToPlainText(prompt).trim();
 }
 
 export function shouldUseCompactComposerFooter(

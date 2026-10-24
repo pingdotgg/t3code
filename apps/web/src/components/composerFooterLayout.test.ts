@@ -1,11 +1,49 @@
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
 import {
+  getCollapsedComposerPromptText,
   resolveComposerTimelineInset,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
 } from "./composerFooterLayout";
+
+describe("getCollapsedComposerPromptText", () => {
+  const citation: AssistantCitation = {
+    version: 1,
+    environmentId: EnvironmentId.make("environment-local"),
+    threadId: ThreadId.make("thread-source"),
+    messageId: MessageId.make("message-1"),
+    text: "Resting composer keeps the quote",
+    start: 10,
+    end: 42,
+    prefix: "before ",
+    suffix: " after",
+  };
+
+  it("prints the quoted text instead of the serialized citation link", () => {
+    const prompt = `  Look at ${serializeAssistantCitation(citation)} please `;
+
+    expect(getCollapsedComposerPromptText(prompt)).toBe(
+      "Look at Resting composer keeps the quote please",
+    );
+  });
+
+  it("keeps the comment written on a quote", () => {
+    const prompt = serializeAssistantCitation({ ...citation, comment: "Is this still true?" });
+
+    expect(getCollapsedComposerPromptText(prompt)).toBe(
+      "Resting composer keeps the quote\nComment: Is this still true?",
+    );
+  });
+
+  it("leaves plain prompts and blank drafts alone", () => {
+    expect(getCollapsedComposerPromptText("  fix the build  ")).toBe("fix the build");
+    expect(getCollapsedComposerPromptText("   ")).toBe("");
+  });
+});
 
 describe("resolveComposerTimelineInset", () => {
   it("keeps timeline padding stable when the model-only strip appears on collapse", () => {
