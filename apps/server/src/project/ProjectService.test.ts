@@ -1,6 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+  ServerSettingsError,
+} from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -56,13 +63,14 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  settingsOverrides: Parameters<typeof ServerSettings.layerTest>[0] = {},
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest(settingsOverrides)),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
     Layer.provide(NodeServices.layer),
   );
@@ -464,6 +472,105 @@ it.layer(layerTest)("ProjectService", (it) => {
   );
 });
 
+it.effect("retries a failed settings write without accepting an incomplete project update", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const failWrite = yield* Ref.make(true);
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        ...settings,
+        getSettings: settings.getSettings.pipe(
+          Effect.map((current) => ({ ...current, projectSettingsFolded: true })),
+        ),
+        updateSettings: (patch) =>
+          Ref.getAndSet(failWrite, false).pipe(
+            Effect.flatMap((fail) =>
+              fail
+                ? Effect.fail(
+                    new ServerSettingsError({
+                      settingsPath: "/test/settings.json",
+                      operation: "write-file",
+                      cause: "injected transient write failure",
+                    }),
+                  )
+                : settings.updateSettings(patch),
+            ),
+          ),
+      }),
+    );
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("project:settings-retry");
+    yield* service.create({
+      commandId: CommandId.make("command:settings-retry:create"),
+      projectId,
+      title: "Settings retry",
+      workspaceRoot: "/work/settings-retry",
+    });
+    const input = {
+      commandId: CommandId.make("command:settings-retry:update"),
+      projectId,
+      autoPull: true,
+    };
+    assert.equal((yield* service.update(input).pipe(Effect.flip))._tag, "ProjectOperationError");
+    const leftovers = yield* sql<{ readonly count: number }>`
+      SELECT
+        (SELECT COUNT(*) FROM orchestration_events WHERE command_id = ${input.commandId}) +
+        (SELECT COUNT(*) FROM orchestration_command_receipts WHERE command_id = ${input.commandId}) AS count
+    `;
+    assert.equal(leftovers[0]?.count, 0);
+    assert.isFalse(Option.getOrThrow(yield* service.getById(projectId)).autoPull);
+    assert.isTrue((yield* service.update(input)).autoPull);
+    assert.isTrue(
+      (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultAutoPull,
+    );
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+    });
+    assert.isFalse((yield* service.update(input)).autoPull);
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("allows settings persistence to wait for an independent SQL reader", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const sql = yield* SqlClient.SqlClient;
+    const settingsWriteStarted = yield* Deferred.make<void>();
+    // Settings reloads SQL while holding its write semaphore. This reader starts outside
+    // the project transaction so it must acquire its own connection.
+    const settingsReader = yield* Deferred.await(settingsWriteStarted).pipe(
+      Effect.andThen(sql`SELECT 1`.pipe(Effect.orDie)),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        ...settings,
+        getSettings: settings.getSettings.pipe(
+          Effect.map((current) => ({ ...current, projectSettingsFolded: true })),
+        ),
+        updateSettings: (patch) =>
+          Deferred.succeed(settingsWriteStarted, undefined).pipe(
+            Effect.andThen(Fiber.join(settingsReader)),
+            Effect.andThen(settings.updateSettings(patch)),
+          ),
+      }),
+    );
+    const projectId = ProjectId.make("project:settings-sql-lock");
+    yield* service.create({
+      commandId: CommandId.make("command:settings-sql-lock:create"),
+      projectId,
+      title: "Settings SQL lock",
+      workspaceRoot: "/work/settings-sql-lock",
+    });
+    assert.isTrue(
+      (yield* service.update({
+        commandId: CommandId.make("command:settings-sql-lock:update"),
+        projectId,
+        autoPull: true,
+      })).autoPull,
+    );
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
 it.effect("keeps project snapshots available when optional metadata enrichment fails", () =>
   Effect.gen(function* () {
     const layerFailingMetadata = Layer.merge(
@@ -669,3 +776,211 @@ it.effect("rejects an update that waited on the lock while its project was delet
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
+
+it.layer(
+  layerTestFor(layerMetadata, { projectSettingsFolded: true, defaultThreadEnvMode: "local" }),
+)("ProjectService folded settings", (it) => {
+  it.effect.each([
+    {
+      field: "scripts",
+      setting: "defaultProjectScripts",
+      value: [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "vp install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ],
+      reset: [],
+    },
+    {
+      field: "defaultModelSelection",
+      setting: "defaultModelSelection",
+      value: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+      reset: null,
+    },
+    {
+      field: "defaultThreadEnvMode",
+      setting: "defaultThreadEnvMode",
+      value: "worktree",
+      reset: null,
+    },
+    { field: "autoPull", setting: "defaultAutoPull", value: true, reset: false },
+  ] as const)(
+    "updates $field in effective settings after project settings were folded",
+    ({ field, setting, value, reset }) =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const settingsService = yield* ServerSettings.ServerSettingsService;
+        const projectId = ProjectId.make(`project:folded:${field}`);
+        yield* service.create({
+          commandId: CommandId.make(`command:folded:${field}:create`),
+          projectId,
+          title: "Folded settings",
+          workspaceRoot: `/work/folded-${field}`,
+        });
+
+        const updated = yield* service.update({
+          commandId: CommandId.make(`command:folded:${field}:update`),
+          projectId,
+          [field]: value,
+        });
+        assert.deepEqual(updated[field], value);
+        const effective = resolveProjectSettings(
+          yield* settingsService.getSettings,
+          projectId,
+        ).settings;
+        assert.deepEqual(effective[setting], value);
+        assert.deepEqual(Option.getOrThrow(yield* service.getById(projectId))[field], value);
+
+        yield* service.update({
+          commandId: CommandId.make(`command:folded:${field}:rename`),
+          projectId,
+          title: "Renamed",
+        });
+        assert.deepEqual(
+          resolveProjectSettings(yield* settingsService.getSettings, projectId).settings[setting],
+          value,
+        );
+
+        const cleared = yield* service.update({
+          commandId: CommandId.make(`command:folded:${field}:reset`),
+          projectId,
+          [field]: reset,
+        });
+        const resetEffective = resolveProjectSettings(
+          yield* settingsService.getSettings,
+          projectId,
+        ).settings;
+        const expected = field === "defaultThreadEnvMode" ? "local" : reset;
+        assert.deepEqual(resetEffective[setting], expected);
+        assert.deepEqual(cleared[field], field === "defaultThreadEnvMode" ? null : expected);
+        assert.deepEqual(
+          Option.getOrThrow(yield* service.getById(projectId))[field],
+          cleared[field],
+        );
+      }),
+  );
+
+  it.effect(
+    "preserves other overrides and restores file inheritance when clearing the workspace default",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const settingsService = yield* ServerSettings.ServerSettingsService;
+        const projectId = ProjectId.make("project:folded:preserve");
+        yield* service.create({
+          commandId: CommandId.make("command:folded:preserve:create"),
+          projectId,
+          title: "Preserve settings",
+          workspaceRoot: "/work/folded-preserve",
+        });
+        const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+        yield* settingsService.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: {
+              defaultModelSelection: model,
+              defaultThreadEnvMode: "local",
+              branchNamePrefix: "feature/",
+            },
+          },
+        });
+        yield* service.update({
+          commandId: CommandId.make("command:folded:preserve:update"),
+          projectId,
+          autoPull: true,
+          defaultThreadEnvMode: null,
+        });
+        const settings = yield* settingsService.getSettings;
+        assert.deepEqual(settings.projectSettingsOverrides[projectId], {
+          defaultModelSelection: model,
+          branchNamePrefix: "feature/",
+          defaultAutoPull: true,
+        });
+        // File-backed defaults only apply when the environment also inherits the file.
+        yield* settingsService.updateSettings({ defaultThreadEnvMode: null });
+        const project = Option.getOrThrow(yield* service.getById(projectId));
+        assert.isNull(project.defaultThreadEnvMode);
+        assert.deepEqual(project.defaultModelSelection, model);
+        assert.equal(
+          resolveProjectSettings(yield* settingsService.getSettings, projectId, project, {
+            defaultThreadEnvMode: "worktree",
+          }).settings.defaultThreadEnvMode,
+          "worktree",
+        );
+      }),
+  );
+
+  it.effect("does not reapply a replayed command over newer Settings edits", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settingsService = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:folded:replay");
+      yield* service.create({
+        commandId: CommandId.make("command:folded:replay:create"),
+        projectId,
+        title: "Replay settings",
+        workspaceRoot: "/work/folded-replay",
+      });
+      const update = {
+        commandId: CommandId.make("command:folded:replay:update"),
+        projectId,
+        autoPull: true,
+      };
+      yield* service.update(update);
+      yield* settingsService.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+      });
+      const replayed = yield* service.update(update);
+      assert.isFalse(replayed.autoPull);
+      assert.isFalse(
+        resolveProjectSettings(yield* settingsService.getSettings, projectId).settings
+          .defaultAutoPull,
+      );
+    }),
+  );
+
+  it.effect("reads effective settings instead of stale persisted fields after folding", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settingsService = yield* ServerSettings.ServerSettingsService;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project:folded:stale");
+      yield* service.create({
+        commandId: CommandId.make("command:folded:stale:create"),
+        projectId,
+        title: "Previously updated",
+        workspaceRoot: "/work/folded-stale",
+      });
+      // These are values older project updates persisted without changing effective settings.
+      yield* sql`
+        UPDATE projection_projects
+        SET default_model_selection_json = ${JSON.stringify({ instanceId: "codex", model: "gpt-6.1-sol" })},
+          default_thread_env_mode = 'worktree', auto_pull = 1,
+          scripts_json = ${JSON.stringify([{ id: "setup", name: "Setup", command: "vp install", icon: "configure", runOnWorktreeCreate: true }])}
+        WHERE project_id = ${projectId}
+      `;
+      yield* settingsService.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultModelSelection: null,
+            defaultThreadEnvMode: "local",
+            defaultAutoPull: false,
+            defaultProjectScripts: [],
+          },
+        },
+      });
+      const effective = resolveProjectSettings(
+        yield* settingsService.getSettings,
+        projectId,
+      ).settings;
+      const project = Option.getOrThrow(yield* service.getById(projectId));
+      assert.deepEqual(project.defaultModelSelection, effective.defaultModelSelection);
+      assert.equal(project.defaultThreadEnvMode, effective.defaultThreadEnvMode);
+      assert.equal(project.autoPull, effective.defaultAutoPull);
+      assert.deepEqual(project.scripts, effective.defaultProjectScripts);
+    }),
+  );
+});

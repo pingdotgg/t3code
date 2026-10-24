@@ -15,7 +15,6 @@ import {
   type OrchestrationV2ThreadShell,
   type PullRequestSummary,
   type ServerSettings as ContractServerSettings,
-  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Crypto from "effect/Crypto";
@@ -505,9 +504,15 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const scriptRuns =
     yield* Queue.unbounded<ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput>();
 
-  const updateSettings = (patch: ServerSettingsPatch) =>
+  const updateSettings: ServerSettings.ServerSettingsService["Service"]["updateSettings"] = (
+    patch,
+  ) =>
     Effect.gen(function* () {
-      const next = applyServerSettingsPatch(yield* Ref.get(settings), patch);
+      const current = yield* Ref.get(settings);
+      const next = applyServerSettingsPatch(
+        current,
+        typeof patch === "function" ? patch(current) : patch,
+      );
       yield* Ref.set(settings, next);
       yield* PubSub.publish(settingsChanges, next);
       return next;

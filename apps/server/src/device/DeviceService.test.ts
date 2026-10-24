@@ -203,14 +203,17 @@ const fixture = Effect.fn("fixture")(function* (
         ready: Effect.void,
         getSettings: Ref.get(settings),
         updateSettings: (patch) =>
-          Ref.updateAndGet(settings, (current) => ({
-            ...current,
-            enableDeviceSupport: patch.enableDeviceSupport ?? current.enableDeviceSupport,
-            enableAgentDeviceAccess:
-              patch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
-            deviceOnboardingCompleted:
-              patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
-          })),
+          Ref.updateAndGet(settings, (current) => {
+            const resolvedPatch = typeof patch === "function" ? patch(current) : patch;
+            return {
+              ...current,
+              enableDeviceSupport: resolvedPatch.enableDeviceSupport ?? current.enableDeviceSupport,
+              enableAgentDeviceAccess:
+                resolvedPatch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
+              deviceOnboardingCompleted:
+                resolvedPatch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
+            };
+          }),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
       }),

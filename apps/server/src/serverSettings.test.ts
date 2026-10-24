@@ -94,6 +94,42 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("merges functional project edits against the latest persisted settings", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const projectId = ProjectId.make("project:atomic-edit");
+      yield* Effect.all(
+        [
+          service.updateSettings((settings) => ({
+            projectSettingsOverrides: {
+              [projectId]: {
+                ...settings.projectSettingsOverrides[projectId],
+                defaultAutoPull: true,
+              },
+            },
+          })),
+          service.updateSettings((settings) => ({
+            projectSettingsOverrides: {
+              [projectId]: {
+                ...settings.projectSettingsOverrides[projectId],
+                defaultThreadEnvMode: "worktree",
+              },
+            },
+          })),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.deepEqual(persisted.projectSettingsOverrides[projectId], {
+        defaultAutoPull: true,
+        defaultThreadEnvMode: "worktree",
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

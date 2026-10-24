@@ -183,7 +183,7 @@ export class ServerSettingsService extends Context.Service<
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateSettings: (
-      patch: ServerSettingsPatch,
+      patch: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateProviderInstance: (
@@ -244,7 +244,12 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     getSettings,
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
-        Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        Effect.succeed(
+          applyServerSettingsPatch(
+            currentSettings,
+            typeof patch === "function" ? patch(currentSettings) : patch,
+          ),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
@@ -1164,7 +1169,9 @@ const make = Effect.gen(function* () {
     ),
     updateSettings: (patch) =>
       updateAndPersistSettings((current) =>
-        Effect.succeed(applyServerSettingsPatch(current, patch)),
+        Effect.succeed(
+          applyServerSettingsPatch(current, typeof patch === "function" ? patch(current) : patch),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings((current) =>
