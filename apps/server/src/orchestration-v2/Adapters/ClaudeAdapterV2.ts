@@ -300,9 +300,11 @@ export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROV
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 // Entry extensions the Claude SDK runs through node instead of executing.
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
-// The SDK puts no deadline on control requests. The CLI answers
-// mcp_set_servers once each server connected or hit its own 30 s timeout.
-const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+// The SDK puts no deadline on control requests, though it rejects them if the
+// CLI exits. The CLI reads mcp_set_servers only after its SessionStart hooks,
+// which run up to Claude Code's default 10 minute hook timeout, then answers
+// once each server connected or hit its own 30 s timeout (#23151).
+const CLAUDE_MCP_REGISTRATION_TIMEOUT = "690 seconds";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";

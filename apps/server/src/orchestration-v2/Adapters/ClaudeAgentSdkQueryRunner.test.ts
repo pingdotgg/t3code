@@ -7,11 +7,14 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -102,6 +105,55 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+// The CLI answers mcp_set_servers only after its SessionStart hooks finish, and
+// a project hook can legitimately run past 90 s, e.g. a cold worktree's setup
+// script (#23151).
+it.effect("opens a session whose SessionStart hook outlasts 90 seconds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registrationStarted = yield* Deferred.make<void>();
+      let answerRegistration: () => void = () => {};
+      const close = vi.fn();
+      const fakeQuery = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            setMcpServers: () => {
+              Deferred.doneUnsafe(registrationStarted, Exit.void);
+              return new Promise((resolve) => {
+                answerRegistration = () => resolve({ added: ["t3-code"], removed: [], errors: {} });
+              });
+            },
+            close,
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => fakeQuery.mockRestore()));
+
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const opening = yield* runner
+        .open({
+          threadId: ThreadId.make("thread-slow-session-start-hook"),
+          providerSessionId: ProviderSessionId.make("session-slow-session-start-hook"),
+          options: {
+            sessionId: "native-session-slow-session-start-hook",
+            model: "claude-sonnet-4-6",
+            tools: [],
+            permissionMode: "default",
+            mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1:1/mcp" } },
+          },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(registrationStarted);
+
+      yield* TestClock.adjust("105 seconds");
+      answerRegistration();
+      const exit = yield* Fiber.await(opening);
+
+      assert.isTrue(Exit.isSuccess(exit), `open failed: ${String(exit)}`);
+      assert.equal(close.mock.calls.length, 0);
+    }).pipe(Effect.provide(forkRunnerLayer)),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 const realQueryRunner = layerQueryRunner.pipe(
   Layer.provide(
     Layer.succeed(ProviderEventLoggers, {
