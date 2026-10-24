@@ -140,6 +140,8 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
+import { useThreadAgentCwd } from "../hooks/useThreadAgentCwd";
+import { FilePanelRootContext } from "./chat/FilePanelRootContext";
 import {
   RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
   type ThreadPanelPresentation,
@@ -1577,6 +1579,14 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  // The agent's cwd: a subdirectory project stays in that subdirectory of the
+  // thread's worktree. Skills, composer paths, and links in replies follow it.
+  const agentCwd = useThreadAgentCwd(
+    environmentId,
+    activeProject ?? null,
+    activeThread?.worktreePath ?? null,
+    `${activeThread?.branch ?? ""}\0${workspaceMutationId ?? ""}`,
+  );
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -2693,7 +2703,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const getShortcutContextStable = useStableCallback(getShortcutContext);
   const timelineSkills = activeProviderStatus
-    ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+    ? resolveProviderSkillsForCwd(activeProviderStatus, agentCwd)
     : EMPTY_PROVIDER_SKILLS;
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
@@ -3108,6 +3118,7 @@ export default function ChatView(props: ChatViewProps) {
       files={{
         projectName: activeProject?.title ?? null,
         workspaceRoot: activeWorkspaceRoot,
+        agentCwd: agentCwd ?? undefined,
         availableEditors,
         pendingSurfaceIds: pendingFileSurfaceIds,
         onOpenFile: openFileSurfaceStable,
@@ -3259,7 +3270,7 @@ export default function ChatView(props: ChatViewProps) {
                 activeThreadKey={activeThreadKey}
                 syncing={threadSyncPhase !== null}
                 detailLoading={threadDetailLoading}
-                readyMarkdownCwd={gitCwd}
+                readyMarkdownCwd={agentCwd}
                 readyWorkspaceRoot={activeWorkspaceRoot ?? null}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
@@ -3380,7 +3391,7 @@ export default function ChatView(props: ChatViewProps) {
                 markdownCwd={
                   paintOnlyDisplayedTimeline
                     ? (heldPaintContext?.markdownCwd ?? undefined)
-                    : (gitCwd ?? undefined)
+                    : (agentCwd ?? undefined)
                 }
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
@@ -3598,7 +3609,8 @@ export default function ChatView(props: ChatViewProps) {
                               settings={settings}
                               keybindings={keybindings}
                               terminalOpen={Boolean(terminalUiState.terminalOpen)}
-                              gitCwd={gitCwd}
+                              gitCwd={agentCwd}
+                              workspaceRoot={activeWorkspaceRoot ?? null}
                               pullRequestProjectId={
                                 supportsPullRequests ? (activeProject?.id ?? null) : null
                               }
@@ -3918,7 +3930,7 @@ export default function ChatView(props: ChatViewProps) {
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
     >
-      {content}
+      <FilePanelRootContext value={activeWorkspaceRoot}>{content}</FilePanelRootContext>
     </FileMetadataThreadProvider>
   );
 }

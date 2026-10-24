@@ -259,6 +259,8 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly context?: OrchestrationV2ThreadProjection["messages"][number]["context"];
+  readonly agentCwd?: string;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly fileSystem?: FileSystem.FileSystem;
@@ -334,6 +336,7 @@ function makeLocalCommandHarness(input: {
     nodeId: rootNodeId,
     role: "user",
     text: input.text,
+    ...(input.context === undefined ? {} : { context: input.context }),
     attachments: [],
     streaming: false,
     createdBy: "user",
@@ -666,7 +669,9 @@ function makeLocalCommandHarness(input: {
   );
   const resolveRuntimePolicy = vi.fn(
     ({ thread }: Parameters<RuntimePolicy.RuntimePolicyV2Shape["resolve"]>[0]) =>
-      Effect.succeed({ cwd: thread.worktreePath ?? "/tmp/native-account-command" } as never),
+      Effect.succeed({
+        cwd: input.agentCwd ?? thread.worktreePath ?? "/tmp/native-account-command",
+      } as never),
   );
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const getThreadRecords = vi.fn<ProjectionStore.ProjectionStoreV2Shape["getThreadRecords"]>(() =>
@@ -793,6 +798,38 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
     expect(harness.startRootRun.mock.calls[0]?.[0].providerThread.nativeThreadRef?.nativeId).toBe(
       "existing-native-conversation",
     );
+  }),
+);
+
+effectIt.effect.each([
+  { agentCwd: "/tmp/checkout/ios", expected: "path: /tmp/checkout/README.md" },
+  { agentCwd: "/tmp/checkout", expected: "path: README.md" },
+])("resolves saved checkout mentions for an agent cwd of $agentCwd", ({ agentCwd, expected }) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Read [README.md](t3-context://v1/mention/ctx_readme)",
+      context: {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: "ctx_readme",
+            label: "README.md",
+            kind: "mention",
+            path: "README.md",
+          },
+        ],
+      } as never,
+      worktreePath: "/tmp/checkout",
+      agentCwd,
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+
+    yield* harness.start;
+
+    const text = harness.startRootRun.mock.calls[0]?.[0].message.text;
+    expect(text).toContain(expected);
+    expect(text).not.toContain("path: /tmp/checkout/ios/");
   }),
 );
 

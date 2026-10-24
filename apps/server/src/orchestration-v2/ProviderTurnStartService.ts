@@ -1032,9 +1032,25 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
+      // Mentions are saved relative to the checkout; an agent in a subdirectory
+      // of it would otherwise read them against its own cwd.
+      const checkoutRoot = projection.thread.worktreePath;
+      const mentionRoot =
+        checkoutRoot !== null &&
+        resolvedRuntimePolicy.cwd !== null &&
+        path.resolve(checkoutRoot) !== path.resolve(resolvedRuntimePolicy.cwd)
+          ? checkoutRoot
+          : null;
       const userText = projectComposerContextForProvider({
         text: message.text,
-        records: message.context?.records ?? [],
+        records: (message.context?.records ?? []).map((record) =>
+          mentionRoot !== null &&
+          record.kind === "mention" &&
+          "path" in record &&
+          !path.isAbsolute(record.path)
+            ? { ...record, path: path.join(mentionRoot, record.path) }
+            : record,
+        ),
       });
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.

@@ -6,7 +6,11 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import {
+  isHostPath,
+  rebaseWorkspaceFilePath,
+  resolveWorkspaceFilePath,
+} from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
   AuthFilesystemReadScope,
@@ -65,6 +69,7 @@ import {
 import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
+import { FilePanelRootContext } from "./chat/FilePanelRootContext";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -454,6 +459,7 @@ function useChatMarkdownState({
   sourceControlMedia = false,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
+  const filePanelRoot = use(FilePanelRootContext);
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
   // A preview opened from another thread or workspace never carries over.
@@ -528,7 +534,10 @@ function useChatMarkdownState({
         environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
       createAssetUrl,
       onOpenFile: threadRef
-        ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
+        ? (path) =>
+            useRightPanelStore
+              .getState()
+              .openFile(threadRef, rebaseWorkspaceFilePath(path, cwd, filePanelRoot ?? cwd))
         : undefined,
     }).then(
       (preview) => {
@@ -788,7 +797,13 @@ function useChatMarkdownState({
     // in flight.
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
-      useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+      useRightPanelStore
+        .getState()
+        .openFile(
+          threadRef,
+          rebaseWorkspaceFilePath(path, cwd, filePanelRoot ?? cwd),
+          fileLinkMeta.line,
+        );
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||

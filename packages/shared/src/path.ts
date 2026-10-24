@@ -134,3 +134,36 @@ export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): s
     ? `${base}\\${path.replaceAll("/", "\\")}`
     : `${base}/${path}`;
 }
+
+/**
+ * Re-roots `path`, relative to `cwd` or absolute, as a path relative to
+ * `workspaceRoot`. A subdirectory project's worktree thread works below the
+ * checkout root its file panel shows. Falls back to `path` outside the root.
+ */
+export function rebaseWorkspaceFilePath(
+  path: string,
+  cwd: string | null | undefined,
+  workspaceRoot: string | null | undefined,
+): string {
+  if (!cwd) return path;
+  return workspaceRelativeFilePath(resolveWorkspaceFilePath(path, cwd), workspaceRoot) ?? path;
+}
+
+/**
+ * The path a composer mention of `path`, relative to `base`, records. Relative
+ * mentions mean the file panel's root; when the agent works in a subdirectory
+ * of it, a mention is absolute so both read it alike.
+ */
+export function composerMentionPath(
+  path: string,
+  base: string | null | undefined,
+  roots: {
+    readonly agentCwd: string | null | undefined;
+    readonly workspaceRoot: string | null | undefined;
+  },
+): string {
+  const { agentCwd, workspaceRoot } = roots;
+  if (!base || !agentCwd || !workspaceRoot) return path;
+  if (workspaceRelativeFilePath(agentCwd, workspaceRoot) === ".") return path;
+  return resolveWorkspaceFilePath(path, base);
+}

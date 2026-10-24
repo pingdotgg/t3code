@@ -59,14 +59,18 @@ function retainRepositoryIdentity(
   previous: OrchestrationProjectShell | undefined,
   next: OrchestrationProjectShell,
 ): OrchestrationProjectShell {
-  if (
-    next.repositoryIdentity == null &&
-    previous?.repositoryIdentity != null &&
-    previous.workspaceRoot === next.workspaceRoot
-  ) {
-    return { ...next, repositoryIdentity: previous.repositoryIdentity };
+  if (previous === undefined || previous.workspaceRoot !== next.workspaceRoot) return next;
+  // Project events carry no enrichment; keep what an earlier snapshot resolved.
+  const repositoryIdentity = next.repositoryIdentity ?? previous.repositoryIdentity;
+  const repositoryRoot = next.repositoryRoot ?? previous.repositoryRoot;
+  if (repositoryIdentity === next.repositoryIdentity && repositoryRoot === next.repositoryRoot) {
+    return next;
   }
-  return next;
+  return {
+    ...next,
+    ...(repositoryIdentity !== undefined ? { repositoryIdentity } : {}),
+    ...(repositoryRoot !== undefined ? { repositoryRoot } : {}),
+  };
 }
 
 export interface MergeShellSnapshotOptions {
@@ -102,13 +106,27 @@ export function mergeShellSnapshotProjects(
         if (resolvedRootSet?.has(project.workspaceRoot) === true) {
           // Refreshes re-resolve every root; an unchanged identity keeps the project's identity
           // so every subscriber (each pull request row, the sidebar) skips re-rendering.
-          if (sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity)) {
+          if (
+            sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity) &&
+            project.repositoryRoot === candidate.repositoryRoot
+          ) {
             return project;
           }
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+          return {
+            ...project,
+            repositoryIdentity: candidate.repositoryIdentity,
+            repositoryRoot: candidate.repositoryRoot,
+          };
         }
-        if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+        if (
+          (project.repositoryIdentity == null && candidate.repositoryIdentity != null) ||
+          (project.repositoryRoot == null && candidate.repositoryRoot != null)
+        ) {
+          return {
+            ...project,
+            repositoryIdentity: project.repositoryIdentity ?? candidate.repositoryIdentity,
+            repositoryRoot: project.repositoryRoot ?? candidate.repositoryRoot,
+          };
         }
         return project;
       }),

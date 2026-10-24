@@ -122,6 +122,8 @@ import {
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
+  /** Where the thread's agent works; tree mentions follow it. */
+  agentCwd?: string | undefined;
   projectName: string;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
@@ -988,6 +990,7 @@ function initialExplorerOpen(): boolean {
 export default function FilePreviewPanel({
   environmentId,
   cwd,
+  agentCwd,
   projectName,
   relativePath: requestedPath,
   attachment,
@@ -1471,6 +1474,7 @@ export default function FilePreviewPanel({
               key={`${environmentId}:${hostFolderPath ?? cwd}`}
               environmentId={environmentId}
               cwd={hostFolderPath ?? cwd}
+              agentCwd={agentCwd}
               projectName={hostFolderPath ?? projectName}
               hostFolder={hostFolderPath !== null}
               selectedPath={

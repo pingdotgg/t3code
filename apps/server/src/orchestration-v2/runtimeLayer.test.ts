@@ -35,6 +35,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
@@ -340,12 +341,14 @@ const layerProjectDeletionTest = Layer.mergeAll(
         Effect.succeed({
           repositoryIdentity: null,
           faviconPath: null,
+          repositoryRoot: null,
           repositoryIdentityResolved: false,
         }),
       getAvailable: () =>
         Effect.succeed({
           repositoryIdentity: null,
           faviconPath: null,
+          repositoryRoot: null,
           repositoryIdentityResolved: false,
         }),
       invalidate: () => Effect.void,
@@ -612,6 +615,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
         Effect.succeed({
           repositoryIdentity: null,
           faviconPath: null,
+          repositoryRoot: null,
           repositoryIdentityResolved: false,
         }),
       request: () => Effect.void,
@@ -619,6 +623,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
         Effect.succeed({
           repositoryIdentity: null,
           faviconPath: null,
+          repositoryRoot: null,
           repositoryIdentityResolved: false,
         }),
       invalidate: () => Effect.void,
@@ -714,6 +719,68 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           }),
       };
     });
+
+  it.effect("keeps a subdirectory project's checkpoint scope at the worktree's checkout root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "runtime-nested-scope-" });
+        const repoRoot = path.join(base, "repo");
+        const worktreePath = path.join(base, "worktree");
+        yield* fileSystem.makeDirectory(path.join(repoRoot, ".git"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(repoRoot, "ios"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(worktreePath, "ios"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreePath, ".git"), "gitdir: elsewhere\n");
+        const projectId = ProjectId.make("runtime-nested-scope-project");
+        yield* seedProject({
+          projectId,
+          title: "Nested",
+          workspaceRoot: path.join(repoRoot, "ios"),
+          defaultModelSelection: null,
+          createdAt: "2026-06-21T00:00:00.000Z",
+        });
+        const threadId = ThreadId.make("runtime-nested-scope");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-nested-scope-create"),
+          threadId,
+          projectId,
+          title: "Nested scope",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-nested-scope-message"),
+          threadId,
+          messageId: MessageId.make("runtime-nested-scope-message"),
+          text: "Edit ios and shared.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* outbox.cancelUnsettled({
+          threadId,
+          effectTypes: ["provider-turn.start"],
+          reason: "not under test",
+        });
+
+        // The agent works in ios/, but checkpoints capture and restore the whole
+        // checkout so edits to siblings such as ../shared are rewindable.
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.checkpointScopes[0]?.cwd, worktreePath);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("projects a rollback that fails every attempt and clears it on the next one", () =>
     Effect.gen(function* () {

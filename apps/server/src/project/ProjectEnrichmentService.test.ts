@@ -1,8 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 
@@ -42,6 +45,7 @@ const layer = (
 ) =>
   Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make(options)).pipe(
     Layer.provide(metadataLayer),
+    Layer.provide(NodeServices.layer),
   );
 
 it.effect("publishes repository completion while favicon enrichment is still pending", () =>
@@ -252,4 +256,40 @@ it.effect("deduplicates requests, bounds pending work, and reloads invalidated r
       ),
     );
   }),
+);
+
+it.effect.each([
+  ["without a remote", Effect.succeed(null)],
+  ["whose identity lookup fails", Effect.die("git is unavailable")],
+] as const)("reports the checkout containing a subdirectory project %s", ([, identity]) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const repoRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "enrichment-root-" });
+    const projectRoot = path.join(repoRoot, "ios");
+    yield* fileSystem.makeDirectory(path.join(repoRoot, ".git"));
+    yield* fileSystem.makeDirectory(projectRoot);
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => identity,
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+
+    const available = yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      yield* service.request(projectRoot);
+      return yield* waitForAvailable(
+        service,
+        projectRoot,
+        (value) => value.repositoryRoot !== null,
+      );
+    }).pipe(Effect.provide(layer(layerMetadata)));
+
+    assert.isNull(available.repositoryIdentity);
+    assert.equal(available.repositoryRoot, repoRoot);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

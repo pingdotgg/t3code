@@ -49,6 +49,40 @@ export function projectScriptCwd(input: {
   return input.worktreePath ?? input.project.cwd;
 }
 
+/**
+ * Where an agent works for a thread. A worktree checks out the whole
+ * repository, so a project rooted in a repository subdirectory keeps that
+ * subdirectory inside the worktree; its files and skills live there.
+ * `repositoryRoot` is the checkout containing `projectRoot`, when known.
+ */
+export function threadAgentCwd(input: {
+  readonly projectRoot: string;
+  readonly repositoryRoot?: string | null | undefined;
+  readonly worktreePath: string | null;
+}): string {
+  const { projectRoot, repositoryRoot, worktreePath } = input;
+  if (worktreePath === null) return projectRoot;
+  if (!repositoryRoot) return worktreePath;
+  const separator = projectRoot.includes("\\") && !projectRoot.includes("/") ? "\\" : "/";
+  const root = trimTrailingSeparators(repositoryRoot);
+  if (projectRoot.length <= root.length + 1 || !projectRoot.startsWith(root)) return worktreePath;
+  if (!isSeparator(projectRoot[root.length])) return worktreePath;
+  const relative = trimTrailingSeparators(projectRoot.slice(root.length + 1));
+  if (relative === "" || relative.split(/[\\/]/).includes("..")) return worktreePath;
+  return `${trimTrailingSeparators(worktreePath)}${separator}${relative}`;
+}
+
+function isSeparator(character: string | undefined): boolean {
+  return character === "/" || character === "\\";
+}
+
+// A scan rather than /[\\/]+$/, which backtracks quadratically on long separator runs.
+function trimTrailingSeparators(value: string): string {
+  let end = value.length;
+  while (end > 0 && isSeparator(value[end - 1])) end -= 1;
+  return value.slice(0, end);
+}
+
 export function projectScriptRuntimeEnv(
   input: ProjectScriptRuntimeEnvInput,
 ): Record<string, string> {

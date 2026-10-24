@@ -24,6 +24,7 @@ import {
   setComposerDraftContext,
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { composerMentionPath } from "@t3tools/shared/path";
 import {
   detectComposerTrigger,
   replaceTextRange,
@@ -134,6 +135,9 @@ export function resolveComposerCommandSelection(input: {
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
   readonly item: ComposerCommandItem;
   readonly allowInteractionMode: boolean;
+  // Path suggestions are relative to projectCwd; see `composerMentionPath`.
+  readonly projectCwd?: string | null;
+  readonly workspaceRoot?: string | null;
 }): {
   readonly text: string;
   readonly cursor: number;
@@ -153,7 +157,12 @@ export function resolveComposerCommandSelection(input: {
 
   let replacement = "";
   if (item.type === "path") {
-    replacement = `${serializeComposerFileLink(item.path)} `;
+    replacement = `${serializeComposerFileLink(
+      composerMentionPath(item.path, input.projectCwd, {
+        agentCwd: input.projectCwd,
+        workspaceRoot: input.workspaceRoot,
+      }),
+    )} `;
   } else if (item.type === "skill") {
     replacement = `$${item.skill.name} `;
   } else if (item.type === "slash-command") {
@@ -174,6 +183,7 @@ export function useComposerCommandMenu({
   threadShells = EMPTY_THREAD_SHELLS,
   currentThreadId = null,
   projectCwd,
+  workspaceRoot = null,
   pullRequestProjectId = null,
   pullRequestRepository = null,
   threadPullRequests,
@@ -192,6 +202,7 @@ export function useComposerCommandMenu({
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
+  readonly workspaceRoot?: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
@@ -605,6 +616,8 @@ export function useComposerCommandMenu({
       draftMessage,
       trigger,
       item,
+      projectCwd,
+      workspaceRoot,
       allowInteractionMode:
         onUpdateInteractionMode !== undefined &&
         selectedProviderStatus?.showInteractionModeToggle !== false,

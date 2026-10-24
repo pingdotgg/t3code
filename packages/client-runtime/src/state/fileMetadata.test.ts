@@ -220,6 +220,28 @@ describe("file metadata", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("re-checks a mounted directory that a branch switch removes and restores", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const path = "/worktree/ios";
+      h.registry.mount(h.atom(path));
+      h.values.set(path, { kind: "directory" });
+      expect(yield* h.read(path)).toEqual({ kind: "directory" });
+      const recheck = (value: FilesystemEntryMetadata | null) =>
+        Effect.gen(function* () {
+          if (value === null) h.values.delete(path);
+          else h.values.set(path, value);
+          yield* h.atoms
+            .invalidate(path)
+            .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, h.supervisor));
+          h.atoms.refreshPath(ENVIRONMENT_ID, path, h.registry);
+          return yield* h.read(path);
+        });
+      expect(yield* recheck(null)).toBeNull();
+      expect(yield* recheck({ kind: "directory" })).toEqual({ kind: "directory" });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("a reconnect discards retained metadata from the previous session", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

@@ -54,12 +54,15 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
+import { FilePanelRootContext } from "./FilePanelRootContext";
+import { rebaseWorkspaceFilePath } from "@t3tools/shared/path";
 
 function UserMessageMentionChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
   copyMarkdown: string;
 }) {
   const ctx = use(TimelineRowCtx);
+  const filePanelRoot = use(FilePanelRootContext);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -71,7 +74,12 @@ function UserMessageMentionChip(props: {
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
               if (ctx.threadRef)
-                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+                useRightPanelStore
+                  .getState()
+                  .openFile(
+                    ctx.threadRef,
+                    rebaseWorkspaceFilePath(props.record.path, filePanelRoot, filePanelRoot),
+                  );
             }}
           >
             <WorkspaceEntryIcon

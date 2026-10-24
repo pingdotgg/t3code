@@ -2118,7 +2118,31 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              let existing = (yield* Ref.get(sessions)).get(key);
+              // A subdirectory project's worktree thread moves its agent cwd when
+              // a branch gains or drops the subdirectory. A provider keeps its
+              // spawn cwd, so an idle session is reopened there and resumes.
+              if (
+                existing !== undefined &&
+                cwd !== null &&
+                existing.runtime.providerSession.cwd !== cwd &&
+                existing.busyTurns.size === 0 &&
+                [...existing.attachedThreadIds].every((threadId) => threadId === input.threadId) &&
+                !(existing.runtime.hasPendingBackgroundWork === undefined
+                  ? false
+                  : yield* existing.runtime.hasPendingBackgroundWork.pipe(
+                      Effect.catchCause(() => Effect.succeed(true)),
+                    ))
+              ) {
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: "The agent's working directory changed.",
+                  gracefulSubscribers: true,
+                  onlyIfIdleGeneration: existing.idleGeneration,
+                }).pipe(logReleaseFailure(input.providerSessionId));
+                existing = (yield* Ref.get(sessions)).get(key);
+              }
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {

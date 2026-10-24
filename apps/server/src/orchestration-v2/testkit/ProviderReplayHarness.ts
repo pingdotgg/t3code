@@ -374,7 +374,7 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
-    Layer.provide(layerProvidedRegistry),
+    Layer.provide(Layer.merge(layerProvidedRegistry, layerRuntime)),
   );
   const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
     Layer.provide(

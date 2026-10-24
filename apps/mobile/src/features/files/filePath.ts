@@ -79,6 +79,30 @@ export function resolveFileLinkPath(
   return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
 }
 
+/**
+ * Like `resolveFileLinkPath` for a link relative to `cwd`, which can sit below
+ * the file route's `root`: `../shared/x` from a subdirectory project's worktree
+ * still names a checkout file, returned absolute. `null` when it escapes `root`.
+ */
+export function resolveNestedFileLinkPath(
+  cwd: string | null | undefined,
+  root: string | null | undefined,
+  targetPath: string,
+): string | null {
+  const prefix = root && cwd ? resolveWorkspaceRelativeFilePath(root, cwd) : null;
+  if (
+    !root ||
+    prefix === null ||
+    isAbsolutePath(targetPath) ||
+    targetPath.startsWith("~/") ||
+    targetPath.startsWith("~\\")
+  ) {
+    return resolveFileLinkPath(cwd, targetPath);
+  }
+  const relativePath = normalizeRelativePath(`${prefix}/${targetPath}`);
+  return relativePath === null ? null : resolveWorkspaceFilePath(root, relativePath);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,

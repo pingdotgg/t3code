@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
@@ -10,8 +11,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -74,38 +77,42 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
-  Layer.provide(
-    Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
-      getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
-      listInstances: Effect.succeed([]),
-      listUnavailable: Effect.succeed([]),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.never,
-    }),
-  ),
-  Layer.provide(
-    Layer.mock(ProjectStore.ProjectStoreV2)({
-      get: () =>
-        Effect.succeed(
-          Option.some({
-            projectId,
-            title: "Project",
-            workspaceRoot: "/project-root",
-            defaultModelSelection: null,
-            defaultThreadEnvMode: null,
-            autoPull: false,
-            faviconPath: null,
-            projectIcon: null,
-            scripts: [],
-            createdAt: "2026-06-21T00:00:00.000Z",
-            updatedAt: "2026-06-21T00:00:00.000Z",
-            deletedAt: null,
-          }),
-        ),
-    }),
-  ),
-);
+const layerWithProjectRoot = (workspaceRoot: string) =>
+  RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(NodeServices.layer),
+    Layer.provide(
+      Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
+        listInstances: Effect.succeed([]),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.never,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProjectStore.ProjectStoreV2)({
+        get: () =>
+          Effect.succeed(
+            Option.some({
+              projectId,
+              title: "Project",
+              workspaceRoot,
+              defaultModelSelection: null,
+              defaultThreadEnvMode: null,
+              autoPull: false,
+              faviconPath: null,
+              projectIcon: null,
+              scripts: [],
+              createdAt: "2026-06-21T00:00:00.000Z",
+              updatedAt: "2026-06-21T00:00:00.000Z",
+              deletedAt: null,
+            }),
+          ),
+      }),
+    ),
+  );
+
+const layerTest = layerWithProjectRoot("/project-root");
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
   it.effect("runs a mode the provider does not offer in Supervised", () =>
@@ -127,3 +134,58 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 });
+
+// A project rooted in a repository subdirectory, with a thread in a worktree of
+// that repository. A clone's `.git` is a directory and a worktree's is a file.
+const makeSubdirectoryProject = Effect.fn(function* (options: {
+  readonly worktreeIos: "directory" | "file" | "missing";
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "runtime-policy-subdir-" });
+  const repoRoot = path.join(base, "repo");
+  const worktreePath = path.join(base, "worktree");
+  yield* fileSystem.makeDirectory(path.join(repoRoot, ".git"), { recursive: true });
+  yield* fileSystem.makeDirectory(path.join(repoRoot, "ios"), { recursive: true });
+  yield* fileSystem.makeDirectory(worktreePath, { recursive: true });
+  yield* fileSystem.writeFileString(path.join(worktreePath, ".git"), "gitdir: elsewhere\n");
+  if (options.worktreeIos === "directory") {
+    yield* fileSystem.makeDirectory(path.join(worktreePath, "ios"));
+  }
+  if (options.worktreeIos === "file") {
+    yield* fileSystem.writeFileString(path.join(worktreePath, "ios"), "not a directory\n");
+  }
+  return { projectRoot: path.join(repoRoot, "ios"), worktreePath, path };
+});
+
+const resolveWorktreeCwd = (options: { readonly worktreeIos: "directory" | "file" | "missing" }) =>
+  Effect.gen(function* () {
+    const fixture = yield* makeSubdirectoryProject(options);
+    const now = yield* DateTime.now;
+    const resolved = yield* Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      return yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: fixture.worktreePath }),
+        modelSelection,
+      });
+    }).pipe(Effect.provide(layerWithProjectRoot(fixture.projectRoot)));
+    return { cwd: resolved.cwd, ...fixture };
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.effect("starts worktree threads in the project's subdirectory of the worktree", () =>
+  Effect.gen(function* () {
+    const { cwd, worktreePath, path } = yield* resolveWorktreeCwd({ worktreeIos: "directory" });
+    assert.equal(cwd, path.join(worktreePath, "ios"));
+  }),
+);
+
+it.effect(
+  "starts at the worktree root when its branch has no directory at the project's path",
+  () =>
+    Effect.gen(function* () {
+      for (const worktreeIos of ["missing", "file"] as const) {
+        const { cwd, worktreePath } = yield* resolveWorktreeCwd({ worktreeIos });
+        assert.equal(cwd, worktreePath);
+      }
+    }),
+);

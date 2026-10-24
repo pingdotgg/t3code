@@ -64,6 +64,7 @@ import {
 } from "@t3tools/shared/codexArtifactTemplates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
+import { rebaseWorkspaceFilePath } from "@t3tools/shared/path";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   executeAtomQuery,
@@ -262,7 +263,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
   fileRoutePathSegments,
-  resolveFileLinkPath,
+  resolveNestedFileLinkPath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
@@ -340,7 +341,11 @@ export interface ThreadFeedProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly threadTitle: string;
+  // Where the agent works, which relative links in replies resolve against.
   readonly workspaceRoot?: string | null;
+  // The thread file route's root; a subdirectory project's worktree thread
+  // works below it.
+  readonly fileRouteRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
@@ -786,6 +791,8 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
 
 interface MarkdownLinkHandlers {
   readonly onLinkPress: (href: string) => void;
+  // Mention paths are relative to the file route's root, not the agent's cwd.
+  readonly onMentionPress?: (path: string) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction: (href: string, actionId: string) => void;
   readonly onImagePress?: (href: string) => void;
@@ -1813,7 +1820,7 @@ function UserMessageContent(props: UserMessageContentProps) {
       (record) => record.contextId === reference.contextId,
     );
     if (record?.kind === "mention" && "path" in record) {
-      props.linkHandlers.onLinkPress?.(record.path);
+      (props.linkHandlers.onMentionPress ?? props.linkHandlers.onLinkPress)?.(record.path);
       return;
     }
     if (record?.kind === "thread" && "threadId" in record) {
@@ -2264,7 +2271,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
     const presentation = resolveMarkdownLinkPresentation(href);
     if (presentation.kind === "file") {
-      const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
+      const path = resolveNestedFileLinkPath(
+        props.workspaceRoot,
+        props.fileRouteRoot,
+        presentation.path,
+      );
       if (path === null) return;
       const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
       const openAt = (target: string) => {
@@ -2273,7 +2284,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         navigation.navigate("ThreadFile", {
           environmentId: String(props.environmentId),
           threadId: String(props.threadId),
-          path: fileRoutePathSegments(target),
+          path: fileRoutePathSegments(
+            rebaseWorkspaceFilePath(target, props.workspaceRoot, props.fileRouteRoot),
+          ),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
         });
       };
@@ -2348,6 +2361,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const markdownLinkHandlers: MarkdownLinkHandlers = {
     onLinkPress: onMarkdownLinkPress,
+    onMentionPress: (path) =>
+      onMarkdownLinkPress(
+        props.fileRouteRoot ? resolveWorkspaceFilePath(props.fileRouteRoot, path) : path,
+      ),
     linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,

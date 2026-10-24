@@ -5,8 +5,10 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -14,6 +16,7 @@ import type * as Scope from "effect/Scope";
 
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import { findRepositoryRoot } from "./repositoryRoot.ts";
 
 const DEFAULT_CACHE_CAPACITY = 512;
 const DEFAULT_MAX_PENDING = 512;
@@ -27,6 +30,9 @@ const DEFAULT_FAILURE_TTL = Duration.seconds(5);
 
 export interface ProjectEnrichment {
   readonly repositoryIdentity: RepositoryIdentity | null;
+  // The checkout containing the project, found without a remote, so clients can
+  // place a subdirectory project inside a thread's worktree.
+  readonly repositoryRoot: string | null;
   readonly faviconPath: string | null;
   readonly repositoryIdentityResolved: boolean;
 }
@@ -96,13 +102,27 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const failureTtl = options.failureTtl ?? DEFAULT_FAILURE_TTL;
   const faviconTtl = options.faviconTtl ?? DEFAULT_FAVICON_TTL;
 
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const repositoryIdentityCache = yield* Cache.makeWith(
-    (workspaceRoot: string) => Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)),
+    (workspaceRoot: string) =>
+      Effect.all(
+        {
+          // A failed identity lookup still leaves the checkout root usable.
+          repositoryIdentity: Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)),
+          repositoryRoot: findRepositoryRoot(workspaceRoot).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+        },
+        { concurrency: "unbounded" },
+      ),
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({
         onFailure: () => failureTtl,
-        onSuccess: (result) => (Exit.isSuccess(result) ? successTtl : failureTtl),
+        onSuccess: (result) =>
+          Exit.isSuccess(result.repositoryIdentity) ? successTtl : failureTtl,
       }),
     },
   );
@@ -163,7 +183,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const resolveRepositoryIdentity = Effect.fn("ProjectEnrichmentService.resolveRepositoryIdentity")(
     function* (workspaceRoot: string) {
-      const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
+      const repository = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
+      const repositoryIdentity = repository.repositoryIdentity;
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
       const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
@@ -172,6 +193,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         repositoryIdentityResolved,
         enrichment: {
           repositoryIdentity: availableValue(Option.some(repositoryIdentity)),
+          repositoryRoot: repository.repositoryRoot,
           faviconPath: availableValue(faviconPath),
           repositoryIdentityResolved,
         },
@@ -233,15 +255,17 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const peek: ProjectEnrichmentService["Service"]["peek"] = Effect.fn(
     "ProjectEnrichmentService.peek",
   )(function* (workspaceRoot) {
-    const [repositoryIdentity, faviconPath] = yield* Effect.all(
+    const [repository, faviconPath] = yield* Effect.all(
       [
         Cache.getSuccess(repositoryIdentityCache, workspaceRoot),
         Cache.getSuccess(faviconCache, workspaceRoot),
       ] as const,
       { concurrency: "unbounded" },
     );
+    const repositoryIdentity = Option.map(repository, (value) => value.repositoryIdentity);
     return {
       repositoryIdentity: availableValue(repositoryIdentity),
+      repositoryRoot: Option.getOrNull(Option.map(repository, (value) => value.repositoryRoot)),
       faviconPath: availableValue(faviconPath),
       repositoryIdentityResolved: isSuccessfullyResolved(repositoryIdentity),
     };

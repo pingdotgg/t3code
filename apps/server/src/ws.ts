@@ -763,6 +763,7 @@ const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
               project: {
                 ...project,
                 repositoryIdentity: enrichment.repositoryIdentity,
+                repositoryRoot: enrichment.repositoryRoot,
               },
               repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
             })),
@@ -1092,18 +1093,22 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       Stream.groupedWithin(64, Duration.millis(25)),
       Stream.mapEffect((changes) =>
         Effect.gen(function* () {
-          const identities = new Map(
-            Array.from(changes, (change) => [
-              change.workspaceRoot,
-              change.enrichment.repositoryIdentity,
-            ]),
+          const enrichments = new Map(
+            Array.from(changes, (change) => [change.workspaceRoot, change.enrichment]),
           );
           const snapshotSequence = yield* applicationEvents.latestApplicationSequence;
-          const changedProjects = (yield* projects.listShells()).flatMap((project) =>
-            identities.has(project.workspaceRoot)
-              ? [{ ...project, repositoryIdentity: identities.get(project.workspaceRoot) ?? null }]
-              : [],
-          );
+          const changedProjects = (yield* projects.listShells()).flatMap((project) => {
+            const enrichment = enrichments.get(project.workspaceRoot);
+            return enrichment === undefined
+              ? []
+              : [
+                  {
+                    ...project,
+                    repositoryIdentity: enrichment.repositoryIdentity,
+                    repositoryRoot: enrichment.repositoryRoot,
+                  },
+                ];
+          });
           return shellStreamItemFromEnrichmentRefresh({
             snapshot: {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,

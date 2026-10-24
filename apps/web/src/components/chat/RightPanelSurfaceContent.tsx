@@ -51,6 +51,8 @@ export interface RightPanelPullRequestProps {
 export interface RightPanelFileProps {
   readonly projectName: string | null;
   readonly workspaceRoot: string | undefined;
+  /** Where the thread's agent works, when known. */
+  readonly agentCwd?: string | undefined;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly pendingSurfaceIds: ReadonlySet<string>;
   readonly onOpenFile: (relativePath: string) => void;
@@ -196,6 +198,7 @@ export function RightPanelSurfaceContent(props: {
             }`}
             environmentId={props.environmentId}
             cwd={files.workspaceRoot ?? ""}
+            agentCwd={files.agentCwd}
             projectName={files.projectName ?? ""}
             threadRef={threadRef}
             composerDraftTarget={props.composerDraftTarget}

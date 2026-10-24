@@ -205,13 +205,14 @@ function makeProviderSession(input: {
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
+  readonly cwd?: string | null;
 }): OrchestrationV2ProviderSession {
   return {
     id: input.providerSessionId,
     driver: CODEX_DRIVER,
     providerInstanceId: modelSelection.instanceId,
     status: "ready",
-    cwd: process.cwd(),
+    cwd: input.cwd ?? process.cwd(),
     model: "gpt-5.4",
     capabilities: input.capabilities ?? CodexCapabilities,
     createdAt: input.now,
@@ -381,6 +382,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         const session = makeProviderSession({
           providerSessionId: input.providerSessionId,
           now,
+          cwd: input.runtimePolicy.cwd,
           ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
         });
         yield* Ref.update(state, (current) => {
@@ -950,6 +952,62 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
           state,
           idleTimeoutMs: 60_000,
         }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 reopens an idle session when the agent cwd moves", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const now = yield* DateTime.now;
+      const checkout = yield* fileSystem.makeTempDirectoryScoped();
+      const nested = `${checkout}/ios`;
+      yield* fileSystem.makeDirectory(nested);
+      const threadId = ThreadId.make("thread-provider-session-manager-cwd-move");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const open = (cwd: string) =>
+        manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd },
+        });
+
+      const atRoot = yield* open(checkout);
+      assert.equal(atRoot.providerSession.cwd, checkout);
+      assert.strictEqual(yield* open(checkout), atRoot);
+
+      const atNested = yield* open(nested);
+      assert.equal(atNested.providerSession.cwd, nested);
+      const backAtRoot = yield* open(checkout);
+      assert.equal(backAtRoot.providerSession.cwd, checkout);
+      const current = yield* Ref.get(state);
+      assert.equal(current.openCount, 3);
+      assert.equal(current.closeCount, 2);
+    });
+
+    yield* effect.pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.merge(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+          }),
+          NodeServices.layer,
+        ),
       ),
     );
   }),
