@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -352,6 +353,38 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(clean.next, conflicting, noRemarks).changes, [
       { kind: "conflicting" },
     ]);
+  });
+
+  it("reports each merge queue removal once while the head checks stay green", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const watching = evaluatePullRequestWatch(watch(), green, noRemarks).next;
+    const removed = (id: string, removedAt: string) =>
+      detail({ ...green, mergeQueueRemoval: { id, removedAt, reason: "Merge conflict" } });
+
+    const dropped = removed("first", "2026-10-02T12:10:00Z");
+    const first = evaluatePullRequestWatch(watching, dropped, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+    const wake = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: first.next.headSha,
+      report: first,
+    });
+    assert.deepEqual(wake.notification, {
+      source: { kind: "monitor" },
+      outcome: "failed",
+      summary: "#1: removed from merge queue",
+    });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, dropped, noRemarks).changes, []);
+    // A read without queue news keeps the removal already told.
+    const quiet = evaluatePullRequestWatch(first.next, green, noRemarks);
+    assert.deepEqual(evaluatePullRequestWatch(quiet.next, dropped, noRemarks).changes, []);
+
+    const again = removed("second", "2026-10-02T12:20:00Z");
+    assert.equal(evaluatePullRequestWatch(first.next, again, noRemarks).changes.length, 1);
+    const before = removed("before", "2026-10-02T11:00:00Z");
+    assert.deepEqual(evaluatePullRequestWatch(watching, before, noRemarks).changes, []);
   });
 
   it("does not spend the comment wake limit on check results", () => {

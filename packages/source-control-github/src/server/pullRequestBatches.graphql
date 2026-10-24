@@ -84,7 +84,12 @@ query PullRequestStackMembership($owner: String!, $name: String!, $number: Int!)
 # edit moves `updatedAt`, so an edit to an old comment on a long pull request is still in the page.
 # Reviews have no such order: an edit to a review older than the last hundred waits for the
 # watch's periodic full read, as do edits to comments inside review threads.
-query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!) {
+query PullRequestWatchFingerprint(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $mergeQueue: Boolean!
+) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       state
@@ -103,6 +108,10 @@ query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!
         }
       }
       reviewThreads {
+        totalCount
+      }
+      mergeQueueRemovals: timelineItems(itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT])
+        @include(if: $mergeQueue) {
         totalCount
       }
       commits(last: 1) {
