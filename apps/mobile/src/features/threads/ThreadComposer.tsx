@@ -30,7 +30,7 @@ import {
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Keyboard, Platform, View, type ViewStyle } from "react-native";
+import { Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -127,6 +127,9 @@ import {
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
 const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
+// Space between the compact editor and the icon-only model control. It belongs
+// to the editor slot, so a tap that lands short of the icon focuses the editor.
+const COMPACT_EDITOR_TRAILING_GAP = 12;
 // iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
 // descender (0.31em) + half x-height (0.504em) above the line bottom.
 const LOWERCASE_MIDLINE_EM = 0.562;
@@ -196,7 +199,9 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
     overflow: "hidden",
     height: animatedHeight.value,
     left: isExpanded ? 14 : editorX.value + 4,
-    right: isExpanded ? 14 : rowWidth.value - editorX.value - editorWidth.value + 4,
+    right: isExpanded
+      ? 14
+      : rowWidth.value - editorX.value - editorWidth.value + COMPACT_EDITOR_TRAILING_GAP,
     bottom:
       (compactRowHeight - minimum) / 2 + expansion.value * (52 - (compactRowHeight - minimum) / 2),
   }));
@@ -213,7 +218,9 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       if (!isExpanded) {
         editorX.set(event.nativeEvent.layout.x);
         editorWidth.set(event.nativeEvent.layout.width);
-        setCompactWidth(Math.max(0, event.nativeEvent.layout.width - 8));
+        setCompactWidth(
+          Math.max(0, event.nativeEvent.layout.width - 4 - COMPACT_EDITOR_TRAILING_GAP),
+        );
       }
     },
     editorProps: {
@@ -979,7 +986,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
-              ></Animated.View>
+              >
+                {/* The editor overlay is inset from this slot; taps on the inset still focus it. */}
+                <Pressable
+                  accessible={false}
+                  className="flex-1"
+                  onPress={() => inputRef.current?.focus()}
+                />
+              </Animated.View>
               {!isExpanded && stripAttachments.length > 0 ? (
                 <View className="h-[44px] shrink-0 flex-row items-center gap-1 pl-1">
                   {stripAttachments.slice(0, compactAttachmentLimit).map((attachment) => (
