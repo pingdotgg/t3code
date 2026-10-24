@@ -3,9 +3,11 @@ import {
   type OrchestrationV2LimitRecoveryUpdate,
   type RunId,
 } from "@t3tools/contracts";
+import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { GaugeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
+import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -15,11 +17,12 @@ type RecoveryProps = {
   stoppedAt: string;
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
+  timestampFormat: TimestampFormat;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, resetAt, stoppedAt } = props;
+  const { runId, resetAt, stoppedAt, timestampFormat } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   return {
     id: `usage-limit-recovery:${runId}`,
@@ -28,7 +31,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     icon: <GaugeIcon />,
     title: "Usage limit reached",
     description: resetAt
-      ? `Resets ${new Date(resetAt).toLocaleString()}`
+      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
       : "Reset time unavailable; retry manually",
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
