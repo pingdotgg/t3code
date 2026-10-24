@@ -187,23 +187,37 @@ export const layer = Layer.effectDiscard(
             ordinal: projection.messages.length + 1,
           }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        const dispatch = threads.dispatch({
-          type: "message.dispatch",
-          commandId,
-          threadId: request.threadId,
-          messageId,
-          text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
-          notification: request.notification ?? {
-            source: { kind: "background_task" },
-            outcome: "updated",
-            summary: "Background activity updated",
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          // Only buffered wakes use creationSource "provider"; Claude would drain an empty buffer instead of prompting message_text.
-          creationSource: request.delivery === "message_text" ? "server" : "provider",
-        });
+        const dispatch = threads.dispatch(
+          request.origin === "voice"
+            ? {
+                type: "message.dispatch",
+                commandId,
+                threadId: request.threadId,
+                messageId,
+                text: request.detail ?? "",
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "user",
+                creationSource: "server",
+              }
+            : {
+                type: "message.dispatch",
+                commandId,
+                threadId: request.threadId,
+                messageId,
+                text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+                notification: request.notification ?? {
+                  source: { kind: "background_task" },
+                  outcome: "updated",
+                  summary: "Background activity updated",
+                },
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "agent",
+                // Only buffered wakes use creationSource "provider"; message_text must prompt the supplied text.
+                creationSource: request.delivery === "message_text" ? "server" : "provider",
+              },
+        );
         // Catch after dispatchIfCurrent so adapters see raw failures first; clearIfCurrent is idempotent and covers others.
         const logInstanceDisabled = (
           error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,

@@ -88,6 +88,7 @@ export interface ServerProviderPresentation {
   readonly reportsContextWindow?: boolean;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly supportsConversationRollback?: boolean;
+  readonly supportsVoice?: boolean;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -254,6 +255,7 @@ export function buildServerProvider(input: {
     ...(input.presentation.supportedRuntimeModes === undefined
       ? {}
       : { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }),
+    ...(input.presentation.supportsVoice ? { supportsVoice: true } : {}),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,

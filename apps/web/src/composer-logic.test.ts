@@ -23,6 +23,7 @@ import {
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   parseSideChatCommand,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
@@ -509,6 +510,16 @@ describe("assistant citation cursor offsets", () => {
 
     expect(result).toEqual({ text: `(),${citationSource}!`, cursor: 1 });
     expect(collapseExpandedComposerCursor(result.text, result.text.length)).toBe("(),□!".length);
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("parses standalone /voice command", () => {
+    expect(parseStandaloneComposerSlashCommand("/Voice ")).toBe("voice");
+  });
+
+  it("ignores /voice with extra message text", () => {
+    expect(parseStandaloneComposerSlashCommand("/voice please")).toBeNull();
   });
 });
 

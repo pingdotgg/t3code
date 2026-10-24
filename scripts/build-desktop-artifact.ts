@@ -2844,6 +2844,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             LSItemContentTypes: ["public.html", "public.xhtml"],
           },
         ],
+        NSMicrophoneUsageDescription:
+          "T3 Code uses the microphone when you start a voice conversation with an agent.",
       },
       protocols: [
         {

@@ -136,7 +136,13 @@ import {
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { isEditableFocused } from "../../lib/editableFocus";
+import { getTerminalFocusOwner } from "../../lib/terminalFocus";
+import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
+import { toggleThreadVoice, useVoicePhaseFor, voiceMode } from "../../voice/voiceMode";
+import { ComposerVoiceButton, VoiceModeStrip } from "./VoiceModeStrip";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -948,6 +954,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
+  // Voice follows the provider that owns the thread; a draft without a thread
+  // shell follows the composer's selection and waits for its first message.
+  const voiceThread = activeThread ?? props.activeThreadShell ?? null;
+  const voiceProviderInstanceId = voiceThread?.providerInstanceId ?? selectedInstanceId;
+  const voiceAvailability = resolveVoiceAvailability({
+    provider: providerStatuses.find((provider) => provider.instanceId === voiceProviderInstanceId),
+    hasMessages: voiceThread?.latestUserMessageAt != null,
+    hasSession: voiceThread?.activeProviderThreadId != null,
+  });
+  const voicePhase = useVoicePhaseFor(routeThreadRef);
+  const voiceEngaged = voicePhase !== "idle";
+  // A conversation stays stoppable here even if its provider stopped offering voice.
+  const voiceSupported = voiceAvailability.kind !== "unsupported" || voiceEngaged;
+  const toggleVoice = () => toggleThreadVoice(routeThreadRef, voiceAvailability);
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
@@ -1120,6 +1140,44 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [backgroundThread]);
 
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+          editableFocus: isEditableFocused(event.target),
+          composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",
+          draftThreadRoute: routeKind === "draft",
+          turnRunning: phase === "running",
+        },
+      });
+      if (command === "voice.toggleMute") {
+        // Muting is global: the microphone belongs to the one conversation.
+        if (voiceMode.getState().phase === "idle") return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) voiceMode.toggleMuted();
+        return;
+      }
+      if (command !== "voice.toggle" || !voiceSupported || isCommandPaletteOpen()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) toggleVoice();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [
+    isComposerModelPickerOpen,
+    keybindings,
+    phase,
+    routeKind,
+    terminalOpen,
+    toggleVoice,
+    voiceSupported,
+  ]);
+
   const composerSendState = deriveComposerSendState({
     prompt,
     imageCount: composerImages.length + composerFiles.length,
@@ -1156,6 +1214,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sideChatAvailable: props.sideChatAvailable === true,
     sideChatDisabledReason: props.sideChatDisabledReason ?? null,
     compactSlashCommandAvailable,
+    voiceSlashCommand: voiceSupported ? (voiceEngaged ? "stop" : "start") : null,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -1893,6 +1952,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
         );
         if (applied) setComposerHighlightedItemId(null);
+        return;
+      }
+      if (item.command === "voice") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          toggleVoice();
+        }
         return;
       }
       if (!planModeUiEnabled) return;
@@ -3194,6 +3263,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />
+          {voiceEngaged ? (
+            <ComposerBanner.Attachment>
+              <VoiceModeStrip target={routeThreadRef} />
+            </ComposerBanner.Attachment>
+          ) : null}
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
@@ -3501,6 +3575,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  {voiceSupported ? (
+                    <ComposerVoiceButton
+                      engaged={voiceEngaged}
+                      disabledReason={
+                        voiceAvailability.kind === "unavailable" && !voiceEngaged
+                          ? voiceAvailability.reason
+                          : null
+                      }
+                      onToggle={toggleVoice}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

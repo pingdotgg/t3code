@@ -67,6 +67,7 @@ export function useComposerMenuItems({
   sideChatAvailable,
   sideChatDisabledReason,
   compactSlashCommandAvailable,
+  voiceSlashCommand,
   selectedProvider,
   selectedProviderSkills,
   selectedProviderSlashCommands,
@@ -86,6 +87,8 @@ export function useComposerMenuItems({
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
   readonly compactSlashCommandAvailable: boolean;
+  /** Whether /voice starts or stops a conversation; null hides it. */
+  readonly voiceSlashCommand: "start" | "stop" | null;
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
@@ -257,6 +260,20 @@ export function useComposerMenuItems({
                 command: "btw",
                 label: "/btw",
                 description: sideChatDisabledReason ?? "Same as /side",
+              },
+            ] as const)
+          : []),
+        ...(voiceSlashCommand !== null
+          ? ([
+              {
+                id: "slash:voice",
+                type: "slash-command",
+                command: "voice",
+                label: "/voice",
+                description:
+                  voiceSlashCommand === "stop"
+                    ? "Stop the voice conversation"
+                    : "Start a voice conversation",
               },
             ] as const)
           : []),

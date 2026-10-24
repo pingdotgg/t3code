@@ -115,6 +115,9 @@ import {
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
+import { ComposerVoiceModeButton, ComposerVoiceStrip } from "../voice-mode/ComposerVoiceMode";
+import { useVoiceModePhase, useVoiceModeThreadLifecycle } from "../voice-mode/useVoiceMode";
+import { voiceMode, voiceModeSupported } from "../voice-mode/voiceMode";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
@@ -561,17 +564,37 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
   });
+  const voiceTarget = { environmentId: props.environmentId, threadId: props.selectedThread.id };
+  const voicePhase = useVoiceModePhase(voiceTarget);
+  useVoiceModeThreadLifecycle(voiceTarget);
+  // Dictation and a voice conversation both need the microphone.
+  const voiceConversationLive = voicePhase !== "idle";
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || "Untitled thread",
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
+    disabled: voiceConversationLive,
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
+  const offersVoiceConversation =
+    voiceModeSupported &&
+    props.serverConfig?.providers.find(
+      (provider) => provider.instanceId === props.selectedThread.providerInstanceId,
+    )?.supportsVoice === true;
+  // The server attaches voice to the thread's provider thread, which the first
+  // run creates. An optimistic pending thread already has a message timestamp.
+  const canToggleVoiceConversation =
+    voiceConversationLive ||
+    (props.connectionState === "connected" &&
+      props.canOperateThread &&
+      props.selectedThread.activeProviderThreadId !== null &&
+      !voiceInput.isGloballyBusy);
+  const toggleVoiceConversation = () => voiceMode.toggle(voiceTarget);
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
@@ -583,6 +606,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const usesLargeControls =
     useSidebarWorkspaceTabs() === "picker" || (Platform.OS === "ios" && Platform.isPad);
   const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
+  const voiceModeButton = offersVoiceConversation ? (
+    <ComposerVoiceModeButton
+      size={usesLargeControls ? "large" : "regular"}
+      phase={voicePhase}
+      disabled={!canToggleVoiceConversation}
+      onPress={toggleVoiceConversation}
+    />
+  ) : null;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
@@ -864,6 +895,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             {selectedProviderStatus.compatibilityAdvisory.message}
           </Text>
         ) : null}
+
+        {voiceConversationLive ? <ComposerVoiceStrip /> : null}
+
         {modelUnavailable ? (
           <Button
             label="Model unavailable. Open model settings."
@@ -1081,11 +1115,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 }
               >
                 {modelControl}
+                {voiceModeButton}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
                   state={voiceInput.state}
                   isAvailable={voiceInput.isAvailable}
-                  disabled={isSubmissionLocked}
+                  disabled={isSubmissionLocked || voiceConversationLive}
                   onStart={voiceInput.start}
                   onCancel={voiceInput.cancel}
                 />
@@ -1153,7 +1188,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     state={voiceInput.state}
                     presentation={voicePresentation}
                     isAvailable={voiceInput.isAvailable}
-                    disabled={isSubmissionLocked}
+                    disabled={isSubmissionLocked || voiceConversationLive}
                     onStart={voiceInput.start}
                     onConfirm={voiceInput.stop}
                     onCancel={voiceInput.cancel}

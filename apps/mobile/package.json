@@ -131,6 +131,7 @@
     "react-native-safe-area-context": "~5.10.1",
     "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.48.tgz",
     "react-native-svg": "15.16.0",
+    "react-native-webrtc": "124.0.8",
     "react-native-webview": "14.0.1",
     "react-native-worklets": "0.13.0",
     "remark-gfm": "catalog:",
@@ -141,6 +142,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
+    "@config-plugins/react-native-webrtc": "15.0.2",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@pierre/trees": "1.0.0-beta.6",
