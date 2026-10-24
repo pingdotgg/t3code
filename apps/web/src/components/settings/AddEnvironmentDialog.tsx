@@ -270,20 +270,21 @@ export function AddEnvironmentDialog({
   const handleSelectSshHostSuggestion = async (target: DesktopDiscoveredSshHost) => {
     if (isAddingSavedBackend || !desktopBridge) return;
 
-    setIsAddingSavedBackend(true);
-    onErrorChange(null);
     setSavedBackendSshHost(target.alias);
-    let resolved: DesktopSshEnvironmentTarget;
+    // Connect by alias with only the typed overrides. Saving what ssh config resolves
+    // today would pin its user and port, so later config edits never apply.
+    let aliasTarget: DesktopSshEnvironmentTarget;
     try {
-      resolved = await desktopBridge.resolveSshHost(target.alias);
+      aliasTarget = parseManualDesktopSshTarget({
+        host: target.alias,
+        username: savedBackendSshUsername,
+        port: savedBackendSshPort,
+      });
     } catch (error) {
       onErrorChange(formatDesktopSshConnectionError(error));
-      setIsAddingSavedBackend(false);
       return;
     }
-    setSavedBackendSshUsername(resolved.username ?? "");
-    setSavedBackendSshPort(resolved.port === null ? "" : String(resolved.port));
-    await connectSavedBackendSshTarget(resolved);
+    await connectSavedBackendSshTarget(aliasTarget);
   };
 
   const handleSavedBackendSshHostKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {

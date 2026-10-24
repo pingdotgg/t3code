@@ -30,10 +30,6 @@ import {
   mapRemoteEnvironmentError,
   profileMissingError,
 } from "./errors.ts";
-import {
-  PullRequestRoutingPermissions,
-  pullRequestRoutingConnectionKey,
-} from "./pullRequestRoutingPermissions.ts";
 import type {
   BearerConnectionTarget,
   ConnectionTarget,
@@ -43,7 +39,6 @@ import type {
   SshConnectionTarget,
 } from "./model.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
-import * as ConnectionProfileStore from "./profileStore.ts";
 import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
@@ -204,7 +199,6 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
 });
 
 const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(function* () {
-  const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
@@ -243,20 +237,6 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
         new BearerConnectionCredential({ token: prepared.bearerToken }),
       );
     }
-    const preparedProfile = new SshConnectionProfile({
-      connectionId: profile.connectionId,
-      environmentId: profile.environmentId,
-      label: profile.label,
-      target: prepared.bootstrap.target,
-    });
-    if (
-      pullRequestRoutingConnectionKey(entry) !==
-      pullRequestRoutingConnectionKey({ ...entry, profile: Option.some(preparedProfile) })
-    ) {
-      const permissions = yield* PullRequestRoutingPermissions;
-      yield* permissions.forget(target.environmentId);
-    }
-    yield* profiles.put(preparedProfile);
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
       httpBaseUrl: prepared.bootstrap.httpBaseUrl,

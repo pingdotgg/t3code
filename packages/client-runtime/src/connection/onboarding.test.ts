@@ -588,4 +588,46 @@ describe("connection onboarding", () => {
       });
     }),
   );
+
+  it.effect("saves the SSH target as entered so ssh config changes apply on reconnect", () =>
+    Effect.gen(function* () {
+      const target = {
+        alias: "devbox",
+        hostname: "devbox",
+        username: "developer",
+        port: null,
+      };
+      const registration = yield* prepareSshRegistration({
+        target,
+      }).pipe(
+        Effect.provideService(
+          ClientCapabilities.SshEnvironmentGateway,
+          ClientCapabilities.SshEnvironmentGateway.of({
+            provision: () =>
+              Effect.succeed({
+                environmentId: EnvironmentId.make("environment-ssh"),
+                label: "Remote development box",
+                bootstrap: {
+                  // Resolved from ssh config at provisioning time.
+                  target: {
+                    alias: "devbox",
+                    hostname: "127.0.0.1",
+                    username: "developer",
+                    port: 24568,
+                  },
+                  httpBaseUrl: "http://127.0.0.1:3201",
+                  wsBaseUrl: "ws://127.0.0.1:3201",
+                  pairingToken: "pairing-token",
+                },
+                bearerToken: "bearer-token",
+              }),
+            prepare: () => Effect.die("unused"),
+            disconnect: () => Effect.die("unused"),
+          }),
+        ),
+      );
+
+      expect(registration.profile.target).toEqual(target);
+    }),
+  );
 });

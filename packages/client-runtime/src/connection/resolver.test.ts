@@ -20,12 +20,7 @@ import {
   type ConnectionProfile,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-import {
-  ConnectionTransientError,
-  PrimaryConnectionTarget,
-  SshConnectionTarget,
-  type ConnectionTarget,
-} from "./model.ts";
+import { PrimaryConnectionTarget, SshConnectionTarget, type ConnectionTarget } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import {
@@ -250,99 +245,74 @@ describe("ConnectionResolver", () => {
     }),
   );
 
-  it.effect.each(["unchanged", "changed", "revocation-failed"] as const)(
-    "handles %s SSH routing consent before saving or authorizing",
-    (scenario) =>
-      Effect.gen(function* () {
-        const calls: string[] = [];
-        const target = new SshConnectionTarget({
-          environmentId: ENVIRONMENT_ID,
-          label: "SSH",
-          connectionId: "ssh-1",
-        });
-        const profile = new SshConnectionProfile({
-          connectionId: target.connectionId,
-          environmentId: ENVIRONMENT_ID,
-          label: "SSH",
-          target: SSH_TARGET,
-        });
-        const entry = catalogEntry(target, Option.some(profile));
-        const preparedTarget =
-          scenario === "unchanged"
-            ? SSH_TARGET
-            : { ...SSH_TARGET, hostname: "replacement.example.test" };
-        const failure = new ConnectionTransientError({
-          reason: "remote-unavailable",
-          detail: "Could not persist routing consent.",
-        });
-        const permissions = yield* makePullRequestRoutingPermissions({
-          read: Effect.succeed([
-            {
-              environmentId: ENVIRONMENT_ID,
-              connectionKey: pullRequestRoutingConnectionKey(entry)!,
-              permission: "read-write",
-            },
-          ]),
-          write: () =>
-            Effect.sync(() => {
-              calls.push("revoke");
-            }).pipe(
-              Effect.andThen(scenario === "revocation-failed" ? Effect.fail(failure) : Effect.void),
-            ),
-        });
-        let savedProfile: ConnectionProfile = profile;
-        const layerBroker = yield* makeDependencies({
-          profileStore: {
-            get: () => Effect.sync(() => Option.some(savedProfile)),
-            put: (value) =>
-              Effect.sync(() => {
-                calls.push("profile");
-                savedProfile = value;
-              }),
-            remove: () => Effect.die("unused"),
+  it.effect("keeps the SSH target as entered and its routing consent across reconnects", () =>
+    Effect.gen(function* () {
+      const target = new SshConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "SSH",
+        connectionId: "ssh-1",
+      });
+      const enteredTarget = { ...SSH_TARGET, hostname: "development", port: null };
+      const profile = new SshConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: "SSH",
+        target: enteredTarget,
+      });
+      const entry = catalogEntry(target, Option.some(profile));
+      const permissions = yield* makePullRequestRoutingPermissions({
+        read: Effect.succeed([
+          {
+            environmentId: ENVIRONMENT_ID,
+            connectionKey: pullRequestRoutingConnectionKey(entry)!,
+            permission: "read-write",
           },
-          prepareSsh: () =>
-            Effect.succeed({
+        ]),
+        write: () => Effect.void,
+      });
+      const preparedTargets: Array<DesktopSshEnvironmentTarget> = [];
+      // ssh config resolves the alias, and its port changes between connects.
+      const configPorts = [24568, 24569];
+      let savedProfile: ConnectionProfile = profile;
+      const layerBroker = yield* makeDependencies({
+        profileStore: {
+          get: () => Effect.sync(() => Option.some(savedProfile)),
+          put: (value) =>
+            Effect.sync(() => {
+              savedProfile = value;
+            }),
+          remove: () => Effect.die("unused"),
+        },
+        prepareSsh: (input) =>
+          Effect.sync(() => {
+            preparedTargets.push(input.target);
+            return {
               bootstrap: {
-                target: preparedTarget,
+                target: {
+                  ...input.target,
+                  hostname: "127.0.0.1",
+                  port: configPorts[preparedTargets.length - 1]!,
+                },
                 httpBaseUrl: "http://127.0.0.1:4010",
                 wsBaseUrl: "ws://127.0.0.1:4010",
                 pairingToken: null,
               },
               bearerToken: "ssh-bearer",
-            }),
-          authorizeBearer: (input) =>
-            Effect.sync(() => {
-              calls.push("authorize");
-              return {
-                environmentId: input.expectedEnvironmentId,
-                label: "SSH",
-                httpBaseUrl: input.httpBaseUrl,
-                socketUrl: "ws://127.0.0.1:4010/ws?wsTicket=ssh",
-                httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
-              };
-            }),
-        });
-        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
-          Effect.provide(layerBroker),
-        );
-        const prepare = broker
-          .prepare(entry)
+            };
+          }),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const prepare = (current: ConnectionCatalogEntry) =>
+        broker
+          .prepare(current)
           .pipe(Effect.provideService(PullRequestRoutingPermissions, permissions));
-        if (scenario === "revocation-failed") {
-          expect(yield* Effect.flip(prepare)).toBe(failure);
-          expect(savedProfile).toBe(profile);
-          expect(calls).toEqual(["revoke"]);
-        } else {
-          expect((yield* prepare).socketUrl).toContain("wsTicket=ssh");
-          expect(savedProfile).toMatchObject({ target: preparedTarget });
-          expect(calls).toEqual(
-            scenario === "unchanged"
-              ? ["profile", "authorize"]
-              : ["revoke", "profile", "authorize"],
-          );
-        }
-        expect(yield* permissions.get(entry)).toBe(scenario === "changed" ? "off" : "read-write");
-      }),
+
+      yield* prepare(entry);
+      yield* prepare(catalogEntry(target, Option.some(savedProfile)));
+
+      expect(preparedTargets).toEqual([enteredTarget, enteredTarget]);
+      expect(savedProfile).toBe(profile);
+      expect(yield* permissions.get(entry)).toBe("read-write");
+    }),
   );
 });
