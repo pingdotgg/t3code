@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
@@ -9,11 +10,16 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
+
+// Windows and NixOS have no /bin/bash, so the real-shell test only runs where it exists.
+const hasBinBash =
+  NodeChildProcess.spawnSync("/bin/bash", ["-c", "exit 0"], { stdio: "ignore" }).status === 0;
 
 vi.mock("node:os", { spy: true });
 
@@ -68,7 +74,8 @@ function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
   readonly userShell?: string;
-  readonly handler: (
+  // Omit to spawn real processes through NodeServices.
+  readonly handler?: (
     command: ChildProcess.Command,
   ) => string | { output: string; exitCode: number };
   readonly failure?: PlatformError.PlatformError;
@@ -79,18 +86,22 @@ function runShellEnvironment(input: {
       platform: input.platform,
     } as DesktopEnvironment.DesktopEnvironment["Service"]),
   );
-  const layerSpawner = Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      if (input.failure !== undefined) return Effect.fail(input.failure);
-      const result = input.handler(command);
-      return Effect.succeed(
-        typeof result === "string"
-          ? makeProcess(result)
-          : makeProcess(result.output, result.exitCode),
-      );
-    }),
-  );
+  const handler = input.handler;
+  const layerSpawner =
+    handler === undefined
+      ? Layer.empty
+      : Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (input.failure !== undefined) return Effect.fail(input.failure);
+            const result = handler(command);
+            return Effect.succeed(
+              typeof result === "string"
+                ? makeProcess(result)
+                : makeProcess(result.output, result.exitCode),
+            );
+          }),
+        );
 
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
@@ -167,6 +178,48 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
+    }),
+  );
+
+  it.effect.skipIf(!hasBinBash)(
+    "hydrates CLAUDE_CODE_OAUTH_TOKEN from a real bash login profile with the darwin platform",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const home = yield* fileSystem.makeTempDirectoryScoped();
+          yield* fileSystem.writeFileString(
+            `${home}/.bash_profile`,
+            'export CLAUDE_CODE_OAUTH_TOKEN="synthetic-token-22816"\n',
+          );
+          // A Dock launch inherits no shell profile exports.
+          const env: NodeJS.ProcessEnv = { HOME: home, SHELL: "/bin/bash", PATH: "/usr/bin:/bin" };
+
+          yield* runShellEnvironment({ env, platform: "darwin" }).pipe(
+            Effect.provide(Logger.layer([])),
+          );
+
+          assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "synthetic-token-22816");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps an inherited CLAUDE_CODE_OAUTH_TOKEN over the login shell's", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        CLAUDE_CODE_OAUTH_TOKEN: "inherited-token",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({ PATH: "/usr/bin", CLAUDE_CODE_OAUTH_TOKEN: "shell-profile-token" }),
+      });
+
+      assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "inherited-token");
     }),
   );
 
