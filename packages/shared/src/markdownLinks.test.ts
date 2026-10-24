@@ -49,6 +49,20 @@ describe("parseMarkdownFileLink", () => {
     },
   );
 
+  it.each([
+    [
+      "<Summer 2026/pastexam/線性代數/2025_midterm_exam1_易志偉_1222.pdf>",
+      "Summer 2026/pastexam/線性代數/2025_midterm_exam1_易志偉_1222.pdf",
+    ],
+    [
+      "Summer%202026/pastexam/%E7%B7%9A%E6%80%A7%E4%BB%A3%E6%95%B8/2025_midterm_exam1_%E6%98%93%E5%BF%97%E5%81%89_1222.pdf",
+      "Summer 2026/pastexam/線性代數/2025_midterm_exam1_易志偉_1222.pdf",
+    ],
+    ["線性代數.pdf", "線性代數.pdf"],
+  ])("recognizes non-ASCII relative path %s as a file", (href, path) => {
+    expect(parseMarkdownFileLink(href)?.path).toBe(path);
+  });
+
   it("recognizes a relative folder that ends in a slash", () => {
     expect(parseMarkdownFileLink("patches/")).toEqual({ path: "patches/" });
     expect(parseMarkdownFileLink("docs/My%20Folder/")?.path).toBe("docs/My Folder/");
