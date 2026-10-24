@@ -193,17 +193,20 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const layerDesktopEnvironment = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const makeLayerDesktopEnvironment = (platform: NodeJS.Platform) =>
+  DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
+
+const layerDesktopEnvironment = makeLayerDesktopEnvironment(environmentInput.platform);
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
@@ -345,7 +348,10 @@ function layerTest(input: {
   );
 }
 
-const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | null)[]) =>
+const makeSplashScenario = (
+  createOutcomes: readonly (Electron.BrowserWindow | null)[],
+  platform: NodeJS.Platform = environmentInput.platform,
+) =>
   Effect.gen(function* () {
     const createdWindows = yield* Ref.make<Electron.BrowserWindow[]>([]);
     const createCalls = yield* Ref.make(0);
@@ -419,7 +425,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             recordMetrics: () => Effect.void,
             shutdown: Effect.void,
           }),
-          layerDesktopEnvironment,
+          makeLayerDesktopEnvironment(platform),
           DesktopAppSettings.layerTest(),
           layerDesktopClientSettings,
           layerDesktopServerExposure,
@@ -448,7 +454,16 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       ),
     );
 
-    return { layer, createCalls, mainWindow, revealedWindows } as const;
+    const closeWindow = (fake: ReturnType<typeof makeFakeBrowserWindow>) =>
+      Effect.gen(function* () {
+        yield* Ref.update(createdWindows, (windows) =>
+          windows.filter((window) => window !== fake.window),
+        );
+        fake.windowListeners.get("closed")?.();
+        yield* Effect.promise(() => Promise.resolve());
+      });
+
+    return { layer, createCalls, mainWindow, revealedWindows, closeWindow } as const;
   });
 
 const captureOne = DesktopSnapShotId.make("11111111-1111-4111-8111-111111111111");
@@ -989,6 +1004,60 @@ describe("DesktopWindow", () => {
         assert.isTrue(prevented);
         assert.deepEqual(openedExternalUrls, ["https://accounts.microsoft.com/oauth"]);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect(
+    "reveals the connecting splash on first load on Linux, where Wayland skips ready-to-show",
+    () =>
+      Effect.gen(function* () {
+        const splash = makeFakeBrowserWindow();
+        const scenario = yield* makeSplashScenario([splash.window], "linux");
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.showConnectingSplash;
+
+          const didFinishLoad = splash.webContentsOnce.mock.calls.find(
+            ([eventName]) => eventName === "did-finish-load",
+          )?.[1];
+          assert.isDefined(didFinishLoad);
+          didFinishLoad();
+          assert.equal(vi.mocked(splash.window.show).mock.calls.length, 1);
+        }).pipe(Effect.provide(scenario.layer));
+      }),
+  );
+
+  it.effect(
+    "reopens a closed connecting splash on activate while the backend is still starting",
+    () =>
+      Effect.gen(function* () {
+        const splash = makeFakeBrowserWindow();
+        const reopenedSplash = makeFakeBrowserWindow();
+        const scenario = yield* makeSplashScenario([splash.window, reopenedSplash.window]);
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.showConnectingSplash;
+          yield* scenario.closeWindow(splash);
+
+          yield* desktopWindow.activate;
+          assert.equal(yield* Ref.get(scenario.createCalls), 2);
+          assert.isTrue(Option.isNone(yield* Ref.get(scenario.mainWindow)));
+        }).pipe(Effect.provide(scenario.layer));
+      }),
+  );
+
+  it.effect("opens no window on activate during a normal boot that never showed a splash", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(scenario.createCalls), 0);
+      }).pipe(Effect.provide(scenario.layer));
     }),
   );
 

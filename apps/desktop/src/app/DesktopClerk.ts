@@ -183,7 +183,8 @@ export const make = Effect.gen(function* () {
         if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
+            // Never the connecting splash: the destination would vanish with it.
+            const mainWindow = yield* electronWindow.main;
             if (Option.isNone(mainWindow)) return;
             yield* Effect.promise(() => mainWindow.value.loadURL(destination));
             yield* electronWindow.reveal(mainWindow.value);

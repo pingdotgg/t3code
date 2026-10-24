@@ -176,12 +176,12 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
+function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean, text: string): string {
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">${text}</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -271,6 +271,18 @@ function syncWindowAppearance(
 
 type RevealSubscription = (listener: () => void) => void;
 
+// Wayland only emits `ready-to-show` after `show()`, so Linux also reveals on first load.
+function firstRevealSubscribers(
+  window: Electron.BrowserWindow,
+  platform: NodeJS.Platform,
+): RevealSubscription[] {
+  const subscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
+  if (platform === "linux") {
+    subscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+  }
+  return subscribers;
+}
+
 function bindFirstRevealTrigger(
   subscribers: readonly RevealSubscription[],
   reveal: () => void,
@@ -303,6 +315,9 @@ export const make = Effect.gen(function* () {
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  // Only a start that already needed a splash may bring it back; a normal boot
+  // never shows one, even though activate fires during it.
+  const splashShownWhileStartingRef = yield* Ref.make(false);
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
@@ -823,11 +838,7 @@ export const make = Effect.gen(function* () {
       );
     });
 
-    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
-    if (environment.platform === "linux") {
-      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
-    }
-    bindFirstRevealTrigger(revealSubscribers, () => {
+    bindFirstRevealTrigger(firstRevealSubscribers(window, environment.platform), () => {
       if (!window.isDestroyed()) {
         window.webContents.setBackgroundThrottling(true);
       }
@@ -902,6 +913,11 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const settings = yield* desktopSettings.get;
+    const splashText =
+      settings.wslOnly === true && settings.wslBackendEnabled === true
+        ? "Connecting to WSL…"
+        : "Starting T3 Code…";
     if (yield* Ref.get(desktopState.quitting)) return;
     const splash = yield* electronWindow.create({
       width: 360,
@@ -928,15 +944,16 @@ export const make = Effect.gen(function* () {
     }
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
+    yield* Ref.set(splashShownWhileStartingRef, true);
     splash.once("closed", () => {
       void runPromise(Ref.set(splashWindowRef, Option.none()));
     });
-    splash.once("ready-to-show", () => {
+    bindFirstRevealTrigger(firstRevealSubscribers(splash, environment.platform), () => {
       if (!splash.isDestroyed()) {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
+    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors, splashText));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     Effect.catch((error) =>
@@ -996,12 +1013,19 @@ export const make = Effect.gen(function* () {
           return;
         }
       }
+      // A splash closed during a slow start would otherwise leave Dock clicks,
+      // second launches and the update menu dead until the backend is ready.
+      if ((yield* Ref.get(splashShownWhileStartingRef)) && (yield* waitingForBackend)) {
+        yield* showConnectingSplash;
+        return;
+      }
       yield* createMainIfBackendReady;
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
     showConnectingSplash,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);
+      yield* Ref.set(splashShownWhileStartingRef, false);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
       yield* createMainIfBackendReady;
     }),

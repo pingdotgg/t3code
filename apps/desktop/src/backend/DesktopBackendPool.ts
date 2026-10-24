@@ -174,6 +174,9 @@ export const layer = Layer.effect(
             }),
           ),
         ),
+      // A slow startup (e.g. migrations stuck behind a busy database) would otherwise leave
+      // the desktop windowless until the backend answers; the splash closes once it does.
+      onReadinessFailure: () => desktopWindow.showConnectingSplash,
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>

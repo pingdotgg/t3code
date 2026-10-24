@@ -297,7 +297,7 @@ it.effect(
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const electronWindow = {
-      currentMainOrFirst: Effect.succeed(Option.some(window)),
+      main: Effect.succeed(Option.some(window)),
       reveal: () => Effect.sync(() => revealed.resolve()),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
     return Effect.gen(function* () {
@@ -466,3 +466,44 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
     );
   }).pipe(Effect.scoped),
 );
+
+it.effect("provider auth deep links never navigate the connecting splash", () => {
+  storageMock.mockReturnValue(storageAdapter);
+  createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  const queried = Promise.withResolvers<void>();
+  const splash = { loadURL: vi.fn(async (_url: string) => undefined) };
+  const electronApp = {
+    on: (name: string, listener: (...args: unknown[]) => void) =>
+      Effect.sync(() => {
+        listeners.set(name, listener);
+      }),
+  } as unknown as ElectronApp.ElectronApp["Service"];
+  const electronWindow = {
+    main: Effect.sync(() => {
+      queried.resolve();
+      return Option.none();
+    }),
+    currentMainOrFirst: Effect.sync(() => {
+      queried.resolve();
+      return Option.some(splash);
+    }),
+    reveal: () => Effect.void,
+  } as unknown as ElectronWindow.ElectronWindow["Service"];
+  return Effect.gen(function* () {
+    const clerk = yield* DesktopClerk.DesktopClerk;
+    yield* clerk.configure;
+    listeners.get("open-url")!(
+      { preventDefault: vi.fn() },
+      "t3code-dev://app/settings/providers?instanceId=work",
+    );
+    yield* Effect.promise(() => queried.promise);
+    assert.equal(splash.loadURL.mock.calls.length, 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
+    Effect.provideService(ElectronApp.ElectronApp, electronApp),
+    Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+    Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+  );
+});

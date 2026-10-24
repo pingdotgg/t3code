@@ -240,6 +240,7 @@ export interface BackendInstanceSpec {
   // 127.0.0.1). Splitting this off from configResolve avoids races
   // between "fired onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
+  readonly onReadinessFailure?: () => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
@@ -939,6 +940,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* backendOutputLog.persistFailureSnapshot({
                 details: error.message,
               });
+              yield* spec.onReadinessFailure?.() ?? Effect.void;
             },
           ),
           onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
