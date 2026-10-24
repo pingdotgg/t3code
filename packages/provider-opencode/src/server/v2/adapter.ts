@@ -36,6 +36,7 @@ import {
   type ProviderInstanceId,
   type RunId,
   type RuntimeRequestId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -377,7 +378,7 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
  * the last matching rule wins, so every thread's T3 server is denied and then
  * this thread's own is allowed again, in every mode.
  */
-const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
+export const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
   mcpServerName === null
     ? []
     : [
@@ -3080,9 +3081,74 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
       ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
 
+    /**
+     * Servers this session registered before their thread's first turn, when no
+     * ThreadState exists to hold them. OpenCode builds a session's tool catalog
+     * when the session is created, so a server only added in `prepareTurn`
+     * misses the first request; registering here, before any `session.create`,
+     * keeps the first turn's catalog complete. Prepared per thread by the
+     * session manager before `openSession`, so the config is normally ready.
+     */
+    const registeredMcp = new Map<
+      ThreadId,
+      { readonly name: string; readonly directory: string; readonly credential: string }
+    >();
+    /**
+     * Registers the thread's MCP server in a specific directory, before that
+     * thread's native session exists. OpenCode MCP registrations are
+     * directory-scoped, and a session's tool catalog is built from the
+     * directory the session is created in, so `directory` must be the same
+     * runtime directory the session will be created or forked in — not the
+     * server launch directory.
+     */
+    const preRegisterMcp = Effect.fn("OpenCode2Adapter.preRegisterMcp")(function* (
+      threadId: ThreadId,
+      directory: string,
+    ) {
+      if (connection.external || registeredMcp.has(threadId)) return;
+      const mcpSession = yield* mcpSessions.read(threadId);
+      if (mcpSession === undefined) return;
+      const name = yield* mcpServerNameFor(threadId);
+      const added = yield* client.mcp
+        .add({
+          server: name,
+          location: { directory },
+          config: new Mcp.RemoteConfig({
+            type: "remote",
+            url: mcpSession.endpoint,
+            headers: { Authorization: mcpSession.authorizationHeader },
+            oauth: false,
+          }),
+        })
+        .pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
+              Effect.as(false),
+            ),
+          ),
+        );
+      if (added) {
+        registeredMcp.set(threadId, {
+          name,
+          directory,
+          credential: mcpSession.authorizationHeader,
+        });
+      }
+    });
+
+    // The session's first thread is prepared by the session manager with this
+    // same runtime policy before `openSession`, so register in the directory
+    // its native session will be created in.
+    yield* preRegisterMcp(input.threadId, input.runtimePolicy.cwd ?? host.paths.cwd);
+
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
-        [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        [
+          ...[...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+          ...registeredMcp.values(),
+        ],
         removeMcp,
         { concurrency: 8, discard: true },
       ),
@@ -3101,14 +3167,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         mcpSession === undefined || connection.external
           ? undefined
           : { name, directory, credential: mcpSession.authorizationHeader };
+      // A server registered before the thread's first turn lives in
+      // `registeredMcp`: no ThreadState existed yet. Removal decisions must see
+      // it, and ownership moves to the state only once this turn's add
+      // succeeds — a failed or timed-out re-add leaves the map entry in place
+      // so the finalizer can still remove the live server.
+      const known = state.mcp ?? registeredMcp.get(turnInput.threadId);
       if (
-        state.mcp !== undefined &&
+        known !== undefined &&
         (wanted === undefined ||
-          state.mcp.directory !== wanted.directory ||
-          state.mcp.credential !== wanted.credential)
+          known.directory !== wanted.directory ||
+          known.credential !== wanted.credential)
       ) {
-        yield* removeMcp(state.mcp);
-        state.mcp = undefined;
+        yield* removeMcp(known);
+        if (state.mcp === known) state.mcp = undefined;
+        if (registeredMcp.get(turnInput.threadId) === known) {
+          registeredMcp.delete(turnInput.threadId);
+        }
       }
       // Idle Location eviction drops runtime MCP servers without clearing T3's cache.
       // Re-adding an unchanged config keeps its existing connection.
@@ -3134,11 +3209,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               ),
             ),
           );
-        if (mcpAvailable) state.mcp = wanted;
+        if (mcpAvailable) {
+          state.mcp = wanted;
+          // Ownership of any pre-registration moved onto the state.
+          registeredMcp.delete(turnInput.threadId);
+        }
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(mcpAvailable),
+        t3OrchestrationSystemPrompt(mcpAvailable, wanted?.name),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
@@ -3476,6 +3555,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             threadInput.threadId,
           );
           const title = threadInput.title?.trim() || undefined;
+          // The catalog is built from this directory at `session.create`, so
+          // the thread's own MCP server must already be registered there.
+          yield* preRegisterMcp(threadInput.threadId, directory);
           // A session created with a title is never titled by OpenCode's own model.
           const created = yield* client.session.create({
             location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
@@ -4073,6 +4155,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   yield* userMessages(sourceId),
                 );
           // A fork copies the source's history, model, location and rules; its
+          // catalog is built at `session.fork`, so the target's own MCP server
+          // must already be registered in the directory the forked session
+          // starts in — a fork's inherited source server is denied by the
+          // target thread's rules.
+          yield* preRegisterMcp(
+            forkInput.targetThreadId,
+            forkInput.runtimePolicy?.cwd ?? ownerOf(sourceId)?.directory ?? host.paths.cwd,
+          );
           const forked = yield* client.session.fork({
             sessionID: Session.ID.make(sourceId),
             ...(before === null ? {} : { before: SessionMessage.ID.make(before) }),

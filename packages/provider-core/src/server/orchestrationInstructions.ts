@@ -29,7 +29,7 @@ For stacked work, set \`baseRef\` to the intended parent branch and \`startFromO
 \`t3_thread_launch\` is the single-thread launch tool. Use \`create_threads\` only for a batch of threads intentionally sharing the caller's checkout: it always inherits the caller's project, branch, and worktree and has no workspace override. Asking an agent to run \`git worktree add\` or \`cd\` in its prompt does not update T3's thread binding. Select the workspace in the launch call instead. \`t3_worktree_handoff\` moves the calling thread, not another thread, and cannot move a thread already attached to a worktree.
 
 \`t3_thread_launch\` has no idempotency key. Retain its returned threadId and inspect it with \`t3_thread_read\` / \`t3_thread_wait\`; preparation can still be running after acceptance. If a launch fails or its response is lost, inspect \`t3_thread_list\` before retrying, since a thread may already exist.`,
-  `Tool names may include a harness-normalized MCP prefix, such as \`mcp__t3_code__delegate_task\`; the semantics are the same. Some harnesses attach optional MCP servers lazily: if an initial tool-catalog scan does not show T3 tools, do not conclude that cross-provider delegation is unavailable. Make one bounded direct attempt using the known T3 tool name on the next tool step. In Codex code mode, for example, call \`tools.mcp__t3_code__orchestrator_capabilities({})\` before reporting that the capability is absent. Keep polling/wait loops bounded, do not duplicate active work, and use stable \`clientRequestId\` values when retrying tools that accept them.
+  `Tool names may include a harness-normalized MCP prefix, and some harnesses rename the server per session. In OpenCode's Code Mode, T3 registers one server per thread named \`t3-code-<threadId>\` (or \`t3-code-<digest>\` for long ids), so paths look like \`tools["t3-code-..."].delegate_task\`; in Codex code mode the prefix is flat, \`tools.mcp__t3_code__delegate_task\`. The semantics are the same. Some harnesses attach optional MCP servers lazily: if an initial tool-catalog scan does not show T3 tools, do not conclude that cross-provider delegation is unavailable. Prefer a namespace-agnostic catalog search for a T3 tool name, then make one bounded direct attempt using the discovered path on the next tool step. In Codex code mode, for example, call \`tools.mcp__t3_code__orchestrator_capabilities({})\` before reporting that the capability is absent. Keep polling/wait loops bounded, do not duplicate active work, and use stable \`clientRequestId\` values when retrying tools that accept them.
 
 ACP fallback: some ACP agents accept the injected MCP server but fail to expose its tools. When the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call the same tools through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset when T3 runs as a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. This is the supported T3 transport fallback, not an ordinary shell-based substitute for delegation.
 
@@ -118,6 +118,18 @@ export function t3OrchestrationPromptForFirstRun(input: {
     : input.prompt;
 }
 
-export function t3OrchestrationSystemPrompt(hasT3Mcp: boolean): string | undefined {
-  return hasT3Mcp ? T3_CODE_ORCHESTRATION_INSTRUCTIONS : undefined;
+export function t3OrchestrationSystemPrompt(
+  hasT3Mcp: boolean,
+  mcpServerName?: string,
+): string | undefined {
+  if (!hasT3Mcp) return undefined;
+  // Some harnesses rename the server per session, so the shared instructions
+  // stay pattern-based and the adapter appends the exact name in use.
+  const exact =
+    mcpServerName === undefined || mcpServerName === "t3-code"
+      ? undefined
+      : `\n\n### This session's tool namespace\n\nThis session's T3 MCP server is registered as \`${mcpServerName}\`. Call its tools as \`tools["${mcpServerName}"].<tool_name>\`, or find them with a namespace-agnostic catalog search, such as \`search({ query: "orchestrator_capabilities" })\`.`;
+  return exact === undefined
+    ? T3_CODE_ORCHESTRATION_INSTRUCTIONS
+    : `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}${exact}`;
 }
