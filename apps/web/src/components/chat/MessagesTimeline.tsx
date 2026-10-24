@@ -1046,7 +1046,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     <TimelineRowCtx value={sharedState}>
       <div className="messages-timeline-row-frame">
         <div
-          className="@container/chat-lane chat-content-lane overflow-x-clip"
+          className="@container/chat-lane chat-content-lane chat-text-scope overflow-x-clip"
           data-timeline-root="true"
         >
           <TimelineRowContent row={item} />

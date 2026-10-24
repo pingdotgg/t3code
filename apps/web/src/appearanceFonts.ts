@@ -64,6 +64,7 @@ export interface AppearanceFontPreferences {
   readonly code: string;
   readonly composer: string;
   readonly sizeInterface: number;
+  readonly sizeChat: number | null;
   readonly sizePrompt: number;
   readonly sizeCode: number;
   readonly smoothing: boolean;
@@ -93,6 +94,12 @@ export function applyAppearanceFontVariables(
   }
 
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
+  const chatScale = chatFontScale(preferences.sizeChat, preferences.sizeInterface);
+  if (chatScale === null) {
+    root.style.removeProperty("--chat-font-size-ratio");
+  } else {
+    root.style.setProperty("--chat-font-size-ratio", String(chatScale));
+  }
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);
@@ -117,6 +124,18 @@ function clampInterfaceFontSize(value: number): number {
     MAX_INTERFACE_FONT_SIZE,
     DEFAULT_INTERFACE_FONT_SIZE,
   );
+}
+
+/**
+ * Chat text keeps its rem-based sizes, so a chat size is applied as a ratio to
+ * the interface size rather than as pixels. Null means chat follows the
+ * interface.
+ */
+export function chatFontScale(sizeChat: number | null, sizeInterface: number): number | null {
+  if (sizeChat === null) return null;
+  const chat = clampInterfaceFontSize(sizeChat);
+  const base = clampInterfaceFontSize(sizeInterface);
+  return chat === base ? null : chat / base;
 }
 
 function clampPromptFontSize(value: number): number {

@@ -82,6 +82,64 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   );
 }
 
+const FOLLOW_INTERFACE_VALUE = "interface";
+
+function ChatFontSizeRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const value = settings.fontSizeChat;
+  return (
+    <SettingsRow
+      {...searchableSetting("chat-font-size")}
+      description="Your messages and the agent's replies. Follows the interface size by default."
+      resetAction={
+        value !== DEFAULT_UNIFIED_SETTINGS.fontSizeChat ? (
+          <SettingResetButton
+            label="chat font size"
+            onClick={() => updateSettings({ fontSizeChat: DEFAULT_UNIFIED_SETTINGS.fontSizeChat })}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={value === null ? FOLLOW_INTERFACE_VALUE : String(value)}
+          onValueChange={(next) => {
+            if (next === FOLLOW_INTERFACE_VALUE) {
+              updateSettings({ fontSizeChat: null });
+              return;
+            }
+            const parsed = Number(next);
+            if (
+              Number.isInteger(parsed) &&
+              parsed >= MIN_INTERFACE_FONT_SIZE &&
+              parsed <= MAX_INTERFACE_FONT_SIZE
+            ) {
+              updateSettings({ fontSizeChat: parsed });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-28 shrink-0" aria-label="Chat font size">
+            <SelectValue>{value === null ? "Interface" : `${value} px`}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value={FOLLOW_INTERFACE_VALUE}>
+              Interface
+            </SelectItem>
+            {Array.from(
+              { length: MAX_INTERFACE_FONT_SIZE - MIN_INTERFACE_FONT_SIZE + 1 },
+              (_, index) => MIN_INTERFACE_FONT_SIZE + index,
+            ).map((px) => (
+              <SelectItem hideIndicator key={px} value={String(px)}>
+                {px} px
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
 function PromptFontRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -254,6 +312,7 @@ function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
+      <ChatFontSizeRow />
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
@@ -267,6 +326,7 @@ function SimpleFontRows() {
   return (
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
+      <ChatFontSizeRow />
       <CodeFontRow
         title="Monospace font"
         description="Code blocks, diffs, file previews, and the terminal."

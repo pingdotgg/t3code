@@ -1784,6 +1784,19 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+/* Chat font size. Tailwind's text utilities read these tokens, so rescaling
+   them here resizes conversation text without touching chrome, the prompt, or
+   code, which sizes itself in pixels through --font-size-code. The root only
+   carries the ratio; scaling applies inside the scope, so markdown elsewhere
+   (prompt, file previews) keeps the interface size. */
+.chat-text-scope {
+  --chat-font-scale: var(--chat-font-size-ratio, 1);
+  --text-xs: calc(0.75rem * var(--chat-font-scale, 1));
+  --text-sm: calc(0.875rem * var(--chat-font-scale, 1));
+  --text-base: calc(1rem * var(--chat-font-scale, 1));
+  --text-lg: calc(1.125rem * var(--chat-font-scale, 1));
+}
+
 /* Chat markdown rendering */
 
 .chat-markdown > :first-child {
@@ -1822,21 +1835,21 @@ code {
 }
 
 :is(.chat-markdown, .composer-tiptap) h1 {
-  font-size: 1.25rem;
+  font-size: calc(1.25rem * var(--chat-font-scale, 1));
 }
 
 :is(.chat-markdown, .composer-tiptap) h2 {
-  font-size: 1.125rem;
+  font-size: calc(1.125rem * var(--chat-font-scale, 1));
 }
 
 :is(.chat-markdown, .composer-tiptap) h3 {
-  font-size: 1rem;
+  font-size: calc(1rem * var(--chat-font-scale, 1));
 }
 
 :is(.chat-markdown, .composer-tiptap) h4,
 :is(.chat-markdown, .composer-tiptap) h5,
 :is(.chat-markdown, .composer-tiptap) h6 {
-  font-size: 0.875rem;
+  font-size: calc(0.875rem * var(--chat-font-scale, 1));
 }
 
 :is(.chat-markdown, .composer-tiptap) h6 {
