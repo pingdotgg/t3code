@@ -18,6 +18,8 @@ import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
+import * as DeviceService from "../device/DeviceService.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
@@ -808,4 +810,113 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each([
+  { capabilities: [], preview: false, device: false },
+  { capabilities: ["preview"], preview: true, device: false },
+  { capabilities: ["device"], preview: false, device: true },
+  { capabilities: ["preview", "device"], preview: true, device: true },
+] as const)(
+  "lists preview and device tools only to credentials granting them: $capabilities",
+  ({ capabilities, preview, device }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const token = "providerTokenWithoutDots";
+        const scope: McpInvocationContext.McpThreadInvocationScope = {
+          environmentId,
+          requestNamespace: "provider-session",
+          thread: {
+            threadId: ThreadId.make("thread-provider"),
+            providerSessionId: "provider-session",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration", ...capabilities]),
+          issuedAt: 1,
+        };
+        const ProbeToolkit = Toolkit.make(
+          Tool.make("probe", {
+            description: "Stands in for the tools every credential sees.",
+            success: Schema.Struct({ ok: Schema.Boolean }),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+            dependencies: [McpInvocationContext.McpInvocationContext],
+          }),
+        );
+        const serverLayer = Layer.mergeAll(
+          McpHttpServer.toolkitRegistration(
+            ProbeToolkit,
+            McpToolAccess.toLayer(ProbeToolkit, {
+              probe: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+            }),
+          ),
+          McpHttpServer.layerPreviewToolkit,
+          McpHttpServer.layerPreviewControlsRegistration,
+          McpHttpServer.layerDeviceToolkit,
+        ).pipe(
+          Layer.provideMerge(McpHttpServer.layerMcpTransport),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: (presented) => Effect.succeed(presented === token ? scope : undefined),
+            }),
+          ),
+          Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+          Layer.provide(PreviewAutomationBroker.layer),
+          Layer.provide(Layer.mock(PreviewManager.PreviewManager)({})),
+          Layer.provide(Layer.mock(DeviceService.DeviceService)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" }),
+          ),
+          Layer.provide(NodeServices.layer),
+        );
+        yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.build,
+        );
+        const httpClient = (yield* HttpClient.HttpClient).pipe(
+          HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+        );
+        const headers = { accept: "application/json, text/event-stream" };
+        const initialize = yield* httpClient.post("/mcp", {
+          headers,
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-test","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        });
+        expect(initialize.status).toBe(200);
+        const listed = yield* httpClient.post("/mcp", {
+          headers: {
+            ...headers,
+            "mcp-session-id": initialize.headers["mcp-session-id"]!,
+            "mcp-protocol-version": "2025-06-18",
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+            "application/json",
+          ),
+        });
+        const { result } = yield* listed.json.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.Struct({
+                result: Schema.Struct({
+                  tools: Schema.Array(Schema.Struct({ name: Schema.String })),
+                }),
+              }),
+            ),
+          ),
+        );
+        const names = result.tools.map((tool) => tool.name);
+
+        expect(names).toContain("probe");
+        expect(names.some((name) => name.startsWith("preview_"))).toBe(preview);
+        expect(names.some((name) => name.startsWith("device_"))).toBe(device);
+        expect(names.includes("preview_snapshot")).toBe(preview);
+        expect(names.includes("t3_preview_list")).toBe(preview);
+        expect(names.includes("t3_preview_close")).toBe(preview);
+        expect(names.includes("device_screenshot")).toBe(device);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

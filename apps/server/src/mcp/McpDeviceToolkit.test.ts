@@ -187,8 +187,12 @@ it.effect("registers the device tools and returns the screenshot as image conten
 
       const denied = yield* server
         .callTool({ name: "device_list", arguments: {} })
-        .pipe(callWith(["preview"]), Effect.provideService(McpSchema.McpServerClient, client));
-      expect(denied.isError).toBe(true);
+        .pipe(
+          callWith(["preview"]),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.flip,
+        );
+      expect(denied.message).toContain("not found");
     }),
   ).pipe(Effect.provide(layerTest)),
 );

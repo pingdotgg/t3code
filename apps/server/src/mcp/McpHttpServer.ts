@@ -3,6 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -959,6 +960,45 @@ const withToolAnalytics =
   });
 
 /**
+ * Offers a capability's tools only to credentials that grant it; `EnabledWhen`
+ * gates calls as well as `tools/list`. Its predicate sees only the client's
+ * protocol profile, so it reads the credential from the fiber the auth
+ * middleware provided `McpInvocationContext` to. Handlers keep their own checks.
+ */
+const offeredWith = <A, E, R>(
+  capability: McpInvocationContext.McpCapability | undefined,
+  registration: Effect.Effect<A, E, R>,
+) =>
+  capability === undefined
+    ? registration
+    : Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        const granted = () => {
+          const fiber = Fiber.getCurrent();
+          return (
+            fiber !== undefined &&
+            Context.getOrUndefined(
+              fiber.context,
+              McpInvocationContext.McpInvocationContext,
+            )?.capabilities.has(capability) === true
+          );
+        };
+        return yield* registration.pipe(
+          Effect.provideService(
+            McpServer.McpServer,
+            McpServer.McpServer.of({
+              ...server,
+              addTool: (options) =>
+                server.addTool({
+                  ...options,
+                  annotations: Context.add(options.annotations, McpSchema.EnabledWhen, granted),
+                }),
+            }),
+          ),
+        );
+      });
+
+/**
  * `McpServer.toolkit` asks for every service its tools declare when it
  * registers them, but the auth middleware provides `McpInvocationContext` to
  * each request instead. Registration must not get one: the services it
@@ -967,9 +1007,13 @@ const withToolAnalytics =
 export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+  capability?: McpInvocationContext.McpCapability,
 ) => {
   const registration = Layer.effectDiscard(
-    withToolAnalytics(McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    offeredWith(
+      capability,
+      withToolAnalytics(McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    ),
   ).pipe(Layer.provide(McpServer.McpServer.layer));
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
   const registered = registration as Layer.Layer<
@@ -983,8 +1027,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+  capability?: McpInvocationContext.McpCapability,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(register)).pipe(
+  Layer.effectDiscard(offeredWith(capability, withToolAnalytics(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
@@ -996,11 +1041,13 @@ export const layerHtmlToolkit = Layer.mergeAll(
 const layerPreviewStandardToolkitRegistration = toolkitRegistration(
   PreviewStandardToolkit,
   PreviewHandlers.layerStandard,
+  "preview",
 );
 
 const layerPreviewSnapshotRegistration = imageToolRegistration(
   registerPreviewSnapshot(),
   PreviewHandlers.layerSnapshot,
+  "preview",
 );
 
 export const layerPreviewToolkit = Layer.mergeAll(
@@ -1020,9 +1067,10 @@ const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeHandlers.layer,
 ).pipe(Layer.provide(WorktreeMcpService.layer));
 
-const layerPreviewControlsRegistration = toolkitRegistration(
+export const layerPreviewControlsRegistration = toolkitRegistration(
   PreviewControlsToolkit,
   PreviewControlsHandlers.layer,
+  "preview",
 );
 
 const layerEnvironmentToolkit = toolkitRegistration(
@@ -1045,11 +1093,13 @@ export const layerPullRequestsToolkit = toolkitRegistration(
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
+  "device",
 );
 
 const layerDeviceScreenshotRegistration = imageToolRegistration(
   registerDeviceScreenshot(),
   DeviceHandlers.layerScreenshot,
+  "device",
 );
 
 export const layerDeviceToolkit = Layer.mergeAll(
