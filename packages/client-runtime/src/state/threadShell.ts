@@ -61,6 +61,22 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
   return kind === "user_input" ? "user_input" : "approval";
 }
 
+// The server hands a subagent's question to its parent agent, which can answer
+// it, so the user sees it only once that parent stops working. Secrets and
+// approvals need the user and surface at once, as do questions from older
+// servers, which send no secret marker. A queue held for the user reports its
+// last finished run rather than "queued", so its question escalates.
+function heldForParentAgent(
+  child: OrchestrationV2ThreadShell,
+  threadsById: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>,
+): boolean {
+  const request = child.pendingRuntimeRequest;
+  if (request?.kind !== "user_input" || request.secret !== false) return false;
+  const parentId = child.lineage.parentThreadId;
+  const parent = parentId === null ? undefined : threadsById.get(parentId);
+  return parent !== undefined && (isChildRunLive(parent) || parent.status === "queued");
+}
+
 export function pendingSubagentRequestsByThread(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyMap<ThreadId, PendingSubagentRequest> {
@@ -70,6 +86,7 @@ export function pendingSubagentRequestsByThread(
     const request = subagentRequest(child);
     if (request === null) continue;
     byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
+    if (heldForParentAgent(child, byId)) continue;
     const seen = new Set<ThreadId>([child.id]);
     let current: OrchestrationV2ThreadShell | undefined = child;
     while (current?.lineage.relationshipToParent === "subagent") {
@@ -294,6 +311,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         else children.set(parent, [thread]);
       }
       const subagentRequests = get(pendingSubagentRequestsAtom(ref.environmentId));
+      const threadsById = get(environmentThreadIndexAtom(ref.environmentId));
       const seen = new Set<ThreadId>([ref.threadId]);
       const pending = [ref.threadId];
       const next: EnvironmentThreadShell[] = [];
@@ -302,7 +320,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           if (seen.has(child.id)) continue;
           seen.add(child.id);
           pending.push(child.id);
-          if (subagentRequest(child) !== null) {
+          if (subagentRequest(child) !== null && !heldForParentAgent(child, threadsById)) {
             next.push(scopedThread(ref.environmentId, child, subagentRequests));
           }
         }

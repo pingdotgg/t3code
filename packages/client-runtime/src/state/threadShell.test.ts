@@ -16,7 +16,11 @@ import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
-import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
+import {
+  childThreadInputsTitle,
+  createEnvironmentThreadShellAtoms,
+  pendingSubagentRequestsByThread,
+} from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
@@ -210,6 +214,82 @@ describe("v2 thread shell lists", () => {
     });
     expect(registry.get(parent)?.pendingSubagentRequest).toBeNull();
     expect(isThreadWorking(registry.get(parent)!)).toBe(true);
+    disposeInputs();
+    disposeParent();
+    registry.dispose();
+  });
+
+  it("routes a subagent question to its parent agent until that agent stops", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("root-run"),
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+    };
+    const child = {
+      ...v2ThreadShell,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      lineage: {
+        ...v2ThreadShell.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("question"),
+        kind: "user_input" as const,
+        createdAt: v2Now,
+        secret: false,
+      },
+    };
+    const parent = threads.threadShellAtom({ environmentId, threadId: root.id });
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: root.id });
+    const disposeParent = registry.mount(parent);
+    const disposeInputs = registry.mount(inputs);
+    const show = (...shells: ReadonlyArray<OrchestrationV2ThreadShell>) => {
+      registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: shells });
+      return {
+        request: registry.get(parent)?.pendingSubagentRequest,
+        inputs: registry.get(inputs).map((thread) => thread.id),
+      };
+    };
+
+    expect(show(root, child)).toEqual({ request: null, inputs: [] });
+    expect(isThreadWorking(registry.get(parent)!)).toBe(true);
+    const { activityRunStatus: _omitted, ...legacyRoot } = root;
+    expect(show(legacyRoot, child)).toEqual({ request: null, inputs: [] });
+    const wakeQueued = { ...root, status: "queued" as const, activityRunStatus: null };
+    expect(show(wakeQueued, child)).toEqual({ request: null, inputs: [] });
+    const stopped = { ...root, status: "completed" as const, activityRunStatus: null };
+    expect(show(stopped, child)).toEqual({ request: "user_input", inputs: [child.id] });
+    expect(pendingSubagentRequestsByThread([child]).get(root.id)).toBe("user_input");
+    const secret = { ...child.pendingRuntimeRequest, blocking: true, secret: true };
+    expect(show(root, { ...child, pendingRuntimeRequest: secret })).toEqual({
+      request: "user_input",
+      inputs: [child.id],
+    });
+    const { secret: _unmarked, ...olderServerQuestion } = child.pendingRuntimeRequest;
+    expect(show(root, { ...child, pendingRuntimeRequest: olderServerQuestion })).toEqual({
+      request: "user_input",
+      inputs: [child.id],
+    });
+
+    const grandchild = {
+      ...child,
+      id: ThreadId.make("grandchild"),
+      lineage: { ...child.lineage, parentThreadId: child.id },
+    };
+    const busyChild = { ...child, pendingRuntimeRequest: null };
+    expect(show(stopped, busyChild, grandchild)).toEqual({ request: null, inputs: [] });
+
+    const approval = { ...child.pendingRuntimeRequest, kind: "command" as const };
+    expect(show(root, { ...child, pendingRuntimeRequest: approval })).toEqual({
+      request: "approval",
+      inputs: [child.id],
+    });
     disposeInputs();
     disposeParent();
     registry.dispose();

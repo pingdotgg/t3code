@@ -224,8 +224,9 @@ On web and desktop, use **Agents** to follow work delegated to subagents.
 Stop on a thread also stops the subagents it delegated to.
 
 Subagent threads started by the agent can't take messages; message the parent
-thread instead. When such a subagent needs an approval or an answer, the parent
-thread asks for it.
+thread instead. When such a subagent needs an approval or a secret, the parent
+thread asks you for it. Its questions go to the parent agent first, and reach you
+only if that agent stops without answering.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
