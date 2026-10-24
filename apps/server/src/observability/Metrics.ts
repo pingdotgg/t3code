@@ -15,6 +15,15 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
   description: "RPC request handling duration.",
 });
 
+export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_commands_total", {
+  description: "Total orchestration commands dispatched by result.",
+});
+
+export const orchestrationCommandDuration = Metric.timer("t3_orchestration_command_duration", {
+  description:
+    "Orchestration command dispatch duration while holding its dispatch lock, excluding lock wait.",
+});
+
 export const orchestrationEffectClaimsTotal = Metric.counter(
   "t3_orchestration_effect_claims_total",
   {

@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
@@ -199,6 +200,36 @@ it.layer(layerTest)("ProjectService", (it) => {
       assert.deepEqual(
         changes.map((change) => change.event_type),
         ["project.created", "project.meta-updated", "project.meta-updated", "project.deleted"],
+      );
+    }),
+  );
+
+  it.effect("records a command metric for a committed project command", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
+      yield* service.create({
+        commandId: CommandId.make("command:metrics:create"),
+        projectId: ProjectId.make("project:metrics"),
+        title: "Metrics",
+        workspaceRoot: "/work/metrics",
+      });
+
+      const snapshots = yield* Metric.snapshot;
+      assert.isTrue(
+        snapshots.some(
+          (snapshot) =>
+            snapshot.id === "t3_orchestration_commands_total" &&
+            snapshot.attributes?.commandType === "project.create" &&
+            snapshot.attributes?.outcome === "success",
+        ),
+      );
+      assert.isTrue(
+        snapshots.some(
+          (snapshot) =>
+            snapshot.id === "t3_orchestration_command_duration" &&
+            snapshot.attributes?.commandType === "project.create",
+        ),
       );
     }),
   );

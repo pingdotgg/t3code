@@ -17,6 +17,11 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import {
+  orchestrationCommandDuration,
+  orchestrationCommandsTotal,
+  withMetrics,
+} from "../observability/Metrics.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -210,81 +215,96 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
-    const { projectId } = command;
-    const dispatchError = (cause: unknown) =>
-      new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
-    const workspaceRoot = command.type === "project.delete" ? undefined : command.workspaceRoot;
-    const planAndCommit = Effect.gen(function* () {
-      const project = Option.getOrUndefined(yield* readRow(projectId, { includeDeleted: true }));
-      const workspaceOwner =
-        workspaceRoot === undefined
-          ? undefined
-          : Option.getOrUndefined(
-              yield* projects
-                .findActiveByWorkspaceRoot(workspaceRoot)
-                .pipe(Effect.mapError(dispatchError)),
-            );
-      const now = yield* DateTime.now;
-      const eventId = yield* idAllocator.allocate
-        .event({ commandId: command.commandId })
-        .pipe(Effect.mapError(dispatchError));
-      const planned = planProjectCommand({
-        command,
-        state: { project, workspaceOwner },
-        eventId,
-        now,
-      });
-      if (Result.isSuccess(planned)) {
-        const { receipt } = yield* eventSink.commitProjectCommand({
+  const commit = Effect.fn("ProjectService.commit")(
+    function* (command: ProjectCommand) {
+      const { projectId } = command;
+      const dispatchError = (cause: unknown) =>
+        new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
+      const workspaceRoot = command.type === "project.delete" ? undefined : command.workspaceRoot;
+      const planAndCommit = Effect.gen(function* () {
+        const project = Option.getOrUndefined(yield* readRow(projectId, { includeDeleted: true }));
+        const workspaceOwner =
+          workspaceRoot === undefined
+            ? undefined
+            : Option.getOrUndefined(
+                yield* projects
+                  .findActiveByWorkspaceRoot(workspaceRoot)
+                  .pipe(Effect.mapError(dispatchError)),
+              );
+        const now = yield* DateTime.now;
+        const eventId = yield* idAllocator.allocate
+          .event({ commandId: command.commandId })
+          .pipe(Effect.mapError(dispatchError));
+        const planned = planProjectCommand({
+          command,
+          state: { project, workspaceOwner },
+          eventId,
+          now,
+        });
+        if (Result.isSuccess(planned)) {
+          const { receipt } = yield* eventSink.commitProjectCommand({
+            commandId: command.commandId,
+            projectId,
+            commandType: command.type,
+            acceptedAt: now,
+            event: planned.success,
+          });
+          return receipt;
+        }
+        return yield* eventSink.commitRejectedProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
-          acceptedAt: now,
-          event: planned.success,
+          rejectedAt: now,
+          error: encodeProjectCommandRejection(planned.failure),
         });
-        return receipt;
-      }
-      return yield* eventSink.commitRejectedProjectCommand({
-        commandId: command.commandId,
-        projectId,
-        commandType: command.type,
-        rejectedAt: now,
-        error: encodeProjectCommandRejection(planned.failure),
       });
-    });
-    const receipt = yield* projectLocks
-      .withLock(
-        projectId,
-        workspaceRoot === undefined
-          ? planAndCommit
-          : workspaceLocks.withLock(workspaceRoot, planAndCommit),
-      )
-      .pipe(Effect.mapError(dispatchError));
-    if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
-      return yield* dispatchError(
-        `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
+      const timedPlanAndCommit = planAndCommit.pipe(
+        withMetrics({
+          timer: orchestrationCommandDuration,
+          attributes: { commandType: command.type },
+        }),
       );
-    }
-    // A retried command re-plans against the state it already produced, so its
-    // first receipt, not the new plan, decides the outcome.
-    if (receipt.status === "accepted") return;
-    const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
-    switch (rejection?._tag) {
-      case "ProjectWorkspaceConflictError":
-        return yield* new ProjectConflictError({
+      const receipt = yield* projectLocks
+        .withLock(
           projectId,
-          workspaceRoot: rejection.workspaceRoot,
-          conflictingProjectId: rejection.conflictingProjectId,
-        });
-      case "ProjectCommandMissingProjectError":
-        return yield* new ProjectNotFoundError({ projectId });
-      default:
+          workspaceRoot === undefined
+            ? timedPlanAndCommit
+            : workspaceLocks.withLock(workspaceRoot, timedPlanAndCommit),
+        )
+        .pipe(Effect.mapError(dispatchError));
+      if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
         return yield* dispatchError(
-          rejection ?? receipt.error ?? "The command was previously rejected.",
+          `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
         );
-    }
-  });
+      }
+      // A retried command re-plans against the state it already produced, so its
+      // first receipt, not the new plan, decides the outcome.
+      if (receipt.status === "accepted") return;
+      const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
+      switch (rejection?._tag) {
+        case "ProjectWorkspaceConflictError":
+          return yield* new ProjectConflictError({
+            projectId,
+            workspaceRoot: rejection.workspaceRoot,
+            conflictingProjectId: rejection.conflictingProjectId,
+          });
+        case "ProjectCommandMissingProjectError":
+          return yield* new ProjectNotFoundError({ projectId });
+        default:
+          return yield* dispatchError(
+            rejection ?? receipt.error ?? "The command was previously rejected.",
+          );
+      }
+    },
+    (effect, command) =>
+      effect.pipe(
+        withMetrics({
+          counter: orchestrationCommandsTotal,
+          attributes: { commandType: command.type },
+        }),
+      ),
+  );
 
   const readCommitted = Effect.fn("ProjectService.readCommitted")(function* (projectId: ProjectId) {
     const row = yield* readRow(projectId, { includeDeleted: true });

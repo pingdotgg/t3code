@@ -21,6 +21,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -1365,5 +1366,42 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     } as const;
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("records a command and its duration for a dispatched command", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-dispatch-metrics"),
+      threadId: ThreadId.make("thread:dispatch-metrics"),
+      projectId: ProjectId.make("project:dispatch-metrics"),
+      title: "Dispatch metrics",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const snapshots = yield* Metric.snapshot;
+    assert.isTrue(
+      snapshots.some(
+        (snapshot) =>
+          snapshot.id === "t3_orchestration_commands_total" &&
+          snapshot.attributes?.commandType === "thread.create" &&
+          snapshot.attributes?.outcome === "success",
+      ),
+    );
+    assert.isTrue(
+      snapshots.some(
+        (snapshot) =>
+          snapshot.id === "t3_orchestration_command_duration" &&
+          snapshot.attributes?.commandType === "thread.create",
+      ),
+    );
   }).pipe(Effect.provide(layerTest)),
 );
