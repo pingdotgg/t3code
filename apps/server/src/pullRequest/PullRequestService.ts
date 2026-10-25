@@ -86,6 +86,7 @@ import type { SourceControlProviderContext } from "@t3tools/source-control-core/
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   type ProviderChangeRequest,
+  type ProviderDiffFilePaths,
   type ProviderFilterOptionPage,
   type ProviderListCursor,
   type ProviderChangeRequestWatchFingerprint,
@@ -543,6 +544,9 @@ function withRateLimitBackoff(
         }),
     getViewerPermissions: interactive("getViewerPermissions", api.getViewerPermissions),
     getDiff: wrap("getDiff", api.getDiff),
+    ...(api.getDiffFilePaths === undefined
+      ? {}
+      : { getDiffFilePaths: wrap("getDiffFilePaths", api.getDiffFilePaths) }),
     ...(api.getDiffFileContents === undefined
       ? {}
       : { getDiffFileContents: wrap("getDiffFileContents", api.getDiffFileContents) }),
@@ -3475,14 +3479,10 @@ export const make = Effect.gen(function* () {
     const fileKey = (oldPath: string, newPath: string) => JSON.stringify([oldPath, newPath]);
     const sliceKey = (input: PullRequestDiffInput) =>
       JSON.stringify([refCacheKey(input), input.cursor ?? null, input.commit ?? null]);
-    const record = (key: string, slice: PullRequestDiffResult, at: number) => {
+    const recordPaths = (key: string, slice: ProviderDiffFilePaths, at: number) => {
       const entry = {
         at,
-        files: new Set(
-          parseDiffFilePaths(slice.patch).map((file) =>
-            fileKey(file.oldPath ?? file.newPath ?? "", file.newPath ?? file.oldPath ?? ""),
-          ),
-        ),
+        files: new Set(slice.files.map((file) => fileKey(file.oldPath, file.newPath))),
         nextCursor: slice.nextCursor,
       };
       held.delete(key);
@@ -3493,11 +3493,37 @@ export const make = Effect.gen(function* () {
       held.set(key, entry);
       return entry;
     };
+    const record = (key: string, slice: PullRequestDiffResult, at: number) =>
+      recordPaths(
+        key,
+        {
+          files: parseDiffFilePaths(slice.patch).map((file) => ({
+            oldPath: file.oldPath ?? file.newPath ?? "",
+            newPath: file.newPath ?? file.oldPath ?? "",
+          })),
+          nextCursor: slice.nextCursor,
+        },
+        at,
+      );
     const read = Effect.fn("PullRequestService.read")(function* (input: PullRequestDiffInput) {
       const key = sliceKey(input);
       const now = yield* Clock.currentTimeMillis;
       const cached = held.get(key);
       if (cached !== undefined && now - cached.at <= ttlMs) return cached;
+      const project = yield* requireProject(input);
+      if (project.api.capabilities.diff && project.api.getDiffFilePaths) {
+        const slice = yield* project.api
+          .getDiffFilePaths({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+            ...(input.commit === undefined ? {} : { commit: input.commit }),
+          })
+          .pipe(Effect.mapError(toPullRequestError("diffFileContents")));
+        return recordPaths(key, slice, now);
+      }
       const slice = yield* diff(input);
       return record(key, slice, now);
     });

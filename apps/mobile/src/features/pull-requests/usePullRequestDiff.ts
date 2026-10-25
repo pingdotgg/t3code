@@ -1,19 +1,13 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
-import {
-  EnvironmentId,
-  ProjectId,
-  type PullRequestDiffResult,
-  type PullRequestListEntry,
-} from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type PullRequestListEntry } from "@t3tools/contracts";
 import { useAtomRefresh } from "@effect/atom-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
-import type { ReviewParsedDiff } from "../review/reviewModel";
 import {
-  combinePullRequestDiffPages,
+  getCachedPullRequestDiffPages,
   retainPullRequestDiffPage,
   type PullRequestDiffPage,
 } from "./pullRequestDiffPages";
@@ -42,6 +36,46 @@ export function pullRequestTarget(params: PullRequestParams) {
 }
 
 const NO_PAGES: readonly PullRequestDiffPage[] = [];
+
+export function usePullRequestDiffEntry(navigation: {
+  readonly addListener: (
+    type: "transitionStart" | "transitionEnd",
+    listener: (event: { readonly data: { readonly closing: boolean } }) => void,
+  ) => () => void;
+}) {
+  const [ready, setReady] = useState(false);
+  useLayoutEffect(() => {
+    if (ready) return;
+    let opening = false;
+    let closing = false;
+    const finish = () => {
+      if (!closing) setReady(true);
+    };
+    const removeStart = navigation.addListener("transitionStart", ({ data }) => {
+      closing = data.closing;
+      if (!closing) opening = true;
+    });
+    const removeEnd = navigation.addListener("transitionEnd", ({ data }) => {
+      closing = data.closing;
+      if (!closing) finish();
+    });
+    // Initial and unanimated presentations may have no transition events; let the shell paint first.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        if (!opening) finish();
+      });
+    });
+    // A missing native completion must not strand the route on its loading state.
+    const fallback = setTimeout(finish, 1_000);
+    return () => {
+      removeStart();
+      removeEnd();
+      cancelAnimationFrame(frame);
+      clearTimeout(fallback);
+    };
+  }, [navigation, ready]);
+  return ready;
+}
 
 export function usePullRequestDiff(
   params: PullRequestDiffParams,
@@ -74,10 +108,9 @@ export function usePullRequestDiff(
   }, [cursor, key, query.data, state.key, state.pages]);
   if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages });
 
-  const [parseCache] = useState(() => new WeakMap<PullRequestDiffResult, ReviewParsedDiff>());
   const parsed = useMemo(
-    () => combinePullRequestDiffPages(pages, parseCache, key, terminology),
-    [key, pages, parseCache, terminology],
+    () => getCachedPullRequestDiffPages(pages, key, terminology),
+    [key, pages, terminology],
   );
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;

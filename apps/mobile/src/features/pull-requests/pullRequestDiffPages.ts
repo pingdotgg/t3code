@@ -7,6 +7,46 @@ export interface PullRequestDiffPage {
   readonly result: PullRequestDiffResult;
 }
 
+interface CachedPullRequestDiffPages {
+  readonly pages: readonly PullRequestDiffPage[];
+  readonly cache: WeakMap<PullRequestDiffResult, ReviewParsedDiff>;
+  readonly parsed: ReviewParsedDiff;
+}
+
+// Keep only the latest combination per scoped first page; query results own its lifetime.
+const parsedSnapshots = new WeakMap<
+  PullRequestDiffResult,
+  Map<string, CachedPullRequestDiffPages>
+>();
+
+export function getCachedPullRequestDiffPages(
+  pages: readonly PullRequestDiffPage[],
+  scope: string,
+  terminology: ChangeRequestTerminology,
+): ReviewParsedDiff {
+  const first = pages[0];
+  if (!first) return { kind: "empty" };
+  const key = JSON.stringify([scope, terminology.singular, first.cursor]);
+  let snapshots = parsedSnapshots.get(first.result);
+  if (!snapshots) {
+    snapshots = new Map();
+    parsedSnapshots.set(first.result, snapshots);
+  }
+  const previous = snapshots.get(key);
+  if (
+    previous?.pages.length === pages.length &&
+    pages.every((page, index) => {
+      const cached = previous.pages[index];
+      return cached?.cursor === page.cursor && cached.result === page.result;
+    })
+  )
+    return previous.parsed;
+  const cache = previous?.cache ?? new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
+  const parsed = combinePullRequestDiffPages(pages, cache, scope, terminology);
+  snapshots.set(key, { pages, cache, parsed });
+  return parsed;
+}
+
 /** A changed page invalidates later cursors, which belong to the previous patch. */
 export function retainPullRequestDiffPage(
   pages: readonly PullRequestDiffPage[],
