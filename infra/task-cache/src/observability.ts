@@ -161,7 +161,7 @@ export const Observability = Effect.gen(function* () {
   const dashboard = yield* Axiom.Dashboard("CacheSavingsDashboard", {
     dashboard: {
       name: "⚡ Task Cache · Time Back",
-      owner: "",
+      owner: "X-AXIOM-EVERYONE",
       schemaVersion: 2,
       refreshTime: 60,
       description:
