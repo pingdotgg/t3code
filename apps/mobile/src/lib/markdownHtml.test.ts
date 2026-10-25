@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
-import { markdownHtmlContent, markdownWithHtml, parseMarkdownDocument } from "./markdownDocument";
+import {
+  markdownHtmlContent,
+  markdownWithHtml,
+  markdownWithFileEmbeds,
+  parseMarkdownDocument,
+  type MarkdownNode,
+} from "./markdownDocument";
 import { markdownImageSources } from "./markdownImageSources";
+import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "./markdownMedia";
+import { resolveMarkdownLinkPresentation } from "./markdownLinks";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
 describe("HTML in native Markdown", () => {
   it("preserves screenshot URLs and captions from GitHub HTML image embeds", () => {
@@ -93,5 +103,196 @@ describe("HTML in native Markdown", () => {
 
   it("keeps anchor text unlinked for unsafe hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
+  });
+});
+
+describe("file embeds in native thread and file Markdown", () => {
+  const input = {
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("thread-1"),
+    workspaceRoot: "/repo",
+  };
+  const assets = (markdown: string) => {
+    const result: MarkdownNode[] = [];
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "link" || node.type === "image") result.push(node);
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(parseMarkdownDocument(markdown));
+    return result;
+  };
+
+  it.each([
+    [
+      "[![sheet](./report.csv)](https://example.com/download)",
+      "report.csv",
+      "https://example.com/download",
+    ],
+    ["[![report](./report.pdf)](./report.pdf)", "report.pdf", "./report.pdf"],
+    [
+      "[![sheet][f]][download]\n\n[f]: ./report.csv\n[download]: https://example.com/download",
+      "report.csv",
+      "https://example.com/download",
+    ],
+  ])("keeps the enclosing link for %s", async (source, filename, target) => {
+    const converted = markdownWithFileEmbeds(source, (href, standalone) =>
+      markdownFileEmbedLabel(href, input, standalone),
+    );
+    expect((await parseMarkdown(converted.markdown)).children).toMatchObject([
+      {
+        type: "Paragraph",
+        children: [
+          {
+            type: "Link",
+            attributes: { url: target },
+            children: [{ type: "Text", content: filename }],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it.each(["f", "F", "File Label", "file   label"])(
+    "uses the first reference definition for %s",
+    async (identifier) => {
+      const source = `![sheet][${identifier}]\n\n[${identifier.toLowerCase()}]: ./report.csv\n[${identifier.toUpperCase()}]: ./report.xlsx`;
+      const converted = markdownWithFileEmbeds(source, (href, standalone) =>
+        markdownFileEmbedLabel(href, input, standalone),
+      );
+      expect(converted.fileHrefs).toEqual(new Set(["./report.csv"]));
+      expect((await parseMarkdown(converted.markdown)).children).toMatchObject([
+        {
+          type: "Paragraph",
+          children: [
+            {
+              type: "Link",
+              attributes: { url: "./report.csv" },
+              children: [{ type: "Text", content: "report.csv" }],
+            },
+          ],
+        },
+      ]);
+      expect((await parseMarkdown(source)).children).toMatchObject([
+        { type: "Paragraph", children: [{ type: "Image", attributes: { url: "./report.csv" } }] },
+      ]);
+    },
+  );
+
+  it.each([
+    "report.csv",
+    "report.tsv",
+    "report.pdf",
+    "report.docx",
+    "report.xlsx",
+    "report.pptx",
+    "report.unknown",
+    "main.tf",
+    "schema.prisma",
+    "index.astro",
+    "main.zig",
+    "Containerfile",
+    "sound.mp3",
+    "clip.mp4",
+  ])("uses filename links throughout prose, lists, and tables for %s", (name) => {
+    for (const href of [
+      `./${name}`,
+      `/tmp/${name}`,
+      `file:///tmp/${name}`,
+      `https://cdn.example.com/${name}?signature=a%2fb`,
+    ]) {
+      if (name === "Containerfile" && href.startsWith("https:")) continue;
+      for (const source of [
+        `download: ![sheet](<${href}>)`,
+        `- ![sheet](<${href}>)`,
+        `| file |\n| --- |\n| ![sheet](<${href}>) |`,
+        `download: ![sheet][file]\n\n[file]: <${href}>`,
+        `download: <img src="${href}" alt="sheet">`,
+      ]) {
+        const converted = markdownWithFileEmbeds(markdownWithHtml(source), (url, standalone) =>
+          markdownFileEmbedLabel(url, input, standalone),
+        );
+        const image = href.startsWith("https:") && /\.(unknown|tf|prisma|astro|zig)$/.test(name);
+        if (image) expect(converted.markdown).toBe(markdownWithHtml(source));
+        else
+          expect(assets(converted.markdown)).toMatchObject([
+            { type: "link", url: href, children: [{ type: "text", value: name }] },
+          ]);
+        expect(converted.fileHrefs.has(href)).toBe(!image);
+        const preview = resolveMarkdownMediaPreview(href, { ...input, imageEmbed: true });
+        if (
+          !href.startsWith("https:") &&
+          !name.endsWith(".pdf") &&
+          !name.endsWith(".mp3") &&
+          !name.endsWith(".mp4")
+        ) {
+          expect(preview?.kind).toBe("file");
+          expect(resolveMarkdownLinkPresentation(href)).toMatchObject({ kind: "file" });
+        }
+      }
+    }
+  });
+
+  it("retains standalone audio players and image/video embeds in threads", () => {
+    const source =
+      "![sound](./sound.mp3)\n\n![image](./image.png)\n\n![clip](./clip.mp4)\n\ninline ![photo](./photo.png)";
+    const converted = markdownWithFileEmbeds(source, (href, standalone) =>
+      markdownFileEmbedLabel(href, input, standalone),
+    );
+    expect(converted.markdown).toBe(source);
+    expect(converted.fileHrefs.size).toBe(0);
+    expect(resolveMarkdownMediaPreview("./sound.mp3", input)?.kind).toBe("audio");
+  });
+
+  it("uses audio filenames in file previews and draft workspaces", () => {
+    const draft = { ...input, threadId: undefined, workspaceRoot: "/repo/docs" };
+    const converted = markdownWithFileEmbeds("![sound](./sound.mp3)", (href) =>
+      markdownFileEmbedLabel(href, draft, false),
+    );
+    expect(assets(converted.markdown)).toMatchObject([
+      { type: "link", url: "./sound.mp3", children: [{ value: "sound.mp3" }] },
+    ]);
+    expect(resolveMarkdownMediaPreview("./sound.mp3", draft)?.source).toMatchObject({
+      resource: { _tag: "draft-workspace-file", cwd: "/repo/docs", path: "/repo/docs/./sound.mp3" },
+    });
+  });
+
+  it("keeps captured images on the image path and documents on filename links", () => {
+    const captured = { ...input, captured: true };
+    const converted = markdownWithFileEmbeds(
+      "![photo](./photo.png)\n\n![clip](./clip.mp4)\n\n![sheet](./report.csv)",
+      (href, standalone) => markdownFileEmbedLabel(href, captured, standalone),
+    );
+    expect(assets(converted.markdown)).toMatchObject([
+      { type: "image", url: "./photo.png" },
+      { type: "image", url: "./clip.mp4" },
+      { type: "link", url: "./report.csv", children: [{ value: "report.csv" }] },
+    ]);
+    expect(resolveMarkdownMediaPreview("./report.csv", captured)).toBeNull();
+  });
+
+  it("preserves table structure and filename punctuation", () => {
+    const source = "| file |\n| --- |\n| ![sheet](./report%5B1%5D%26%7C.csv) |";
+    const converted = markdownWithFileEmbeds(source, (href, standalone) =>
+      markdownFileEmbedLabel(href, input, standalone),
+    );
+    expect(parseMarkdownDocument(converted.markdown).children[0]?.type).toBe("table");
+    expect(assets(converted.markdown)).toMatchObject([
+      { type: "link", url: "./report%5B1%5D%26%7C.csv", children: [{ value: "report[1]&|.csv" }] },
+    ]);
+  });
+
+  it("keeps authored positions, signed URLs, and code examples literal", () => {
+    const href = "https://cdn.example.com/report%23one%2520.csv?name=&lt;&signature=a%2fb";
+    const source = `![report](<${href.replaceAll("&", "\\&")}>)\n\n![source](./main.tf#L42C3)\n\n\`![sheet](./literal.csv)\`\n\n\`\`\`md\n![sheet](./fenced.csv)\n\`\`\``;
+    const converted = markdownWithFileEmbeds(source, (url, standalone) =>
+      markdownFileEmbedLabel(url, input, standalone),
+    );
+    expect(assets(converted.markdown)).toMatchObject([
+      { type: "link", url: href, children: [{ value: "report#one%20.csv" }] },
+      { type: "link", url: "./main.tf#L42C3", children: [{ value: "main.tf · L42:C3" }] },
+    ]);
+    expect(converted.markdown).toContain("`![sheet](./literal.csv)`");
+    expect(converted.markdown).toContain("```md\n![sheet](./fenced.csv)\n```");
+    expect(converted.fileHrefs.has(href)).toBe(true);
   });
 });

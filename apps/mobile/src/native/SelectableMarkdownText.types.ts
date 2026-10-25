@@ -73,6 +73,7 @@ export interface SelectableMarkdownTextProps {
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
   readonly contextClipboardFragment?: string;
   readonly renderImage?: MarkdownImageRenderer;
+  readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly onImagePress?: (href: string) => void;
   readonly marginTop?: number;
