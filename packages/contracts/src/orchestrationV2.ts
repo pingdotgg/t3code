@@ -3136,6 +3136,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     requestId: CommandId,
     message: TrimmedNonEmptyString,
   }),
+  /** Delivering the answer to request `requestId` failed on its last attempt. */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.delivery.fail"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.background-work.settle"),
     commandId: CommandId,

@@ -9,6 +9,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   VcsProcessExitError,
 } from "@t3tools/contracts";
@@ -83,6 +84,7 @@ function layerExecutorFor(input: {
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
+  readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -142,7 +144,9 @@ function layerExecutorFor(input: {
     ),
     Layer.succeed(
       RuntimeRequestService.RuntimeRequestServiceV2,
-      RuntimeRequestService.RuntimeRequestServiceV2.of({ respond: () => Effect.void }),
+      RuntimeRequestService.RuntimeRequestServiceV2.of({
+        respond: input.respond ?? (() => Effect.void),
+      }),
     ),
     Layer.succeed(
       ThreadTitleRegenerationService.ThreadTitleRegenerationService,
@@ -266,6 +270,42 @@ it.effect.each([
       yield* Effect.flip(executor.execute(rollback, { willRetry: false }));
     }).pipe(Effect.provide(layer));
     assert.deepEqual(yield* Ref.get(failures), [message]);
+  }),
+);
+
+it.effect("does not report an answer whose last delivery attempt is interrupted", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const reported = yield* Ref.make(0);
+    const layer = layerExecutorFor({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      respond: () => Effect.interrupt,
+      threads: {
+        dispatch: (command) =>
+          Ref.update(reported, (count) =>
+            command.type === "runtime-request.delivery.fail" ? count + 1 : count,
+          ).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+      },
+    });
+    const exit = yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      return yield* Effect.exit(
+        executor.execute(
+          {
+            ...restartEffect(now, { type: "detach" }),
+            request: {
+              type: "runtime-request.respond",
+              providerSessionId: oldSessionId,
+              requestId: RuntimeRequestId.make("runtime-request:effect-worker-interrupted"),
+              answers: { next: "Ship it" },
+            },
+          },
+          { willRetry: false },
+        ),
+      );
+    }).pipe(Effect.provide(layer));
+    assert.isTrue(Exit.hasInterrupts(exit));
+    assert.equal(yield* Ref.get(reported), 0);
   }),
 );
 

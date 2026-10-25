@@ -1231,6 +1231,136 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("reports an answer that never reaches its provider without reopening it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("runtime-lost-answer");
+      // Projected as attached, but no live session holds it, so every delivery fails.
+      const providerSessionId = ProviderSessionId.make("runtime-lost-answer-session");
+      const requestId = RuntimeRequestId.make("runtime-lost-answer-request");
+      const nodeId = NodeId.make("runtime-lost-answer-node");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-lost-answer-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("runtime-lost-answer-project"),
+        title: "Lost answer",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-lost-answer-seed"),
+        events: [
+          {
+            id: EventId.make("runtime-lost-answer-session-event"),
+            type: "provider-session.attached",
+            threadId,
+            driver,
+            occurredAt: now,
+            payload: {
+              id: providerSessionId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "running",
+              cwd: process.cwd(),
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          },
+          {
+            id: EventId.make("runtime-lost-answer-node-event"),
+            type: "node.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: "user_input_request",
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("runtime-lost-answer-request-event"),
+            type: "runtime-request.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "live", providerSessionId },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+        ],
+      });
+      const commandId = CommandId.make("runtime-lost-answer-answer");
+      const answers = { color: "Blue" };
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId,
+        answers,
+      });
+      const errors = orchestrator
+        .getThreadProjection(threadId)
+        .pipe(
+          Effect.map((projection) => projection.turnItems.filter((item) => item.type === "error")),
+        );
+
+      // A delivery that can still be retried reports nothing.
+      yield* worker.drain();
+      assert.deepEqual(yield* errors, []);
+      for (let attempt = 1; attempt < 5; attempt++) {
+        yield* TestClock.adjust("30 seconds");
+        yield* worker.drain();
+      }
+
+      const [deliveryEffect] = yield* outbox.listByCommandId(commandId);
+      assert.equal(deliveryEffect?.request.type, "runtime-request.respond");
+      assert.equal(deliveryEffect?.status, "failed");
+      const failed = yield* orchestrator.getThreadProjection(threadId);
+      const reported = failed.turnItems.filter((item) => item.type === "error");
+      assert.equal(reported.length, 1);
+      assert.equal(reported[0]?.status, "failed");
+      assert.equal(reported[0]?.nodeId, nodeId);
+      // The answer stays recorded; the user is not asked again.
+      const request = failed.runtimeRequests.find((row) => row.id === requestId);
+      assert.equal(request?.status, "resolved");
+      assert.deepEqual(request?.answers, answers);
+    }),
+  );
+
   it.effect("dismisses message-capable questions directly and while settling", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
