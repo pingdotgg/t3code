@@ -130,8 +130,7 @@ export const ProviderAuthState = Schema.Struct({
   authorizationUrl: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
-  // Newer servers may add method types, interactions, or owners; older
-  // clients drop what they cannot decode instead of rejecting the state.
+  // Drop unknown auth methods rather than rejecting the entire state.
   methods: Schema.optionalKey(
     ForwardCompatibleArray(ProviderAuthMethod).check(Schema.isMaxLength(32)),
   ),

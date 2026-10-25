@@ -267,11 +267,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     />
   );
 
-  // On iOS `uiTextView` renders a real `UITextView`, which selects across every line,
-  // wraps, and lays out long documents through TextKit; on Android the primitive is an RN
-  // `Text`, which selects across its nested children. Either way "select all" takes the
-  // file rather than a line, which a `FlatList` row can never do because each row is its
-  // own selection scope.
+  // One native text view permits document-wide selection; virtualized rows cannot.
   const selectableBlock = props.selectable ? (
     <SourceText
       selectable

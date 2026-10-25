@@ -22,8 +22,7 @@ import { hasCloudPublicConfig } from "./publicConfig";
 export function ConnectOnboardingRouteScreen() {
   const navigation = useNavigation();
 
-  // The route is deep-linkable; without cloud config the sheet would present
-  // empty with no chrome to dismiss it, so bail back out instead.
+  // Without cloud config, deep links must exit to avoid an empty, undismissable sheet.
   useEffect(() => {
     if (hasCloudPublicConfig()) {
       return;
@@ -60,8 +59,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
     navigation.goBack();
   };
 
-  // Persist before dismissing so a quick sign-out/sign-in cannot race ahead
-  // of the preference write; the write is a local secure-store update.
+  // Persist before dismissing so quick sign-out/sign-in cannot outrun the write.
   const handleDontShowAgain = () => {
     void (async () => {
       if (userId) {

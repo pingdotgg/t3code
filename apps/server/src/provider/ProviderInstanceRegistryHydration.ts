@@ -45,9 +45,7 @@ export const deriveProviderInstanceConfigMap = (
     merged[instanceId] = { driver: driver.driverKind };
   }
 
-  // A project that turns an instance on needs it alive and probed even when the machine itself
-  // has it off, or a thread in that project would route to an instance nobody ever checked in
-  // on.
+  // Probe project-enabled instances even if disabled machine-wide; project threads can still route to them.
   for (const overrides of Object.values(settings.projectSettingsOverrides)) {
     for (const [rawInstanceId, projectOverride] of Object.entries(
       overrides?.providerInstances ?? {},

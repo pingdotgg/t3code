@@ -54,8 +54,7 @@ export function prepareSourceFileDocument(contents: string): SourceFileDocument 
   return document;
 }
 
-// A selectable document cannot virtualize its rows. Cap React spans instead; large
-// attachments remain fully selectable as one plain string, including every newline.
+// Virtualization prevents document-wide selection; cap spans and fall back to a fully selectable string.
 export function boundedSelectableSourceTokens(
   tokens: ReadonlyArray<ReadonlyArray<HighlightedToken>> | null,
 ): typeof tokens {

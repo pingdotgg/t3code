@@ -90,8 +90,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const [orientationSettled, setOrientationSettled] = useState(false);
   const [agentActivityStaged, setAgentActivityStaged] = useState(false);
   const requestedSceneRef = useRef<ShowcaseScene | null>(null);
-  // Staging reads the latest entities without restarting on every shell
-  // update, which would re-enter a permission prompt that is still open.
+  // Read current entities without restarting on shell updates and re-entering open permission prompts.
   const entitiesRef = useRef({ threads, projects });
   useEffect(() => {
     entitiesRef.current = { threads, projects };
@@ -142,8 +141,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       const value = getNativeShowcaseScene();
       if (!value || requestedSceneRef.current === value) return;
       requestedSceneRef.current = value;
-      // A native draw belongs only to the scene request that produced it. In
-      // particular, revisiting review must wait for its newly mounted surface.
+      // Draws belong to their scene request; revisiting review must wait for its new surface.
       clearShowcaseRenderSignal();
       setAgentActivityStaged(false);
       setRequestedScene(value);

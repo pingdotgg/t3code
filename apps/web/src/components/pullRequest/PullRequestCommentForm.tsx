@@ -87,8 +87,7 @@ export function PullRequestCommentForm({
     <div className="space-y-2">
       <Textarea
         ref={textareaRef}
-        // Locked while posting: the body is cleared on success, which would otherwise throw
-        // away a new draft typed while the request was still in flight.
+        // Lock while posting because success clears the draft.
         disabled={submitting !== null || actionPending}
         value={body}
         rows={3}

@@ -188,8 +188,7 @@ describe("readTranscriptRecords resume", () => {
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
 
-    // Codex re-emits an unchanged token_count on stream boundaries; the copy
-    // lands after the resume point and must still be dropped.
+    // Codex duplicates token_count at stream boundaries, including after resume points.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5) + codexUsageLine(21, 8));
     const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
     assert.isNotNull(second);

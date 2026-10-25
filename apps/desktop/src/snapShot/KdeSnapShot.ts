@@ -182,8 +182,7 @@ export class KdeCaptureSetup {
     }
     // KService must see the new desktop entry before KWin checks the executable.
     await run("kbuildsycoca6", ["--noincremental"]);
-    // AppImages change XDG search paths, and KService caches are also locale-specific.
-    // Refresh Plasma's cache in its session environment, not just the app's cache.
+    // AppImage search paths and locale affect KService caches; refresh in Plasma's session environment.
     await run("systemd-run", [
       "--user",
       "--quiet",

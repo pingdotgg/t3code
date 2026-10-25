@@ -69,10 +69,7 @@ const decodeSecurityWarning = Schema.decodeUnknownOption(
   }),
 );
 
-/**
- * The agent marks "Allow Always" on shell and web tools with a prompt injection
- * warning in `_meta`. Surface it as option text so both clients can show it.
- */
+/** Expose shell/web Allow Always _meta warnings as option text for both clients. */
 function antigravitySecurityWarning(option: EffectAcpSchema.PermissionOption): string | undefined {
   const meta = option._meta;
   if (!Predicate.isObject(meta)) return undefined;
@@ -346,10 +343,7 @@ export function isAntigravityOpenCommand(toolCall: AcpToolCallState): boolean {
   return toolCall.kind === "execute" && toolCall.status === "inProgress";
 }
 
-/**
- * ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs
- * or models.
- */
+/** ACP 1.1.1 reports subagent calls as ordinary tools without child IDs or models. */
 export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,
   rawPayload?: unknown,

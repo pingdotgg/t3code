@@ -52,7 +52,6 @@ export function AddCodexAccountDialog({
     if (pending || !name.trim() || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
       return;
     setPending(true);
-    // The ID is routing identity; the name is editable and need not be unique.
     const id = ProviderInstanceId.make(`codex_${randomUUID()}`);
     const result = await update({
       environmentId,

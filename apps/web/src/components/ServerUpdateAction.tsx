@@ -198,10 +198,7 @@ export function ServerUpdateProgress({
   );
 }
 
-/**
- * Self-updates delegate their full lifecycle to client-runtime so this component can unmount
- * during reconnect without losing operation state.
- */
+/** client-runtime owns self-updates so unmounting during reconnect preserves operation state. */
 export function ServerUpdateAction({
   environmentId,
   serverLabel,
@@ -330,9 +327,7 @@ export function ServerUpdateAction({
   );
 }
 
-/**
- * Its version comes from the host descriptor because the host never delivers a server config.
- */
+/** Read the host descriptor's version because the host never delivers server config. */
 export function OutdatedServerUpdateAction({
   environmentId,
   serverLabel,

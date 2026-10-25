@@ -585,10 +585,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     name: "acp_elicitation",
     buildInput: planQuestionsInput,
     providers: [
-      // Grok Build still elicits with the pre-1.0 session/elicitation wire
-      // method the current spec removed; T3 supports standard ACP only, so
-      // the scenario covers the registry driver until Grok ships
-      // elicitation/create.
+      // Grok Build uses removed session/elicitation; cover the registry driver until it supports standard elicitation/create.
       {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./acp_elicitation/registry_transcript.ndjson", import.meta.url),
@@ -816,8 +813,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           "./tool_call_restricted_granular/codex_transcript.ndjson",
           import.meta.url,
         ),
-        // gpt-6 models write through the shell; gpt-5.6-terra's apply_patch raises the
-        // file-change approval this fixture covers.
+        // gpt-6 uses shell writes; gpt-5.6-terra triggers this fixture's apply_patch approval.
         modelSelection: { ...CODEX_MODEL_SELECTION, model: "gpt-5.6-terra" },
         runtimePolicyOverride: RESTRICTED_GRANULAR_POLICY,
         assertOutput: assertToolCallRestrictedGranularOutput,

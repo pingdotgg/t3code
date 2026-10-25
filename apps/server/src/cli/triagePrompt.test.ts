@@ -7,10 +7,7 @@ import { assert, it } from "@effect/vitest";
 import { buildTriageContext, buildTriageLaunchPrompt, TRIAGE_PLAYBOOK } from "./triagePrompt.ts";
 
 it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
-  // Old releases fetch the repo copy from `main` and follow it when it differs
-  // from their bundled playbook. The two must say the same thing at HEAD, or a
-  // playbook edit silently changes behavior only for old (or only for new)
-  // installs.
+  // Older releases fetch the repository playbook.
   const canonicalPath = NodePath.join(
     import.meta.dirname,
     "../../../../.github/triage/PLAYBOOK.md",
@@ -19,8 +16,7 @@ it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
 });
 
 it("launch prompt stays a single argv-safe line naming the prompt file", () => {
-  // The launch argument goes through cmd.exe on Windows (.cmd shims), which
-  // cannot carry newlines; the playbook itself must stay on disk.
+  // Windows .cmd shims cannot carry multiline argv.
   const launch = buildTriageLaunchPrompt(String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`);
   assert.notInclude(launch, "\n");
   assert.include(launch, String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`);
@@ -28,8 +24,6 @@ it("launch prompt stays a single argv-safe line naming the prompt file", () => {
 });
 
 it("context file labels the CLI version as the CLI's, not the user's build", () => {
-  // `npx t3 triage` can resolve a different `t3` than the app the bug
-  // happened on (#13337), so the agent must not read it as the user's version.
   const context = buildTriageContext({
     generatedAt: "2026-09-24T00:00:00.000Z",
     cliVersion: "0.0.42",

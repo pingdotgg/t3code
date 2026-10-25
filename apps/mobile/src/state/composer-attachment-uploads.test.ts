@@ -136,8 +136,6 @@ vi.mock("./attachments", () => ({
 }));
 vi.mock("./assets", () => ({ assetEnvironment: { createUrl: (input: unknown) => input } }));
 vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
-  // The worker settles uploads with the real settlePromise and squashAtomCommandFailure;
-  // only the RPC transport is substituted.
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
   createEnvironmentRpcCommand: () => Symbol("rpc-command"),
   executeAtomQuery: async (

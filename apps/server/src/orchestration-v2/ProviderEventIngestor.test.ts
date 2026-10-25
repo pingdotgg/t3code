@@ -1809,7 +1809,6 @@ layer("ProviderEventIngestorV2", (it) => {
             },
           ],
         });
-        // The rename's final scan finishes while the child is still uncommitted.
         const snapshot = yield* projections.getShellSnapshot();
         assert.isFalse(
           [...snapshot.threads, ...snapshot.archivedThreads].some(

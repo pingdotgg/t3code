@@ -548,8 +548,7 @@ const make = Effect.gen(function* () {
         }
       }
 
-      // Keep only defaults that fit, before persisted rules so existing
-      // custom shortcuts retain priority when their conditions overlap.
+      // Put defaults before persisted rules so custom shortcuts win overlapping conditions.
       const availableSlots = Math.max(0, MAX_KEYBINDINGS_COUNT - customConfig.length);
       const defaultsToAppend = missingDefaults.slice(0, availableSlots);
       const skippedDefaults = missingDefaults.slice(availableSlots);
@@ -594,8 +593,7 @@ const make = Effect.gen(function* () {
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
-    // Editors emit multiple events per save (truncate, write, rename) and
-    // `fs.watch` can fire before the content has been flushed to disk.
+    // Saves emit multiple events; fs.watch may fire before content is flushed.
     const debouncedKeybindingsEvents = fs.watch(keybindingsConfigDir).pipe(
       Stream.filter((event) => {
         return (

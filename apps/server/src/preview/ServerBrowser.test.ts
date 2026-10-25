@@ -96,7 +96,6 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
-      // Snapshots read password fields from their own isolated world in each frame.
       if (method === "Page.createIsolatedWorld") {
         return {
           executionContextId: (input as { worldName?: string }).worldName === "t3-preview" ? 1 : 7,
@@ -436,7 +435,6 @@ it.live.each(["desktop" as const, undefined])(
         expect(error.message).toContain("cannot control");
         expect(yield* manager.list({ threadId: scope.thread.threadId })).toEqual(before);
         expect(contexts).toHaveLength(1);
-        // A rejected explicit target must not replace this session's working tab.
         const reused = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
           operation: "open",
@@ -792,7 +790,6 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       const page = contexts[0]!.page;
       const pdf = "https://example.com/paper.pdf";
       const request = { url: () => pdf, method: () => "GET", isNavigationRequest: () => true };
-      // What Chromium reports when a navigation turns into a download.
       page.emit("requestfailed", {
         ...request,
         frame: () => page,

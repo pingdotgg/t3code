@@ -119,10 +119,7 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId?: string;
-  /**
-   * Antigravity selects its credential source (Google account vs API key) from
-   * the method, so the session must not open first.
-   */
+  /** Authenticate before opening: Antigravity selects its credential source from the method. */
   readonly authenticateEagerly?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly additionalDirectories?: ReadonlyArray<string>;
@@ -130,9 +127,7 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
-  /**
-   * Redact secrets before logging. A failure closes the runtime.
-   */
+  /** Redact secrets before logging. Failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Disable only for non-interactive discovery that must surface auth-required immediately. */
   readonly authenticateOnAuthRequired?: boolean;
@@ -150,10 +145,7 @@ export interface AcpSessionRuntimeOptions {
   readonly onTermination?: (error: EffectAcpErrors.AcpError) => Effect.Effect<void>;
   readonly onOutgoingResponseFailure?: EffectAcpClient.AcpClientOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: EffectAcpClient.AcpClientOptions["onOutgoingResponse"];
-  /**
-   * The model config option accepts them even when the agent does not advertise
-   * them, and the agent validates them instead.
-   */
+  /** Unadvertised model IDs accepted by the config option; the agent validates them. */
   readonly customModels?: ReadonlyArray<string>;
 }
 
@@ -280,13 +272,7 @@ export function wrapCommandForLinuxCgroup(
         '[ "$actual" = "$expected" ] || exit 126',
         "unset ELECTRON_RUN_AS_NODE T3_ACP_CGROUP_WRAPPER",
         "trap 'exit 125' 0",
-        // The trap alone does not cover a failed `exec`: bash — which is
-        // /bin/sh on Arch derivatives — exits 127 without running the EXIT
-        // trap, so a missing agent binary reported "killed by the wrapper"
-        // instead of "never launched". The caller always hands us an absolute
-        // target, so test it as an executable file rather than asking the
-        // shell to resolve it. Name the target before exiting: exit 125 alone
-        // does not say which path was rejected.
+        // Bash can skip EXIT traps on failed exec; reject invalid targets with path and exit 125.
         '[ -f "$1" ] && [ -x "$1" ] || { printf "%s: %s: not an executable file\\n" "$0" "$1" >&2; exit 125; }',
         'exec "$@"',
       ].join("\n"),
@@ -304,8 +290,7 @@ export function resolveLinuxCgroupTargetCommand(
   cwd: string,
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
-  // Match Node spawn PATH fallback when PATH is undefined. An explicitly empty
-  // PATH stays empty (lookup only via empty-segment → cwd).
+  // Match Node spawn: only undefined PATH gets a fallback; empty PATH searches cwd.
   const pathEnv = environment.PATH === undefined ? "/usr/bin:/bin" : environment.PATH;
   const candidates = command.includes(NodePath.sep)
     ? [NodePath.resolve(cwd, command)]
@@ -480,8 +465,7 @@ export function makeLinuxCgroupController(): AcpLinuxCgroupController {
   };
 }
 
-// OS-state polls (cgroup emptiness, process trees) must use wall time. Under
-// TestClock, Effect.sleep never resolves unless the test advances the clock.
+// OS-state polls need wall time; TestClock sleep requires explicit advancement.
 const wallClock = Clock.Clock.defaultValue();
 const withWallClock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, Clock.Clock, wallClock);
@@ -842,10 +826,7 @@ export function capturePosixOwnershipLedger(input: {
     input.ledger.set(processIdentityKey(rootIdentity), ownedRoot);
     if (input.root !== undefined) input.root.value = ownedRoot;
   }
-  // Drop non-root ledger entries whose PID is free or whose identity no longer
-  // matches the live process at that PID. Either case can block admission of a
-  // legitimate child after PID reuse. Keep the root reservation even if the
-  // root briefly disappears mid-teardown (finalizer retry still needs it).
+  // Expire stale identities to allow PID reuse; retain the root reservation for finalizer retries.
   for (const [key, owned] of input.ledger.entries()) {
     if (owned.pid === input.rootPid) continue;
     const live = byPid.get(owned.pid);
@@ -903,9 +884,7 @@ export function terminatePosixOwnedProcessTree(input: {
   readonly root?: AcpPosixOwnershipRoot;
   readonly rootPid: number;
 }): Effect.Effect<void, AcpProcessGroupTerminationError> {
-  // This portable fallback can only admit processes whose exact parent chain is
-  // visible before it breaks. A descendant that double-forks before discovery
-  // requires pre-exec cgroup containment for a hard ownership guarantee.
+  // Parent-chain discovery misses early double-forks; only pre-exec cgroups guarantee ownership.
   const ledger = input.ledger ?? new Map<string, AcpOwnedPosixProcess>();
 
   const fail = (detail: string, cause?: unknown) =>
@@ -987,8 +966,7 @@ export function terminatePosixOwnedProcessTree(input: {
         }
       }
       try {
-        // Linux starttime prevents PID reuse across observations, but Node does
-        // not expose pidfd_send_signal. A final read-to-kill race remains.
+        // Node lacks pidfd_send_signal, so starttime checks still leave a read-to-kill race.
         input.controller.signalProcess(candidate.pid, signal);
         signalled.add(candidate.pid);
       } catch (cause) {
@@ -1135,10 +1113,7 @@ export class AcpSessionRuntime extends Context.Service<
     readonly handleUnknownExtNotification: EffectAcpClient.AcpClient["Service"]["handleUnknownExtNotification"];
     readonly handleExtRequest: EffectAcpClient.AcpClient["Service"]["handleExtRequest"];
     readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
-    /**
-     * Health probes use this to read advertised capabilities without authenticating or opening
-     * a session, so a probe can never start an interactive login or boot MCP servers.
-     */
+    /** Reads capabilities without authentication, session creation, or MCP startup. */
     readonly initialize: () => Effect.Effect<
       EffectAcpSchema.InitializeResponse,
       EffectAcpErrors.AcpError
@@ -1181,11 +1156,7 @@ export class AcpSessionRuntime extends Context.Service<
       providerId: string,
     ) => Effect.Effect<EffectAcpSchema.DisableProviderResponse, EffectAcpErrors.AcpError>;
     readonly logout: Effect.Effect<EffectAcpSchema.LogoutResponse, EffectAcpErrors.AcpError>;
-    /**
-     * `options.dispatched` settles once the `session/prompt` RPC is registered as the
-     * active prompt, so a caller that forks this effect knows when a later `cancel` will
-     * target this prompt.
-     */
+    /** options.dispatched settles when cancel can target this prompt. */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
       options?: { readonly dispatched?: Deferred.Deferred<void> },

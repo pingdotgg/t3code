@@ -585,8 +585,6 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  // Ctrl+wheel bypasses the menu accelerators, so it has to take the same
-  // zoom step, preview restore included, from the window's zoom-changed event.
   it.effect("zooms the app from Ctrl+wheel like the menu does", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

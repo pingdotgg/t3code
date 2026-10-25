@@ -27,11 +27,9 @@ function orderKey(subagent: Subagent): number {
 }
 
 /**
- * The agents behind the thread's agents pill and sheet: every agent of the active run (or, once
- * the thread is idle, of the run the most recently updated agent belongs to), plus any agent
- * still working from another run. A background agent outlives the turn that launched it, and the
- * Waiting strip counts it, so the pill has to count it and the sheet has to reach it too. Agents
- * of rolled-back runs stay out, as they do from the strip.
+ * The pill and sheet include the active run's agents, or the most recently updated agent's run when idle.
+ * Include agents still working from other runs so background work stays counted and reachable.
+ * Exclude rolled-back runs, matching the Waiting strip.
  */
 export function deriveThreadTurnSubagents(
   projection: Pick<Projection, "runs" | "subagents">,

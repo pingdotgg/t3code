@@ -132,8 +132,7 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
-    // These callbacks outlive startup while a run drains background work. Build
-    // them outside start's scope so they cannot retain its full thread history.
+    // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
@@ -402,8 +401,7 @@ export const layer: Layer.Layer<
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
-        // Preparing a run may already point the thread at a newly selected
-        // provider. Account commands still belong to its last native session.
+        // Preparation may select a new provider; account commands still target the last native session.
         const nativeThreads = new Map(
           projection.providerThreads
             .filter(
@@ -735,10 +733,7 @@ export const layer: Layer.Layer<
           );
         }
         if (providerThread.nativeThreadRef === null) {
-          // Hand the run's provider thread to the adapter so it adopts this
-          // row's identity when attaching native state. An adapter that mints
-          // its own row instead leaves two live rows per app thread, and
-          // `activeProviderThreadId` then flaps between them on every update.
+          // Pass the stored provider row for adoption; adapter-minted duplicates make activeProviderThreadId flap.
           return yield* loadFromProvider(
             session.ensureThread({
               threadId: projection.thread.id,
@@ -792,9 +787,7 @@ export const layer: Layer.Layer<
             modelSelection: run.modelSelection,
             runtimePolicy: resolvedRuntimePolicy,
             providerSessionId,
-            // The native ref is dropped so the adapter binds a fresh native
-            // session instead of retrying the resume that just failed, while
-            // still adopting this row's identity.
+            // Clear the native ref to force a fresh session while preserving row identity.
             existingProviderThread: { ...providerThread, nativeThreadRef: null },
           }),
         );
@@ -1036,8 +1029,7 @@ export const layer: Layer.Layer<
         text: message.text,
         records: message.context?.records ?? [],
       });
-      // Delivered once: this run's provider turn marks the work as told. A
-      // restart continuation is prompted by its own text or resumes natively.
+      // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
         projection.runs,
@@ -1115,8 +1107,7 @@ export const layer: Layer.Layer<
           )
           .map((source) => source.id),
       );
-      // Legacy attempts lack native identity; exclude their explicitly recovered history, whose
-      // attachments were not replayed into the replacement thread.
+      // Legacy attempts lack native ids; exclude recovered attachments absent from the replacement thread.
       const nativeContextEstimate = Effect.gen(function* () {
         return sameNativeThread
           ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
@@ -1255,8 +1246,7 @@ export const layer: Layer.Layer<
               text: context === "" ? userText : `${context}\n\nUser message:\n${userText}`,
             },
           }).pipe(
-            // A pending marker would make the next turn abandon this native
-            // session, though the refused prompt never reached it.
+            // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
               refusedBeforePrompt(error)
                 ? delivery.unsent.pipe(
@@ -1269,8 +1259,7 @@ export const layer: Layer.Layer<
                 : Effect.void,
             ),
           );
-          // The provider already accepted the turn. A stale pending marker
-          // can force a fresh thread later, but must not stop live ingestion.
+          // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
           yield* delivery.delivered.pipe(
             Effect.catchCause(() =>
               Effect.logWarning("Failed to record accepted context handoff delivery", {

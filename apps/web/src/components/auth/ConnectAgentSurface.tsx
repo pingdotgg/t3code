@@ -80,9 +80,7 @@ function readAuthorizationRequest(): AuthMcpAuthorizationRequest {
   return Object.fromEntries(new URL(window.location.href).searchParams);
 }
 
-/**
- * A session may only grant access whose scopes it holds itself.
- */
+/** Sessions can grant only scopes they hold. */
 function oneClickApproves(details: AuthMcpApprovalDetails, access: AuthMcpClientAccess) {
   return details.csrfToken !== undefined && (details.oneClickAccess ?? []).includes(access);
 }

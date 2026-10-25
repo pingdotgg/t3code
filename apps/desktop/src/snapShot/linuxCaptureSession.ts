@@ -4,8 +4,7 @@ import * as NodeURL from "node:url";
 import type { SnapShotKeyChord } from "@t3tools/contracts";
 import { nativeImage } from "electron";
 
-// Linux helpers that need no D-Bus. Keep this module free of dbus-next so the main
-// process can answer "which desktop is this" and read a PNG without loading it.
+// Keep dbus-next out of desktop detection and PNG reads in the main process.
 
 export const HYPRLAND_CAPTURE_ACTION = "capture-window";
 export const NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";

@@ -499,9 +499,7 @@ export function CommandPalette(props: {
     pendingAction.current?.();
   }, [props]);
 
-  // iOS drops Modal onDismiss when the VC is dismissed mid-presentation (e.g.
-  // ⌘K during the fade-in) or raced by another sheet — without a fallback the
-  // palette stays mounted-but-invisible and ⌘K dead-ends on a stale open state.
+  // iOS may drop onDismiss during presentation or competing sheets; a fallback clears stale palette state.
   useEffect(() => {
     if (visible) return;
     const fallback = setTimeout(handleDismissed, 400);

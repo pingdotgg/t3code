@@ -254,8 +254,7 @@ function useNativeReviewDiffPayload(
         });
     };
 
-    // Fabric attaches the React ref before Expo registers the native tag used by
-    // view functions. Starting on the next frame avoids racing that registration.
+    // Expo registers native tags after Fabric attaches refs; dispatch next frame.
     frame = requestAnimationFrame(dispatch);
 
     return () => {

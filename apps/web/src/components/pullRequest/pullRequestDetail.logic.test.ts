@@ -1312,7 +1312,6 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(1))).toBeNull();
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(2))?.number).toBe(2);
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(21))?.number).toBe(21);
-    // Twenty snapshots plus the list of their keys.
     expect(storage.size()).toBe(21);
   });
 

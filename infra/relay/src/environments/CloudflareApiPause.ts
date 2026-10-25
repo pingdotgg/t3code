@@ -22,14 +22,9 @@ const withoutSqlTransaction = (context: Context.Context<never>): Context.Context
   );
 
 /**
- * Cloudflare's API rate limit is per account, so a 429 seen by any isolate
- * applies to all of them. Both operations fail open: a pause that cannot be
- * read or recorded must not block provisioning.
- *
- * Both also run outside any ambient transaction. Provisioning calls Cloudflare
- * while holding an allocation row lock, and a 429 there rolls that transaction
- * back, which would drop the recorded pause; a failed read inside it would
- * abort the provision's own statements.
+ * Cloudflare's account-wide 429 pause is shared across isolates and must fail open.
+ * Run outside provisioning transactions: rollback would lose a recorded pause,
+ * and a failed pause read would abort provisioning's own statements.
  */
 export class CloudflareApiPause extends Context.Service<
   CloudflareApiPause,

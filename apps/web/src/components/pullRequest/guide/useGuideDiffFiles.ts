@@ -50,7 +50,6 @@ export function useGuideDiffFiles({
       : null,
   );
 
-  // Each page is folded in once, during the render that first sees it.
   const data = query.data;
   if (data !== null && !current.done && current.folded !== data) {
     const parsed = getRenderablePatch(

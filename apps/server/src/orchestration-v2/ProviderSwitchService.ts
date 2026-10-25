@@ -181,8 +181,7 @@ export const layer: Layer.Layer<
             .filter((session) => {
               if (!isLiveProviderSession(session)) return false;
               if (transition.type === "restart_and_resume") {
-                // Other live records may serve pooled or delegated bindings;
-                // only the session being replaced is released.
+                // Release only the replaced session; peers can serve pooled or delegated bindings.
                 return session.id === currentSession?.id;
               }
               if (transition.type === "create_with_handoff") {

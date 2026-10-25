@@ -17,9 +17,7 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import type { MenuPopupProps } from "./MenuPopup";
 import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol";
 
-// The glyph is a React Native view hosted in the Compose row, and its native host consumes
-// every touch over it, so the row's onClick never sees a tap on the icon. The glyph runs the
-// row's action itself; the row stays the accessible element.
+// The Compose glyph host consumes touches; run the action here and keep accessibility on the row.
 function MenuIcon(props: {
   readonly name: AppSymbolName;
   readonly color?: MenuAction["imageColor"];
@@ -57,7 +55,6 @@ function MenuIcon(props: {
   );
 }
 
-/** Native popup positioned at the original trigger, outside virtualized rows. */
 export function MenuPopup(props: MenuPopupProps) {
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, menuItemHeight } = useAndroidControlSizing();

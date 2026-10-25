@@ -143,7 +143,7 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
 });
 
 describe("interrupt turn", () => {
-  // A stale cached item has nothing left to interrupt, so the server can reject Stop (#18188).
+  // A stale cached item has nothing left to interrupt, so the server can reject Stop.
   it.effect("reconciles pending work when the server rejects the interrupt", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

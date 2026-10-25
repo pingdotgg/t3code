@@ -163,10 +163,7 @@ export function resolveMarkdownFontSizes(baseFontSize: number): ResolvedMarkdown
   };
 }
 
-/**
- * Maps the Uniwind `--text-*` theme variables (see global.css) to the
- * MOBILE_TYPOGRAPHY roles they were authored from. Keep in sync with both.
- */
+/** Keep text-variable roles in sync with global.css and MOBILE_TYPOGRAPHY. */
 const TEXT_SCALE_VARIABLE_ROLES = {
   "--text-3xs": MOBILE_TYPOGRAPHY.micro,
   "--text-2xs": MOBILE_TYPOGRAPHY.caption,

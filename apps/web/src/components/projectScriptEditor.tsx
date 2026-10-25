@@ -158,8 +158,7 @@ export function ProjectScriptEditorDialog({
   onClose: () => void;
 }) {
   const canEditActions = useEnvironmentScope(environmentId, editScope);
-  // Keyed by the request it belongs to: a new request starts from its own error,
-  // and a late save from the previous request can't overwrite it.
+  // Scope errors by request so late saves cannot overwrite a newer request's error.
   const [errorState, setErrorState] = useState<{
     readonly request: ProjectScriptEditorRequest;
     readonly message: string | null;

@@ -255,8 +255,7 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
   },
-  // Needs the claude.ai Firecrawl connector on the recording account. Claude
-  // Code describes MCP tool uses in an undeclared `tool_use_meta` field.
+  // Requires the recording account's claude.ai Firecrawl connector; MCP metadata uses undeclared `tool_use_meta`.
   claude_mcp_tool_presentation: {
     prompts: [CLAUDE_MCP_TOOL_PRESENTATION_PROMPT],
     defaultTranscriptFile: "fixtures/claude_mcp_tool_presentation/claude_transcript.ndjson",

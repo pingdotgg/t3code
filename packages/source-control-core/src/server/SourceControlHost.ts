@@ -65,7 +65,7 @@ export class SourceControlHost extends Context.Service<
   SourceControlHost,
   {
     readonly settings: {
-      /** Read fresh on each call, so a credential saved in Settings applies without a restart. */
+      /** Read fresh on each call to pick up credential changes. */
       readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
     };
     readonly process: {
@@ -85,10 +85,7 @@ export class SourceControlHost extends Context.Service<
         readonly cwd: string;
         readonly revision: string;
       }) => Effect.Effect<{ readonly commitSha: string }, GitCommandError>;
-      /**
-       * The outer effect resolves the repository and fails when the server cannot drive
-       * one there; the inner one lists its remotes.
-       */
+      /** The outer effect resolves the repository; the inner effect lists its remotes. */
       readonly remotes: (
         cwd: string,
       ) => Effect.Effect<Effect.Effect<VcsListRemotesResult, VcsError>, VcsError>;

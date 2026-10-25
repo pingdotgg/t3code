@@ -17,7 +17,7 @@ import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 /** The relay enforces the same cap. */
 export const WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
-/** Response header naming what happened to the request; the relay records it. */
+// The relay records this outcome header.
 const WEBHOOK_OUTCOME_HEADER = "x-t3-hook-outcome";
 
 const json = (status: number, body: Record<string, string>, outcome: string) =>

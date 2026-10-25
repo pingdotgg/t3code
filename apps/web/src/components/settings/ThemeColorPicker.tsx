@@ -88,26 +88,21 @@ function ThemeColorPickerPanel({
 
   if (syncedValue !== normalizedValue) {
     setSyncedValue(normalizedValue);
-    // While a text field is focused, the incoming value may be the guided
-    // editor's readability-adjusted echo of what is being typed; rewriting the
-    // draft would fight the keystrokes. The swatch still tracks via hsv.
+    // Ignore readability-adjusted echoes while typing so drafts keep keystrokes; hsv still updates the
+    // swatch.
     if (!isEditingText) {
       setHexDraft(normalizedValue);
       setRgbDraft(themeRgbValue(normalizedValue));
     }
-    // Keep the current hue/saturation when the incoming value is just our own
-    // change echoed back; hex → HSV is lossy for greys, white, and black.
+    // Preserve hue/saturation for echoed changes; hex-to-HSV loses them for greys, white, and black.
     if (currentColor !== normalizedValue) setHsv(hexToHsv(normalizedValue));
   }
 
-  // Local state updates immediately for a smooth thumb; the parent commit
-  // (which can regenerate a whole guided palette) is batched to one call per
-  // animation frame.
+  // Update the thumb immediately; batch expensive parent palette regeneration to one commit per frame.
   const commitColor = useStableCallback(onChange);
   const pendingCommitRef = useRef<string | null>(null);
   const commitFrameRef = useRef<number | null>(null);
-  // The final drag frame must not be lost when the popover closes or the
-  // pointer lifts before the animation frame fires.
+  // Flush the last drag frame if the popover closes or the pointer lifts before animation frame.
   const flushPendingCommit = () => {
     if (commitFrameRef.current !== null) {
       cancelAnimationFrame(commitFrameRef.current);

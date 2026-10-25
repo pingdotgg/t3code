@@ -2,10 +2,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { AppState } from "react-native";
 
-/**
- * Retained routes stay mounted when hidden, so an ungated interval would keep
- * re-rendering them.
- */
+/** Hidden retained routes stay mounted; gate intervals to avoid background re-renders. */
 export function useVisibleSecondClock(enabled: boolean): number {
   const focused = useIsFocused();
   const [appActive, setAppActive] = useState(() => AppState.currentState === "active");

@@ -25,9 +25,7 @@ function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-/**
- * Grok resolves through xAI's first-party entry, which has no bare alias.
- */
+// Grok's xAI first-party rate entry has no bare alias.
 export function cursorRateModel(model: string): string {
   const base = model
     .replace(/^cursor-/, "")

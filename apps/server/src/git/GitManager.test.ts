@@ -209,10 +209,7 @@ function initRepo(
     yield* runGit(cwd, ["init", "--initial-branch=main"]);
     yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
     yield* runGit(cwd, ["config", "user.name", "Test User"]);
-    // Hermetic line endings: machine-global `core.autocrlf=true` on Windows
-    // makes Git check out CRLF, which breaks exact-content assertions that
-    // write LF with Node. Local config overrides the global so the fixture
-    // (and its linked worktrees, which share config) always checks out LF.
+    // Override global autocrlf on Windows for LF assertions, including linked worktrees.
     yield* runGit(cwd, ["config", "core.autocrlf", "false"]);
     yield* fs.writeFileString(NodePath.join(cwd, "README.md"), "hello\n");
     yield* runGit(cwd, ["add", "README.md"]);
@@ -1601,9 +1598,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/merged-branch-deleted"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/merged-branch-deleted"]);
 
-      // GitHub commonly deletes a pull request's head branch after merge. Git
-      // removes the remote-tracking ref, but preserves the local branch's
-      // remote and merge configuration as evidence that it was published.
+      // Deleting a merged head removes its tracking ref but leaves remote/merge config proving publication.
       yield* runGit(repoDir, ["push", "origin", "--delete", "feature/merged-branch-deleted"]);
       const configuredRemote = yield* runGit(repoDir, [
         "config",
@@ -3674,7 +3669,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const forkDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
-      // Origin is the base repository; a lone remote would be the base itself.
+      // A lone remote would be treated as the base repository.
       yield* runGit(repoDir, [
         "remote",
         "add",

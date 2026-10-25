@@ -79,8 +79,7 @@ export function shouldShowComposerContextStrip(input: {
   );
 }
 
-// Labels collapse to icons when the strip's content no longer fits. A small
-// hysteresis on the way back out keeps the boundary from flapping.
+// Hysteresis prevents labels and icons from flapping at the width boundary.
 const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
 
 export function resolveContextStripLabelsCompact(input: {

@@ -41,7 +41,6 @@ function sessionHasScope(
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
-// Keyed by scope and ids so callers get one Set per session change, not one per render.
 const environmentsWithScopeAtom = Atom.family((key: string) => {
   const [scope, idsKey = ""] = key.split(/\n(.*)/s) as [AuthEnvironmentScope, string?];
   const ids = idsKey === "" ? [] : (idsKey.split("\n") as EnvironmentId[]);
@@ -91,10 +90,7 @@ export function readPreparedConnection(environmentId: EnvironmentId) {
   );
 }
 
-/**
- * `data` stays populated across SWR revalidations; `isPending` is only
- * meaningful before the first resolve.
- */
+/** data survives SWR revalidation; isPending applies only before first resolve. */
 export function useEnvironmentSessionState(environmentId: EnvironmentId) {
   const result = useAtomValue(environmentSession.sessionStateAtom(environmentId));
   return {

@@ -58,10 +58,7 @@ export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
 export type SourceControlManagedCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "managed-cli";
   readonly probe: (cwd: string) => Effect.Effect<SourceControlProviderDiscoveryItem>;
-  /**
-   * `null` when the integration holds nothing for the remote, which includes its CLI not being
-   * installed. A failure means it could not tell, and the registry does not keep that answer.
-   */
+  /** Null includes missing CLIs. Failure means unknown and must not be cached by the registry. */
   readonly refineUnknownRemote: (input: {
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext;
@@ -301,10 +298,7 @@ export function probeSourceControlProvider(input: {
 
 const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
 
-/**
- * A hosting CLI that is not installed claims no remote. The spawner checks the cwd before the
- * executable, so only the executable's own ENOENT comes from `ChildProcess`.
- */
+/** The spawner checks cwd first, so ChildProcess NotFound identifies the executable. */
 export function isMissingExecutable(error: unknown): boolean {
   return (
     isVcsProcessSpawnError(error) &&
@@ -368,8 +362,7 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
     const results = yield* Effect.forEach(input.specs, (spec) =>
       refineWithSpec({ ...input, spec }).pipe(Effect.result),
     );
-    // A claim reached after another integration could not answer is not settled: that one might
-    // have claimed the host first.
+    // An earlier integration that could not answer might have claimed this host.
     let settled = true;
     for (const result of results) {
       if (Result.isFailure(result)) settled = false;

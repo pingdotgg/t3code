@@ -66,7 +66,6 @@ export function AttachmentFilePreview(props: {
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const attachmentId = props.asset?.attachmentId;
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
-  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
   const resource = attachmentId
     ? {
         _tag: "attachment" as const,
@@ -177,8 +176,7 @@ export function AttachmentFilePreview(props: {
         if (!response.ok) throw new Error("The file could not be loaded. Try again.");
         file = await response.blob();
       }
-      // A Blob keeps cross-origin downloads inside the desktop client instead of
-      // navigating its custom app scheme to an external browser.
+      // Blob downloads keep desktop's custom app scheme from navigating to an external browser.
       const downloadUrl = URL.createObjectURL(file);
       // Scheduled before the click so the URL is revoked even if the click throws.
       setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);

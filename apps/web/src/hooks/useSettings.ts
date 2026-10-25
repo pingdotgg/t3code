@@ -218,11 +218,7 @@ export function persistClientSettingsPatch(
   });
 }
 
-/**
- * If another settings write lands while persistence is pending, the updater is
- * reapplied to that newer snapshot and persisted again so neither change is
- * lost.
- */
+/** Reapply to newer snapshots after pending writes to avoid losing concurrent changes. */
 export async function persistClientSettingsUpdate(
   update: (current: ClientSettings) => ClientSettings,
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
@@ -268,10 +264,7 @@ export function getClientSettings(): ClientSettings {
   return getClientSettingsSnapshot();
 }
 
-/**
- * Failed reads reject and remain retryable. They must not allow defaults to overwrite saved
- * preferences.
- */
+/** Failed reads reject and remain retryable so defaults cannot overwrite saved preferences. */
 export function ensureClientSettingsHydrated(): Promise<void> {
   return hydrateClientSettings();
 }
@@ -295,11 +288,7 @@ export function useClientSettingsHydrationStatus(): ClientSettingsHydrationStatu
 const getDefaultClientSettings = () => DEFAULT_CLIENT_SETTINGS;
 const selectWholeClientSettings = (settings: ClientSettings) => settings;
 
-/**
- * The selection, not the whole snapshot, is what the store compares, so a write re-renders only
- * readers whose selected value changed. Selectors may build objects or arrays: a structurally
- * equal result keeps the previous reference.
- */
+/** Structurally equal selections retain their reference and skip rendering. */
 export function useClientSettings<T = ClientSettings>(
   selector?: (settings: ClientSettings) => T,
 ): T {
@@ -316,8 +305,7 @@ export function mergeEnvironmentSettings(
   serverSettings: ServerSettings,
   clientSettings: ClientSettings,
 ): UnifiedSettings {
-  // Decode drops retired client keys, but older untyped persistence adapters
-  // can still return them. Server-owned values must always win.
+  // Older untyped adapters can return retired client keys; server values must win.
   return {
     ...clientSettings,
     ...serverSettings,
@@ -367,7 +355,6 @@ export function useMigrateModelPreferences(
   }, [clientSettings, connectionGeneration, environmentId, hydrated, migrate, settings]);
 }
 
-/** Selecting inside the client store keeps a client write from re-rendering unaffected readers. */
 export function useMergedSettings<T = UnifiedSettings>(
   serverSettings: ServerSettings,
   selector?: (settings: UnifiedSettings) => T,
@@ -409,12 +396,7 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
   });
 }
 
-/**
- * Held at the default sidebar until client settings hydrate: the pre-hydration snapshot is just
- * the schema defaults, so resolving against it could mount one sidebar and then swap it out
- * once persisted settings land — remounting the whole tree for everyone instead of only for
- * legacy opt-ins.
- */
+/** Wait for hydration: swapping sidebar implementations after mount remounts the whole tree. */
 export function useLegacySidebarEnabled(): boolean {
   const settingsHydrated = useClientSettingsHydrated();
   const legacySidebarEnabled = useClientSettings((settings) => settings.legacySidebarEnabled);
@@ -492,7 +474,6 @@ export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId |
       pending: true,
     };
     pendingFavorites.current.set(key, pending);
-    // save settles into a result and never rejects, so the rollback below always runs.
     const result = await save({
       setModelFavorites: [{ provider, model, favorite: pending.favorite }],
     });
@@ -563,11 +544,7 @@ export function usePrimarySettings<T = UnifiedSettings>(
 export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE =
   "This setting is saved on a server, and the hosted app is not anchored to one. Change it from the desktop app or from the server's own address.";
 
-/**
- * The hosted app connects to every environment as a remote, so it has no
- * primary: `usePrimarySettings` reads schema defaults there and writes have
- * nowhere to go.
- */
+/** Hosted clients have no primary: usePrimarySettings reads defaults and cannot write. */
 export function usePrimarySettingsAvailable(): boolean {
   const primaryEnvironment = usePrimaryEnvironment();
   return primaryEnvironment !== null || !isHostedStaticApp();
@@ -581,8 +558,7 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
   const results = useAtomValue(environmentSessionStatesAtom(environmentIdsKey(targetIds)));
   return targetIds.flatMap((environmentId, index) => {
     const result = results[index]!;
-    // A cold grant must not drop a shared edit. The server authorizes the
-    // write; mismatch suggestions still wait for a confirmed grant.
+    // Let the server authorize shared edits with cold grants; suggestions still need confirmed grants.
     if (includePending && result._tag === "Initial") {
       return [environmentId];
     }

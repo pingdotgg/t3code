@@ -1097,7 +1097,6 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         creationSource: "server",
         restartContinuationOfRunId: source.id,
       });
-      // The held run resumed after the cancelled source ran, so it sorts after it.
       assert.deepEqual(yield* threadState(threadId), {
         runs: ["completed", "cancelled", "interrupted"],
         watched: [],

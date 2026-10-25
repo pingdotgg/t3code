@@ -2,11 +2,7 @@ import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
-/**
- * Open on purpose, like `ProviderDriverKind`: a server can report a host this client does not
- * ship a definition for, and clients fall back to a generic presentation instead of failing to
- * decode.
- */
+/** Accept unknown hosts so clients can fall back to generic presentation. */
 export const SourceControlProviderKind = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.isPattern(/^[a-z][a-z0-9-]*$/),

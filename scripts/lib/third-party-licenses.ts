@@ -535,7 +535,6 @@ function exportTargets(value: unknown, underTypesCondition = false): ReadonlyArr
   );
 }
 
-/** Declarations, or the package's own manifest that many packages also export. Neither is code. */
 function isTypeDeclaration(target: ExportTarget): boolean {
   return (
     target.underTypesCondition ||
@@ -558,11 +557,7 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-/**
- * A package that only describes types (DefinitelyTyped, csstype, undici-types): it declares types
- * and has no JS entry, so nothing of it ships. A types condition or a name with "types" in it is not
- * enough on its own: `@shikijs/types` exports real code next to its declarations.
- */
+/** Type declarations plus no JS entry mean nothing ships; a types name/condition alone does not prove that. */
 async function isTypeOnlyPackage(packageJson: PackageJson, packageRoot: string): Promise<boolean> {
   const targets = exportTargets(packageJson.exports);
   const declaresTypes =

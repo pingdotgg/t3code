@@ -10,7 +10,6 @@ function row(html: string) {
 
 describe("collectThreadFindRanges", () => {
   it("finds matches split across inline token spans, in order", () => {
-    // Shiki-style tokens split one identifier over several text nodes.
     const container = row(
       "<pre><code><span>con</span><span>st</span> a = <span>c</span>onst; const</code></pre>",
     );

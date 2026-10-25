@@ -107,7 +107,7 @@ export function WorkLogButton({
   );
 }
 
-/** Div-based disclosure supports selectable detail and nested actions in an entry. */
+/** Div disclosure permits selectable detail and nested actions. */
 export function WorkLogRow({
   icon,
   label,
@@ -139,8 +139,6 @@ export function WorkLogDetails({
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const atLiveEdgeRef = useRef(true);
-  // No deps: each streamed chunk re-renders this, and pinning before paint
-  // shows the new text without a visible jump.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (followLive && atLiveEdgeRef.current && scroller) {

@@ -10,7 +10,7 @@ export class BrowserTraceCollector extends Context.Service<
   }
 >()("t3/observability/BrowserTraceCollector") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = (sink: TraceSink): BrowserTraceCollector["Service"] =>
   BrowserTraceCollector.of({
     record: (records) =>

@@ -89,11 +89,7 @@ export function projectedRowEncodedBytes(row: HistoryRow): number {
   return bytesOfJson(row);
 }
 
-/**
- * Bounded-snapshot cost: local rows also land in `projection.turnItems`, so
- * charge the nested item a second time. Inherited rows only appear in the
- * visible list.
- */
+/** Charge local items twice because bounded snapshots also include projection.turnItems; inherited rows appear only once. */
 export function projectedRowBoundedSnapshotEncodedBytes(
   row: OrchestrationV2ProjectedTurnItem,
   threadId: ThreadId | string,
@@ -171,11 +167,7 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
   );
 }
 
-/**
- * A wake (PR watch, task completion) starts its run with a notification instead of a user message, so a
- * notification starts a turn when it is its run's first input. ProjectionStore's `run_starts` window query
- * applies the same rule.
- */
+/** Notifications can start wake turns when they are the run's first input; match ProjectionStore run_starts. */
 export function threadHistoryTurnStarts(
   items: ReadonlyArray<HistoryRow["item"]>,
 ): ReadonlyArray<boolean> {
@@ -388,12 +380,7 @@ function isLocalProjectedRow(
   return row.visibility === "local" || String(row.sourceThreadId) === String(projection.thread.id);
 }
 
-/**
- * Keep every small request item from the full projection even when it sits
- * outside the recent visible window, so a later history page that introduces
- * the matching result still has the request available for live attempt/run
- * reducers.
- */
+/** Retain small requests outside the visible window; later result pages still need them for attempt/run reducers. */
 function retainedInterruptRequestTurnItems(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -469,16 +456,12 @@ function messagesForBoundedProjection(
       retainedMessageIds.has(String(message.id)) ||
       (message.runId !== null && retainedRunIds.has(String(message.runId))) ||
       message.delegatedCompletion !== undefined ||
-      // Clients open a workflow coordinator's thread from its script, however
-      // far back the history window starts. A thread has at most one.
+      // Keep the workflow script outside the history window; clients use it to open the coordinator thread.
       message.workflowScript === true,
   );
 }
 
-/**
- * Used as a cheap partial-timeline watermark so old missing turn-item updates
- * cannot append newest when the bounded window has no local rows.
- */
+/** Watermark prevents old missing updates from appending newest when bounded windows lack local rows. */
 export function computeLatestLocalTurnOrdinal(
   turnItems: ReadonlyArray<{ readonly ordinal: number }>,
 ): number | null {

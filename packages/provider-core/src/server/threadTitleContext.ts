@@ -23,8 +23,7 @@ export function limitTitleMessage(text: string, budget: number): string {
 
 export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>) {
   const sections = messages.flatMap((message, index) => {
-    // Thinking traces are working notes, not what the thread is about, and they
-    // dwarf the answer they precede. Titling on them would be worse and costlier.
+    // Thinking traces dwarf answers without identifying the thread subject.
     if (
       message.role === "system" ||
       message.role === "reasoning" ||

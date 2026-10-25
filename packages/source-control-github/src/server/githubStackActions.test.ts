@@ -14,13 +14,7 @@ import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
 
-/**
- * One request as the fake saw it, flattened to words: the path or document, then each variable
- * or body field as `name=value`, so an assertion reads as "this request carried that value".
- * A batched GraphQL request is one call, its variables carrying their alias prefixes.
- */
 type Call = ReadonlyArray<string>;
-/** The next answer in the script: a REST body, or for GraphQL the `data` to answer with. */
 type Send = (call: Call, kind: "graphql" | "rest") => Effect.Effect<unknown>;
 
 let gitCalls: Array<ReadonlyArray<string>> = [];
@@ -45,7 +39,6 @@ const fakeGit = Layer.mergeAll(
   FileSystem.layerNoop({ makeTempDirectoryScoped: () => Effect.succeed("/tmp/scratch") }),
 );
 
-/** GitHub's GraphQL endpoint, answering each request with the next scripted `data`. */
 const graphQlHttp = (send: Send) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
@@ -155,7 +148,6 @@ const input = {
   action: "merge" as const,
 };
 const writable = { headRepository: { viewerPermission: "WRITE" }, maintainerCanModify: false };
-/** One batched branch-access answer: each open layer's pull request, in stack order. */
 const accessOf = (...pullRequests: ReadonlyArray<unknown>) =>
   Object.fromEntries(
     pullRequests.map((pullRequest, index) => [`_${index}_repository`, { pullRequest }]),
@@ -329,11 +321,9 @@ it.effect("rebases the open layers bottom to top in a scratch clone, each onto t
     gitCalls = [];
     const api = fake([stack, access]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    // Both layers' access is one aliased read, layer by layer in stack order.
     expect(api.calls[1]).toEqual(
       expect.arrayContaining(["_0_number=2", "_1_number=3", "_0_owner=acme", "_0_name=web"]),
     );
-    // GitHub is only read; every change is a git push with a lease on the reviewed head.
     expect(api.calls.some(isMutation)).toBe(false);
     const rebases = gitCalls.filter((args) => args[0] === "rebase");
     expect(rebases).toEqual([

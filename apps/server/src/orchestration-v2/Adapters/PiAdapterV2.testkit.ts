@@ -119,11 +119,7 @@ function adapterRequestId(frame: unknown): string | undefined {
   return typeof id === "string" && ADAPTER_REQUEST_ID.test(id) ? id : undefined;
 }
 
-/**
- * Compares a recorded request against the adapter's own request id, so the
- * correlation Pi recorded holds without pinning counter values. Any other id,
- * such as the Pi request id an `extension_ui_response` must echo, stays exact.
- */
+/** Rebind adapter request ids without pinning counters; provider ids that responses must echo stay exact. */
 function withRequestId(expected: unknown, actual: unknown): unknown {
   const actualId = adapterRequestId(actual);
   return isRecord(expected) && adapterRequestId(expected) !== undefined && actualId !== undefined
@@ -181,13 +177,7 @@ interface PiReplayProcess {
   open: boolean;
 }
 
-/**
- * Independent adapter fibers (skill discovery beside thread setup, a settle
- * probe beside a steer) can reach stdin in a different order than recorded, so
- * a write that matches a later outbound record of the same turn is held until
- * the transcript reaches it. A write that matches nothing before the next
- * turn-starting record fails immediately.
- */
+/** Adapter fibers can reorder stdin writes; hold matches within the turn until reached, and fail unmatched writes. */
 class PiReplayController {
   private cursor = 0;
   private failure: unknown = null;

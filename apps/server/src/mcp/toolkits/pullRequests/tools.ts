@@ -260,7 +260,7 @@ export const ThreadPullRequestEntry = Schema.Struct({
   stack: Schema.NullOr(
     Schema.Struct({
       kind: Schema.Literals(["native", "derived"]),
-      /** 1-based layer, bottom of the stack first. Pull requests built on the same one share it. */
+      /** 1-based layer from the bottom; siblings share a layer. */
       position: Schema.Int,
       size: Schema.Int,
     }),

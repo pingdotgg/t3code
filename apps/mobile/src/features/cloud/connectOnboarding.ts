@@ -2,8 +2,7 @@ import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../../state/atom-registry";
 
-// Holds the account id so a sign-out between the request and the navigation
-// cannot present the sheet for the wrong account.
+// Retain the account id so sign-out cannot present onboarding for the wrong account.
 export const connectOnboardingRequestAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:connect-onboarding-request"),

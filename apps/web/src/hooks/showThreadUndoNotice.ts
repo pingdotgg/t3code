@@ -55,8 +55,7 @@ function refreshNotice() {
           (entry) => liveUndos.includes(entry) && entry.claim.isCurrent(),
         );
         liveUndos = liveUndos.filter((entry) => !group.includes(entry));
-        // Consume every claim before awaiting, so repeated clicks or shortcuts
-        // cannot restore the same group twice.
+        // Claim before awaiting to prevent repeated actions restoring a group twice.
         for (const entry of current) entry.claim.finish();
         refreshNotice();
         await Promise.all(

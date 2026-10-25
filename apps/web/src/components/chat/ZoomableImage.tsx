@@ -9,9 +9,7 @@ import { AttachmentImage } from "../media/AttachmentImage";
 
 const MAX_ZOOM = 8;
 
-// The viewer lays out below the native caption strip so its controls never share a row with
-// the window buttons. ExpandedImageDialog and the media dialog viewport mirror this in CSS
-// through --native-titlebar-height.
+// Subtract the caption strip, matching dialog CSS's --native-titlebar-height.
 function readViewerSize() {
   return { width: window.innerWidth, height: window.innerHeight - windowControlsOverlayHeight() };
 }
@@ -125,7 +123,7 @@ export function ZoomableImage({
       changeZoom(1);
     };
     window.addEventListener("resize", resize);
-    // The caption strip can come and go around fullscreen without a matching resize event.
+    // Fullscreen caption-strip changes may not emit resize.
     const stopOverlayListener = onWindowControlsOverlayGeometryChange(resize);
     return () => {
       window.removeEventListener("resize", resize);
@@ -167,7 +165,7 @@ export function ZoomableImage({
           cursor: zoom > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
         }}
         onClick={(event) => {
-          // Pointer capture also produces a click after dragging; leave the image zoomed.
+          // Pointer capture emits a click after dragging; preserve zoom.
           if (suppressClickRef.current || event.detail > 1) return;
           changeZoom(zoomRef.current > 1 ? 1 : 2, { x: event.clientX, y: event.clientY });
         }}

@@ -294,8 +294,7 @@ async function resolve({ github, context, core }) {
 
   const sourceArtifacts = await artifactsForRun(github, owner, repo, source.id);
   const sourceArtifact = findResultArtifact(sourceArtifacts);
-  // CI requires the artifact whenever the server tests run, so a passing run
-  // without one skipped them because the PR cannot affect the server.
+  // Successful server tests require this artifact; its absence means CI skipped them.
   if (!sourceArtifact && source.conclusion === "success") {
     core.info("CI skipped the server tests for this change; nothing to report.");
     core.setOutput("publish", "false");

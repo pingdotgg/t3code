@@ -66,7 +66,7 @@ function PendingSecretRequestForm(props: {
   const [secret, setSecret] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Enter then a click can both run before a re-render; this guard is synchronous.
+  // Enter and click can both submit before a render.
   const inFlight = useRef(false);
 
   const send = async (
@@ -117,15 +117,13 @@ function PendingSecretRequestForm(props: {
         <div className="min-w-0 flex-1">
           <Input
             id={inputId}
-            // Masked text rather than a password field: browsers offer to
-            // save any submitted password, and this is not a login.
+            // Password fields prompt to save credentials; this secret is not a login.
             type="text"
             className="[-webkit-text-security:disc]"
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
-            // Password managers otherwise offer to save or fill this field.
             data-1p-ignore
             data-lpignore="true"
             data-bwignore

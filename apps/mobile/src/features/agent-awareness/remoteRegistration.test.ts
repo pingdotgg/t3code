@@ -94,8 +94,7 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
-// The state modules pull the whole connection stack (and native expo modules)
-// into the import graph; the arming gate only needs the configs map.
+// Avoid importing the native connection stack; this gate only needs configs.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
     get: () => environmentConfigsMock.configs,

@@ -106,14 +106,13 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
     return;
   }
 
-  // The result dialogs need no main window. Opening one before the backend
-  // answers strands the renderer on a failed auth bootstrap.
+  // Opening a window before backend confirmation can strand it on failed auth bootstrap.
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.activate;
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -143,10 +142,7 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
-    // Chromium already pastes as plain text for this chord, so the accelerator
-    // needs nothing from the menu: the composer and the terminal each arm
-    // themselves from the same keydown. Routing it through the renderer anyway
-    // lands a second, injected paste and doubles the text.
+    // Chromium and the renderer already handle this chord; injecting another paste duplicates text.
     const pasteAsTextClick = (
       _item: Electron.MenuItem,
       _window: Electron.BaseWindow | undefined,
@@ -238,11 +234,7 @@ export const make = Effect.gen(function* () {
       {
         label: "View",
         submenu: [
-          /*
-            Not the reload, DevTools or zoom roles: those act on the focused
-            webContents, so with a browser page focused they reload or zoom
-            the guest page and the app UI appears stuck.
-          */
+          /* Native reload/DevTools/zoom roles target focused guests; these commands must target the app. */
           { label: "Reload", accelerator: "CmdOrCtrl+R", click: mainContentsClick("reload") },
           {
             label: "Force Reload",
@@ -274,8 +266,7 @@ export const make = Effect.gen(function* () {
               ]
             : []),
           { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
-          // The numeric keypad sends its own key codes, so the number-row
-          // accelerators above never match it.
+          // Keypad codes do not match number-row accelerators.
           {
             label: "Actual Size",
             accelerator: "CmdOrCtrl+num0",

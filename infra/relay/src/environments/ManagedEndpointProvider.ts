@@ -166,11 +166,7 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly origin: RelayManagedEndpointOrigin;
       readonly endpoint: RelayManagedEndpoint;
     }) => Effect.Effect<ManagedEndpointOriginSyncResult, ManagedEndpointProviderError>;
-    /**
-     * Captures the allocation generation owned by an unlink before its link
-     * revocation commits. Passing this target to `deprovision` prevents a
-     * concurrent relink from having its newer allocation torn down.
-     */
+    /** Capture before revocation so a concurrent relink's newer allocation survives deprovision. */
     readonly prepareDeprovision: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -183,12 +179,7 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly environmentId: string;
       readonly target?: ManagedEndpointDeprovisionTarget | null;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
-    /**
-     * Resolves to whether the caller's connector token is now dead: true when
-     * the tunnel was deleted (or none was recorded to begin with), false when
-     * a concurrent provision outbid the release claim and the recorded tunnel
-     * — and any token issued for it — stays live.
-     */
+    /** True means the connector token is dead; false means concurrent provisioning kept its tunnel live. */
     readonly release: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -765,10 +756,7 @@ export const make = Effect.gen(function* () {
           hostname: allocation.hostname,
         });
       }
-      // A release keeps the recorded tunnel id, so the record alone cannot
-      // tell a live tunnel from one deleted by a shutdown whose host was
-      // killed before it dropped its config. Ask Cloudflare, or the host
-      // starts a connector that can never connect.
+      // Released records retain tunnel ids; verify Cloudflare still has the tunnel before reconnecting.
       const recorded = yield* tunnels.get(input.tunnelId).pipe(
         Effect.asSome,
         Effect.catchTags({
@@ -993,11 +981,7 @@ export const make = Effect.gen(function* () {
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
       }
-      // Claim the release against the allocation's current generation before
-      // touching Cloudflare. A provision racing this release (fast environment
-      // restart) increments the generation when it records its tunnel, so a stale
-      // claim means the recorded tunnel may already back a fresh connector and
-      // must be left alive.
+      // Claim before deleting: concurrent provisioning can advance the generation and reuse the tunnel.
       const claimedGeneration = yield* allocations
         .claimRelease({
           userId: input.userId,
@@ -1114,11 +1098,7 @@ export const make = Effect.gen(function* () {
             if (finalGeneration === null) {
               return false;
             }
-            // A delete whose response is lost (a timeout) may still have
-            // removed the tunnel. Ask Cloudflare before rolling back: if the
-            // tunnel is gone, the delete happened and the claim, including any
-            // released marker, must commit, since no later sweep can find
-            // this tunnel again to retry.
+            // A timed-out deletion may have succeeded; confirm Cloudflare state before rolling back the claim.
             return yield* deleteTunnel.pipe(
               Effect.as(true),
               Effect.catchIf(
@@ -1145,10 +1125,7 @@ export const make = Effect.gen(function* () {
               ),
           }),
         );
-      // The recorded tunnelId is now stale, but the allocation row is left
-      // untouched deliberately: connect/status authorization requires a fully
-      // recorded allocation, and an offline environment must keep reporting
-      // "offline" (health probe fails) rather than "not authorized".
+      // Keep the allocation recorded so offline environments stay authorized and report offline, not unauthorized.
       return Option.getOrElse(released, () => false);
     }),
     provision: Effect.fn("relay.managed_endpoint_provider.provision")(function* (input) {
@@ -1297,8 +1274,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (tunnelGeneration === null) {
-        // A newer provision can adopt this tunnel by name at any point after
-        // our claim fails. Leave it available for that provision or a retry.
+        // A newer provision can adopt this tunnel by name after our claim fails; leave it available.
         return yield* new ManagedEndpointProvisioningFailed({
           userId: input.userId,
           environmentId: input.environmentId,

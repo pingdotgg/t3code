@@ -54,7 +54,6 @@ export function prompt(request: TextInputDialogRequest): void {
   presentRequest?.({ kind: "text-input", request });
 }
 
-/** Android presenter for Dialog.alert, Dialog.confirm and Dialog.prompt; mounted once at the app root. */
 export function Host() {
   const [presented, setPresented] = useState<(DialogRequest & { readonly id: number }) | null>(
     null,

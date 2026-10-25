@@ -282,12 +282,9 @@ export interface ThreadComposerProps {
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
-// Android gets NO layout transition: the composer rides the keyboard via KeyboardStickyView
-// (frame-synced to the IME), and a time-based morph running alongside that translate reads as
-// jitter.
+// Android KeyboardStickyView tracks the IME; concurrent timed layout morphs cause jitter.
 export const COMPOSER_TRANSITION_DURATION_MS = 220;
-// Side panes already animate the dock's width. Nested horizontal layout
-// transitions would leave the surface trailing its toolbar's new position.
+// Side panes animate dock width; nested horizontal transitions would make the surface trail the toolbar.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
   const timing = {
@@ -402,8 +399,7 @@ export function ComposerSurface(props: {
   }));
   const layoutTransition = shouldAnimate ? COMPOSER_LAYOUT_TRANSITION : undefined;
 
-  // Each native frame follows the same transition. Animating only the outer
-  // clip leaves the glass and content at their final height on the first frame.
+  // Animate every native frame or glass and content jump to final height inside the clip.
   return (
     <Animated.View
       className={
@@ -702,13 +698,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     const sent = await settlePromise(() => onSendMessage(followUp, stillSendable));
     inFlightThreadIdsRef.current.delete(threadKey);
     if (AsyncResult.isFailure(sent)) {
-      // The composer state already surfaces send errors; only the lock needed releasing.
       console.error("[composer] send failed", squashAtomCommandFailure(sent));
       return;
     }
     if (sent.value === null) return;
-    // Armed after the send so its preference read and native Activity start don't contend
-    // with the queued-message feedback on the tap frame.
+    // Arm after send so preference reads and native Activity startup do not delay tap-frame feedback.
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: props.environmentId,
       threadTitle: props.selectedThread.title,
@@ -795,8 +789,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
   useEffect(
     () =>
-      // UIKit's completion callback for the sheet dismissal, surfaced by the
-      // native-stack patch. This is when the queued keyboard restore runs.
+      // The native-stack patch exposes UIKit dismissal completion; restore the keyboard then.
       (navigation as unknown as NavigationWithFinishTransitioning).addListener(
         "finishTransitioning",
         settingsSheetPresentation.onStackTransitionsFinished,
@@ -877,9 +870,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           Platform.OS === "android" ? themeColorWithAlpha(composerPanel, 1) : undefined,
       }}
     >
-      {/* The backdrop gradient lives on a plain View: Reanimated's Animated.View
-          silently drops experimental_backgroundImage on Android, which left this
-          strip fully transparent and the feed text legible through the composer. */}
+      {/* Use a plain View: Reanimated Animated.View drops experimental_backgroundImage on Android. */}
       <View
         className={
           Platform.OS === "android"

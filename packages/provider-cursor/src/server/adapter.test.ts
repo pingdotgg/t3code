@@ -88,10 +88,7 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
-                    // Recorded Cursor task calls (see fixtures/subagent) stream a
-                    // partial-tool-call before tool-call-started with the same args.
-                    // The run then ends without tool-call-completed, which a live
-                    // run cannot produce on demand.
+                    // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
                       args: {
@@ -1056,13 +1053,11 @@ describe("CursorAdapterV2", () => {
       const expected =
         'Cursor cannot run the model "deepseek/deepseek-v4.1-flash". Cursor only runs models from your Cursor account. Choose one of those, or use OpenCode for OpenRouter and other API-key models.';
 
-      // A new thread created with the custom model.
       const createFailure = yield* runtime
         .ensureThread({ threadId, modelSelection: customModel, runtimePolicy })
         .pipe(Effect.flip);
       assert.equal(makeProviderFailure({ cause: createFailure }).message, expected);
 
-      // An existing thread switched to the custom model.
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection: catalogModel,

@@ -94,14 +94,10 @@ const gitMetricOperations = new Set([
 ]);
 
 /**
- * Appends `key=value` to the `GIT_CONFIG_*` entries git reads as command-line
- * config, so argv stays the same on every platform and nothing is written to
- * the user's config. The entry goes after any inherited ones. Windows env names
- * are case-insensitive (elsewhere git reads only `GIT_CONFIG_COUNT`), so there the
- * count is found regardless of casing, read from
- * the last spelling (a per-command value spread over process.env), and updated
- * under every spelling so the child sees it whichever one Node keeps. A count
- * git would reject is left alone so git still reports it.
+ * Append after inherited entries without changing argv or the user's config.
+ * Windows env keys ignore case: read the last spelling of the count so command overrides win,
+ * then update every spelling because Node may keep any one.
+ * Leave invalid counts untouched so Git reports them.
  */
 export const gitConfigEnv = (
   env: NodeJS.ProcessEnv,
@@ -117,8 +113,7 @@ export const gitConfigEnv = (
   if (
     inherited !== undefined &&
     inherited !== "" &&
-    // Git parses the count with strtoul: leading whitespace, an optional sign
-    // (only -0 is non-negative), digits, and nothing after them.
+    // Match Git's strtoul count syntax, including whitespace, signs and non-negative -0.
     /^[ \t\r\n\v\f]*(?:\+?\d+|-0+)/.exec(inherited)?.[0] !== inherited
   ) {
     return {};
@@ -132,11 +127,8 @@ export const gitConfigEnv = (
 };
 
 /**
- * Git otherwise opens any folder holding `HEAD`, `objects/` and `refs/` as a
- * bare repository and applies its `config`, including commands such as
- * `core.fsmonitor`. Files saved in a project or checked out from a clone can
- * form one, so git started by T3 (or by a host CLI) only opens a bare
- * repository named with `--git-dir` or `GIT_DIR`. Git before 2.38 ignores it.
+ * A project can contain a fake bare repository whose config runs commands such as `core.fsmonitor`.
+ * Require `--git-dir` or `GIT_DIR` to open bare repositories; Git before 2.38 ignores this setting.
  */
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);

@@ -24,9 +24,7 @@ export function UsageLimitRecoveryCard({
   const canSchedule =
     resetAt !== null &&
     Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
-  // Whether the reset already passed is state a timer flips at resetAt: the
-  // compiler caches render output on its inputs, so reading the clock during
-  // render would leave the snooze button enabled after the reset.
+  // Use timer-driven state; the compiler can cache render-time clock reads and leave Snooze enabled after reset.
   const resetAtMs = resetAt === null ? null : Date.parse(resetAt);
   const [resetPassedFor, setResetPassedFor] = useState<number | null>(null);
   const resetPassed = resetAtMs !== null && resetPassedFor === resetAtMs;

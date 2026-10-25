@@ -80,11 +80,7 @@ function isDetailDone<E>(result: AsyncResult.AsyncResult<EnvironmentThreadState,
   );
 }
 
-/**
- * The shell and detail streams are independent, so the shell can report a stop
- * before the detail loads or catches up. A stopped thread stays mounted until
- * its own detail is live and shows the stop too.
- */
+/** Keeps stopped threads mounted until their independent detail stream is live and also reports stopped. */
 export function createRunningThreadKeepAliveAtom<E>(input: {
   readonly environmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>;
   readonly threadsAtom: (
@@ -115,8 +111,7 @@ export function createRunningThreadKeepAliveAtom<E>(input: {
       for (const threadId of previous?.get(environmentId) ?? []) {
         if (threadIds.has(threadId)) continue;
         const stateAtom = input.stateAtom(environmentId, threadId);
-        // `once`, not `get`: a dependency on a stopped thread would hold its
-        // stream open until some other change rebuilds this atom.
+        // A get dependency would hold stopped streams open until another change rebuilds this atom.
         if (isDetailDone(get.once(stateAtom))) continue;
         threadIds.add(threadId);
         get.subscribe(stateAtom, (state) => {

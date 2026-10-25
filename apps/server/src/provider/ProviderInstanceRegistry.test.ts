@@ -285,8 +285,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           [claudeId]: {
             driver: ProviderDriverKind.make("claudeAgent"),
             enabled: true,
-            // Packaged desktop builds start the server in $HOME, where some
-            // `claude` wrappers refuse to run.
+            // Packaged desktop starts in $HOME, where some claude wrappers refuse to run.
             environment: [{ name: "T3_CLAUDE_REQUIRED_CWD", value: stateDir, sensitive: false }],
             config: makeClaudeConfig({
               enabled: true,

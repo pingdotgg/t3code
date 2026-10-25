@@ -211,10 +211,7 @@ export interface ThreadDetailScreenProps {
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
   readonly selectedThread: EnvironmentThreadShell;
-  /**
-   * Read thread details through this, not `selectedThread.id`: it stays null until
-   * a queued creation reaches the server; see `useThreadSelection`.
-   */
+  /** Use this for detail reads; it stays null until queued creation reaches the server. */
   readonly selectedThreadDetailRef: ScopedThreadRef | null;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
@@ -545,13 +542,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
-  // Android can swallow the IME hide callbacks when the app is backgrounded mid keyboard-hide
-  // (the reported repro: send — which blurs and starts the hide — then Home within a second). The
-  // keyboard library's height AND visibility then stay frozen open, so gating the sticky
-  // translation on visibility alone still strands the composer after resume. An input that kept
-  // focus through the switch is exempt: Android restores its keyboard unchanged, so no keyboard
-  // or focus event would ever lift the quarantine. Hiding the keyboard with Back keeps focus, so
-  // Back then Home mid-hide takes the exemption and can still strand the composer.
+  // Android can lose IME hide callbacks on backgrounding. Quarantine translation on resume unless focused input retained its keyboard.
   const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
   const ownedInputFocusedRef = useRef(false);
   useEffect(() => {
@@ -920,8 +911,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     readonly threadKey: string;
     readonly now: number;
   } | null>(null);
-  // A pending approval or question is part of the key: once it is answered,
-  // from this client or any other, the agent resumes and spends quota.
+  // Approval/question identity invalidates quota: answering on any client resumes spending.
   const usageLimitsKey = [
     selectedThreadKey,
     props.selectedThread.modelSelection.instanceId,
@@ -951,8 +941,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
           },
     );
   const dismissUsageLimits = () => setUsageLimitsPanel(null);
-  // A send may resolve after navigating away, so only the originating
-  // thread's panel is cleared; a panel opened elsewhere in the meantime stays.
+  // Late sends clear only their originating thread's limits panel.
   const clearUsageLimitsFor = (threadKey: string) =>
     setUsageLimitsPanel((current) =>
       current !== null && current.threadKey === threadKey ? null : current,
@@ -975,13 +964,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       ? deviceType !== "duo-unfolded" || (composerOwnsKeyboard && !sidebarSearchActive)
       : !keyboardStateSuspect;
   const estimatedOverlayHeight = composerOverlapHeight;
-  // The overlay's measured height includes the home-indicator inset (the
-  // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
-  // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
-  // dead strip between the resting content and the composer. Report the
-  // overlay height minus the safe area; UIKit adds it back, and ThreadFeed
-  // hands LegendList the same delta via contentInsetEndStaticAdjustment so
-  // its end-scroll math matches the real resting position.
+  // UIKit adds safe-area bottom to overlay insets; subtract here and include it in ThreadFeed scroll math.
   const nativeInsetOvercount =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios" ? insets.bottom : 0;
   const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
@@ -1061,9 +1044,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       { duration: 180, reduceMotion: ReduceMotion.System },
     );
   }, [floatingControlCoverage, showFloatingStatus]);
-  // Android renders the expanded card in-flow (it cannot hit-test the iOS
-  // overlay outside the bar's bounds), so its measured overlay height already
-  // includes the card — the coverage extra is iOS-only.
+  // Android measures its expanded card in-flow; only iOS needs extra overlay coverage.
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
   const combinedContentInsetEndAdjustment = useSharedValue(
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
@@ -1139,10 +1120,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     if ((!threadChanged && !visibilityChanged) || (threadChanged && !showFloatingStatus)) {
       return;
     }
-    // LegendList applies the larger inset but does not re-anchor short
-    // followed conversations when this floating coverage changes after the
-    // initial load. Re-pin after the finite inset transition; the callback
-    // checks follow state again so a user who scrolled up stays put.
+    // LegendList misses short-conversation re-anchoring after coverage changes; re-pin after transition only if still following.
     scheduleOverlayRepin(230);
   }, [scheduleOverlayRepin, selectedThreadKey, showFloatingStatus]);
   const handleToggleUserInputCollapsed = () => {
@@ -1157,9 +1135,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     } else {
       Keyboard.dismiss();
       userInputCardProgress.set(withTiming(0, USER_INPUT_TOGGLE_TIMING));
-      // Instant: the sinking card still covers the strip being revealed, and
-      // animating the inset downward is what drifted the short-content end
-      // anchor.
+      // The sinking card already covers this strip. Animating the inset downward would drift the end anchor.
       userInputInsetProgress.set(0);
       setCollapsedUserInputRequestId(activeUserInputRequestId);
       scheduleOverlayRepin(60);
@@ -1248,11 +1224,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         return;
       }
       lastScrolledSubmittedMessageIdRef.current = submittedMessageId;
-      // Wait for the keyboard dismissal (started by blur() on send) to finish
-      // before scrolling: scrollMessageToEnd freezes keyboard-driven inset
-      // updates while it runs, and a close event swallowed by that freeze
-      // leaves the keyboard padding permanently applied — overshooting the
-      // anchor and leaving a phantom bottom inset once the reply streams in.
+      // Dismiss before scrollMessageToEnd freezes insets, or the missed hide leaves permanent padding.
       void KeyboardController.dismiss()
         .then(() => {
           if (
@@ -1789,9 +1761,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         canStopThread={props.canStopThread}
                         environmentId={props.environmentId}
                         projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
-                        // Follow-ups typed before the server creates the thread wait in
-                        // the draft: queueing them against a thread id the server may
-                        // still reject would strand them in the outbox.
+                        // Keep follow-ups in the draft until server creation succeeds, or rejection strands them in the outbox.
                         sendBlockedReason={
                           props.draftMode
                             ? props.draftMode.sendBlockedReason

@@ -12,8 +12,7 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
 
-// Annotations go on the encoded (string) side so they survive into the
-// published JSON Schema; decoding still trims and re-validates non-emptiness.
+// Encoded-side annotations survive into JSON Schema; decoding still trims and rejects empty strings.
 const trimmedNonEmpty = (annotations: { readonly description: string }, maxLength?: number) => {
   const annotated = Schema.String.annotate(annotations);
   const encoded =
@@ -111,19 +110,12 @@ export const T3ProjectFile = Schema.Struct({
 });
 export type T3ProjectFile = typeof T3ProjectFile.Type;
 
-/**
- * A key here must be nullable on `ServerSettings` (null means inherit) so both
- * the project override and the environment value can defer to the file; `field`
- * names the t3.json field carrying the same value and `builtIn` is what applies
- * when every tier is unset.
- */
+/** Keys must be nullable in ServerSettings so both environment and project overrides can inherit t3.json. */
 export const PROJECT_FILE_BACKED_SETTINGS = {
   defaultThreadEnvMode: { field: "defaultThreadEnvMode", builtIn: "local" },
   worktreeSubmodules: { field: "worktreeSubmodules", builtIn: "recursive" },
 } as const satisfies {
-  // `providerInstances` is scoped per project but overrides field by field
-  // rather than replacing a whole `ServerSettings` value (see its doc comment
-  // in settings.ts), so it cannot be file-backed and is excluded here.
+  // providerInstances overrides individual fields, so it cannot use whole-setting file inheritance.
   readonly [K in ProjectScopedServerSettingKey & keyof ServerSettings]?: {
     readonly field: {
       readonly [F in keyof T3ProjectFile]: T3ProjectFile[F] extends

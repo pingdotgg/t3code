@@ -5,8 +5,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
-// Published previews assigned V2 to 53, then 54. Keep their schema and import
-// progress intact while reserving main's migration ids for upgrades from main.
+// Previews used V2 ids 53/54; preserve their schema and import progress while reserving main's ids.
 export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigration")(function* () {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(

@@ -201,8 +201,6 @@ function ConversationCard({
   });
 
   const save = async (body: string) => {
-    // A review's own summary is not a kind any host rewrites, which is why `editable` is never
-    // one; the check is here because the comment's own type still allows it.
     if (editable === null || saving || editable.kind === "review") return;
     setSaving(true);
     const result = await updateComment({
@@ -350,9 +348,7 @@ function ConversationGroup({
               <div className="mt-1 space-y-1">
                 {events.map((event) => (
                   <ConversationCard
-                    // Named with the pull request too: a remark's id is the host's own, and two
-                    // pull requests can hand out the same one — which would leave one card's open
-                    // editor standing over the other's remark.
+                    // Host comment ids can collide across pull requests.
                     key={`${reactions.reference.projectId}#${reactions.reference.number}:${event.id}`}
                     event={event}
                     editable={editable.get(event.id) ?? null}

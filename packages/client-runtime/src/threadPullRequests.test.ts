@@ -14,8 +14,7 @@ import {
   threadPullRequestKeysEqual,
 } from "./threadPullRequests.ts";
 
-// Match Hermes: these ES2023 array methods are absent on mobile, and this module runs in
-// the home thread list on every launch.
+// Remove ES2023 array methods to match Hermes on mobile.
 beforeEach(() => {
   const methods = ["toSorted", "toReversed", "toSpliced"] as const;
   const descriptors = methods.map((method) =>
@@ -177,7 +176,6 @@ describe("resolveThreadPullRequestChains", () => {
     expect(
       chains.map((chain) => [chain.layers.map((layer) => layer.number), chain.depths]),
     ).toEqual([
-      // #6 and #1 both build on #5; #3 and #2 both build on #1.
       [
         [5, 6, 1, 3, 2],
         [0, 1, 1, 2, 2],
@@ -192,7 +190,6 @@ describe("resolveThreadPullRequestChains", () => {
   });
 
   it("points at the highest layer of a branched stack, not the last sibling listed", () => {
-    // #1 → #2 → #3, and #4 also builds on #1.
     const branched = (state: ThreadPullRequestSnapshot["state"]) => [
       link(1, { snapshot: snapshot({ state, headBranch: "a" }) }),
       link(2, { snapshot: snapshot({ state, headBranch: "b", baseBranch: "a" }) }),

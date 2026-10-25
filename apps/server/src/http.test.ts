@@ -148,9 +148,7 @@ const makeStaticRequest = Effect.fn("HttpTest.makeStaticRequest")(function* (sta
     ServerHttp.layerStaticAndDevRoute,
     ServerHttp.layerHttpCompression,
   ).pipe(Layer.provideMerge(NodeHttpPlatform.layer));
-  // HttpRouter.serve reuses services from the layers around it before the
-  // app's own, and NodeHttpServer.layerTest brings a real FileSystem, so the
-  // caller's FileSystem and static directory go between the two.
+  // HttpRouter.serve prefers outer services; inject the test FileSystem between it and NodeHttpServer.layerTest.
   const services = yield* Layer.build(
     HttpRouter.serve(layerApp, { disableListenLog: true }).pipe(
       Layer.provideMerge(ServerConfig.layer({ ...config, staticDir })),

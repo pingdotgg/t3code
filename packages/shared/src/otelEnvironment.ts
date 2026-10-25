@@ -257,9 +257,7 @@ const sdkFlags = {
     T3CODE_FALSE,
     (value) => `T3CODE_OTEL_SDK_DISABLED=${value} is not a yes or a no and was ignored`,
   ),
-  // The specification: a boolean it defines is true "only by the
-  // case-insensitive string `true`", implementations "MUST NOT" accept other
-  // values as true, and should warn about unrecognized ones.
+  // OTEL booleans are true only for case-insensitive true; warn on unrecognized values.
   spec: flag(
     "OTEL_SDK_DISABLED",
     ["true"],
@@ -379,11 +377,7 @@ export const resolveSignalEndpoint = (
   });
 };
 
-/**
- * Provide this around Effect's OTLP exporters, which read
- * `OTEL_RESOURCE_ATTRIBUTES` for themselves and die when it does not decode,
- * so they see what `load` accepted instead.
- */
+/** Give OTLP exporters the accepted resource attributes so their own decoding cannot fail. */
 export const layerResourceAttributes = (attributes: Readonly<Record<string, string>>) =>
   ConfigProvider.layerAdd(
     ConfigProvider.fromEnv({

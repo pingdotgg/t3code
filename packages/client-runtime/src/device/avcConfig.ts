@@ -71,11 +71,10 @@ function withReorderLimits(sps: Uint8Array): Uint8Array {
     // With no VUI, only rbsp_stop_one_bit and byte padding may follow.
     if (!/^10{0,7}$/.test(bits.slice(position))) return sps;
 
-    // serve-sim disables frame reordering. Its fallback encoder omits the VUI,
-    // causing Chromium to infer a large reorder queue despite optimizeForLatency.
-    // Preserve the SPS and add VUI defaults with max_num_reorder_frames = 0.
-    // The flag bits enable VUI, omit its eight optional sections, and enable
-    // bitstream restrictions and motion_vectors_over_pic_boundaries_flag.
+    // serve-sim disables reordering, but its fallback encoder omits VUI, so Chromium
+    // infers a large queue despite optimizeForLatency. Add VUI with zero reorder frames.
+    // Flags omit eight optional sections and enable bitstream restrictions
+    // and motion_vectors_over_pic_boundaries_flag.
     const restricted =
       bits.slice(0, vuiPosition) +
       "10000000011" +

@@ -12,7 +12,6 @@ function useWorkspacePage() {
   );
 }
 
-/** Where an iOS split window shows the workspace tabs instead of UIKit's tab bar. */
 export function useSidebarWorkspaceTabs(): "picker" | "toolbar" | null {
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();

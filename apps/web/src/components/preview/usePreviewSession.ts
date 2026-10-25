@@ -48,8 +48,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       if (result.waiting || !AsyncResult.isSuccess(result)) return;
       reconcilePreviewServerSessions(threadRef, result.value);
       if (!readThreadPreviewState(threadRef).listLoaded) {
-        // An event overtook the first list. Retry the authoritative baseline;
-        // do not declare a partial event-only index ready for surface cleanup.
+        // An event overtook the initial list; retry before using the partial index for surface cleanup.
         queueMicrotask(() => {
           if (!disposed) get.refresh(sessionsAtom);
         });
@@ -70,8 +69,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       disposed = true;
     });
     const initialEvent = get.once(eventsAtom);
-    // Subscribing alone does not evaluate a lazy list. Start it now, but
-    // reconcile only subsequent responses: a completed cache may be stale.
+    // Evaluate the lazy list, then reconcile only new responses because cached results can be stale.
     get.once(sessionsAtom);
     get.subscribe(sessionsAtom, (result) => {
       reconcileSessions(result);
@@ -84,9 +82,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     get.mount(eventsAtom);
     queueMicrotask(() => {
       if (disposed) return;
-      // The cached list can predate an automation-created tab. Keep the local
-      // snapshot visible until an authoritative refresh arrives instead of
-      // reconciling against a stale empty result when the panel first mounts.
+      // Keep local tabs until authoritative refresh; stale cached emptiness could remove automation-created
+      // tabs.
       const current = get.once(sessionsAtom);
       if (!AsyncResult.isInitial(current) && !current.waiting) get.refresh(sessionsAtom);
       if (eventsVersion === 0) applyLatestEvent(initialEvent);

@@ -304,11 +304,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   return `${days} at ${schedule.timeOfDay}`;
 }
 
-/**
- * `formatRelativeTime` only handles the past, and `nextRunAt` is a future
- * instant — render "in 5m" style labels for upcoming runs instead of a
- * misleading "just now".
- */
+/** formatRelativeTime handles only the past; upcoming runs need future labels. */
 function relativeLabel(value: string | null, nowMs: number): string {
   if (!value) return "Not scheduled";
   const diffMs = new Date(value).getTime() - nowMs;
@@ -325,8 +321,7 @@ function relativeLabel(value: string | null, nowMs: number): string {
   return `in ${Math.round(hours / 24)}d`;
 }
 
-// The clock is the label's own minute tick: the React Compiler caches a
-// `Date.now()` read in render on the timestamp alone.
+// Use the label's minute tick because the compiler caches render-time Date.now() on the timestamp.
 export function ScheduledRelativeLabel(props: { value: string | null }) {
   const nowMinute = useNowMinute();
   return relativeLabel(props.value, Date.parse(`${nowMinute}:00.000Z`));

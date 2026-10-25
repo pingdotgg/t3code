@@ -343,8 +343,7 @@ function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
   const bareEnd = markdownRunEndFinder(markdown, /[\s)]/g);
-  // Separate caches keep each branch's searches moving forward even when an
-  // angle destination fails and falls back to an ordinary destination.
+  // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
   const angleTail = markdownLinkTailScanner(markdown);
   const bareTail = markdownLinkTailScanner(markdown);
   return (start: number) => {
@@ -374,8 +373,7 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
     const labelEnd = markdown.indexOf("]", labelStart + 1);
     if (labelEnd === -1) break;
 
-    // Nested opening brackets share this closing bracket. On failure, skip the
-    // whole label instead of rescanning its suffix from each opening bracket.
+    // Skip a failed label once; nested openings share its closing bracket.
     cursor = labelEnd + 1;
     const destination = scanDestination(cursor);
     if (!destination) continue;

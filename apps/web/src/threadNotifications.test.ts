@@ -52,7 +52,6 @@ describe("playNotificationSound", () => {
   it("plays one sound for threads that complete together", async () => {
     const { playNotificationSound } = await loadUnlocked();
 
-    // All four are waiting on the first decode when the sound becomes playable.
     await Promise.all(
       Array.from({ length: 4 }, () => playNotificationSound("completion", () => true)),
     );

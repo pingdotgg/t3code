@@ -283,13 +283,7 @@ export const installedBinary = Effect.fn("installedBinary")(function* (
   return yield* digest(hashes.sort().join("\n"));
 });
 
-/**
- * Run `expo prebuild --clean` without losing `android/.gradle` (task history) and
- * `android/app/.cxx` (native compile outputs). Both invalidate by input, so a clean
- * rebuild only redoes changed work. `app/build` stays out: its autolinking and JS
- * bundle tasks do not declare every input. Each step is best-effort, because a lost
- * cache costs one slower build and must never cost the build.
- */
+/** Preserve input-invalidated Gradle/.cxx caches; exclude app/build because its tasks omit inputs. Ignore cache failures. */
 export const prebuildAndroid = Effect.fn("nativeClient.prebuildAndroid")(function* <E, R>(
   mobile: string,
   prebuild: Effect.Effect<void, E, R>,
@@ -297,8 +291,7 @@ export const prebuildAndroid = Effect.fn("nativeClient.prebuildAndroid")(functio
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const android = path.join(mobile, "android");
-  // A sibling of android/ keeps the renames on one filesystem. It is gitignored, and a
-  // run killed mid-prebuild leaves it for the next run to clear.
+  // Sibling renames stay on one filesystem; interrupted runs leave this gitignored cache for next-run cleanup.
   const saved = path.join(mobile, ".android-cache");
   const caches = [".gradle", "app/.cxx"];
   const clear = fs.remove(saved, { recursive: true, force: true }).pipe(Effect.ignore);

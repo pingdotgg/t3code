@@ -58,17 +58,11 @@ function descendsFrom(
   return false;
 }
 
-/**
- * The app is read from its stored tool call, never from the route, so a link
- * can only open an app that call really produced.
- */
+/** Resolve apps from stored tool calls so links cannot supply apps the call never produced. */
 export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  // A plain goBack pops whatever is on top, so it only runs while this modal
-  // is: an exit that lands while another screen covers it (after a teardown
-  // wait) waits for the modal to be on top again, rather than popping that
-  // screen or being lost.
+  // Wait for focus before goBack; an exit under another screen must not pop that screen.
   const focused = useIsFocused();
   const [exitRequested, setExitRequested] = useState(false);
   const onClose = useCallback(() => {
@@ -96,8 +90,7 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
     }),
   );
   const item = detail.data?.item;
-  // One reference per app: the item is a new object on every refetch (a
-  // reconnect, for one), and a new reference would rebuild the app's host.
+  // Keep one reference per app; refetches must not rebuild the host.
   const derived = item?.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
   const [app, setApp] = useState(derived);
   if (derived?.attachmentId !== app?.attachmentId) setApp(derived);

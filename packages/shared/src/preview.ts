@@ -153,9 +153,7 @@ export function resolveAddressBarInput(
   if (URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed) || trimmed.length === 0)
     return normalizePreviewUrl(trimmed);
   if (!/\s/.test(trimmed)) {
-    // `mailto:x` or `data:...` is an explicit scheme; `example.com:8080` or
-    // `devbox:8080` is a bare host and port. `normalizePreviewUrl` would read
-    // `mailto:alice@example.com` as credentials on a bare host, so reject here.
+    // Reject explicit schemes before URL normalization can misread mailto as bare-host credentials.
     const protocol = previewUrlProtocol(trimmed);
     if (
       protocol !== undefined &&

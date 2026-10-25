@@ -74,7 +74,6 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
       endHandoff();
     }
     for (const asset of result.canceled ? [] : result.assets) {
-      // React Native's FormData uploads a file part from its URI.
       body.append("file", {
         uri: asset.uri,
         name: asset.name,

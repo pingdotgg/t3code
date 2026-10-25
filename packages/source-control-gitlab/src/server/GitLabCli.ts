@@ -269,7 +269,7 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
-      /** Piped to the child's stdin, for payloads that must never appear in argv. */
+      /** Keeps sensitive payloads out of argv. */
       readonly stdin?: string;
       readonly maxOutputBytes?: number;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, GitLabCliError>;
@@ -418,7 +418,7 @@ const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null =
   return null;
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
 

@@ -85,9 +85,7 @@ export function useOpenChangeRequestLink(
     const reads = (environmentId: string) =>
       serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
       true;
-    // Beside a thread the panel reads on that thread's environment, so a project from another
-    // one could not be read there whatever its remote says: two environments can hold the same
-    // repository, and handing the panel the wrong one's id opens a surface that never loads.
+    // Matching remotes do not make project ids usable outside the panel thread's environment.
     const projects = resolvedThreadRef
       ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
       : targetEnvironmentId
@@ -178,9 +176,7 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
     const openInBrowser = shouldOpenPullRequestExternally(event);
     const isAnchor =
       event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
-    // A real link already knows how to cmd/ctrl/middle-click. Leave its default
-    // action alone so the browser (or Electron's window-open handler) opens
-    // the host. Buttons have no href, so they still go through openExternal.
+    // Native links handle modified clicks; buttons still need openExternal.
     if (openInBrowser && isAnchor) return false;
 
     event.preventDefault();

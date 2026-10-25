@@ -178,9 +178,6 @@ describe("ProviderContinuationService", () => {
           readonly text: string;
           readonly notification: OrchestrationV2Notification;
         };
-        // An app-owned child buffers nothing in the adapter, so this text is
-        // the whole wake. Marking it "provider" would make ClaudeAdapterV2
-        // drop it and settle the turn having prompted nothing.
         assert.notEqual(command.creationSource, "provider");
         assert.equal(command.creationSource, "server");
         assert.equal(command.text, "Delegated task completed.");
@@ -349,11 +346,7 @@ describe("ProviderContinuationService", () => {
           ),
         );
 
-        // Mirrors the ACP adapter's own dispatchIfCurrent: on a failed effect
-        // it clears its sticky "continuation requested" flag before
-        // re-raising. If this service pre-recovered the failure before
-        // handing the effect here, this flag would stay stuck set and
-        // hasPendingBackgroundWork would never clear.
+        // ACP clears its sticky continuation flag on raw dispatch failure; pre-recovery would prevent that cleanup.
         const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
           Effect.gen(function* () {
             const exit = yield* Effect.exit(effect);
@@ -402,11 +395,7 @@ describe("ProviderContinuationService", () => {
           ),
         );
 
-        // Mirrors the Muse adapter: dispatchIfCurrent forwards the dispatch
-        // effect without any failure handling of its own (unlike ACP or Pi),
-        // so only the explicit clearIfCurrent callback can clear the sticky
-        // "wake held" flag. Without it, a disabled instance leaves the flag
-        // set forever and no later background turn is ever offered.
+        // Muse forwards dispatch failures unchanged; clearIfCurrent must release its sticky wake flag.
         const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
           Effect.asSome(effect);
 

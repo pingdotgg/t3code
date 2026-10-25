@@ -10,8 +10,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 export const FileMetadataThreadContext = createContext<ScopedThreadRef | null>(null);
 const EMPTY_RETENTION = Atom.make(undefined);
 
-/** The chat view owns this lifetime, so virtualized message rows can unmount
- * without losing the metadata they already fetched. */
+/** Keeps fetched metadata across virtualized message-row unmounts. */
 export function FileMetadataThreadProvider(props: {
   threadRef: ScopedThreadRef | null;
   cwd: string | undefined;

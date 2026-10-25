@@ -113,9 +113,7 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
     const host = yield* ServiceLauncherHostProcess;
     const environment = yield* HostProcess.Environment;
     const currentVersion = options?.currentVersion ?? packageJson.version;
-    // The launcher always spawns its child with an IPC channel, and Node does
-    // not pass that channel on. Without one, the context was inherited from an
-    // ancestor (e.g. `t3 serve` run in a T3 terminal), so it describes someone else.
+    // IPC channels are not inherited; without one, launcher context belongs to an ancestor.
     const rawContext = host.connected ? environment[SERVICE_LAUNCHER_CONTEXT_ENV] : undefined;
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
 

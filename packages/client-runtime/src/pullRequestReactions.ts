@@ -54,14 +54,7 @@ function countRemainder(count: number, named: boolean): string {
   return `${count} ${count === 1 ? "person" : "people"}`;
 }
 
-/**
- * The viewer reads as "You" and comes first, because that is the name they are looking for; a
- * compliant host already leaves the viewer's own login out of `actors` when they have reacted,
- * leaving room for "You" without ever exceeding `count`. This function has no viewer login to
- * match against `actors`, so it cannot tell a non-compliant host apart by name — but such a host
- * gives itself away by leaving no room: `actors` alone already accounts for everyone `count`
- * claims.
- */
+/** Hosts omit the viewer from actors; add You only if count has room, since viewer login is unavailable. */
 export function pullRequestReactionTooltip(reaction: PullRequestReaction): string {
   const viewerHasRoom = reaction.actors.length < reaction.count;
   const names =

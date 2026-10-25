@@ -14,9 +14,7 @@ import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-// Background sweeps resolve every project each minute. A long TTL keeps them
-// from spawning git each time. Clone, publish, and PR discovery (after a turn
-// and before it saves links) resolve with `refresh: true`.
+// Minute-by-minute sweeps need cached hits; clone, publish and PR discovery force refresh.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
@@ -39,8 +37,7 @@ export class RepositoryIdentityResolver extends Context.Service<
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
-// Local remotes (GitButler's `gb-local` is `.`) name a path on this machine,
-// not a repository, so unrelated repos would share one identity.
+// Local paths such as GitButler's gb-local=. would give unrelated repos the same identity.
 function isLocalRemoteUrl(url: string): boolean {
   if (/^file:/i.test(url)) return true;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return false;
@@ -145,8 +142,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
 
-    // git is a real executable on every platform — no cmd.exe shell mode, which
-    // would split paths containing spaces during cmd's re-tokenization.
+    // git is always a real executable; cmd shell mode would split spaced paths on re-tokenization.
     const topLevelResult = yield* processRunner
       .run({
         command: "git",

@@ -148,8 +148,7 @@ export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
   const enqueue = (threadId: ThreadId) =>
     Effect.suspend(() => {
       if (queued.has(threadId)) return Effect.void;
-      // Removing the ID when processing starts allows one new queue entry
-      // for updates received while the current snapshot is being published.
+      // Remove queued IDs when processing starts so publication can queue one later update.
       queued.add(threadId);
       return worker.enqueue(threadId);
     }).pipe(Effect.uninterruptible);
@@ -360,7 +359,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
     .map((thread) => thread.id);
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -410,9 +409,7 @@ export const make = Effect.gen(function* () {
   let cachedRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
   let publishedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
 
-  // The confirming publish is re-enqueued through the same drainable worker as
-  // every other publish, so a confirmed tombstone can never race an in-flight
-  // live update; a recovered state clears the deadline.
+  // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
@@ -512,17 +509,13 @@ export const make = Effect.gen(function* () {
       });
     });
 
-    // Per-thread shell read: this publish runs for every activity-relevant
-    // domain event, so materializing the full shell here would make the cost
-    // of one thread's activity proportional to how many threads exist.
+    // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = yield* threads.getThreadShell(threadId);
     if (
       threadShell?.lineage.relationshipToParent === "subagent" &&
       !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
     ) {
-      // Subagents never project activity, so the relay holds no row to clear.
-      // Their events would otherwise publish a tombstone each, and every
-      // publish re-delivers the user's aggregate.
+      // Subagents have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
     const thread =
@@ -547,10 +540,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
     if (publishedStateByThread.get(threadId) === publishIdentity) {
-      // The projection is back at (or never left) the last published state, so
-      // any pending deferred confirmation is moot. Leaving the deadline in
-      // place would let a much later transient null find it already expired
-      // and publish a tombstone immediately, skipping the deferral window.
+      // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
       yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
@@ -560,11 +550,8 @@ export const make = Effect.gen(function* () {
       return;
     }
 
-    // - null (tombstone) while the previous published state was live: deletes
-    //   the thread from every armed card mid-conversation.
-    // - completed as the thread's FIRST published state: sessions boot at
-    //   "ready" before their first turn, which projects as completed for an
-    //   instant and sends a spurious Done notification at thread birth.
+    // Confirm tombstones over live state to avoid removing active cards.
+    // Confirm first-state completion because sessions briefly project completed before their first turn.
     const requiresConfirmation =
       (snapshot.state === null &&
         publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
@@ -658,8 +645,7 @@ export const make = Effect.gen(function* () {
     const attempts = publishRetries.get(threadId)?.attempts ?? 0;
     const delayMs = RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[attempts];
     if (delayMs === undefined) {
-      // Keep the exhausted budget until fresh activity or a successful publish
-      // clears it; an old confirmation timer must not start another retry series.
+      // Retain exhausted budgets until activity or success resets them; old timers must not restart retries.
       yield* Effect.logWarning("agent activity publish retry budget exhausted", { threadId });
       return;
     }

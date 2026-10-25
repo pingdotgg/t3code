@@ -85,8 +85,6 @@ describe("BrowserSession", () => {
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
 
-      // TextEncoder folds a lone surrogate to U+FFFD, so without escaping these
-      // two supported ids would hash to one partition and share every cookie.
       const loneSurrogate = yield* browserSessions.getPartition("p\ud800");
       const replacementChar = yield* browserSessions.getPartition("p\ufffd");
       assert.notStrictEqual(loneSurrogate, replacementChar);
@@ -116,13 +114,8 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  // A rewritten session UA — any variant, even ones that keep the Electron
-  // token — makes Cloudflare Turnstile loop with error 600010 (#5002), so the
-  // guest must end up with Electron's native User-Agent.
   it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
     Effect.gen(function* () {
-      // Electron's real UA shape: app token, then Chrome, then Electron, then
-      // Safari — the token order and casing matter to any strip regex.
       const nativeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
       fromPartition.mockReset();

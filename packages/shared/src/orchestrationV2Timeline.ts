@@ -31,8 +31,7 @@ export function isOrchestrationV2SupersededInterrupt(input: {
     return false;
   }
 
-  // Paired stop-then-steer results have a matching request on the same run and
-  // must stay visible. Legacy plain-steer results have no request and stay hidden.
+  // Show paired stop-then-steer results; hide legacy plain-steer results without matching requests.
   const hasMatchingRequest = input.items.some(
     (candidate) => candidate.type === "run_interrupt_request" && candidate.runId === item.runId,
   );
@@ -53,9 +52,7 @@ export function isOrchestrationV2TurnItemVisible(input: {
     return false;
   }
 
-  // A queued message is composer state, not conversation history. When its run
-  // is cancelled the input never reached the provider, so it must not surface
-  // as a transcript row.
+  // Cancelled queued input never reached the provider and must stay out of the transcript.
   if (
     item.type === "user_message" &&
     item.inputIntent === "queued_turn" &&

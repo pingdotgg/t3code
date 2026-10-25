@@ -501,11 +501,8 @@ function scorePaletteItem(
 }
 
 /**
- * Filters and ranks the palette for a query. Groups order by the class of their
- * best match, and on equal classes commands come first, then threads, so "new"
- * runs "New thread" and a thread's title is not stuck under a setting. Server
- * message matches always come last, in their own group, so rows above never
- * move when they arrive.
+ * Equal match classes put commands before threads, so "new" runs "New thread".
+ * Server message matches stay in a final group so late results cannot move earlier rows.
  */
 export function filterCommandPaletteGroups(input: {
   activeGroups: ReadonlyArray<CommandPaletteGroup>;

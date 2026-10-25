@@ -24,8 +24,7 @@ import * as ServerConfig from "../config.ts";
 import { forkParked } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;
-// Persistence prefixes every entry key with the store id, so each entry file
-// name starts with it. The scope `revisions` file does not.
+// Entry filenames have the store-id prefix; the scope revisions file does not.
 const STORE_ID = "pr-v2";
 const ENTRY_FILE_NAME = new RegExp(`^${STORE_ID}[0-9a-f]{64}$`);
 /**

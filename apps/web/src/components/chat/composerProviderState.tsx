@@ -69,10 +69,7 @@ export function getComposerPromptInjectionState(prompt: string): ComposerPromptI
   return isClaudeUltrathinkPrompt(prompt) ? "ultrathink" : "none";
 }
 
-/**
- * Cursor ACP can report `fastMode: true` as the provider default. T3 only
- * treats Fast as selected when the user chose it (draft/sticky/settings).
- */
+/** Cursor ACP can default Fast to true; T3 requires a user selection. */
 export function withImplicitFastModeDefault(
   caps: ModelCapabilities,
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
@@ -163,10 +160,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   };
 }
 
-/**
- * `cursor` is an expanded caret in `prompt`; the result's `cursor` keeps it on
- * the same character when the Ultrathink prefix is added or removed.
- */
+/** Expanded caret positions stay on the same character across Ultrathink prefix changes. */
 export function getComposerReasoningStep(input: {
   provider: ProviderDriverKind;
   instanceId: ProviderInstanceId;
@@ -205,7 +199,7 @@ export function getComposerReasoningStep(input: {
   if (!step) return null;
   const modelOptions = "modelOptions" in step ? { modelOptions: step.modelOptions } : {};
   if (step.prompt === prompt) return { prompt, cursor, ...modelOptions };
-  // Adding the prefix also trims the prompt, so the kept text starts right after the prefix.
+  // Adding the prefix also trims the prompt.
   const keptStart = "modelOptions" in step ? 0 : step.prompt.length - prompt.trim().length;
   const offset =
     "modelOptions" in step

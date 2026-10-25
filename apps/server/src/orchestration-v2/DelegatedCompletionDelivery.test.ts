@@ -2057,9 +2057,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
-  // A running provider turn does not prove the provider consumed the delivery
-  // (Claude marks the turn running before it reads the prompt), so a cut
-  // delivery is offered again even when a continuation resumes that turn.
+  // Running does not prove prompt consumption in Claude; re-offer cut deliveries even when resuming the turn.
   it.effect("re-offers a cut delivery even when a continuation resumes its turn", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

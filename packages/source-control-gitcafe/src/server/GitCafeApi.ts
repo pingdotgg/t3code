@@ -85,7 +85,7 @@ const credentialFailure = (
       ? "unauthenticated"
       : "failed";
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const credentials = yield* GitCafeCredentials.GitCafeCredentials;
@@ -102,7 +102,7 @@ export const make = Effect.gen(function* () {
         detail: fields.detail,
         ...(fields.cause === undefined ? {} : { cause: fields.cause }),
       });
-    // The host comes from a remote URL, so a token never leaves for one GitCafe does not own.
+    // Remote URLs must not send tokens outside GitCafe's hosts.
     const host = GitCafeHosts.gitCafeHost(input.host);
     if (host === null)
       return yield* fail({
@@ -134,10 +134,9 @@ export const make = Effect.gen(function* () {
           input.body === undefined ? base : base.pipe(HttpClientRequest.bodyJsonUnsafe(input.body)),
         )
         .pipe(
-          // The client's own span would record the query string, which can carry branch names.
+          // Client spans expose query strings containing branch names.
           Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
-          // fetch would follow a redirect itself and keep the bearer token on a same-origin hop;
-          // GitCafe's API never redirects a request it serves, so a 3xx is answered as a failure.
+          // GitCafe does not redirect; reject 3xx to protect bearer credentials.
           Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
         );
       return { status: response.status, text: yield* response.text };

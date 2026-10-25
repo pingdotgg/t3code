@@ -321,11 +321,7 @@ export interface TimelineEndState {
   readonly scrollLength?: number;
 }
 
-/**
- * strict isAtEnd flickers false for a frame while streaming content grows under
- * the viewport, so follow re-arms within this distance of the real content
- * bottom instead.
- */
+// Streaming can briefly unset isAtEnd; re-arm near the content bottom.
 const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
@@ -336,12 +332,7 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   if (contentLength === undefined || scroll === undefined || scrollLength === undefined) {
     return state.isAtEnd;
   }
-  // contentLength includes the composer inset spacer, but the composer hides
-  // the same amount of viewport, so the inset cancels: plain
-  // contentLength - scroll - scrollLength is the gap between the last real row
-  // and the visible edge above the composer. LegendList's own isAtEnd subtracts
-  // the inset and is true anywhere in the bottom composer-height band, so it is
-  // only a fallback here, never a short-circuit.
+  // LegendList double-subtracts the composer inset, so its isAtEnd is only a fallback.
   return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
 }
 
@@ -760,11 +751,7 @@ interface SupersededAttemptFold {
   readonly hiddenEntryIds: ReadonlySet<string>;
 }
 
-/**
- * Item status alone cannot tell: an interrupted stream also closes as
- * `completed`. The reply must be the attempt's last output; trailing tool or
- * reasoning work means the attempt was still going.
- */
+// Interrupted streams can be `completed`; only the attempt's last output proves completion.
 function completeSupersededReplyEntryIds(
   timelineEntries: ReadonlyArray<TimelineEntry>,
 ): ReadonlySet<string> {
@@ -847,12 +834,7 @@ function deriveSupersededAttemptFolds(
   return foldsByAnchorEntryId;
 }
 
-/**
- * This is deliberately keyed on the turn's own lifecycle rather than transient
- * working state: right after the user sends a message, the previous turn is
- * still the "active" one until the server creates the new turn, and folding
- * must not flicker through that window.
- */
+// After send, the previous turn stays active until the server creates its replacement.
 function deriveUnsettledRunId(
   latestRun: TimelineLatestRun | null,
   runningRunId: RunId | null = null,
@@ -869,11 +851,7 @@ function deriveUnsettledRunId(
   return isSettled ? null : latestRun.runId;
 }
 
-/**
- * A child can keep working after its launching turn settles (or its attempt is
- * superseded), and the waiting footer counts it, so its card stays visible
- * until the child ends.
- */
+// Children can outlive their launching turn; keep cards visible while the footer counts them.
 function liveSubagentCardEntryIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
   const visible = new Set<string>();
   let batch: Array<Extract<TimelineEntry, { kind: "event" }>> = [];
@@ -950,11 +928,7 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
   return null;
 }
 
-/**
- * A promptless provider restart replaces the native turn without adding a user
- * message. Keep every provider turn since the initiating prompt in one visual
- * response until the replacement turn settles.
- */
+// Group promptless restarts under the initiating prompt until settled.
 function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
   return timelineEntries.findLastIndex(timelineEntryStartsResponse);
 }
@@ -1043,11 +1017,7 @@ function deriveTurnFolds(input: {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
     hasStreamingMessage: boolean;
-    /**
-     * Entry timestamps alone undercount the duration (the first entry appears
-     * only once the provider starts producing output), and a turn cut short by
-     * a steer may hold a single instantaneous commentary message.
-     */
+    // Entry timestamps omit startup and can collapse steered turns to an instant.
     startBoundary: string | null;
     anchorEntryId: string;
     /**
@@ -1059,9 +1029,7 @@ function deriveTurnFolds(input: {
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
 
-  // Fold state is keyed by run, so each runless prompt lends its response a
-  // stable key of its own. Decide per prompt, not per thread: a V1 thread's
-  // first V2 run must not unfold every imported turn above it.
+  // Key runless responses per prompt to prevent V2 runs unfolding imported turns.
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
@@ -1092,9 +1060,7 @@ function deriveTurnFolds(input: {
     if (!ownRunId) {
       continue;
     }
-    // Resuming a subagent moves its item to the resuming run, but the item
-    // keeps its place in the turn that started it. It folds with that turn,
-    // so the later run's fold still opens under its own prompt.
+    // Resumed subagents keep their position and fold with their original turn.
     const runId =
       responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
         ? responseKey
@@ -1164,7 +1130,6 @@ function deriveTurnFolds(input: {
         continue;
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
-      // User input stays visible after the surrounding work settles.
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);
     }
@@ -1334,8 +1299,7 @@ function attachTrailingToolGroupsToAssistant(
   return result;
 }
 
-// Delegation already has a durable child card. Remove its tool row only after
-// the returned task ID identifies that child; pending calls can share a prompt.
+// Hide delegation rows only when task ids identify durable child cards; prompts can repeat.
 function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
   const childrenByRun = new Map<RunId, Set<string>>();
   for (const entry of entries) {
@@ -1367,7 +1331,6 @@ function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
 
 const supersededReasoningEntries = new WeakMap<TimelineEntry, TimelineEntry>();
 
-/** A steer or subsequent activity ends thinking even if the provider omits its completion. */
 function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   return entries.map((entry, index) => {
     if (
@@ -1424,10 +1387,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
-  /**
-   * The live work has no app run (a provider-native subagent thread), so
-   * runless entries are the current response instead of settled history.
-   */
+  /** Native subagent work has no app run; runless entries form the live response. */
   runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
@@ -2284,8 +2244,7 @@ function replaceStreamingMessageRows(
     availableRevertTurnCounts,
     ...context
   } = input;
-  // V2 shell and checkpoint selectors produce fresh summaries for each event.
-  // Equivalent summaries must not invalidate a text-only projection.
+  // Shell/checkpoint selectors rebuild summaries per event; compare contents.
   if (
     timelineEntries.length !== previousEntries.length ||
     !shallow(previousContext, context) ||
@@ -2426,13 +2385,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.proposedPlan === (b as typeof a).proposedPlan;
 
     case "html-render": {
-      // Entries rebuild on any tool update; an equal page must keep its mounted frame.
+      // Tool updates rebuild entries; preserve frames for unchanged pages.
       const bh = b as typeof a;
       return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
     }
 
     case "mcp-app": {
-      // Same reason: an equal app keeps its live frame and its state.
       const bm = b as typeof a;
       return (
         a.createdAt === bm.createdAt &&

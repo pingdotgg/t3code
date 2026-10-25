@@ -225,8 +225,6 @@ export function AnnotatableCodeView({
     if (!range) return;
     const item = context.item;
     if (item.type !== "diff") return;
-    // Read from the item, not the file list, so the compiled callback keeps its identity
-    // as patches arrive; the viewer re-applies its options whenever it changes.
     const id = nextFileCommentId();
     const filePath = resolveFileDiffPath(item.fileDiff);
     const comment = buildDiffReviewComment({

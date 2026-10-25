@@ -8,10 +8,7 @@ import { useTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
 
-/**
- * One generation per set: keyed on when the theme was set, not just its value,
- * so re-asserting the same theme still acts.
- */
+/** Include set time so reasserting the same theme still applies. */
 export function defaultThemeGeneration(theme: string, setAt: string): string {
   return setAt.length > 0 ? `${theme}@${setAt}` : theme;
 }
@@ -26,9 +23,7 @@ export function defaultThemeToApply(input: {
   if (input.environmentId === null || input.defaultTheme.length === 0) return null;
   const generation = defaultThemeGeneration(input.defaultTheme, input.defaultThemeSetAt);
   if (input.appliedGeneration === generation) return null;
-  // The setting and the palette it names arrive independently, so an id that
-  // does not resolve yet is not a failure -- the effect runs again when the
-  // published set changes.
+  // Settings and palettes arrive independently; an unresolved theme must retry when palettes arrive.
   if (!input.resolves) return null;
   return generation;
 }
@@ -53,7 +48,6 @@ export function useDefaultThemeAdoption(): void {
   const settings = useAtomValue(primaryServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
   const { setTheme, setAppearanceMode } = useTheme();
-  // Re-read when published or custom palettes change, so a theme that resolves late still applies.
   const definition = useSyncExternalStore(
     subscribeToCustomThemes,
     () => getThemeDefinition(defaultTheme),
@@ -72,16 +66,10 @@ export function useDefaultThemeAdoption(): void {
     });
     if (generation === null || definition === null) return;
 
-    // Clicking a card is a user choosing one half of their own mix; a set theme
-    // is the environment saying what this client opens on, so it takes the base
-    // preference and, for a single-appearance theme, the matching mode --
-    // otherwise a dark-only theme on a light client is recorded as applied
-    // while nothing changes.
+    // A single-appearance theme needs both preference and appearance writes to take effect.
     if (!setTheme(defaultTheme)) return;
     const half = singleAppearanceOf(definition);
-    // Recorded only once both land: marking the generation applied while the
-    // appearance switch failed would leave a dark-only theme rendering its
-    // light half with no retry.
+    // Only record adoption after both writes succeed, so an appearance failure remains retryable.
     if (half !== null && !setAppearanceMode(half)) return;
     writeAppliedGeneration(storageKey, generation);
   }, [environmentId, defaultTheme, defaultThemeSetAt, definition, setTheme, setAppearanceMode]);

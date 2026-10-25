@@ -28,10 +28,7 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
   return `(${attachmentCount} ${label}${attachmentCount === 1 ? "" : "s"})`;
 }
 
-/**
- * The listener runs capture-phase on window so it wins over the composer's handlers while the
- * menu is open.
- */
+/** Window capture gives the open menu priority over composer key handlers. */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
   stashShortcutLabel: string | null;
@@ -98,8 +95,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         return;
       }
       if (event.key === "Enter") {
-        // A focused control inside the row (the delete button) owns its own
-        // activation; swallowing Enter here would restore instead of delete.
+        // Let the delete button handle Enter instead of restoring its row.
         if (event.target instanceof HTMLElement && event.target.closest("button[aria-label]")) {
           return;
         }

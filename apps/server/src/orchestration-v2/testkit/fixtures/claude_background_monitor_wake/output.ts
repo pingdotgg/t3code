@@ -13,9 +13,7 @@ import { CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT } from "./input.ts";
 
 const MONITOR_TASK_ID = "b1htjkjev";
 
-// Claude reports a Monitor as task_type local_bash, the same as a background
-// Bash command. Only the Monitor tool call that started the task tells them
-// apart, so the roster and the wake must name it a monitor.
+// Claude reports Monitors as local_bash; only the launching tool call distinguishes them from background Bash.
 export function assertClaudeBackgroundMonitorWakeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -35,8 +33,7 @@ export function assertClaudeBackgroundMonitorWakeOutput(
       event.type === "provider-thread.updated" ? (event.payload.pendingBackgroundTasks ?? []) : [],
     )
     .filter((task) => task.taskId === MONITOR_TASK_ID);
-  // Claude's first roster snapshot lands one frame before the task_started
-  // that links the task to its Monitor call, so only that entry reads command.
+  // The first roster precedes task_started linking the Monitor call, so that entry reads command.
   assert.isAbove(rosterTasks.length, 1);
   for (const task of rosterTasks.slice(1)) {
     assert.deepEqual(task, {

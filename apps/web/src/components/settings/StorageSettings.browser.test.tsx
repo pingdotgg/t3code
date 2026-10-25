@@ -64,8 +64,6 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
   useUpdateScopedSettings: () => vi.fn(),
   useClearScopedSettings: () => vi.fn(),
 }));
-// The real page container needs a router and the real row reads write permission and
-// overrides from live environment state; this suite is about the cleanup panel.
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsPageContainer: (({ children }: { children: ReactNode }) => children) as never,

@@ -68,8 +68,7 @@ import { makeReplayRecorderDeferredRegistry } from "./replayRecorderDeferredRegi
 const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
   process.env.T3_CODEX_REPLAY_PLAN_DEVELOPER_INSTRUCTIONS ??
   "You are in Plan mode. Prefer request_user_input for clarifying questions. When presenting a complete plan, wrap it in <proposed_plan> and </proposed_plan>.";
-// Match the V2 adapter's initialize, thread and turn frames so recordings replay
-// against it without hand edits.
+// Match V2 adapter frames so recordings replay unchanged.
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
@@ -125,10 +124,7 @@ interface ReplayRun {
   readonly steps: ReadonlyArray<ReplayStep>;
   readonly turnDefaults?: Omit<TurnStartParams, "input" | "threadId">;
   readonly interactionMode?: "plan";
-  /**
-   * Recorder-only `thread/start` config merged over the adapter's. Its keys go in the
-   * transcript header as `recorderThreadConfigKeys`, which replay leaves out of matching.
-   */
+  /** Recorder overrides; replay ignores keys listed in the header's `recorderThreadConfigKeys`. */
   readonly threadConfig?: Readonly<Record<string, boolean | number | string>>;
 }
 
@@ -415,8 +411,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       fileName: "tool_call_restricted_granular.ndjson",
       description:
         "Write a small fixture file with restricted read access and granular approval flags enabled.",
-      // gpt-6 models write through the shell; gpt-5.6-terra uses apply_patch, which is what
-      // raises the file-change approval this scenario covers.
+      // gpt-5.6-terra uses apply_patch, which raises this approval; gpt-6 uses the shell.
       model: "gpt-5.6-terra",
       runs: [
         {
@@ -945,8 +940,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       fileName: "thread_fork_native_siblings.ndjson",
       description:
         "One source marker turn and two independent native forks that each recall the source plus only their own fork marker.",
-      // gpt-6-luna often answers the recall turn with an earlier acknowledgement instead of
-      // the markers; gpt-6-sol recalls them.
+      // gpt-6-luna often recalls acknowledgements; gpt-6-sol recalls the markers.
       model: "gpt-6-sol",
       runs: [
         {
@@ -993,8 +987,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       fileName: "thread_merge_back_continue.ndjson",
       description:
         "A source thread consumes one fork-delta handoff and later recalls source and transferred context.",
-      // gpt-6-luna often answers the recall turn with an earlier acknowledgement instead of
-      // the markers; gpt-6-sol recalls them.
+      // gpt-6-luna often recalls acknowledgements; gpt-6-sol recalls the markers.
       model: "gpt-6-sol",
       runs: [
         {
@@ -1041,8 +1034,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       fileName: "thread_merge_back_siblings.ndjson",
       description:
         "Two sibling fork deltas are merged sequentially into one source provider thread and recalled together.",
-      // gpt-6-luna often answers the recall turn with an earlier acknowledgement instead of
-      // the markers; gpt-6-sol recalls them.
+      // gpt-6-luna often recalls acknowledgements; gpt-6-sol recalls the markers.
       model: "gpt-6-sol",
       runs: [
         {
@@ -1229,8 +1221,7 @@ function layerCodex({ recorder }: { readonly recorder: Recorder }) {
   return Layer.effect(
     CodexClient.CodexAppServerClient,
     Effect.gen(function* () {
-      // The vp node shim marks its children with VP_TOOL_RECURSION, which makes every
-      // `node` the agent runs through a shell fail. Codex must not inherit it.
+      // Inheriting the vp shim's VP_TOOL_RECURSION makes Codex's shell `node` calls fail.
       const { VP_TOOL_RECURSION: _vpToolRecursion, ...environment } =
         yield* HostProcess.Environment;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1547,8 +1538,7 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
       yield* Effect.gen(function* () {
         const client = yield* initializeClient;
         const resumeParams = { threadId, excludeTurns: true, ...threadRuntimeParams };
-        // Like the adapter: the fresh app-server reports the thread notLoaded,
-        // so it is resumed before thread/revert, and the next turn resumes it again.
+        // Fresh app-servers report notLoaded; resume before thread/revert and again on the next turn.
         yield* client.request("thread/read", { threadId, includeTurns: false });
         yield* client.request("thread/resume", resumeParams);
         yield* revertCodexThread(client, threadId, rollback.numTurns);

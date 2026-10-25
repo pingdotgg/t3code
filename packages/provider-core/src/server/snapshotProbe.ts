@@ -23,7 +23,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createProviderVersionAdvisory } from "./maintenanceResolver.ts";
 import { collectUint8StreamText } from "./collectStreamText.ts";
 
-// Localized cmd.exe "not recognized" messages for a missing executable.
 const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
   /is not recognized as an internal or external command/i,
   /n.o . reconhecido como um comando interno/i,
@@ -133,8 +132,7 @@ export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(functi
 }, Effect.scoped);
 
 export function parseGenericCliVersion(output: string): string | null {
-  // "opencode v2.0.3"-style output: the optional "v" has to be consumed first,
-  // since "v2" itself contains no word boundary.
+  // Consume v before the digits; v2 has no internal word boundary.
   const match = output.match(/\bv?(\d+\.\d+\.\d+)\b/);
   return match?.[1] ?? null;
 }

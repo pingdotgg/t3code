@@ -96,8 +96,7 @@ export function V5CardStackView(
       observedDescriptors: props.descriptors,
     });
   }
-  // Keep the real descriptor through dismissal. describe(route, true) creates
-  // a placeholder whose navigation rejects setOptions and dispatches.
+  // Retain the real descriptor through dismissal; placeholders reject setOptions and dispatch.
   const nativeDismiss = useCallback(
     (key: string) => {
       const state = props.navigation.getState();
@@ -110,8 +109,7 @@ export function V5CardStackView(
           completedNativeDismissals.add(key);
           return { ...current, completedNativeDismissals, nativeCompletingPops };
         }
-        // A delayed callback needs immediate cleanup: the router already
-        // removed the route, so no further router update will follow.
+        // Clean delayed callbacks immediately; the router already removed this route and will not update again.
         completedNativeDismissals.delete(key);
         const descriptors = { ...current.descriptors };
         delete descriptors[key];
@@ -185,8 +183,7 @@ export function V5CardStackView(
                   const action = nativeStackPopAction(state, source, route.key);
                   if (action) {
                     const sourceIndex = state.routes.findIndex((current) => current.key === source);
-                    // UIKit owns this pop. Keep these children attached until its
-                    // dismissal callback, so the early router update cannot enqueue a second pop.
+                    // Keep children until UIKit's dismissal callback; early router removal would enqueue a second pop.
                     const poppedKeys = state.routes
                       .slice(sourceIndex - action.payload.count + 1, sourceIndex + 1)
                       .map((popped) => popped.key);
@@ -210,8 +207,7 @@ export function V5CardStackView(
               onWillDisappear={() => {
                 if (index === 0) props.onRootVisibilityChange?.(false);
                 const state = props.navigation.getState();
-                // JS pushes/pops already changed history. Only native Back leaves
-                // the disappearing card at the router's active index.
+                // Only native Back leaves the disappearing card active; JS navigation already changed history.
                 if (state.index > 0 && state.routes[state.index]?.key === route.key) {
                   nativePopSource.current = route.key;
                 }

@@ -22,12 +22,7 @@ import {
   resolveSvgImageSize,
 } from "./markdownImageSize";
 
-/**
- * Width the feed lays markdown out in. The feed already knows this from its
- * viewport, so an image can size its frame on the first render instead of
- * waiting for its own onLayout, which would change the row's height once more
- * after the list has positioned the rows below it.
- */
+/** Use known feed width immediately; later image measurement would move already-positioned rows. */
 export const MarkdownImageAvailableWidthContext = createContext(0);
 
 export function ThreadMarkdownImageView(props: {

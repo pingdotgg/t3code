@@ -124,11 +124,9 @@ describe("toOpenCodeFileParts", () => {
         attachment("application/pdf"),
         attachment("text/plain"),
         attachment("image/png"),
-        // A ZIP file part makes OpenCode's Anthropic path throw before the
-        // turn starts; it must ride only as the prompt's file path line.
+        // ZIP file parts fail Anthropic before turn start; send only the prompt's path line.
         attachment("application/zip"),
-        // OpenCode inlines only text/plain itself. Other text types reach the
-        // model API as raw file parts, which Anthropic and OpenAI reject.
+        // OpenCode inlines only text/plain; other text MIME parts fail Anthropic/OpenAI.
         attachment("text/html"),
         attachment("text/markdown"),
         attachment("application/octet-stream"),

@@ -62,12 +62,7 @@ function isLatestRunSettled(
   return true;
 }
 
-/**
- * The projector only stamps `startedAt` in the same update that moves the
- * session to "running", so while the provider spins up (session "starting") a
- * requested turn has no `startedAt` at all — and returning null there blinks
- * the indicator out for the whole spin-up.
- */
+/** Fall back during provider startup; the projector stamps startedAt only when the session becomes running. */
 export function deriveActiveWorkStartedAt(
   latestRun: LatestRunTiming | null,
   runtime: RuntimeActivityState | null,

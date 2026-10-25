@@ -664,7 +664,6 @@ it.effect("does not follow a redirect off the configured Bitbucket", () =>
       bitbucket.request({ method: "GET", url: "/repositories/acme/web/pullrequests/1/diff" }),
     );
 
-    // The client would carry every header to the new host, so the hop is checked here instead.
     assert.strictEqual(error._tag, "BitbucketUntrustedUrlError");
   }).pipe(
     Effect.provide(
@@ -688,7 +687,6 @@ it.effect("follows a redirect that stays on the configured Bitbucket", () =>
       url: "/repositories/acme/web/pullrequests/1/diff",
     });
 
-    // Bitbucket serves a diff as a redirect to a commit range, so the hop has to be followed.
     assert.strictEqual(result.body, "diff --git a/a.ts b/a.ts");
     assert.isFalse(result.truncated);
   }).pipe(

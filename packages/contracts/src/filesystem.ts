@@ -6,8 +6,7 @@ const FILESYSTEM_PATH_MAX_LENGTH = 512;
 export const FILESYSTEM_METADATA_BATCH_LIMIT = 64;
 
 export const FilesystemGetMetadataInput = Schema.Struct({
-  // Absolute host paths, including ~/ paths. Relative paths need a workspace
-  // anchor on the client; the server never resolves them against its own cwd.
+  // Absolute host paths, including ~/; clients must anchor relative paths.
   paths: Schema.Array(
     TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(FILESYSTEM_METADATA_BATCH_LIMIT)),
@@ -21,8 +20,7 @@ export const FilesystemEntryMetadata = Schema.Struct({
 });
 export type FilesystemEntryMetadata = typeof FilesystemEntryMetadata.Type;
 
-// Results follow request order so paths do not have to travel back over the wire.
-// A null entry means the path is missing, unreadable, or unsupported.
+// Entries follow request order; null means missing, unreadable, or unsupported.
 export const FilesystemGetMetadataResult = Schema.Struct({
   entries: Schema.Array(Schema.NullOr(FilesystemEntryMetadata)),
 });

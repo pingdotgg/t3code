@@ -5,7 +5,6 @@ import {
   readComposerImageThumbnail,
 } from "../../lib/imageCompression";
 
-/** Keep full-resolution image decoding out of composer rerenders. */
 export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
   file,
   alt,

@@ -30,9 +30,7 @@ import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 import { reuseProvidersIgnoringCheckedAt } from "./serverProviders.logic";
 
-// Only the primary environment's themes are rendered, but which environment is primary changes
-// at runtime and the subscription payload is fixed when it is established -- gating on "primary
-// right now" would leave a newly promoted environment with no themes until it reconnected.
+// Subscribe to every environment's themes; primary can change without reconnecting or updating the subscription.
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   environmentThemes: true,
@@ -178,7 +176,6 @@ export const primaryServerEnvironmentThemesAtom = Atom.make(
     get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
 ).pipe(Atom.withLabel("web-primary-server-environment-themes"));
 
-/** Providers for views that do not show `checkedAt`; see {@link reuseProvidersIgnoringCheckedAt}. */
 export const providersIgnoringCheckedAtAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ServerProvider> =>
     reuseProvidersIgnoringCheckedAt(

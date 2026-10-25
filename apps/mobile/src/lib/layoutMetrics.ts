@@ -4,6 +4,5 @@ export const IPAD_HOME_TITLE_OFFSET = 10;
 
 export const IOS_NAV_BAR_HEIGHT = 44;
 
-/* Height of the app's own header chrome below the safe-area inset, on every
- * platform (matches the `min-h-12` AndroidScreenHeader). */
+/* App header height below safe area, matching AndroidScreenHeader min-h-12. */
 export const APP_BAR_HEIGHT = 48;

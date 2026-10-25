@@ -71,14 +71,10 @@ const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-// Every status refresh adds the untracked files to a temporary index, and git add's cost grows
-// much faster than the file count (50k files took about 30 seconds). Past this many, the
-// totals are reported incomplete instead.
+// Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
-// Patches the clients render are parsed against git's default a/ and b/ path
-// prefixes. A repository or global diff.noprefix or diff.mnemonicPrefix would
-// otherwise leak into the patch and leave every parsed file unnamed.
+// Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
 const REVIEW_DIFF_ARGS = [
   "diff",
@@ -318,12 +314,8 @@ export function splitNullSeparatedGitStdoutPaths(
   return splitNullSeparatedPaths(result.stdout, result.stdoutTruncated);
 }
 
-/**
- * Refuses a ref name with a leading "-" before it reaches checkout or `worktree add`. Git refuses
- * such branch and tag names, and both commands, or the `git branch` that `worktree add` runs, read
- * one as an option. `--end-of-options` cannot guard them: Git before 2.44 reads it like `--`.
- * A lone "-" is the previous checkout, which both commands read as a ref.
- */
+// Checkout/worktree add parse leading dashes as options; pre-2.44 Git cannot guard with --end-of-options.
+// A lone - still means previous checkout.
 const refuseOptionLikeRefName = (operation: string, cwd: string, refName: string | undefined) =>
   refName !== undefined && refName !== "-" && refName.startsWith("-")
     ? Effect.fail(
@@ -438,10 +430,7 @@ function gitCommandContext(
   } as const;
 }
 
-// Git states the actual cause on stderr, but stderr never leaves this module:
-// it echoes argv and remote URLs, which can carry credentials. Matching it
-// against fixed patterns yields a tag the caller can act on and a message that
-// quotes none of the matched text.
+// Stderr can echo credentials from argv/URLs; classify fixed patterns without exposing matched text.
 const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFailureReason]> = [
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
   [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
@@ -455,8 +444,7 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     /(?:could not read from remote repository|does not appear to be a git repository|repository .+ not found)/i,
     "remote_unreachable",
   ],
-  // Quoted-path forms only: an unquoted `fatal: <thing> already exists` also
-  // covers tag and ref collisions, which are not path collisions.
+  // Unquoted already-exists errors also describe ref/tag collisions; require quoted paths.
   [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
   // Ambiguous revision/path and pathspec failures can name files, so omit them.
   // Anchor to a diagnostic line to avoid matching quoted paths in other errors.
@@ -494,17 +482,10 @@ function gitFailureDetail(reason: GitCommandFailureReason | null): string {
 // distinguishes them with a separate error line.
 const GIT_NOT_A_COMMIT_PATTERN = /^error: .+(?:, not a commit|expected commit type)/im;
 
-// Hooks write to the same stream git does, and nothing distinguishes their text
-// from git's: a pre-push hook echoing "authentication failed" would otherwise
-// be read as a credential failure. `remote:` is deliberately excluded — git
-// prefixes every byte the server sends that way, remote hook output included,
-// so trusting it would reintroduce the same false positive from the other end
-// of the connection.
+// Trust only Git's diagnostic prefixes: local hooks can write indistinguishable text.
+// Exclude `remote:` too, since it prefixes remote hook output as well as server diagnostics.
 const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
-// ssh reports the refusal itself, unprefixed, and git only adds a generic
-// "Could not read from remote repository" after it. Dropping ssh's line would
-// leave that generic one to be read as an unreachable remote when the real
-// cause is credentials, so these specific refusals are classified too.
+// SSH credential refusals are unprefixed; Git's later generic error would otherwise misclassify them as unreachable.
 const SSH_TRANSPORT_REFUSAL_PATTERN =
   /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
 
@@ -568,9 +549,7 @@ function isUnbornHeadStderr(stderr: string): boolean {
   );
 }
 
-// Matches `git worktree remove` on a path git no longer tracks: "is not a
-// working tree" when the registration is gone, "cannot remove working tree"
-// when older gits fail validation on a registered-but-deleted directory.
+// Git reports missing worktree registrations and registered-but-deleted paths differently.
 function isMissingWorktreeStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return (
@@ -579,8 +558,7 @@ function isMissingWorktreeStderr(stderr: string): boolean {
   );
 }
 
-// Fetch stderr can contain remote credentials. Only fixed diagnoses may enter
-// persisted errors; unrecognized output keeps the generic failure message.
+// Fetch stderr can carry credentials; persist only fixed diagnoses or generic failures.
 function fetchFailureDetail(stderr: string): string | undefined {
   const lines = stderr.split(/\r?\n/).map((line) => line.trim());
   if (
@@ -616,8 +594,7 @@ function fetchFailureDetail(stderr: string): string | undefined {
   return undefined;
 }
 
-// Matches a fetch that lost a ref update to another Git process. Git 2.53+
-// reports it as "fetching ref <ref> failed: ..."; older Git says "cannot lock ref".
+// Git 2.53+ reports ref races as fetching-ref failures; older versions say cannot lock ref.
 function isRefLockFailure(stderr: string): boolean {
   return stderr
     .split(/\r?\n/)
@@ -855,12 +832,10 @@ const collectOutput = Effect.fnUntraced(function* (
   let text = "";
   let lineBuffer = "";
   let truncated = false;
-  // A separator-free stream past the cap must not grow the line buffer
-  // without bound; a line longer than this is not one the callbacks want.
+  // Bound newline-free output; oversized lines are not useful to callbacks.
   const maxPendingLineBytes = 64 * 1024;
 
-  // Git redraws progress with a bare `\r` between updates and only ends the
-  // line once the step is done, so `\r` has to count as a line break here.
+  // Git redraws progress with bare CR; treat it as a line break.
   const emitCompleteLines = Effect.fnUntraced(function* (flush: boolean) {
     let separator = OUTPUT_LINE_SEPARATOR.exec(lineBuffer);
     while (separator) {
@@ -938,12 +913,7 @@ const collectOutput = Effect.fnUntraced(function* (
   };
 });
 
-/**
- * Git on Windows cannot create or delete a path longer than MAX_PATH (260)
- * unless `core.longpaths` is set. The OS-level LongPathsEnabled setting does not
- * cover it, and git leaves it off by default, so deep worktrees fail to check
- * out and fail midway through removal.
- */
+/** Windows Git needs core.longpaths beyond MAX_PATH (260); OS LongPathsEnabled alone is insufficient. */
 export const windowsLongPathConfigEnv = (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -986,8 +956,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const baseEnv = {
           ...process.env,
-          // Status polling runs beside the user's own git commands; without this,
-          // `git status` takes index.lock to save its refreshed index.
+          // Concurrent status polls must not take index.lock to save refreshed indexes.
           GIT_OPTIONAL_LOCKS: "0",
           ...input.env,
           ...trace2Monitor.env,
@@ -995,8 +964,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
-        // A git.cmd wrapper would need cmd.exe, which cuts multi-line commit
-        // messages at the first newline; leave that case to Node's lookup.
+        // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
         const executable = resolved.shell ? "git" : resolved.command;
         const child = yield* commandSpawner
           .spawn(
@@ -1200,10 +1168,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((result) => result.stdout),
     );
 
-  /**
-   * Runs `git worktree list --porcelain -z`. Git before 2.36 rejects `-z`, so a failed run
-   * retries the line form and returns it NUL-delimited, the same shape as `-z` output.
-   */
+  // Pre-2.36 Git rejects worktree list -z; normalize its line fallback to NUL records.
   const executeWorktreeList = Effect.fn("executeWorktreeList")(function* (
     operation: string,
     cwd: string,
@@ -1603,10 +1568,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const statusRemoteRefreshCache = yield* Cache.makeWith(refreshStatusRemoteCacheEntry, {
     capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
-    // A failed background fetch is intentionally cached and exponentially
-    // backed off. Status reads swallow this failure and use the last fetched
-    // refs, so repeated thread mounts cannot turn a slow or unavailable remote
-    // into a repository-wide Git subprocess storm.
+    // Cache/back off failed fetches while status uses old refs; repeated mounts must not cause subprocess storms.
     timeToLive: (exit, cacheKey) =>
       Exit.isSuccess(exit)
         ? STATUS_UPSTREAM_REFRESH_INTERVAL
@@ -2127,8 +2089,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const statusCacheKey = repositoryPaths?.gitCommonDir;
     const [numstatEntries, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
       [
-        // Plumbing, because porcelain `git diff` rewrites the index even with
-        // GIT_OPTIONAL_LOCKS=0. -M keeps porcelain's rename detection.
+        // Porcelain diff rewrites indexes despite GIT_OPTIONAL_LOCKS=0; plumbing with -M preserves rename detection.
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
           cwd,
@@ -2628,11 +2589,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => null),
     );
     if (currentUpstream) {
-      // A branch tracking a differently named ref was cut from it, the way `git
-      // checkout -b feature origin/dev` and our own worktree flow leave it.
-      // That upstream is the branch's base, not its publish target, and pushing
-      // HEAD onto it would write feature commits to a shared branch (bare `git
-      // push` refuses this under push.default=simple).
+      // Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
       const isAliasOfUpstreamHead =
         branch === currentUpstream.branchName ||
         (branch.endsWith(`/${currentUpstream.branchName}`) &&
@@ -2892,8 +2849,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (indexExists) {
       const { mtime } = yield* fileSystem.stat(indexPath);
       yield* fileSystem.copyFile(indexPath, tempIndexPath);
-      // Node FileSystem.stat truncates bigint timestamps to milliseconds before creating its Date.
-      // Flooring preserves the source second without making preceding-second files racy.
+      // stat truncates bigint times to ms; floor seconds to avoid making preceding-second files racy.
       const indexTime = Option.isSome(mtime)
         ? Math.max(0, Math.floor(mtime.value.getTime() / 1000))
         : 0;
@@ -3616,10 +3572,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const currentEpoch = listRefsEpochByCommonDir.get(gitCommonDir);
       const snapshot =
         refresh || currentEpoch === undefined
-          ? // The refresh cache owns the complete snapshot read, rather than only the
-            // epoch bump. Slow repositories therefore remain singleflight for the
-            // entire Git scan even when more refresh requests arrive after the
-            // coalescing TTL would otherwise have elapsed.
+          ? // Cache the entire snapshot read so slow scans stay single-flight beyond the coalescing TTL.
             yield* Cache.get(
               listRefsRefreshSnapshotCache,
               new GitRefsRefreshCacheKey({ gitCommonDir, generation }),
@@ -3727,7 +3680,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
-    // resolve: a cwd like `<repo>/sub/..` must not name the folder `..`.
+    // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
     let worktreePath = input.path;
     if (worktreePath == null) {
@@ -3781,9 +3734,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* progress.onWorktreeClaimed(worktreePath);
     }
 
-    // `git worktree add` leaves submodules empty, so a repo that keeps agent
-    // skills, tooling or source in one gets a worktree that is quietly missing
-    // them.
+    // worktree add leaves submodules empty, potentially omitting project skills, tools or source.
     const hasSubmodules = yield* fileSystem
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));
@@ -3959,17 +3910,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ["merge-base", "--is-ancestor", headCommit, input.targetCommit],
         { allowNonZeroExit: true },
       ).pipe(Effect.map((result) => result.exitCode === 0));
-      // A rewritten head (rebase, squash, amend) does not descend from the checkout, so it can
-      // only be taken by resetting. That is lossless exactly when the tree is clean and HEAD
-      // never left the commit the upstream held before the fetch.
+      // Rewritten heads require reset; allow only clean checkouts still at the pre-fetch upstream commit.
       if (!isAncestor && headCommit !== input.resetWhenHeadCommit) {
         return { headCommit, moved: false, onTarget: false };
       }
 
       if (!isAncestor) {
-        // The commit being reset away is about to be reachable from nothing. It is only ever a
-        // commit the remote already held, but "the remote held it" stops being a way back once
-        // the head it belonged to has been rewritten, so a ref keeps it findable.
+        // Retain the reset-away commit; rewritten remote heads no longer provide a path back.
         yield* executeGit(
           "GitVcsDriver.refreshCheckedOutBranch.keepPrevious",
           input.cwd,
@@ -3981,10 +3928,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit(
         "GitVcsDriver.refreshCheckedOutBranch.move",
         input.cwd,
-        // `--merge` rather than `--hard`: the cleanliness check above is a snapshot, and another
-        // thread may edit a tracked file between it and this move. Git itself refuses a `--merge`
-        // reset that would overwrite such an edit — the same guarantee `--ff-only` gives the
-        // other branch — so a race loses nothing; the refresh fails and is reported instead.
+        // reset --merge refuses tracked edits racing our cleanliness check, preserving work like --ff-only does.
         isAncestor
           ? ["merge", "--ff-only", input.targetCommit]
           : ["reset", "--merge", input.targetCommit],
@@ -4232,12 +4176,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.provideService(Path.Path, path),
     );
     if (result.exitCode === 0) {
-      // Git for Windows never descends into NTFS junctions, such as pnpm's
-      // node_modules links. It reports success but leaves them and their parent
-      // directories behind, so a resumed thread would find a stub instead of
-      // recreating its checkout. Git has already unregistered the worktree, so
-      // anything left here is logged rather than returned: a retry could never
-      // succeed.
+      // Git for Windows reports success without removing NTFS junctions or their parent directories.
+      // Log leftover cleanup failures: Git already unregistered the worktree, so removal cannot be retried.
       if (yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false))) {
         const removed = yield* removeLeftoverLinks(target).pipe(
           Effect.catch((error) =>
@@ -4256,9 +4196,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       return;
     }
-    // Threads can share a worktree path, and worktrees get removed or pruned
-    // outside the app, so a worktree that is already gone is a no-op rather
-    // than an error.
+    // Threads share paths and outside Git can remove worktrees; already-gone removals are no-ops.
     const alreadyGone =
       isMissingWorktreeStderr(result.stderr) &&
       !(yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false)));
@@ -4462,8 +4400,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
     executeWorktreeList("GitVcsDriver.listWorktreePaths", cwd, []).pipe(
-      // One record per worktree, each ended by an empty field. A `prunable`
-      // record's directory is gone, and another checkout may now sit there.
+      // A `prunable` record's directory is gone; another checkout may now sit there.
       Effect.map(({ stdout }) =>
         stdout.split("\0\0").flatMap((record) => {
           const fields = record.split("\0");

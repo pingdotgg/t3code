@@ -29,8 +29,7 @@ interface TerminalMetadataIndex {
 
 const metadataIndexes = new WeakMap<ReadonlyArray<TerminalSummary>, TerminalMetadataIndex>();
 const sessionsBySummary = new WeakMap<TerminalSummary, Map<EnvironmentId, KnownTerminalSession>>();
-// Reuse groups a consumer still holds without keeping old group members alive
-// merely because their first summary remains in a newer metadata snapshot.
+// Reuse held groups without retaining old members when their anchor survives in newer snapshots.
 const groupsByAnchor = new WeakMap<
   TerminalSummary,
   Map<

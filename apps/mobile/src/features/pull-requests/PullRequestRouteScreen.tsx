@@ -777,8 +777,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   getItemType={(row) =>
                     row.key.endsWith(":body") ? row.key : row.key.split(":")[0]
                   }
-                  // The overview body contains the clipped description and owns collapse scroll
-                  // correction. Animating that cell fights both; file rows still fade individually.
+                  // Animating overview fights clipped markdown and collapse scroll correction; file rows can still fade.
                   itemLayoutAnimation={tab === "overview" ? undefined : PR_ROW_LAYOUT}
                   onLoad={() => setListAnimationsReady(true)}
                   renderItem={({ item }) => (

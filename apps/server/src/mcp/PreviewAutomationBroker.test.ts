@@ -1027,7 +1027,6 @@ it.effect("keeps each thread's current tab when threads share a provider session
         ["thread-1", "tab-thread-1"],
         ["thread-2", "tab-thread-2"],
       ]);
-      // Each thread's agent owns its own tabs and tab budget.
       expect(routed[0]!.agentSessionId).not.toBe(routed[1]!.agentSessionId);
     }),
   ),

@@ -63,12 +63,7 @@ export function WorkspaceConnectionStatusProvider(props: { readonly children: Re
   return <ConnectionStatusContext value={status}>{props.children}</ConnectionStatusContext>;
 }
 
-/**
- * Deliberately JS-driven: this can mount inside a native header item
- * (RNSScreenStackHeaderSubview), where native-driver animated nodes blank the
- * re-hosted view entirely. The JS driver updates opacity through the ordinary
- * style path, which those subviews handle.
- */
+/** Native-driver animation blanks views re-hosted in RNSScreenStackHeaderSubview; use the JS style path. */
 function StatusFadeIn(props: {
   readonly children: ReactNode;
   readonly animate: boolean;

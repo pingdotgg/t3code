@@ -8,33 +8,17 @@ import {
 } from "../../orchestration-v2/messageSearchIndex.ts";
 
 /**
- * Full-text index for thread message search. The trigram tokenizer matches any
- * substring of three or more characters, ignoring case and accents, so
- * identifiers inside code still match, without the full-table scan a
- * `LIKE '%q%'` needs.
- *
- * It holds what the user wrote and what agents answered. User-role messages
- * that agents or the system wrote (pull request updates, task notices) would
- * flood results and read as "You".
- *
- * The index is contentless and keyed by the message rowid: search reads the
- * text back from the message row, so the text is not stored twice. `t3 doctor`
- * rebuilds it after its VACUUM, since SQLite does not promise to keep rowids.
- * Thread search scans the same messages when the index is missing.
- *
- * Triggers keep it in sync with every write to the messages table. Streaming
- * messages are indexed once they finish, with apostrophes folded as search
- * folds them.
+ * Trigrams match 3+ character substrings without a scan, ignoring case and accents.
+ * Generated user-role notices would flood results and appear as "You".
+ * VACUUM can change rowids, so `t3 doctor` must rebuild this contentless index afterward.
+ * Index only finished messages, folding apostrophes as queries do; scan if the index is missing.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Node and Electron bundle a SQLite with these options; a Node built against
-  // an older system SQLite may lack them. Search then scans messages instead
-  // of failing to start. Only SQLITE_ERROR ("no such module", "no such
-  // tokenizer", "unrecognized option") means that: a full disk or I/O error
-  // fails the migration, so the next start retries instead of skipping the
-  // index for good.
+  // Older system SQLite builds may lack these FTS5 options; search can scan messages instead.
+  // Only SQLITE_ERROR signals unsupported options. Disk and I/O failures must fail the migration
+  // so the next startup retries creating the index.
   const created = yield* sql`
     CREATE VIRTUAL TABLE orchestration_v2_message_search USING fts5(
       text,

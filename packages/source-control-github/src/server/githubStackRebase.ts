@@ -59,7 +59,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
         }),
     ),
   );
-  // The token rides in a header for this process only: never in the URL, argv, or git config.
+  // Keep the token in this process's header, outside URLs, argv and git config.
   const remote = input.remote ?? remoteUrl(input.host, input.repository);
   const authorization = `AUTHORIZATION: basic ${Base64.encode(`x-access-token:${Redacted.value(token)}`)}`;
   const env = {
@@ -103,8 +103,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   let parentOld = `origin/${input.base}`;
   let parentNew = `origin/${input.base}`;
   for (const [index, layer] of input.layers.entries()) {
-    // The bottom layer's old parent is where it forked from the base; above that it is the
-    // reviewed head of the layer below, which is exactly the commits this layer must not replay.
+    // Exclude old parents: the base fork point for the bottom, the reviewed lower head above it.
     const upstream =
       index === 0
         ? (yield* git(["merge-base", parentOld, layer.headSha]).pipe(

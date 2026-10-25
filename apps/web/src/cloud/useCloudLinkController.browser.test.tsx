@@ -83,7 +83,6 @@ vi.mock(import("./primaryCloudLinkState"), async (original) => ({
     refresh: testState.refreshLink,
   })) as never,
 }));
-// The Clerk JWT template is build-time config the test environment does not set.
 vi.mock(import("./publicConfig"), async (original) => ({
   ...(await original()),
   resolveRelayClerkTokenOptions: () => ({}) as never,

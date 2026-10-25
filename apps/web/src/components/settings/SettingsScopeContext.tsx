@@ -18,7 +18,6 @@ type ProjectFileMember = readonly [
   physicalProjectKey: string,
 ];
 
-// Keyed by the members' identifying fields so each render reads the same atom.
 const memberProjectFilesAtom = Atom.family((membersKey: string) => {
   const members = JSON.parse(membersKey) as ReadonlyArray<ProjectFileMember>;
   return Atom.make((get) => {

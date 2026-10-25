@@ -77,8 +77,7 @@ describe("composerContextClipboard", () => {
     expect(decodeComposerContextClipboardHtml("<p>Ordinary clipboard</p>")).toBeNull();
   });
   it("accepts a large non-ASCII fragment through the HTML attribute", () => {
-    // `encodeURIComponent` expands each CJK code unit to nine characters, so a fragment well
-    // inside the character limit still produces a much longer attribute.
+    // CJK code units expand to nine encoded characters despite fitting the fragment limit.
     const raw = JSON.stringify({
       version: 1,
       source: { environmentId: "env-1" },

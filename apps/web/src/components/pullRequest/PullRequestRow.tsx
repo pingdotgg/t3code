@@ -90,7 +90,7 @@ function PullRequestRowImpl({
   showProvider: boolean;
   environmentLabel?: string;
   matchedElsewhere?: boolean;
-  /** Used by the list's shared visibility observer to defer optional line-count reads. */
+  /** Visibility key for deferred line-count reads. */
   statsKey?: string;
   statsRef?: RefCallback<HTMLDivElement>;
   onSelect: (entry: PullRequestRowTarget) => void;

@@ -4,16 +4,11 @@ import { Option, Schema } from "effect";
 
 export const COMPOSER_MENTION_DRAG_TYPE = "application/x-t3code-composer-mention";
 
-/**
- * Drag payload type carrying a pull request, as JSON `PullRequestContextMetadata`. Set on drags
- * that start on a pull request row; the composer drops it as the same chip the `#` picker adds.
- */
 export const COMPOSER_PULL_REQUEST_DRAG_TYPE = "application/x-t3code-pull-request";
 
 const PullRequestDragPayload = Schema.fromJsonString(PullRequestContextMetadata);
 const decodePullRequestPayload = Schema.decodeUnknownOption(PullRequestDragPayload);
 
-/** The `COMPOSER_PULL_REQUEST_DRAG_TYPE` data for a pull request row's drag. */
 export const encodePullRequestDragPayload = Schema.encodeSync(PullRequestDragPayload);
 
 export function composerMentionFromTreePath(treePath: string): string | null {
@@ -43,12 +38,7 @@ export interface ComposerMentionDragEvent {
   stopPropagation(): void;
 }
 
-/**
- * Deliberately narrow: there is no way to focus the editor from here. Focusing
- * it synchronously during the drop makes the not-yet-reconciled editor sync its
- * stale empty state back over the inserted mention; the insert path already
- * focuses on the next frame, after the editor has caught up.
- */
+/** Insertion focuses next frame; synchronous focus would overwrite the unreconciled mention. */
 export interface ComposerMentionDropHost {
   insertMentionAtEnd(text: string): boolean;
   insertPullRequestAtEnd(pullRequest: PullRequestContextMetadata): boolean;
@@ -65,9 +55,7 @@ export interface ComposerMentionDragHandlers {
 export function makeComposerMentionDragHandlers(
   host: ComposerMentionDropHost,
 ): ComposerMentionDragHandlers {
-  // Claim the event for the composer: React's stopPropagation only halts the
-  // synthetic dispatch, so the native event must be stopped too or the
-  // editor's own DOM listeners still process the drag.
+  // Stop native propagation so the editor cannot process claimed drags.
   const claim = (event: ComposerMentionDragEvent): boolean => {
     if (!dataTransferHasComposerMention(event.dataTransfer.types)) {
       return false;
@@ -87,8 +75,7 @@ export function makeComposerMentionDragHandlers(
       if (!claim(event)) {
         return;
       }
-      // The tree constrains its drags to effectAllowed "move" (pull request links allow
-      // anything); naming any other effect makes the browser cancel the drop without firing it.
+      // Tree drags allow only "move"; other drop effects cancel delivery.
       event.dataTransfer.dropEffect = "move";
       host.setDragActive(true);
     },

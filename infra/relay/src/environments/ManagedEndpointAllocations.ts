@@ -159,13 +159,7 @@ export class ManagedEndpointAllocations extends Context.Service<
       ReadonlyArray<ManagedEndpointTunnelAllocation>,
       ManagedEndpointAllocationPersistenceError
     >;
-    /**
-     * Atomically claims the right to delete the allocation's tunnel: succeeds
-     * only while the recorded tunnel and generation still match what the
-     * caller loaded. A concurrent provision increments `generation` when it
-     * records its tunnel, which makes a stale claim fail and keeps the freshly
-     * issued tunnel alive.
-     */
+    /** Claim deletion only while tunnel and generation match, so concurrent provisioning keeps its new tunnel. */
     readonly claimRelease: (
       input: ClaimManagedEndpointReleaseInput,
     ) => Effect.Effect<number | null, ManagedEndpointAllocationPersistenceError>;
@@ -173,13 +167,7 @@ export class ManagedEndpointAllocations extends Context.Service<
       input: ClaimManagedEndpointReleaseInput,
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<Option.Option<A>, E | ManagedEndpointAllocationPersistenceError, R>;
-    /**
-     * Claims the complete allocation for teardown only if its generation still
-     * matches the snapshot captured by the unlink operation.
-     *
-     * Returns the claim generation used by `removeClaimed`, or null when a
-     * concurrent provision has already superseded the snapshot.
-     */
+    /** Return a teardown claim generation, or null if concurrent provisioning superseded the captured snapshot. */
     readonly claimDeprovision: (
       input: ClaimManagedEndpointDeprovisionInput,
     ) => Effect.Effect<number | null, ManagedEndpointAllocationPersistenceError>;
@@ -324,8 +312,7 @@ export const make = Effect.gen(function* () {
           tunnelId: input.tunnelId,
           readyAt: sql`case when ${relayManagedEndpointAllocations.tunnelId} = ${input.tunnelId} then ${relayManagedEndpointAllocations.readyAt} else null end`,
           origin: sql`case when ${relayManagedEndpointAllocations.tunnelId} = ${input.tunnelId} then ${relayManagedEndpointAllocations.origin} else null end`,
-          // Recovery registration is per tunnel: a replacement must register
-          // again before the reaper may treat it as recoverable.
+          // Replacement tunnels must re-register recovery before becoming reapable.
           recoveryEnabledAt: sql`case when ${relayManagedEndpointAllocations.tunnelId} = ${input.tunnelId} then ${relayManagedEndpointAllocations.recoveryEnabledAt} else null end`,
           recoveryEnvironmentPublicKey: sql`case when ${relayManagedEndpointAllocations.tunnelId} = ${input.tunnelId} then ${relayManagedEndpointAllocations.recoveryEnvironmentPublicKey} else null end`,
           tunnelReleasedAt: null,

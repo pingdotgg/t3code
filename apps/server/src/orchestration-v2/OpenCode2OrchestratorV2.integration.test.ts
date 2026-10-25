@@ -60,10 +60,7 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
 });
 const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntry =>
   entry.type === "runtime_exit" ? entry : { ...entry, label };
-/**
- * T3's own rules after a mode's: every thread's T3 MCP server is denied, and
- * then this thread's own is allowed again (last match wins).
- */
+/** MCP rules are last-match-wins; allow this thread after denying all T3 servers. */
 const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
@@ -856,10 +853,7 @@ describe("OpenCode 2 through the orchestrator", () => {
     "settles a background subagent whose report OpenCode delivers into the launching turn",
     () =>
       Effect.gen(function* () {
-        // The recorded background run, reordered as 2.0.18 ran it live when the
-        // child ended first: the parent's execution is still answering when the
-        // child's report is queued and delivered into it, and that one
-        // execution then answers the report and ends.
+        // OpenCode 2.0.18 can deliver a child report into the parent's still-running execution, which then answers it.
 
         const cwd = yield* checkpointWorkspace("opencode2-background-in-turn");
         const recorded = yield* readProviderReplayTranscript(

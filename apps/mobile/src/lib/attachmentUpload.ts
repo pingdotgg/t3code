@@ -69,9 +69,7 @@ export function withUploadedMobileAttachmentReferences(input: {
 }): ReadonlyArray<DraftComposerAttachment> {
   return input.attachments.map((attachment, index) => {
     const uploaded = input.uploadedAttachments[index];
-    // A picture picked through Files stays `type: "file"` in the draft while it uploads as an
-    // image, so compare against the type it was actually sent under: comparing draft types
-    // drops the id, and the next send re-uploads bytes the server already holds.
+    // Files-picked images upload as images; compare wire types to retain uploaded ids and avoid re-uploading.
     const uploadedAs = isComposerImageAttachment(attachment) ? "image" : attachment.type;
     if (
       !uploaded ||
@@ -145,13 +143,7 @@ export type PrepareTurnAttachmentsResult =
   | PreparedTurnAttachments
   | { readonly status: "abandoned" };
 
-/**
- * A picture picked through Files arrives typed as a plain file, often with no usable mime, so it is
- * promoted to the type the provider accepts. Every place that names the attachment on the wire —
- * the upload header, the upload input, and the message reference — has to agree on this one value,
- * or the turn describes bytes that are not what was actually sent and `ChatImageAttachment` rejects
- * it.
- */
+/** Promote Files-picked images consistently in headers, payloads and references or ChatImageAttachment rejects them. */
 export function composerAttachmentWireMimeType(attachment: DraftComposerAttachment): string {
   if (!isComposerImageAttachment(attachment)) return attachment.mimeType;
   return supportedImageWireMimeType(attachment);
@@ -279,11 +271,7 @@ async function uploadFileBytes(
   }
 }
 
-/**
- * `persistUploadedReferences` runs once the bytes are on the server and only when new ids appeared.
- * It must write the annotated attachments into the owner (queued message or draft) so a retry after
- * a crash reuses the bytes.
- */
+/** persistUploadedReferences runs only for new uploaded ids; save them to their owner so crash retries reuse bytes. */
 export async function prepareTurnAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -377,8 +365,7 @@ export async function prepareTurnAttachments(input: {
         remove: attachmentEnvironment.remove,
         environmentId,
         upload: attachmentUploadInput(attachment),
-        // Read the connection at transfer time: the environment may have
-        // reconnected on a new base URL since this cycle started.
+        // Resolve at transfer time; reconnects may change the base URL.
         resolveUploadUrl: (relativeUrl) => {
           requireUploadAccess();
           const currentConnection = appAtomRegistry.get(

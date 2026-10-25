@@ -33,8 +33,7 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
   for (const [interfaceName, interfaceAddresses] of Object.entries(input.networkInterfaces)) {
     if (!interfaceAddresses) continue;
 
-    // CGNAT space is shared with other VPNs. Native adapter identity also
-    // works when the CLI is missing or its cached status predates a connection.
+    // CGNAT is shared with other VPNs; adapter identity works without current CLI status.
     const isTailscaleInterface =
       /^tailscale(?:\d+|ipv[46])?$/iu.test(interfaceName) ||
       interfaceAddresses.some(

@@ -113,17 +113,9 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * The skill is hidden from the agent's own skill tool, so only the user can
-   * start it — Claude Code's `disable-model-invocation`. Composers must offer
-   * it as a slash command; naming it in prose does nothing.
-   */
+  /** Claude disable-model-invocation: only users can invoke; composers must offer a slash command. */
   userInvocationOnly: Schema.optional(Schema.Boolean),
-  /**
-   * The mirror of {@link ServerProviderSkill.userInvocationOnly}: Claude Code's
-   * `user-invocable: false` keeps the skill out of its own slash commands, so
-   * only the agent can start it. Composers must not offer it under `/`.
-   */
+  /** Claude user-invocable:false: only agents can invoke; composers must hide the slash command. */
   userInvocable: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
@@ -147,11 +139,7 @@ export function isProviderWorkspaceSnapshotCurrent(
   return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
 }
 
-/**
- * Snapshots with `availability: "unavailable"` MUST set
- * `installed: false` and `enabled: false`; the runtime refuses turn
- * starts against them with a structured error.
- */
+/** Unavailable snapshots must set installed and enabled false. */
 export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
 export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
 
@@ -215,14 +203,12 @@ export const ServerProviderUpdateState = Schema.Struct({
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
 export const ServerProvider = Schema.Struct({
-  // Routing key for the configured instance this snapshot represents. This
-  // is the only stable identity consumers may use for provider routing.
+  // Only instanceId is stable enough for provider routing.
   instanceId: ProviderInstanceId,
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
-  // Optional visual identity supplied by the owning provider driver. Clients
-  // must still validate remote URLs against that driver's trusted origin.
+  // Validate driver-supplied remote icons against the driver's trusted origin.
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
@@ -287,11 +273,7 @@ export type ServerProviders = typeof ServerProviders.Type;
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
 
-/**
- * Treat an absent `supportsTextGeneration` as supported so legacy
- * producers, which all support application text generation, keep working
- * without resending the field.
- */
+/** Legacy producers omit this field and support text generation. */
 export const isProviderTextGenerationCapable = (snapshot: ServerProvider): boolean =>
   snapshot.supportsTextGeneration !== false;
 
@@ -531,11 +513,7 @@ export const EnvironmentThemeColor = Schema.String.check(
 );
 export type EnvironmentThemeColor = typeof EnvironmentThemeColor.Type;
 
-/**
- * The appearance keywords are excluded outright: a published `dark.json`
- * would otherwise capture every client whose stored preference is the stock
- * `"dark"`, retinting people who never chose it.
- */
+/** Reserve appearance keywords so published themes cannot replace stock preferences. */
 export const EnvironmentThemeId = Schema.String.check(
   Schema.isPattern(/^(?!(?:system|light|dark)$)[a-z0-9](?:[a-z0-9-]{0,47})$/),
 );
@@ -550,11 +528,7 @@ const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
   appearance: Schema.Literals(["light", "dark"]),
-  /**
-   * When present, clients derive the full palette from them with the guided
-   * theme editor's generator and layer `colors` on top; when absent, `colors`
-   * is the palette, as in an exported theme file.
-   */
+  /** Derive the palette from canvas/accent, then overlay colors; without them, colors is the palette. */
   canvas: Schema.optional(EnvironmentThemeColor),
   accent: Schema.optional(EnvironmentThemeColor),
   colors: Schema.optional(EnvironmentThemeColors),
@@ -582,10 +556,7 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
-/**
- * "tailnet" when the address is on this machine's Tailscale interface, "lan"
- * for any other private address, including other VPNs in 100.64.0.0/10.
- */
+/** tailnet means this machine's Tailscale interface; other private addresses are lan. */
 export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
 export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
 
@@ -618,10 +589,7 @@ export const ServerConfig = Schema.Struct({
   providers: ServerProviders,
   availableEditors: ForwardCompatibleArray(EditorId),
   remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
-  /**
-   * Hints only: the client checks each address answers as this environment
-   * before using it.
-   */
+  /** Hints only; verify each address answers as this environment. */
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
@@ -634,9 +602,7 @@ export const ServerConfig = Schema.Struct({
   shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
   shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
-  /**
-   * Clients must not send window fields to servers that don't advertise this.
-   */
+  /** Send window fields only when advertised. */
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   threadFind: Schema.optionalKey(Schema.Boolean),
@@ -655,10 +621,7 @@ export const ServerConfig = Schema.Struct({
    * subscriber the same array twice per connect.
    */
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
-  /**
-   * Like themes, never in a snapshot: the source stream emits the current set
-   * on subscribe, and it stays absent for subscribers that did not opt in.
-   */
+  /** Stream-only and opt-in; the source stream emits the current set on subscribe. */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
 });
 export type ServerConfig = typeof ServerConfig.Type;
@@ -884,8 +847,7 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
 }
 
 export const ServerSelfUpdateInput = Schema.Struct({
-  /** Exact npm version of the `t3` package to install (never a dist-tag, so
-      the server and the acknowledging client agree on what was requested). */
+  /** Exact npm version, never a dist-tag, so server and client agree on the request. */
   targetVersion: TrimmedNonEmptyString,
   continueRunningThreads: Schema.optionalKey(Schema.Boolean),
 });

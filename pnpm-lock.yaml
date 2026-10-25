@@ -343,7 +343,7 @@ overrides:
 
 packageExtensionsChecksum: sha256-EowbsmlBFaoO0Ypufw901RnvdyjKG5dcdk2FRbc7Dr0=
 
-pnpmfileChecksum: sha256-YzTn4CWqI4l/Czk2VAdpGztl9kv2T+Fnt/Gw1mJ7Lu0=
+pnpmfileChecksum: sha256-STsbxG7+RxOFI611PrDEj1TonJgqKKllY9hYCFMLYiU=
 
 patchedDependencies:
   '@clerk/expo-native-components@0.4.0': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4

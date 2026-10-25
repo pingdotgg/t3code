@@ -11,9 +11,7 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
-// Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`,
-// `zed://ssh/<host>/<path>`, `jetbrains://gateway/ssh/environment?h=…`) must
-// reach the OS handler; every other non-web scheme stays blocked.
+// Remote editor deep links must reach the OS handler.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const REMOTE_EDITOR_PROTOCOLS = new Set(
   REMOTE_CAPABLE_EDITOR_IDS.flatMap((id) => {
@@ -63,7 +61,7 @@ export class ElectronShell extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = ElectronShell.of({
   openExternal: (rawUrl) =>
     Option.match(parseSafeExternalUrl(rawUrl), {

@@ -44,10 +44,7 @@ export class ProjectCloneTracker extends Context.Service<
     /** Interrupts a running clone and deletes the partial checkout. */
     readonly cancel: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly retry: (projectId: ProjectId) => Effect.Effect<boolean, SourceControlRepositoryError>;
-    /**
-     * Stops tracking a project's clone, interrupting it if it still runs and
-     * removing an unfinished checkout.
-     */
+    /** Stops tracking, interrupts any running clone and removes unfinished checkouts. */
     readonly discard: (projectId: ProjectId) => Effect.Effect<void>;
     readonly get: (projectId: ProjectId) => Effect.Effect<ProjectCloneSnapshot | null>;
     readonly stream: Stream.Stream<ReadonlyArray<ProjectCloneSnapshot>>;
@@ -91,7 +88,7 @@ interface TrackedClone {
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
   const clones = yield* Ref.make(new Map<ProjectId, TrackedClone>());
@@ -100,8 +97,7 @@ export const make = Effect.gen(function* () {
   let sequence = 0;
   const cloneScope = yield* Scope.make("parallel");
   yield* Effect.addFinalizer(() => Scope.close(cloneScope, Exit.void));
-  // start/cancel/retry/discard mutate the same entry and the same directory;
-  // one at a time keeps a double-clicked Retry from racing two clones into it.
+  // Serialize actions on the shared entry and directory so retries cannot race clones.
   const actionLock = yield* Semaphore.make(1);
   const locked = <A, E, R>(effect: Effect.Effect<A, E, R>) => actionLock.withPermits(1)(effect);
 
@@ -230,11 +226,8 @@ export const make = Effect.gen(function* () {
   }, Effect.scoped);
 
   /**
-   * Runs in its own fiber; the tracker records the outcome through `onExit`,
-   * which still runs when the fiber is interrupted (a `matchCause` handler
-   * would be skipped). Once git has finished the clone is marked done before
-   * the post-clone hook runs, so a late Cancel cannot tear down a complete
-   * checkout.
+   * `onExit` records outcomes even on interruption; `matchCause` would be skipped.
+   * Mark the clone done before the post-clone hook so a late Cancel cannot remove it.
    */
   const runClone = (projectId: ProjectId, tracked: TrackedClone) =>
     cloneWatchingForStall(projectId, tracked).pipe(
@@ -313,14 +306,11 @@ export const make = Effect.gen(function* () {
           detail: "A clone into this destination is already in progress.",
         });
       }
-      // Everything after the claim runs to completion even if the requesting
-      // connection drops: a claimed entry with no fiber could neither be
-      // cancelled nor retried. Any failure in here releases the claim.
+      // Finish or release the claim despite disconnects; a claim without a fiber cannot be cancelled or retried.
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
           yield* clearRetention(input.projectId);
-          // The entry is registered before the project exists so a
-          // thread.create or project.delete racing this call already sees it.
+          // Register before creation so racing thread.create and project.delete see the clone.
           yield* hooks.createProject({
             projectId: input.projectId,
             title: input.title,
@@ -348,8 +338,7 @@ export const make = Effect.gen(function* () {
       const current = yield* Ref.get(clones);
       const tracked = current.get(projectId);
       if (!tracked || tracked.snapshot.phase !== "running" || !tracked.fiber) return false;
-      // Uninterruptible past this point: a client that disconnects mid-cancel
-      // must not leave a dead fiber behind a "running" snapshot.
+      // Finish cancellation despite disconnects to avoid dead fibers behind running snapshots.
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
           yield* Fiber.interrupt(tracked.fiber!);

@@ -19,12 +19,7 @@ export interface RelayClientConfig {
   readonly clientTracingUrl: string;
   readonly clientTracingDataset: string;
   readonly clientTracingToken: Redacted.Redacted<string>;
-  /**
-   * Alchemy decides whether an Action runs by hashing `JSON.stringify` of its
-   * input, and a Redacted stringifies as `<redacted>`, so a rotated token
-   * alone would never re-run it. A digest of both tokens makes the input
-   * change with them without persisting the secrets in the hash.
-   */
+  /** Alchemy hashes JSON inputs; Redacted hides token rotation, so hash the tokens without persisting secrets. */
   readonly tokenDigest: string;
 }
 
@@ -57,11 +52,7 @@ export class EnvValueNotSingleLineError extends Schema.TaggedError<EnvValueNotSi
   }
 }
 
-/**
- * Every existing line for a name is dropped, not just the first: the file is
- * read with `parseEnv`, where the last duplicate wins, so a stale second copy
- * would override the value just written.
- */
+/** Remove every duplicate: parseEnv takes the last value, which could otherwise override the update. */
 export function reconcileEnvFile(
   contents: string,
   entries: Readonly<Record<string, string>>,
@@ -78,10 +69,7 @@ export function reconcileEnvFile(
       out.push(line);
       continue;
     }
-    // A quoted value can span lines; skip to its closing quote so the
-    // continuation lines go with the assignment they belong to. With no
-    // closing quote in the file, parseEnv treats the opening line as the
-    // whole value, so nothing after it is consumed.
+    // Multiline assignments end at their closing quote; parseEnv consumes only the opening line if it is unclosed.
     const rawValue = match[2] ?? "";
     const quote = /^(['"`])/u.exec(rawValue)?.[1];
     if (quote !== undefined && !closesQuote(rawValue, quote)) {
@@ -116,8 +104,7 @@ export const PublishClientConfig = Alchemy.Action(
       const url = input.url;
       if (url === undefined) return yield* new RelayUrlUnavailableError();
       const entries = relayClientConfigEnv({ ...input, url });
-      // Provider responses are copied in verbatim; a line break in one would
-      // become an extra assignment.
+      // Reject line breaks in provider values to prevent injected assignments.
       for (const [name, value] of Object.entries(entries)) {
         if (/[\r\n]/u.test(value)) return yield* new EnvValueNotSingleLineError({ name });
       }

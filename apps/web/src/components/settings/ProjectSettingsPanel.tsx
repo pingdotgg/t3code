@@ -81,8 +81,7 @@ export function ProjectSettingsPanel({
         (checkoutKey === null || member.physicalProjectKey === checkoutKey),
     ) ?? [];
 
-  // Remember the members of the last rendered group so a grouping-rule change
-  // (which changes the group key) can follow the project to its new group.
+  // Retain group members so grouping-rule changes can follow the project to its new group.
   const lastSelectionRef = useRef<{
     key: string;
     environmentId: EnvironmentId | null;

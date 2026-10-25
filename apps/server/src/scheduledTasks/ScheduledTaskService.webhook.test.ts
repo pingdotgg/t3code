@@ -300,7 +300,6 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       assert.equal(delivery.body, new TextDecoder().decode(pullRequestBody));
       assert.equal(delivery.renderedPrompt, launched.initialMessage?.text);
 
-      // Each delivery gets its own frame, so a request can't predict the tag that closes it.
       yield* service.triggerWebhook(requestFor(task));
       const next = framed.exec((yield* Queue.take(launches)).initialMessage?.text ?? "")?.[1];
       assert.isDefined(next);

@@ -127,11 +127,10 @@ export class ElectronWindow extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronWindow") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  // The focus worker loads a native accessibility module. Start it on the first
-  // capture reveal so users who never capture pay nothing at launch.
+  // Lazy-load native accessibility on capture reveal to avoid startup cost for other users.
   let windowsForegroundFocus: ReturnType<typeof startWindowsForegroundFocusThread> | undefined;
   const ensureWindowsForegroundFocus = () => {
     windowsForegroundFocus ??= startWindowsForegroundFocusThread(

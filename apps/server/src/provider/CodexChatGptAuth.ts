@@ -306,8 +306,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       for (const session of "sessions" in saved ? saved.sessions : [saved]) {
         if (!session.scopes.includes(REQUIRED_SCOPE) || connections.has(session.clientId)) continue;
         connections.add(session.clientId);
-        // Subjects are client-scoped. Use verified email only for counting locally,
-        // never export it or merge the underlying profiles.
+        // Client-scoped subjects need verified email for local counting only; never export email or merge profiles.
         const email = session.email?.trim().toLowerCase();
         if (email) accounts.add(email);
         else unidentifiedConnectedConnectionCount++;
@@ -460,8 +459,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     const savedRegistration = changingAccount
       ? undefined
       : registrations.profiles.find((profile) => profile.clientId === selectedClientId);
-    // Older development registrations used localhost, which cannot be changed on reauth.
-    // Register a 127.0.0.1 connection instead, preserving the verified account.
+    // Legacy localhost registrations cannot change on reauth; register 127.0.0.1 while preserving the verified account.
     const legacyCallback = savedRegistration?.redirectUri?.includes("//localhost:") === true;
     const registeredClientId = legacyCallback ? undefined : savedRegistration?.clientId;
     const selectedTokens = (yield* readSessions).sessions.find(
@@ -640,8 +638,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       const expectedSubject =
         savedRegistration?.subject ??
         (previous?.clientId === registeredClientId ? previous?.subject : undefined);
-      // Subjects are checked within the same registration. Legacy callback migration
-      // registers a new client, whose subject cannot be compared with the old client.
+      // Compare subjects only within a registration; legacy callback migration creates a new client.
       if (registeredClientId && expectedSubject && identity.subject !== expectedSubject)
         return yield* failure(
           "verify",

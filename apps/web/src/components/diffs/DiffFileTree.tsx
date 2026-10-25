@@ -228,8 +228,7 @@ export function DiffFileTree({
           ) {
             return;
           }
-          // Pierre does not emit a selection change for its sole selected row.
-          // Read selection before the row handles the click so new selections reveal only once.
+          // Pierre emits no change for its sole selected row; read before the click to avoid double reveals.
           const selected = model.getSelectedPaths();
           const path = selected.length === 1 ? selected[0] : undefined;
           if (!path || !modelPaths.includes(path)) return;

@@ -49,7 +49,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
         return {
           draftsByThreadKey: {
             ...state.draftsByThreadKey,
-            // Removing a draft session revokes its image previews.
             [key]: discardsSession
               ? {
                   ...draft,

@@ -43,10 +43,7 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
 const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   description:
     "Needs an agent running inside a T3 thread. Report this agent thread's worktree binding: whether it is attached to a git worktree, the worktree path and branch, the project's main workspace root, and the server default for t3_worktree_handoff's startFromOrigin. Call this before t3_worktree_handoff to check whether a handoff is possible or has already happened.",
-  // No `parameters`: Tool.make defaults to Tool.EmptyParams, which serializes
-  // to a top-level `type: "object"` JSON Schema. An explicit empty
-  // Schema.Struct({}) serializes to `anyOf: [object, array]`, which is not a
-  // valid MCP tool input schema and makes clients reject the whole server.
+  // Empty Struct emits object|array, making MCP clients reject the server; use EmptyParams for an object schema.
   success: WorktreeMcpStatusResult,
   failure: WorktreeToolFailure,
   failureMode: "return",

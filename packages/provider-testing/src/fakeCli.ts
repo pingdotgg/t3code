@@ -12,15 +12,11 @@ export interface FakeCliOptions {
   readonly platform?: NodeJS.Platform;
 }
 
-/**
- * On posix the launcher is a `#!/bin/sh` script; on Windows it is a `.cmd` shim, since a
- * shebang file is not executable there and `resolveSpawnCommand` routes `.cmd` through a shell.
- */
+/** Returns a POSIX shell launcher or Windows .cmd shim; shebang files are not executable on Windows. */
 export function writeFakeCli(options: FakeCliOptions): string {
   NodeFS.mkdirSync(options.directory, { recursive: true });
   const stubPath = NodePath.join(options.directory, `${options.name}-stub.mjs`);
-  // The environment rides in a JSON sidecar the stub applies to itself, since
-  // neither sh nor cmd.exe can quote every value (newlines, quotes, `%`) safely.
+  // JSON sidecars avoid shell quoting failures for arbitrary environment values.
   const envPath = NodePath.join(options.directory, `${options.name}-env.json`);
   NodeFS.writeFileSync(envPath, JSON.stringify(options.env ?? {}), "utf8");
   NodeFS.writeFileSync(

@@ -566,12 +566,9 @@ function inOrder(
 }
 
 /**
- * `definitions` is display order, and its first entry is what `get` returns for a repository
- * that has not reported its host yet. A change request URL goes to the first definition that
- * reads it, trying `claimChangeRequestUrlsFirst` before the rest, so a host that claims a route
- * only on its own hostnames can precede one that claims the route everywhere. A remote likewise
- * goes to the first that recognises it, in `recognizeRemotesIn` order and then the rest, because
- * one hostname can carry several hosts' labels.
+ * `definitions` sets display order and the fallback for repositories with an unknown host.
+ * Claim host-specific URL routes before hosts that accept them on any hostname.
+ * Remote recognition needs a separate order because one hostname can carry several hosts' labels.
  */
 export function makeSourceControlDefinitionRegistry(
   definitions: ReadonlyArray<SourceControlDefinition>,

@@ -133,8 +133,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     preparation?.request === initialProjectRef && preparation.workspaceRoot === workspaceRoot
       ? preparation.result
       : null;
-  // The native-stack guard covers iOS swipe dismissal as well as back actions.
-  // A replaced request must settle too before the shared checkout is left behind.
+  // Guard native swipes too; replaced checkout requests must settle before leaving the shared checkout.
   const checkoutPending = pendingCheckouts > 0 || (needsPreparation && result === null);
   usePreventRemove(checkoutPending, () => undefined);
   const { preventedRoutes } = usePreventRemoveContext();

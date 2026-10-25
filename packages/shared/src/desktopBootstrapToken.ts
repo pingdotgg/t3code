@@ -1,13 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
 import * as NodeCrypto from "node:crypto";
 
-/**
- * A backend accepts the previous, current and next window's token: the previous
- * one so a token works for between one and two windows, and the next one
- * because a WSL backend's clock can trail the Windows clock that derived the
- * token, which would otherwise reject every fresh token for a moment after each
- * boundary.
- */
+/** Accept previous/current windows for token lifetime and the next window for WSL clock lag. */
 export const DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 function windowIndex(nowMs: number): number {

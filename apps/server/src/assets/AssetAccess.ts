@@ -78,8 +78,7 @@ const HTML_ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
 const PROJECT_FAVICON_ICNS_MIN_SIZE = 96;
 const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
-// The extension comes from the attachment id the server assigned, never from
-// the client's mime type.
+// Use server-assigned attachment extensions, never client MIME types.
 const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
   pdf: "application/pdf",
   html: "text/html",
@@ -225,8 +224,7 @@ const optionOnNotFound = <A, R>(
 
 export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  // Stored snapshots also contain a bounded CSP meta tag (up to 32 domains
-  // per directive). Bound the read even if the attachment grows after minting.
+  // Allow space for stored CSP tags, but bound reads if the attachment grows after minting.
   const limit = MCP_APP_MAX_HTML_BYTES + 128 * 1024;
   const chunks = yield* Stream.runCollect(fileSystem.stream(filePath, { bytesToRead: limit + 1 }));
   const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
@@ -254,7 +252,7 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
     : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };
 });
 
-/** Serves an `.icns` favicon as its embedded PNG, since browsers cannot draw it. */
+// Browsers cannot draw .icns; serve its embedded PNG.
 const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(function* (
   filePath: string,
 ) {
@@ -329,17 +327,13 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
 
 const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
-/** From the identity-checked, non-blocking handle the caller already holds. */
 const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) =>
   readMediaFileHeader(filePath, file, IMAGE_DIMENSIONS_HEADER_BYTES).pipe(
     Effect.map(readImageDimensions),
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
-/**
- * Opens through `openMediaFile` so a path swapped for a FIFO cannot block the
- * request; a regular open would wait for a writer that never comes.
- */
+// Non-blocking open prevents swapped-in FIFOs from hanging the request.
 const readImageDimensionsFromHeader = (filePath: string) =>
   openMediaFile(filePath).pipe(
     Effect.flatMap((file) =>
@@ -839,9 +833,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     claims = { ...claims, expiresAt };
   }
   if (claims.kind === "attachment" && claims.mimeType === "text/html") {
-    // HTML pages never change, so mints in the same window sign the same URL and a reload
-    // can answer it from the browser cache. Images keep a new URL per mint, since their
-    // load-error retries rely on one.
+    // Stable URLs let immutable HTML reloads hit the cache; image retries need fresh URLs.
     expiresAt =
       Math.ceil(expiresAt / HTML_ATTACHMENT_TOKEN_BUCKET_MS) * HTML_ATTACHMENT_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };

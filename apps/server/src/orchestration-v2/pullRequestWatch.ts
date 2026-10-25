@@ -7,10 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/**
- * Wakes in a row that bring only comments. Check, conflict, or push news resets the count, so
- * this only stops a chatty bot looping an agent that is replying to it.
- */
+/** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
 const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
@@ -30,7 +27,7 @@ export interface PullRequestWatchReport {
   readonly exhausted: boolean;
 }
 
-// "action-required" is a finished check that needs someone, so the agent hears about it.
+// action-required is a finished check needing human input.
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
 
@@ -47,7 +44,7 @@ export function evaluatePullRequestWatch(
   const headSha = detail.headSha ?? null;
   const headMoved = headSha !== watch.headSha;
 
-  // An empty list keeps the last state: a host can answer with one when its check read fails.
+  // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
@@ -63,8 +60,7 @@ export function evaluatePullRequestWatch(
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
-    // A required job created and finished between two passes is never seen pending. Without
-    // required checks, any check counts, and advisory bots keep adding passed ones: no wake.
+    // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.

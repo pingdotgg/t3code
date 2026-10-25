@@ -754,8 +754,6 @@ describe("getChangeRequestActivity dismissed reviews", () => {
   });
 
   it.effect("fills a marker-only dismissed review with the timeline's reason", () =>
-    // Macroscope's approvals carry only an HTML comment, which markdown renders as nothing —
-    // an empty-string check misses them and the card opens onto nothing.
     readActivity.pipe(
       Effect.map((activity) => {
         expect(activity.comments[0]?.body).toBe("Dismissing prior approval to re-evaluate 9b66581");

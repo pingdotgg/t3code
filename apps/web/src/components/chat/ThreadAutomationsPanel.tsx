@@ -97,8 +97,6 @@ export function ThreadAutomationsPanel(props: {
     )
       return;
     setBusyTaskId(task.id);
-    // Partial update: only the enabled flag changes, so a toggle can never
-    // revert concurrent edits made to the task elsewhere.
     const result = await setTaskEnabled({
       environmentId: props.environmentId,
       input: { id: task.id, enabled },
@@ -213,7 +211,7 @@ export function ThreadAutomationsPanel(props: {
               />
               <TooltipPopup>Edit automation</TooltipPopup>
             </Tooltip>
-            {/* A webhook task runs from its URL; there is no request to run it with. */}
+            {/* Webhook tasks need a request from their URL. */}
             {task.schedule.type === "webhook" ? null : (
               <Tooltip>
                 <TooltipTrigger

@@ -35,11 +35,7 @@ import { sortModelsForProviderInstance } from "./modelOrdering";
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
 
-/**
- * Custom instances intentionally do not read the legacy per-driver bucket;
- * otherwise one custom model added to `claude_openrouter` can appear on the
- * stock `claudeAgent` instance.
- */
+// Legacy per-driver buckets would leak custom-instance models into stock instances.
 function readInstanceCustomModels(
   settings: UnifiedSettings,
   instanceId: ProviderInstanceId,
@@ -160,9 +156,7 @@ function getAppModelOptions(
   selectedModel?: string | null,
 ): AppModelOption[] {
   const rawModels = getProviderModels(providers, provider);
-  // Server-reported custom rows mirror settings and can lag a removal, so
-  // only built-ins are taken from the snapshot; custom rows are rebuilt from
-  // settings below.
+  // Server custom-model snapshots can lag removals; rebuild custom rows from settings.
   const options: AppModelOption[] = rawModels
     .filter((model) => !model.isCustom)
     .map(toAppModelOption);
@@ -340,9 +334,7 @@ export function resolveAppModelSelectionState(
     selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
   if (entry) {
     const selectedModel = selectedEntry ? selection.model : null;
-    // A saved model the catalog no longer lists, or a new fallback instance,
-    // gets the driver's cheap text generation default. The catalog's own
-    // default is the flagship chat model, which is too expensive here.
+    // Use the cheap generation default; the catalog default is the expensive chat flagship.
     const options = getAppModelOptionsForInstance(settings, entry);
     const model =
       resolveSelectableModel(entry.driverKind, selectedModel, options) ??

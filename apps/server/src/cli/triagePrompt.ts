@@ -1,7 +1,4 @@
-/**
- * `TRIAGE_PLAYBOOK` must stay byte-identical to `.github/triage/PLAYBOOK.md`
- * (only backticks and backslashes are escaped here).
- */
+/** Keep TRIAGE_PLAYBOOK byte-identical to .github/triage/PLAYBOOK.md after unescaping backticks and backslashes. */
 
 export const TRIAGE_PLAYBOOK = `# T3 Code triage playbook
 
@@ -150,11 +147,7 @@ user's environment and evidence instead of filing a new issue. A confirmed
 duplicate with fresh evidence is more useful than a second thread.
 `;
 
-/**
- * The one-line argument the agent session is launched with. The real
- * instructions live in `prompt.md` on disk: Windows `.cmd` shims run through
- * cmd.exe, which cannot carry a multiline, multi-kilobyte argv string.
- */
+/** Windows .cmd shims cannot carry a multiline playbook in argv; point to the file instead. */
 export const buildTriageLaunchPrompt = (promptFilePath: string) =>
   `Read the file "${promptFilePath}" and follow its instructions exactly: it is your T3 Code triage playbook, and it starts with asking the user what went wrong.`;
 

@@ -136,9 +136,7 @@ const openFakeCli = (cli: string) =>
   });
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI process", () => {
-  // The CLI stops the MCP servers it started, but not their children: a
-  // plugin's `bun server.ts` outlives its `bun run` wrapper (#3089). The child
-  // holds a FIFO open, so its death reads as end-of-file here, with no polling.
+  // The leftover child holds a FIFO open; its death produces EOF without polling.
   it.effect("stops what the CLI left running when the session closes", () =>
     Effect.gen(function* () {
       const cli = fakeClaudeCli(
@@ -187,7 +185,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
   );
 
   // The CLI keeps running its turn after its pipes close, so a server that
-  // crashed would leave it working next to the session it resumes (#23370).
+  // crashed would leave it working next to the session it resumes.
   it.effect("stops the CLI when the server that started it goes away", () =>
     Effect.gen(function* () {
       const cli = fakeClaudeCli(['dir=$(dirname "$0")', 'sleep 600 > "$dir/alive"'].join("\n"));

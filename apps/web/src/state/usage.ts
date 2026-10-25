@@ -165,8 +165,7 @@ export function useUsage(
   });
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
-  // The render-time sync below compares merged by identity, so the derivation is
-  // held in state keyed on its inputs rather than rebuilt every render.
+  // Identity-based render sync needs a derivation retained by inputs across renders.
   const [derived, setDerived] = useState(() =>
     deriveSelection(environments, selectedEnvironmentIds, hiddenProviders),
   );

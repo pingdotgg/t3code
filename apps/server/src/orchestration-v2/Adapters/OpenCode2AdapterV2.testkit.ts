@@ -149,8 +149,7 @@ const replayHttpClient = (
           query,
           raw === undefined ? undefined : decodeJson(raw),
         );
-        // The event stream and requests are separate connections: a request
-        // is matched only once what was recorded before it was delivered.
+        // HTTP streams and requests use separate connections; deliver prior recorded inbound data before matching requests.
         if (operation.type !== "event.subscribe") await controller.untilInboundDelivered();
         if (operation.type === "session.prompt") onPrompt?.(operation.input);
         await controller.expectOutbound(operation);

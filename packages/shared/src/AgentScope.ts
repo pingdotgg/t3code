@@ -8,11 +8,7 @@ export interface AgentScopeShape {
     readonly name: string;
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
-    /**
-     * Set for terminals, so a job the user detached (tmux, nohup) outlives a
-     * server restart. Agents leave it unset: the next server stops agents a
-     * killed server left running before it resumes their sessions.
-     */
+    /** Terminals may survive restarts; agents must remain eligible for orphan cleanup. */
     readonly survivesRestart?: boolean | undefined;
     /**
      * Keep a shared process running after a tool OOM when supported.
@@ -61,8 +57,7 @@ export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/o
 
 const LAUNCH_SCRIPT = [RAISE_OOM_SCORE_LINE, 'exec "$@"'].join("\n");
 
-// systemd-run needs XDG_RUNTIME_DIR to reach the user manager. Fill it in when
-// the agent environment does not carry it; it is the same user either way.
+// systemd-run needs XDG_RUNTIME_DIR to reach this user's manager.
 const SCOPED_LAUNCH_SCRIPT = [
   RAISE_OOM_SCORE_LINE,
   ': "${XDG_RUNTIME_DIR:=$1}"',
@@ -79,11 +74,7 @@ export interface AgentSystemdScope {
   readonly options: ReadonlyArray<string>;
 }
 
-/**
- * Every step `exec`s, so the spawned PID, stdio, and signals all belong to the agent itself.
- * `systemd-run --scope` registers its own PID as the scope and then runs the command, so the
- * agent and all of its children start inside the scope.
- */
+/** Exec at every step preserves the agent PID, stdio, and signals; systemd-run places it and descendants in the scope. */
 export function agentScopeCommand(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;

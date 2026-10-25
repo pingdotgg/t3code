@@ -95,7 +95,7 @@ function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
   });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -105,14 +105,12 @@ export const make = Effect.gen(function* () {
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
   yield* electronApp.setPath("userData", userDataPath);
 
-  // T3 owns the profile-scoped lock on every platform; Clerk skips it on macOS.
-  // Quit is asynchronous, so interrupt before the application runtime is built.
+  // Clerk skips the profile lock on macOS. Interrupt before runtime construction because quit is asynchronous.
   if (!(yield* electronApp.requestSingleInstanceLock)) {
     yield* electronApp.quit;
     return yield* Effect.interrupt;
   }
 
-  // Retain launch arguments while asynchronous startup builds the application runtime.
   const pendingSecondInstances: Array<readonly string[]> = [];
   let handleSecondInstance = (argv: readonly string[]) => {
     pendingSecondInstances.push(argv);

@@ -78,12 +78,7 @@ function linkTerminalAtMs(link: SettlementPullRequestLink): number {
   return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
 }
 
-/**
- * The links whose outcome the thread waits on. A link made after its pull
- * request had already merged or closed records work the thread did, such as an
- * agent merging pull requests it was asked to merge, so it cannot settle the
- * thread.
- */
+/** Exclude links added after merge or close; they record completed work rather than outcomes this thread awaits. */
 function settlementPullRequestLinks(
   links: ReadonlyArray<SettlementPullRequestLink>,
 ): ReadonlyArray<SettlementPullRequestLink> {
@@ -94,10 +89,7 @@ function settlementPullRequestLinks(
   });
 }
 
-/**
- * Absolute age bounds client clock skew in both directions and stops stale
- * pre-adoption data from blocking the thread forever.
- */
+/** Absolute age bounds clock skew in both directions and expires stale pre-adoption data. */
 export function threadHasQueuedTurnStart(
   thread: Pick<
     OrchestrationV2ThreadShell,
@@ -161,10 +153,7 @@ export function isAutoSettlementCandidate(
   return !isSnoozed(thread, nowMs);
 }
 
-/**
- * Server twin of the client's `effectiveSnoozed`, so agents and the sidebar agree on what is
- * snoozed.
- */
+/** Match client effectiveSnoozed so agents and sidebar agree. */
 export function isSnoozed(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
@@ -305,8 +294,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  // Settling a settled thread re-emits thread.settled with the same settledAt,
-  // so this keeps the settle action to one run per settlement.
+  // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
@@ -322,10 +310,7 @@ export const make = Effect.gen(function* () {
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
-    // A merge event re-sweeps every candidate, not just the threads linked to
-    // the merged pull request: most threads carry no link and settle from
-    // their branch lookup, which would otherwise wait for the next minute's
-    // sweep on a possibly stale cached answer.
+    // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
@@ -394,10 +379,7 @@ export const make = Effect.gen(function* () {
       { concurrency: 8, discard: true },
     );
     if (mergedPullRequest !== null) {
-      // The merge just confirmed a terminal state the lookup caches can still
-      // call open (branch answers live two minutes, the sweep runs every
-      // minute). Drop the swept checkouts' cached answers so the merge settles
-      // its branch threads now instead of on a later sweep.
+      // Invalidate checkout caches on merge; cached open branches would delay settlement beyond this sweep.
       const cwds = [...new Set(lookupCwdByThreadId.values())];
       yield* Effect.forEach(cwds, (cwd) => git.invalidateStatus(cwd), {
         concurrency: 8,
@@ -451,11 +433,7 @@ export const make = Effect.gen(function* () {
       const thread = group[0]!;
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
       if (reference != null) {
-        // The event carries the merged state, so only the threads linked to
-        // that exact pull request settle from it. Every other linked thread
-        // falls through to a fresh summary lookup below: the merge sweep
-        // covers all candidates, and an unrelated merge must never settle
-        // them.
+        // Only matching PR links settle from this merge event; unrelated links require fresh lookup.
         const matchesMerge =
           mergedPullRequest !== null &&
           reference.projectId === mergedPullRequest.projectId &&
@@ -549,9 +527,7 @@ export const make = Effect.gen(function* () {
     runSweep(null, threadId),
   );
 
-  // Then the project's settle script runs in the thread's own worktree; a
-  // thread in the shared checkout skips it, because other threads may still be
-  // working there.
+  // Skip settle scripts in shared checkouts where other threads may still work.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
       const settled = yield* projections.getThread(threadId);
@@ -559,8 +535,7 @@ export const make = Effect.gen(function* () {
       yield* terminals.closeIdle({ threadId });
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
-      // Closing and the worktree check wait on I/O. A thread re-engaged
-      // meanwhile is working again, so its worktree is no place for cleanup.
+      // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);

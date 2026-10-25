@@ -262,8 +262,7 @@ export function makeApnsDeliveryJobPayload(input: {
     },
     aggregate: input.aggregate,
     notification: input.notification ?? null,
-    // Omitted (not null) when absent so signatures stay identical to jobs from
-    // relay builds that predate the field.
+    // Omit absent fields to preserve signatures from older relay builds.
     ...(input.alert ? { alert: input.alert } : {}),
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,

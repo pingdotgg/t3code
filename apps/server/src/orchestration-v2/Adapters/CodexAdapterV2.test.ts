@@ -737,8 +737,7 @@ describe("CodexAdapterV2 session initialize", () => {
     Effect.gen(function* () {
       const initializeAwaitingResponse = yield* Deferred.make<void>();
       const releaseInitialize = yield* Deferred.make<void>();
-      // The transcript allows exactly one handshake: a second `initialize`
-      // frame fails the replay, as Codex rejects it with "Already initialized".
+      // Codex rejects a second initialize; the replay permits one handshake.
       const session = yield* openReplaySession(
         makeCodexReplayTranscript({
           scenario: "concurrent-initialize",

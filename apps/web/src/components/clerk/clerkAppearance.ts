@@ -10,8 +10,7 @@ export const clerkAppearance = {
     colorWarning: "var(--warning)",
     colorNeutral: "var(--contrast-foreground)",
     colorForeground: "var(--contrast-foreground)",
-    // The stock dark theme's muted token is translucent. Clerk uses this as
-    // the footer's background, so derive an opaque muted surface from the card.
+    // Clerk's muted token fills the footer; derive an opaque surface instead of stock dark translucency.
     colorMuted: "color-mix(in srgb, var(--card) 98%, var(--contrast-foreground))",
     colorMutedForeground: "var(--contrast-muted-foreground)",
     colorBackground: "var(--card)",

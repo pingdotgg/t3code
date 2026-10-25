@@ -351,9 +351,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          // Background fibers (e.g. the worktree branch rename fork) can run
-          // after their launching request's scope has closed; temp files must
-          // not be tied to that ambient scope or they are reaped on creation.
+          // Background fibers can outlive request scopes; temp files scoped there would be reaped on creation.
           const closedScope = yield* Scope.make();
           yield* Scope.close(closedScope, Exit.void);
 

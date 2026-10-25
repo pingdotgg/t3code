@@ -71,9 +71,7 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
-// The tag pattern is anchored on `<link`, so it only starts at real candidates. Object metadata
-// is matched by scanning brace-free runs instead of by one combined pattern: an unanchored
-// pattern restarts at every offset and rescans forward, which is quadratic on large sources.
+// Anchor HTML at <link and scan brace-free metadata runs to avoid quadratic regex rescans.
 const LINK_ICON_HTML_RE =
   /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
 const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
@@ -235,11 +233,8 @@ export const make = Effect.gen(function* () {
     return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
   });
 
-  // Starts every probe at once and returns the first hit in list order. A miss
-  // costs one round of filesystem latency instead of one per probe, which
-  // matters when the disk is slow. Fibers are joined in order, so a hit returns
-  // without waiting for lower-ranked probes (the scope interrupts them), and a
-  // failure surfaces only when no earlier probe found a file.
+  // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
+  // A failure surfaces only if no earlier probe found a file; scope exit interrupts remaining probes.
   const firstInOrder = Effect.fn("ProjectFaviconResolver.firstInOrder")(function* <A>(
     items: ReadonlyArray<A>,
     probe: (item: A) => Effect.Effect<string | null, ProjectFaviconResolutionError>,

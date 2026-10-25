@@ -537,11 +537,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    // Only touch the theme keys that are actually dirty, so a theme-storage
-    // failure cannot block restoring unrelated settings. Preferences are
-    // re-read after the confirmation dialog: they may have changed (another
-    // tab, an OS flip) while it was open, and rollback must restore the live
-    // values rather than the ones captured at render time.
+    // Reset only dirty theme keys so storage failures cannot block other settings; re-read after confirmation
+    // for safe rollback.
     let previousTheme = theme;
     try {
       previousTheme = readThemePreference();
@@ -559,9 +556,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         }),
       );
     };
-    // Rollback restores the base preference first (which clears any mix) and
-    // then re-applies the captured mix on top, so no failure path can leave
-    // the pair of keys half-restored.
+    // Restore the base preference before the mix because restoring the base clears the mix.
     const previousHalves = liveHalves;
     const rollbackThemeState = () => {
       if (needsThemeReset) setTheme(previousTheme);

@@ -78,7 +78,7 @@ export const definition = defineSourceControl({
   publicHost: "bitbucket.org",
   publishDescription: "bitbucket.org",
   publishHost: () => "bitbucket.org",
-  // A new repository belongs to a workspace, which the signed-in account does not name.
+  // The signed-in account does not identify a workspace.
   newRepositoryOwner: () => null,
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number, webUrl }) =>
@@ -91,7 +91,7 @@ export const definition = defineSourceControl({
   // No endpoint reopens a declined pull request, and nothing documented moves one in or out of
   // draft, so neither is offered rather than failing when pressed.
   changeRequestActions: new Set(["merge", "close"] as const),
-  // Bitbucket has no checkout CLI, so clone the head branch from its own repository.
+  // Bitbucket has no checkout CLI.
   checkoutCommand: ({ number, headBranch, headRepositoryNameWithOwner }) =>
     headRepositoryNameWithOwner &&
     repositoryName.test(headRepositoryNameWithOwner) &&

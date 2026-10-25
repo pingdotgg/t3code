@@ -24,10 +24,7 @@ const HighlightedLine = memo(function HighlightedLine({ node }: { node: Highligh
   });
 });
 
-/** Completed line nodes retain their identity in the incremental highlighter.
- * Keep their DOM mounted too: replacing the entire pre makes the browser parse
- * and resolve styles for thousands of unchanged token spans on each update.
- */
+/** Preserve completed lines' DOM to avoid reparsing unchanged tokens. */
 export function HighlightedCodeLines({ root }: { root: HighlightedRoot }) {
   const pre = root.children[0];
   if (pre?.type !== "element" || pre.tagName !== "pre") return toJsxRuntime(root, runtime);
@@ -40,7 +37,7 @@ export function HighlightedCodeLines({ root }: { root: HighlightedRoot }) {
       elementShell(code),
       undefined,
       code.children.map((node, index) => (
-        // A line's position is stable as tokens and new lines are appended.
+        // Appending tokens and lines preserves line positions.
         // oxlint-disable-next-line react/no-array-index-key
         <HighlightedLine key={index} node={node} />
       )),

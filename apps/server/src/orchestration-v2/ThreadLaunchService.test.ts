@@ -671,7 +671,6 @@ it.effect("keeps native maintenance commands out of steering and restart message
           attachments: [],
           dispatchMode: { type: scenario.mode, targetRunId: targetRun.id },
         });
-        // A steer sent while a maintenance turn runs waits as a queued follow-up.
         if (scenario.name.startsWith("steer-")) {
           yield* dispatch;
           const queued = (yield* threads.getThreadProjection(launched.threadId)).runs[1];
@@ -2068,7 +2067,6 @@ it.effect("stops an in-flight branch rename when tracked setup is cancelled", ()
       yield* Deferred.await(setupEntered);
       yield* Deferred.await(branchNameStarted);
       assert.isTrue(yield* tracker.cancel(launched.threadId));
-      // Let a rename that survived the cancel finish, then check it never ran.
       yield* Deferred.succeed(allowBranchName, undefined);
       yield* Effect.raceFirst(
         Deferred.await(branchNameInterrupted),

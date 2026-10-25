@@ -654,7 +654,6 @@ it.effect("thread resume across compacted history keeps message order and final 
         )
       `;
     }
-    // Only the event between a's first and newest is deleted.
     assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 1);
 
     const items = yield* subscribeOrchestrationV2Thread({

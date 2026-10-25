@@ -12,8 +12,7 @@ import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 const SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
 type SidebarScreenOptions = NativeStackNavigationOptions & {
-  // Same patched RNS option the GLASS/SOLID presets in Stack.tsx use — the
-  // iOS 26 "editor" navigation-item style leading-aligns the inline title.
+  // Patched RNS editor style leading-aligns iOS 26 inline titles, matching Stack.tsx presets.
   readonly unstable_navigationItemStyle?: "editor";
 };
 

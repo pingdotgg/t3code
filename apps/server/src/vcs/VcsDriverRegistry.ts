@@ -14,9 +14,7 @@ import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
 const DETECTION_CACHE_CAPACITY = 2_048;
-// Status polls detect every open cwd each tick, and detection costs three git
-// processes. `detect` re-checks each hit against the disk, so this TTL only
-// bounds rare changes those stats cannot see.
+// Detection costs three git processes per cwd; cached hits still stat disk, so TTL bounds only undetectable changes.
 const DETECTION_CACHE_TTL = Duration.minutes(5);
 
 export interface VcsDriverResolveInput {
@@ -118,8 +116,7 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
-  // Falls back to the cwd alone when the root is not above it, such as a cwd
-  // reached through a symlink.
+  // Symlinks can put cwd outside root; then inspect cwd alone.
   const foldersBelowRoot = (cwd: string, rootPath: string) => {
     const relative = path.relative(path.resolve(rootPath), path.resolve(cwd));
     if (relative.startsWith("..") || path.isAbsolute(relative)) return [cwd];

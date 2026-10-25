@@ -56,7 +56,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const [expanded, setExpanded] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
-  // The path last submitted, so reopening the dialog offers it again.
   const [lastSavePath, setLastSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
@@ -82,8 +81,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
     : null;
   const isCollapsed = canCollapse && !expanded;
-  // While finding, the full plan stays mounted but clipped, so a match past the
-  // preview can be counted and then opened only once it is selected.
+  // Mount clipped plans during find to count hidden matches without revealing them.
   const showPreview = isCollapsed && !findActive;
   const revealRef = findRevealRef(() => setExpanded(true));
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
@@ -241,7 +239,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           }
         }}
       >
-        {/* The form owns the path so a keystroke re-renders it, not the dialog chrome. */}
         <DialogPopup className="max-w-xl">
           <SavePlanToWorkspaceForm
             initialPath={lastSavePath || downloadFilename}

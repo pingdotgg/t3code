@@ -304,7 +304,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   );
 
   // An expired access token prints the logged-out banner, then the CLI refreshes it in the
-  // same run, so the next `grok models` reports the login (#14285).
+  // same run, so the next `grok models` reports the login.
   it.effect("reports authenticated when `grok models` logs in after refreshing a token", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(

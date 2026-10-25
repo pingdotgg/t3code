@@ -22,8 +22,7 @@ export const pendingThreadOrderAtom = Atom.make<PendingThreadOrder | null>(null)
 
 export function usePendingThreadOrder(nowMinute: string, snoozeWakeTick: number) {
   const pending = useAtomValue(pendingThreadOrderAtom);
-  // A timed wake can change section membership without a shell event. Use the
-  // lists' existing clocks to retire that hold and re-enable their move menus.
+  // Clock-driven wakes can change membership without shell events; retire order holds and re-enable moves then.
   useEffect(() => {
     getPendingThreadOrder();
   }, [nowMinute, snoozeWakeTick]);

@@ -1,8 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * Native and canonical views share batching, rotation, and retention state so
- * they cannot race while appending to the same thread-scoped file.
- */
+/** Native and canonical views share write state to avoid races on the same thread file. */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -203,8 +200,7 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
 
     const nested = Reflect.get(event, "event");
     const envelope = typeof nested === "object" && nested !== null ? nested : event;
-    // Decoded frames carry the same information as raw frames without another
-    // copy of every token delta.
+    // Decoded frames preserve raw-frame information without duplicating every token delta.
     if (Reflect.get(envelope, "stage") === "raw") return false;
     const decodedPayload = Reflect.get(envelope, "payload");
     const nativeEvent =

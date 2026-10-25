@@ -166,12 +166,9 @@ export interface ShownOrder {
 const LATE_ROOM = 3;
 
 /**
- * The order to show message results in, and how many: rows already shown for
- * this query keep their places, and results that arrive later, from a slower
- * environment, go below them with up to LATE_ROOM rows past `limit`. Nothing
- * moves under the pointer or the keyboard highlight, and a late best match
- * still shows. Returns `previous` when nothing changed, so it can sit in React
- * state.
+ * Keep shown rows in place so late results cannot move the pointer or keyboard target.
+ * Allow up to LATE_ROOM extra rows so late best matches remain visible.
+ * Reuse `previous` when unchanged to avoid a React state update.
  */
 export function nextShownOrder(
   previous: ShownOrder | null,

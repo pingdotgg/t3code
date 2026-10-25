@@ -215,11 +215,7 @@ export function useProjectEntriesQuery(
   };
 }
 
-/**
- * An empty query is a valid request — the index answers it with
- * frecency-ordered files, so the picker's initial view is recent files without
- * transferring the full workspace listing.
- */
+/** Empty queries return frecency-ranked files without transferring the full workspace listing. */
 export function useProjectFilePickerQuery(
   environmentId: EnvironmentId,
   cwd: string,
@@ -253,8 +249,7 @@ export function useProjectFileQuery(
   relativePath: string | null,
   enabled = true,
 ): ProjectFileQueryState {
-  // A media path is not skipped here: a folder named `assets.png` is only
-  // knowable as a folder from the read failure.
+  // Read media-like paths too; a failed read is how folders with those names are detected.
   const fileAccess = useFilesystemReadAccess(environmentId);
   const { canReadFiles } = fileAccess;
   const isQueryEnabled = enabled;

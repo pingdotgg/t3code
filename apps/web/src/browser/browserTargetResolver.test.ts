@@ -102,8 +102,7 @@ describe("browser target resolver", () => {
   });
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {
-    // WSL NAT mode serves the backend on the distro IP, but a loopback-only dev
-    // server there answers only on localhost from the Windows desktop.
+    // WSL NAT advertises a distro IP, but loopback-bound servers only answer on localhost.
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     env.isElectron = true;
     try {

@@ -94,9 +94,7 @@ function optionsSignature(value: unknown, seen = new WeakSet<object>()): string 
     case "undefined":
       return "undefined";
     case "function":
-      // Header factories are frequently recreated inline. Their source is
-      // stable across equivalent renders, while a reference comparison would
-      // make navigation.setOptions re-enter the navigator indefinitely.
+      // Compare factory source; inline references change every render and would loop setOptions.
       return `function:${Function.prototype.toString.call(value)}`;
     case "symbol":
       return `symbol:${String(value)}`;
@@ -114,8 +112,7 @@ function optionsSignature(value: unknown, seen = new WeakSet<object>()): string 
       if (Array.isArray(value)) {
         return `[${value.map((entry) => optionsSignature(entry, seen)).join(",")}]`;
       }
-      // React refs carry mutable native instances that must not make static
-      // screen options appear different after every render.
+      // Ignore mutable native refs when comparing static screen options.
       if ("current" in object) return "[ref]";
       return `{${Object.keys(value as Record<string, unknown>)
         .sort()
@@ -186,12 +183,7 @@ export function useScreenOptionsWriter() {
 
 export function NativeStackScreenOptions(props: {
   readonly options?: AppNativeStackNavigationOptions;
-  /**
-   * Causes dynamic native header factories to be reapplied when their closed-over
-   * menu content changes. Factory functions are intentionally stabilized, so
-   * their source alone cannot capture a menu that was initially empty while
-   * asynchronous data was loading.
-   */
+  /** Reapply factories when captured data changes; source equality misses asynchronous menu content. */
   readonly optionsVersion?: unknown;
   readonly listeners?: Record<string, (event: never) => void>;
   readonly name?: string;

@@ -83,7 +83,6 @@ const fakePowerShell = (initial: string) => {
   return { registry, spawner };
 };
 
-// The machine's own PATH may already hold a t3; each test sets the PATH it means.
 const machinePath = process.env.PATH;
 beforeEach(() => {
   process.env.PATH = "";

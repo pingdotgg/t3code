@@ -1,7 +1,6 @@
 import type { ThreadLinkedPullRequest, ThreadPullRequestLink } from "@t3tools/contracts";
 
-/** Tombstoned stack members stay in the array only so the
- * sync reactor does not re-add them. */
+/** Tombstones prevent sync from re-adding hidden members. */
 export function visibleThreadPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ReadonlyArray<ThreadPullRequestLink> {

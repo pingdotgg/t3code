@@ -50,9 +50,6 @@ const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
-// A delegated Claude child ends its turn while a background native subagent it
-// started keeps running (#17154).
-
 it.effect("task_cancel ends a delegated child's background native subagent", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -25,9 +25,7 @@ import { isWindowsRenameLock } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.10.0";
-// The oldest release that accepts every flag the connector is started with
-// (`--output` arrived in 2025.6.1). Override, PATH, and older managed binaries
-// below it are skipped, since they exit immediately on the unknown flag.
+// Minimum for --output support; older connectors exit on that flag.
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
@@ -253,9 +251,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return platform === "win32" || (info.value.mode & 0o111) !== 0;
   });
 
-  // `cloudflared version` costs a process spawn, so answers are cached per file
-  // revision. A failed or timed-out probe is not cached, so a slow spawn under
-  // an AV scan does not hide a good binary until it changes on disk.
+  // Cache successful version probes per file revision; do not let transient failures hide valid binaries.
   const versionCache = yield* Cache.makeWith(
     (key: VersionProbeKey) =>
       spawner
@@ -308,8 +304,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return { status: "available", executablePath, source, version } satisfies AvailableRelayClient;
   });
 
-  // Managed releases older than the pin, newest first. Newer folders belong to
-  // a newer server sharing this base dir and are never used or pruned here.
+  // Newer managed folders may belong to another server; never use or prune them.
   const olderManagedVersions = Effect.gen(function* () {
     const entries = yield* fileSystem
       .readDirectory(managedRoot)
@@ -324,9 +319,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const resolvePathExecutable = Effect.gen(function* () {
-    // The default ConfigProvider is cached the first time any Config is read.
-    // Server startup reads its config before fixPath hydrates the environment,
-    // so reading PATH through Config here can retain the service's stale PATH.
+    // Read hydrated PATH directly; ConfigProvider may have cached it before fixPath.
     const pathValue = (yield* HostProcess.Environment).PATH?.trim();
     if (!pathValue) return null;
     const delimiter = platform === "win32" ? ";" : ":";
@@ -375,11 +368,9 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   }).pipe(Effect.withSpan("cloudflared.resolve"));
 
   const pruneManagedVersions: RelayClientShape["pruneManagedVersions"] = Effect.gen(function* () {
-    // The newest older release stays: an older server sharing this base dir, or a
-    // rollback after a failed update, may still need it and cannot redownload it.
+    // Retain the newest older release for rollback or older servers that cannot redownload it.
     for (const version of (yield* olderManagedVersions).slice(1)) {
-      // A connector from another server sharing this base dir may still run an
-      // older release; Windows refuses to delete it, so the next prune retries.
+      // Windows cannot delete another server's running connector; retry next prune.
       yield* fileSystem.remove(path.join(managedRoot, version), { recursive: true }).pipe(
         Effect.tap(() => Effect.logInfo("Removed an older managed relay client", { version })),
         Effect.catch((cause) =>
@@ -565,8 +556,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           .pipe(wrapInstallFailure("write_failed", "Could not make the relay client executable."));
       }
       yield* report("validating");
-      // Requiring the pinned version here keeps a mislabelled asset from being
-      // activated, ignored by resolve, and downloaded again on every reconcile.
+      // Verify the pin so mislabeled assets cannot cause repeated redownloads.
       const installedVersion = yield* probeVersion(executablePath);
       if (installedVersion !== CLOUDFLARED_VERSION) {
         return yield* new RelayClientInstallError({

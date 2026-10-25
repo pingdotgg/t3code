@@ -6,10 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { loadWindowsForegroundApi } from "../electron/WindowsForeground.ts";
 
-/**
- * `id` is the CGWindowNumber on macOS and the HWND on Windows, which is what
- * the capture backends key on.
- */
+/** id is CGWindowNumber on macOS or HWND on Windows, matching the capture backend. */
 export type ActiveWindow = {
   readonly platform: "macos" | "windows";
   readonly id: number;

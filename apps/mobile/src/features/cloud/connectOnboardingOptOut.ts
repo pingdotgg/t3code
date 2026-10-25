@@ -1,8 +1,6 @@
 import { loadPreferences, updatePreferences } from "../../persistence/imperative";
 
-// Lives apart from connectOnboarding.ts so CloudAuthProvider (which imports
-// the request signal) never pulls the persistence adapter into its
-// module graph; that breaks CloudAuthProvider.test.ts suite loading.
+// Keep persistence out of CloudAuthProvider's import graph; it breaks suite loading.
 
 export async function isConnectOnboardingOptedOut(accountId: string): Promise<boolean> {
   const preferences = await loadPreferences();

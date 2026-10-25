@@ -38,7 +38,6 @@ export function useProactivePanels(input: {
   readonly isGitRepo: boolean | undefined;
   readonly linkedPullRequest: ThreadLinkedPullRequest | null;
   readonly hasLinkedPullRequestDetail: boolean;
-  // Identifies the change requests the thread shows, so a new one can open the panel.
   readonly pullRequestsKey: string | null;
   readonly pullRequestsCapabilityKnown: boolean;
   readonly supportsPullRequests: boolean;

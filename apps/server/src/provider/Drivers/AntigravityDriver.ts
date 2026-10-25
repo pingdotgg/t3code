@@ -215,11 +215,9 @@ export const AntigravityDriver: ProviderDriver<
             : cause,
         ),
       );
-      // Each process unpacks into its own directory that dies with the
-      // runtime scope, after the child is killed. A shared directory would
-      // let one session's teardown delete files a sibling still reads.
-      // Removal is best effort: a handle can outlive the kill on Windows,
-      // and the sweep on the next driver start reclaims what is left.
+      // Use one directory per process; shared cleanup could delete files another session still reads.
+      // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
+      // the next driver start sweeps leftovers.
       const runtimeTempDirectory = yield* Effect.acquireRelease(
         fileSystem.makeTempDirectory({ directory: profile.tempDirectory, prefix: "run-" }).pipe(
           Effect.mapError(

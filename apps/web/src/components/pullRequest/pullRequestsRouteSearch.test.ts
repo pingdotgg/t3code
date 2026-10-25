@@ -20,7 +20,7 @@ function matchedSearch(url: string) {
     routeTree: root.addChildren([chat.addChildren([pullRequests])]),
     history: createMemoryHistory({ initialEntries: [url] }),
   });
-  // The search a component reads through `useSearch` is the matched route's, not the URL's.
+  // useSearch reads matched-route search, which can differ from URL search.
   return router.matchRoutes(router.latestLocation).at(-1)?.search as
     | Record<string, unknown>
     | undefined;

@@ -551,8 +551,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
           options={{
             headerBackVisible: false,
             gestureEnabled: !preventRemove,
-            // The system back button begins its native pop before the removal
-            // guard runs. Dispatch from a bar action so the guard runs first.
+            // Native Back pops before removal guards; a bar action lets the guard run first.
             unstable_headerLeftItems: () => [
               withNativeGlassHeaderItem({
                 type: "button",
@@ -693,8 +692,7 @@ function TaskForm({
       environmentUnavailable
     )
       return;
-    // Signatures are edited on desktop and web; send the task's current one,
-    // not the copy taken when this form opened, so a newer edit survives.
+    // Preserve signatures edited on other clients by sending the task's current value.
     const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
     const schedule = scheduleFromDraft(
       draft.schedule.mode === "webhook" && liveTask?.schedule.type === "webhook"
@@ -1039,8 +1037,7 @@ function TaskForm({
             <>
               <WebhookScheduleDetails
                 environmentId={environmentId}
-                // The live row, so a rotated URL shows up without reopening the form.
-                // Once the list has loaded, a missing task is gone; don't keep showing its URL.
+                // Use the live row for rotated URLs; hide the URL once a loaded list no longer contains the task.
                 task={
                   tasks.data
                     ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)

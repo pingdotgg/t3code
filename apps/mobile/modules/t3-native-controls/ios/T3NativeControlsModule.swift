@@ -3,8 +3,6 @@ import ExpoModulesCore
 import Security
 import UIKit
 
-// Expo Modules 2.0: plain members marked @JS are bound by the macro, while the
-// views and main-queue presenters stay in definition(). Both are merged.
 @ExpoModule("T3NativeControls")
 public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
@@ -158,12 +156,8 @@ public final class T3NativeControlsModule: Module {
     }
   }
 
-  // The geometry request above can fail transiently (for example before the
-  // scene is foreground-active), so callers poll this until it settles.
-  // Screen bounds — not the scene's interface orientation — decide the
-  // answer because they match the captured framebuffer: with iPadOS
-  // windowing active, a floating landscape window still reports a portrait
-  // screen, and screenshots would come out portrait.
+  // Geometry requests can fail before foreground activation; callers retry until bounds match.
+  // Use screen bounds because iPadOS floating-window orientation can differ from the captured framebuffer.
   @JS
   @MainActor
   func getInterfaceOrientation() async -> String {

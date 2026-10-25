@@ -129,7 +129,6 @@ export function buildDiffFileTreeUpdates(
   for (const path of previousPaths) {
     if (!next.has(path)) updates.push({ type: "remove", path });
   }
-  // Deepest first: a directory can only go once everything under it has.
   const removedDirectories = [...previousDirectories]
     .filter((directory) => !nextDirectories.has(directory))
     .toSorted((left, right) => pathDepth(right) - pathDepth(left));
@@ -137,7 +136,6 @@ export function buildDiffFileTreeUpdates(
     updates.push({ type: "remove", path: directory, recursive: true });
   }
 
-  // Shallowest first: a file's directory has to exist before the file does.
   const addedDirectories = [...nextDirectories]
     .filter((directory) => !previousDirectories.has(directory))
     .toSorted((left, right) => pathDepth(left) - pathDepth(right));

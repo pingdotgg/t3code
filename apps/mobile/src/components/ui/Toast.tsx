@@ -18,7 +18,6 @@ export interface ToastProps {
   readonly onDismiss?: () => void;
 }
 
-/** The owning screen places and dismisses feedback; actions are never implicit. */
 export function Toast(props: ToastProps) {
   const { fontScale } = useWindowDimensions();
   // A one-line message keeps its action on the same row. Descriptions and

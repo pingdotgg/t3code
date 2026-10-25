@@ -84,8 +84,7 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
     }
     setPending(false);
   }
-  // Failures go to a toast: the actions column is auto-sized, so inline error
-  // text would widen it and crush the title.
+  // Inline errors would widen the actions column and crush the title.
   return (
     <>
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>

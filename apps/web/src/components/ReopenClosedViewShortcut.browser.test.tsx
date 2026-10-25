@@ -40,7 +40,6 @@ vi.mock(import("../state/preview"), async (original) => {
     previewEnvironment: { ...actual.previewEnvironment, open: state.openPreview as never },
   };
 });
-// The remote environment is catalogued and its shell is live.
 vi.mock(import("../connection/catalog"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");

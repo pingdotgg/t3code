@@ -246,8 +246,7 @@ export function useComposerCommandMenu({
     selectedProviderStatus,
     projectCwd,
   );
-  // The last scan this composer asked for. A request inside the TTL is not
-  // repeated, so a client clock ahead of the server's cannot loop rescans.
+  // Record client request time to enforce TTL even when the client clock runs ahead of the server.
   const workspaceRefreshKeyRef = useRef<{ key: string; requestedAt: number } | null>(null);
   const [workspaceRefreshRetry, setWorkspaceRefreshRetry] = useState<{
     key: string;

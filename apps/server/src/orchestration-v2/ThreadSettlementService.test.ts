@@ -417,8 +417,6 @@ describe("resolveAutoSettlementAt", () => {
       },
       stack: null,
     });
-    // The user asked the agent to merge pull requests; it merged one, then
-    // linked it to the thread as a record of the work.
     const recorded = link(1, at(-50 * 60 * 1_000), at(-55 * 60 * 1_000));
     const input = {
       thread: shell({
@@ -432,7 +430,6 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleOnMerge: true,
     };
     expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
-    // A pull request linked while open still settles the thread when it merges.
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,

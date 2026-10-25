@@ -58,7 +58,6 @@ vi.mock(import("../state/session"), async (original) => {
       ),
   };
 });
-// Atoms derived from the server config run in the real registry over this config.
 vi.mock(import("../state/server"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");

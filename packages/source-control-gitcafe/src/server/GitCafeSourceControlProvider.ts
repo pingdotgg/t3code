@@ -79,7 +79,7 @@ const cliDiscovery = {
     const failure = cliFailure(input.stderr) ?? cliFailure(input.stdout);
     if (failure)
       return providerAuth({
-        // Only a refusal says the login is gone; a forbidden or offline answer says nothing.
+        // Forbidden/offline responses do not establish that a login is gone.
         status:
           failure.code === "AUTHENTICATION_REQUIRED" || failure.status === 401
             ? "unauthenticated"
@@ -314,7 +314,7 @@ export const make = Effect.gen(function* () {
           );
           for (const pull of page.items) {
             if (pull.sourceBranch !== branch || items.length >= limit) continue;
-            // List rows omit fork identity, so only the branch's own rows are read in full.
+            // List rows omit fork identity; read matching branches in full.
             const detail = yield* getPull({
               cwd: input.cwd,
               reference: `https://${target.host}/${target.repository}/pulls/${pull.number}`,
@@ -451,7 +451,7 @@ export const make = Effect.gen(function* () {
       );
       return repository.defaultBranch;
     }),
-    // `cafe` has no forced checkout, so the branch is fetched and switched to with git.
+    // `cafe` has no forced checkout.
     checkoutChangeRequest: Effect.fn("GitCafeSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
         const pull = yield* getPull(input);

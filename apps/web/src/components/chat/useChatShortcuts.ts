@@ -13,7 +13,7 @@ import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
-/** Runs a command. Returning false lets the key event through untouched. */
+/** Returning false lets the key event through untouched. */
 export type ChatShortcutHandler = (context: {
   readonly event: KeyboardEvent;
   readonly terminalFocusOwner: TerminalFocusOwner | null;

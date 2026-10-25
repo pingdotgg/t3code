@@ -51,8 +51,7 @@ export function QuestionAttachments(props: {
     props.requestId,
     props.question.id,
   ]);
-  // A focused input that unmounts never delivers its onBlur, so release focus here or
-  // the screen would keep treating the keyboard as owned by a removed input.
+  // Unmounted inputs never emit onBlur; explicitly release keyboard ownership.
   const focusedRef = useRef(false);
   const onInputFocusChange = props.onInputFocusChange;
   const releaseFocus = useEffectEvent(() => {

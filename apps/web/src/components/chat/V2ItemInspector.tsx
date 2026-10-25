@@ -208,7 +208,7 @@ function ToolCallBody(
     readonly args?: unknown;
     readonly toolName?: string | null;
     readonly exitCode?: number | undefined;
-    /** Replaces the fetched output, e.g. with a command's live output. */
+    /** Replaces fetched output. */
     readonly outputSlot?: ReactNode;
   },
 ) {

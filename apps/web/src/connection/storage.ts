@@ -192,11 +192,7 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
   return { handle, close };
 });
 
-/**
- * A connection the browser already closed throws InvalidStateError even when no
- * close event reached this tab, so drop it and retry once on a fresh one
- * instead of failing every later operation.
- */
+// Browsers can omit close events; retry InvalidStateError with a fresh connection.
 function withDatabase<A>(
   database: DatabaseHandle,
   use: (opened: IDBDatabase) => Effect.Effect<A, ConnectionTransientError>,
@@ -247,8 +243,7 @@ function writeDatabaseValueOnConnection(
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
       const transaction = database.transaction(storeName, "readwrite");
-      // Every failed write fires "abort". A failed commit, such as
-      // QuotaExceededError, fires only "abort" and no "error".
+      // Commit failures can fire abort without error; every failed write fires abort.
       transaction.addEventListener("abort", () => {
         resume(
           Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
@@ -599,9 +594,7 @@ export function makeBrowserPullRequestRoutingPermissions(
   });
 }
 
-// A posted message resumes in a fresh task, so input and rendering get a turn between
-// encoding chunks. A zero-delay timer would not do: browsers clamp nested timers to
-// 4 ms and throttle them to once a second or less in a background tab.
+// MessageChannel yields without nested-timer clamping or background throttling.
 const yieldToBrowserTask = Effect.callback<void>((resume) => {
   const { port1, port2 } = new MessageChannel();
   port1.addEventListener(

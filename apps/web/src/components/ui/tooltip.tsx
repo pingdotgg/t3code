@@ -19,8 +19,7 @@ const TooltipProvider = TooltipPrimitive.Provider;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
-// Context values are frozen to the compiler, so consumers update the hovered
-// tooltip through these calls rather than by writing to a shared ref.
+// The compiler freezes context values; update hovered tooltips through calls instead of shared ref writes.
 function createTooltipHoverTracker() {
   let hovered: { trigger: HTMLElement; actionsRef: TooltipActionsRef } | null = null;
   return {

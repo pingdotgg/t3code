@@ -44,7 +44,7 @@ export function MediaVideoPlayer({
   onRetry,
   actionsSource,
 }: MediaVideoPlayerProps) {
-  // State, not a ref: the element remounts on retry and failure, and effects must rebind to it.
+  // Use state so effects rebind when retry or failure remounts the video.
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [playbackSource, setPlaybackSource] = useState<{
     src: string;

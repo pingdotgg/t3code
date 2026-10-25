@@ -100,7 +100,6 @@ export function makeSubagentConversationArtifacts(input: {
   readonly nativeItemRef: OrchestrationV2ProviderRef | null;
   readonly role: "user" | "assistant";
   readonly text: string;
-  /** Whether a user message is the script a workflow run executes; unset for older callers. */
   readonly workflowScript?: boolean;
   readonly ordinal: number;
   readonly now: DateTime.Utc;
@@ -191,8 +190,7 @@ export function subagentResultForRun(
       candidate.role === "assistant" &&
       candidate.text.trim().length > 0,
   );
-  // Turn item order is authoritative: providers can finalize every message of a turn at once,
-  // so message timestamps can tie. They only order messages that have no turn item.
+  // Prefer turn item order; providers can finalize messages with identical timestamps.
   const message =
     messages.find((candidate) => candidate.id === turnItem?.messageId) ??
     messages.toSorted(

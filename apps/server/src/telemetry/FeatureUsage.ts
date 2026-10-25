@@ -14,11 +14,8 @@ const use = (feature: string, variant?: string): FeatureUsage =>
   variant === undefined ? { feature } : { feature, variant };
 
 /**
- * User commands sent through `orchestration.dispatchCommand` that represent a
- * feature choice. Housekeeping commands (visits, reorders, acknowledgements)
- * and `message.dispatch`, which `client.turn.requested` already counts, are
- * left out. The dispatch handler records these, not the RPC middleware, so a
- * retried command id that changed nothing is not counted again.
+ * Exclude housekeeping and `message.dispatch`, which `client.turn.requested` already counts.
+ * Record at command dispatch so retries that commit no change do not count twice.
  */
 const COMMAND_FEATURES: {
   readonly [Type in OrchestrationV2Command["type"]]?: (

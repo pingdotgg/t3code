@@ -227,7 +227,7 @@ const normalizeCwd = (cwd: string) =>
     Effect.orElseSucceed(() => cwd),
   );
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
   const autoPullPolicy = yield* VcsAutoPullPolicy;
@@ -460,8 +460,7 @@ export const make = Effect.gen(function* () {
             errorTag: error._tag,
           });
           if (!pullAttempted) return null;
-          // A pull or its follow-up reads can fail after local state has changed.
-          // Let a failed reconciliation reach the caller instead of publishing old status.
+          // Pull can change local state before failing; propagate reconciliation failures instead of publishing stale status.
           yield* workflow.invalidateLocalStatus(cwd);
           const local = yield* workflow.localStatus({ cwd });
           yield* updateCachedStatus(cwd, local, remote, { publish: true });
@@ -509,8 +508,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    // invalidateStatus (not the two partial invalidations) so an explicit
-    // refresh also bypasses GitManager's slow PR-lookup cache.
+    // Full invalidation also bypasses GitManager's slow PR cache.
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
@@ -544,8 +542,7 @@ export const make = Effect.gen(function* () {
             { concurrency: "unbounded" },
           )).some(Boolean);
           if (!shouldRefresh) return null;
-          // Resolve the checked-out branch again. A cached PR can belong to
-          // the previous branch after an agent checks out another branch.
+          // Re-resolve the branch; cached PRs may belong to a checkout's previous branch.
           const remote = yield* workflow.remoteStatus(
             { cwd },
             { refreshUpstream: false, refreshMissingPullRequest: true },

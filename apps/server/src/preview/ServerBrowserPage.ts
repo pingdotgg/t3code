@@ -105,7 +105,6 @@ const targetLocator = (
 ): Locator | null => {
   const selector = input.locator ?? input.selector;
   if (selector === undefined) return null;
-  // Ignore quoted/escaped CSS values when looking for a selector-engine boundary.
   const engines = selector.replace(
     /\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g,
     " ",
@@ -207,11 +206,9 @@ const withoutTreeDataPayloads = (tree: string) =>
 
 // The broker waits 15s for the host; a snapshot, retry included, answers well before.
 const SNAPSHOT_TIMEOUT_MS = 10_000;
-// How long a frame in another process gets to answer; one that crashed never does.
 const FRAME_ANSWER_MS = 1_000;
 
-// Values the page draws as dots (password fields, and text fields whose CSS
-// draws dots), normalized like accessible text. Open shadow roots included.
+// Include password and CSS-masked text in open shadow roots, normalized like accessible text.
 const DOTTED_SCRIPT = `(() => {
   const values = [];
   const visit = (root) => {
@@ -244,10 +241,10 @@ const tooBusy = () =>
 
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
 
-/** A frame in another process keeps one CDP session, so none pile up across snapshots. */
+/** Reuse one CDP session per out-of-process frame across snapshots. */
 const frameSessions = new WeakMap<Frame, Promise<CDPSession>>();
 
-/** The value, or undefined when it fails or takes longer than a frame may. */
+/** Returns undefined on failure or frame timeout. */
 const answered = <A>(promise: Promise<A>) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<undefined>((resolve) => {
@@ -256,14 +253,7 @@ const answered = <A>(promise: Promise<A>) => {
   return Promise.race([promise.catch(() => undefined), late]).finally(() => clearTimeout(timer));
 };
 
-/**
- * Reads dotted values in isolated worlds, where page script can't change what `value`
- * returns, through the CDP session of the process each frame renders in. A frame in
- * another process that can't be attached, as in desktop tabs where only the page can,
- * is read in the page's own world, where its script can change `value`. `read` gives
- * each reader's values, or undefined for one that didn't answer, and fails when the
- * page's own frames don't or frames came or went.
- */
+/** Isolated worlds prevent spoofing; desktop out-of-process frames use page worlds. Missing own-frame reads or changed frames fail; other missing reads return undefined. */
 const openReaders = async (page: Page, cdp: CDPSession) => {
   const frames = page.frames();
   const owners = new Map<Frame, CDPSession | null | undefined>(
@@ -276,8 +266,7 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
           return [frame, await session] as const;
         } catch (cause) {
           frameSessions.delete(frame);
-          // CdpRelay refuses all but the page. Any other refusal reads the frame through its
-          // parent's session, which fails the read if the frame isn't there.
+          // CdpRelay supports only the page; other refusals fall back to the parent session, failing if the frame is absent.
           const desktop = String(cause).includes("Only this preview tab's page can be attached");
           return [frame, desktop ? null : undefined] as const;
         }
@@ -349,10 +338,8 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
   ];
   return {
     readers,
-    /** Readers that didn't answer `before` aren't asked again. */
     read: async (before?: ReadonlyArray<unknown>) => {
       const now = page.frames();
-      // A frame added since the readers opened has none.
       if (now.length !== frames.length || now.some((frame, i) => frame !== frames[i])) {
         throw pageChanged();
       }
@@ -366,12 +353,7 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
   };
 };
 
-/**
- * Matches each value as the snapshot prints it: raw, as a JSON name, as a
- * quoted value, and with '' for each quote inside a quoted key. A value under
- * four characters only matches between non-word characters; inside other words
- * it would mask unrelated text.
- */
+/** Short values need word boundaries to avoid masking unrelated text. */
 const dottedPattern = (values: ReadonlyArray<string>) => {
   const sources = values
     .flatMap((value) => {
@@ -394,8 +376,7 @@ const dottedPattern = (values: ReadonlyArray<string>) => {
   if (sources.length === 0) return undefined;
   const pattern = new RegExp(sources.join("|"), "gu");
   try {
-    // Compiles it now, for one-byte and two-byte text: one too large fails only when it
-    // first runs on each, naming every value.
+    // Force regex compilation for one-byte and two-byte strings now; size errors name every value.
     pattern.test("");
     pattern.test("\u2022");
   } catch {
@@ -404,16 +385,11 @@ const dottedPattern = (values: ReadonlyArray<string>) => {
   return pattern;
 };
 
-// `- role "name" [attribute]...: value`, the key single-quoted when it holds ": ". A name
-// that starts and ends with "/" prints unquoted. Only Playwright's own attributes count, so
-// text around a value in a name can't pass for one.
+// Playwright single-quotes keys containing ': ' and leaves /.../ names unquoted. Recognize only its attributes so name text cannot spoof them.
 const TREE_LINE =
   /^(\s*- '?[^\s"':]+)( "(?:[^"\\]|\\.)*"| \/(?:.*?\/)?)?((?: \[(?:active|checked(?:=mixed)?|disabled|expanded|level=\d+|pressed(?:=mixed)?|selected|ref=(?:f\d+)?e\d+|cursor=pointer|box=-?\d+,-?\d+,\d+,\d+)\])*'?)(:.*)?$/;
 
-/**
- * Masks each value on a line, except one that only matches inside the role or attributes,
- * so refs keep working. A "/.../" name has no closing mark, so a value can seem to cross it.
- */
+/** Preserve roles and attributes so refs work; unquoted /.../ names can make matches cross boundaries. */
 const maskTree = (tree: string, dotted: RegExp) =>
   tree
     .split("\n")
@@ -553,8 +529,7 @@ const capture = async (
   const generation = state.generation;
   const { readers, read } = await openReaders(input.page, input.cdp);
   const before = await read();
-  // Taken between the reads, so a value that changes during either fails the comparison.
-  // Awaited after the tree: a capture that fails has finished its tree before a retry starts.
+  // Bracket the tree with value reads to detect changes; await tree completion before retrying failed captures.
   const pageAndScreenshot = Promise.all([
     input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
       Pick<
@@ -576,8 +551,7 @@ const capture = async (
   if (after.some((values, i) => values && JSON.stringify(values) !== JSON.stringify(before[i])))
     throw pageChanged();
   const dotted = dottedPattern(after.flatMap((values) => values ?? []));
-  // A frame that didn't answer both times, such as one that crashed, can only hold values the
-  // tree shows if the tree shows its content.
+  // Unread frames can expose values only if their content appears in the tree.
   const unread = readers.flatMap((reader, i) => (after[i] ? [] : reader.frames));
   const filled = /^\s*- iframe (?:\[active\] )?\[ref=(\S+?)\].*:$/gm;
   for (const [, ref] of unread.length ? tree.matchAll(filled) : []) {
@@ -602,8 +576,7 @@ const capture = async (
     });
   return {
     ...page,
-    // Text that holds a value would otherwise show where the tree masked it. Masked before
-    // the cut, so a value crossing it can't leave its start showing.
+    // Mask text before truncating so a value crossing the cut cannot leak its prefix.
     visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
     accessibilityTree,
     consoleEntries: [...input.consoleEntries],
@@ -628,9 +601,7 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   });
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
-  // A page that changed mid-capture, like one rotating ads, has usually settled by a second
-  // try. None starts late or after another snapshot began, since it would revoke the refs of
-  // whichever snapshot came next.
+  // Retry only before the deadline and the next snapshot, whose refs a later retry would revoke.
   const captured = capture(input, deadline).catch((cause: unknown) =>
     Date.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
@@ -647,10 +618,7 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   }
 };
 
-/**
- * A click whose handler opens a dialog does not finish until the dialog is
- * resolved, so it returns as soon as the dialog opens; status then reports it.
- */
+/** Return when a dialog opens; waiting for the action to finish would block until dialog resolution. */
 export const click = async (
   page: Page,
   input: PreviewAutomationClickInput,
@@ -691,9 +659,7 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     (locator !== null || (await target.count()) > 0) &&
     (await target.evaluate(
       (element) => {
-        // Like the desktop host: an enabled text control or contenteditable
-        // that actually takes focus. Anything else would swallow the text or
-        // send it to whichever field had focus before.
+        // Require an enabled, focused text target to avoid losing input or sending it to the previous field.
         const control = element as unknown as {
           readonly type?: string;
           readonly disabled?: boolean;
@@ -799,8 +765,7 @@ export const drag = async (
   const source = targetLocator(page, { locator: input.source })!;
   const target = targetLocator(page, { locator: input.target })!;
   await pointer(await targetPoint(page, source, {}, timeout), "move");
-  // Observe the drag's outcome as it starts: a rejection nobody handles while the cursor
-  // moves exits the server.
+  // Observe drag rejection immediately; an unhandled rejection during cursor movement exits the server.
   const dragFailure = source.dragTo(target, { timeout }).then(
     () => null,
     (error: unknown) => ({ error }),
@@ -833,11 +798,7 @@ export const scroll = async (page: Page, input: PreviewAutomationScrollInput) =>
   await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
 };
 
-/**
- * Runs an agent's expression, bounded by its request's deadline. Past it, the
- * page's script is terminated and the call fails, so the tab's control queue
- * frees for the next request instead of waiting on the script.
- */
+/** Terminate expired page scripts so a hung expression cannot block the tab's control queue. */
 export const evaluate = async (
   cdp: CDPSession,
   input: PreviewAutomationEvaluateInput,

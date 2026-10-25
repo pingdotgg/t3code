@@ -56,17 +56,12 @@ export function usePullRequestFilesViewed(options: {
   const requests = useRef(0);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Everything held here belongs to one change request on one environment. The environment is
-  // part of that: two of them can hand out the same project id, and a press made against one
-  // must never be answered for by the other.
+  // Project ids can repeat across environments.
   const scopeKey = `${environmentId} ${reference.projectId} ${reference.repository} ${reference.number}`;
   const scope = useRef(scopeKey);
 
-  // The host's answer as it stood when a completed write was acknowledged, per path. The first
-  // answer that differs from it is the first read that could have seen the write, which is what
-  // retires the press rather than the host happening to agree with it.
+  // Retire presses only after a post-write read, even if an older response agrees.
   const answeredFrom = useRef<Map<string, FileViewedStates | null>>(new Map());
-  // The committed answer, read when a write completes rather than when it was sent.
   const committedStates = useRef(states);
 
   useEffect(() => {
@@ -81,7 +76,7 @@ export function usePullRequestFilesViewed(options: {
     setOverlay((current) => settleFileViewedOverlay(current, states, pending, answered));
   }, [states]);
 
-  // Takes the target explicitly so a scope being left still sends its last presses to itself.
+  // Explicit targets keep departing scopes' presses in their original scope.
   const flush = (target: {
     readonly environmentId: EnvironmentId;
     readonly reference: PullRequestRef;
@@ -111,8 +106,7 @@ export function usePullRequestFilesViewed(options: {
         }
         return;
       }
-      // Answered for from the next read on, whatever it says. A push landing between the write
-      // and that read comes back as `dismissed`, and the press must not stand over it.
+      // The next read can report dismissed after a push; retire presses regardless of its value.
       for (const path of mine) answeredFrom.current.set(path, committedStates.current);
       refresh();
     });
@@ -121,8 +115,6 @@ export function usePullRequestFilesViewed(options: {
   const currentTarget = useEffectEvent(() => ({ environmentId, reference }));
   const flushTarget = useEffectEvent(flush);
 
-  // Leaving a change request, the environment it lives on, or the page itself records what was
-  // pressed and then drops the rest, sending those last presses to the scope being left.
   useEffect(() => {
     const leaving = currentTarget();
     scope.current = scopeKey;
@@ -138,7 +130,6 @@ export function usePullRequestFilesViewed(options: {
     };
   }, [scopeKey]);
 
-  // Handed to every file header the viewer draws; a new identity would rebuild all of them.
   const setViewed = useStableCallback((path: string, viewed: boolean) => {
     setOverlay((current) => new Map(current).set(path, viewed));
     queued.current.set(path, viewed);

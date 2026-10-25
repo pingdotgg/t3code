@@ -27,7 +27,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   comment: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
-  // Only through a stack: GitCafe's one branch update restacks every layer above it.
+  // Branch updates restack every layer above the target.
   updateMethods: ["rebase"],
   search: true,
   stacks: true,
@@ -56,10 +56,7 @@ const AUTHOR_DISCOVERY_PAGES = 5;
 const KNOWN_AUTHORS_LIMIT = 10_000;
 /** GitCafe's cap on paths per `/diff-files` read, and so one diff page. */
 const DIFF_FILES_BATCH = 64;
-/**
- * Line totals cost one hunk read per batch, so a pull request larger than this reports none
- * rather than reading every file.
- */
+/** Line totals require hunk reads; omit them for large PRs. */
 const LINE_STATS_MAX_FILES = DIFF_FILES_BATCH * 4;
 const MAX_CHANGE_PAGES = 20;
 const LINE_STATS_CACHE_SIZE = 256;
@@ -214,7 +211,7 @@ const withDetails = (
   return files.map((file) => byPath.get(file.path) ?? file);
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
   // GitCafe filters by actor id and has no lookup from a GitHub login to the actor sync made for
@@ -663,8 +660,7 @@ export const make = Effect.gen(function* () {
     if (pull.mergeRoute === "unsupported")
       return yield* failure("merge", "This GitCafe pull request has no supported merge route.");
     const base = yield* repositoryPath("merge", input);
-    // GitCafe observes the base only for merges it routes to the provider; a native merge is
-    // fenced on the target branch's current commit.
+    // Native merges fence on the current target commit; provider-routed merges supply the base.
     const baseOid =
       pull.mergeRoute === "provider"
         ? pull.observedBaseOid

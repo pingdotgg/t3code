@@ -434,9 +434,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     const presentation = props.descriptors[route.key]?.options.presentation;
     return presentation !== undefined && presentation !== "card";
   });
-  // Linking normally restores Home via initialRouteName. A detail-only history
-  // must stay a single stack: placeholder descriptors cannot own an interactive
-  // sidebar because React Navigation rejects their actions and setOptions.
+  // Detail-only histories must stay single-stack: placeholder descriptors cannot own sidebar actions or setOptions.
   const primaryRoute = projection.primary;
   if (!primaryRoute) return <V5StackView {...props} />;
   const primaryDescriptor = props.descriptors[primaryRoute.key]!;
@@ -447,8 +445,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
-    // The native envelope keeps a stable key, but its NavigationProvider must
-    // identify the real visible route or useIsFocused closes media viewers.
+    // Identify the real visible route under the stable envelope key, or useIsFocused closes media viewers.
     route: visibleRoute,
     options: { headerShown: false },
     render: () => (

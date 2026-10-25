@@ -252,8 +252,7 @@ export function V5StackHeader(props: {
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
   const headerStyle = StyleSheet.flatten(options.headerStyle);
   const appearance = {
-    // A clear color also removes UIKit's material. Let UIKit supply it for
-    // translucent bars so scrolling content can appear beneath native blur.
+    // Clear colors remove UIKit material; let translucent bars supply their own blur background.
     backgroundColor: options.headerTransparent
       ? undefined
       : (headerStyle?.backgroundColor ?? theme.colors.card),

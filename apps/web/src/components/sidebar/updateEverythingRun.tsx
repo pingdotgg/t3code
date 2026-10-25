@@ -181,8 +181,7 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
   const handedOff = (run?.machines ?? []).flatMap((machine): HandedOffServer[] => {
     if (machine.result !== null) return [];
     const state = appAtomRegistry.get(serverEnvironment.updateStateAtom(machine.environmentId));
-    // A desktop-managed server installs its own feed's version, which only its
-    // update state knows.
+    // Only the desktop-managed server's update state knows its own feed version.
     const targetVersion =
       machine.handedOffVersion ??
       (state.status === "running" ? state.targetVersion : machine.server?.targetVersion);

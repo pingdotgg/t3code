@@ -15,9 +15,6 @@ import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
-// Rows take the model's fields rather than the picker's item object, and one shared toggle
-// handler, because the picker rebuilds its items on every search keystroke; that keeps memo
-// effective for rows whose content did not change.
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
   slug: string;

@@ -225,8 +225,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
-  // Tying RefreshControl to the query's isPending flag left the spinner stuck
-  // (the status query reports pending during quiet background refreshes too).
+  // Background refreshes also report pending; using that query flag would stick the RefreshControl spinner.
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     setIsRefreshing(true);

@@ -117,7 +117,6 @@ describe("GitHubRest", () => {
         "http.response.status_code": 200,
         "github.ratelimit.remaining": 4800,
       });
-      // Nothing recorded carries the query string or the token.
       const everything = spans
         .flatMap((span) => [...span.attributes].map(([key, value]) => `${key}=${String(value)}`))
         .join("\n");

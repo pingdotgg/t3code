@@ -26,12 +26,7 @@ import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { WizardPopup } from "../ui/wizard";
 
-/**
- * Open state for overlays the chat view hosts. It lives in atoms rather than
- * ChatView state so opening or closing one renders only its host, not the
- * whole chat chrome. Each entry carries the thread it was opened for; a host
- * shows only its own thread's entry and drops it when the thread changes.
- */
+// Atoms isolate overlay renders. Thread keys prevent overlays following thread switches.
 type ThreadOverlayAtom<T> = Atom.Writable<{ readonly threadKey: string; readonly value: T } | null>;
 
 function makeThreadOverlayAtom<T>(label: string): ThreadOverlayAtom<T> {

@@ -826,7 +826,7 @@ it.layer(
         "done\n";
 
       // Counts reads of strings larger than one emitted chunk, so rescanning the
-      // pending prefix on every chunk (#23817) shows up as quadratic work.
+      // pending prefix on every chunk shows up as quadratic work.
       const charCodeAt = String.prototype.charCodeAt;
       let largeStringReads = 0;
       yield* Effect.gen(function* () {

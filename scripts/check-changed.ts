@@ -56,13 +56,9 @@ if (files.length === 0) {
 }
 console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
 
-// The checked tree is the merge base plus the diff plus the untracked files.
-// Ignored generated sources, .astro types, generated declarations such as
-// apps/mobile/expo-env.d.ts, env files, and the install state can change results
-// too, so they are part of the key. Other ignored folders (iOS Pods, dist, the
-// Electron runtime) are large and no check reads them.
-// Computed again after a passing run, so edits made during the run are never
-// cached as passing.
+// Ignored generated sources, declarations, env files, and install state affect check results.
+// Include them in the key, but skip large ignored folders that no check reads.
+// Recompute after a passing run so edits made during it are never cached as passing.
 const inputKey = () => {
   const hash = NodeCrypto.createHash("sha256");
   // CI changes test behavior (vite.config.ts rejects .only under CI).
@@ -162,12 +158,8 @@ const knipPasses = knipCheck.split(" && ").map((command, index, all) => {
   return { name: `knip ${index + 1}/${all.length}`, args: ["exec", "knip", ...args] };
 });
 
-// A version bump can strand a patch in pnpm-workspace.yaml: no resolved
-// version uses it and pnpm rejects the install with ERR_PNPM_UNUSED_PATCH.
-// CI catches that before merge through Release Smoke, because ci-changes.cjs
-// runs everything for any package.json and for root paths it does not map to
-// a package (pnpm-workspace.yaml, pnpm-lock.yaml, patches/). The local run
-// had no such check, so a stranded patch passed here and failed after push.
+// A version bump can leave a patch unused, causing pnpm to reject the install
+// with ERR_PNPM_UNUSED_PATCH. Check it here as Release Smoke does in CI.
 const runPatchCheck = files.some(
   (file) =>
     file === "pnpm-workspace.yaml" ||
@@ -178,12 +170,9 @@ const runPatchCheck = files.some(
     NodePath.basename(file) === "package.json",
 );
 
-// Mirror Release Smoke's temp-copy install: copy the workspace manifests to
-// a temp dir, omit the lockfile, and install with --lockfile-only, so the
-// working tree and its lockfile stay untouched (the mobile modules are
-// mobile file: dependencies, not workspace packages). Local pnpm may resolve
-// from cached registry metadata, so this catches patches stranded by your
-// own change, not registry drift.
+// Resolve without the lockfile in a temp copy to preserve the working tree and lockfile.
+// Copy mobile modules too: they are file: dependencies, not workspace packages.
+// Cached registry metadata limits this to patches stranded by local changes, not registry drift.
 const checkPatches = (): boolean => {
   const temp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-patch-check-"));
   try {

@@ -29,7 +29,7 @@ it.effect.each([
           source: { branch: { name: "release" } },
           destination: { branch: { name: "master" } },
           created_on: "2025-06-16T06:20:58.415108+00:00",
-          // Comments after a merge move this, so it is not the merge time.
+          // Comments after merging move this timestamp.
           updated_on: "2025-06-20T10:00:00.000000+00:00",
           closed_on: state === "OPEN" ? null : "2025-06-16T23:40:46.222238+00:00",
           links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/52" } },

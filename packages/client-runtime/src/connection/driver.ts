@@ -136,7 +136,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   );
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const sessions = yield* RpcSession.RpcSessionFactory;

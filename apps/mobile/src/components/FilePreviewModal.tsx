@@ -52,8 +52,7 @@ function PreviewItemResolver(props: {
   useEffect(() => {
     if (environmentId === null || uri !== null) return;
     let cancelled = false;
-    // A cached URL may have expired while the app was suspended. Await reauthorization
-    // before handing a URL to Quick Look or ACTION_VIEW, which retain that URL.
+    // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
     void refreshAssetUrl()
       .then((url) => {
         if (cancelled) return;
@@ -174,8 +173,7 @@ export function FilePreviewModal(props: {
     },
     [navigation],
   );
-  // The v5 card host sits inside a legacy presentation envelope whose focus context
-  // can describe a different route. The preview belongs to this navigation route.
+  // The legacy envelope's focus context may describe a different route than this v5 card.
   const isFocused = useSyncExternalStore(
     subscribeToFocus,
     navigation.isFocused,

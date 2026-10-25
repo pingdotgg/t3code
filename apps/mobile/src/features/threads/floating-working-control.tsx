@@ -48,8 +48,7 @@ const CONTROL_SEPARATION = (CONTROL_ROW_GAP + CONTROL_HEIGHT) / 2;
 const LABEL_ENTERING = FadeIn.duration(160).delay(80).reduceMotion(ReduceMotion.System);
 const LABEL_EXITING = FadeOut.duration(100).reduceMotion(ReduceMotion.System);
 
-// Expo reapplies glass after native layout and window reattachment, when UIKit
-// can otherwise leave the label visible but lose the material behind it.
+// Expo reapplies glass after layout or reattachment, restoring material UIKit can lose behind visible labels.
 const UniwindGlassView = withUniwind(GlassView, {
   style: { fromClassName: "className" },
 });
@@ -58,9 +57,7 @@ const UniwindGlassContainer = withUniwind(GlassContainer, {
 });
 const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
-// The segment widths feed labelWidth, and labelWidth moves the segments. Pixel
-// rounding then flips a segment's width by one physical pixel per layout, which
-// re-ellipsizes a truncated label every frame. Sub-point changes are ignored.
+// Segment widths feed back into labelWidth; ignore sub-point changes to avoid rounding-driven ellipsis loops.
 function settleWidth(next: number) {
   return (current: number) => (Math.abs(current - next) < 1 ? current : next);
 }
@@ -122,10 +119,7 @@ export function FloatingWorkingControl(props: {
     opacity: separationProgress.value,
   }));
 
-  // Animate an in-flow sizer so native glass receives real layout updates.
-  // Measure labels in a separate, fixed-width host: measuring against the
-  // animated capsule constrains the incoming text to each intermediate width
-  // and repeatedly retargets the animation as it grows.
+  // Animate an in-flow sizer for native glass layout. Measure labels at fixed width to avoid repeated animation retargeting.
   const capsuleWidth = useSharedValue<number | null>(null);
   const measuredWidthRef = useRef<number | null>(null);
   const handleLabelLayout = (event: LayoutChangeEvent) => {

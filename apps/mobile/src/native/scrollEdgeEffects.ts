@@ -1,5 +1,4 @@
-// Kept free of react-native / react-navigation imports so they stay unit-testable in node (those
-// packages ship untranspiled Flow syntax).
+// Avoid RN/navigation imports so node checks do not load their untranspiled Flow.
 
 export type NativeTopScrollEdgeEffect = "automatic" | "soft";
 export type NativeHeaderScrollEdgeEffects = {
@@ -17,8 +16,7 @@ export function nativeTopScrollEdgeEffect(
     return "automatic";
   }
 
-  // Forcing `soft` on iOS 27 makes production look like a local overlay instead of sampling the
-  // app content edge-to-edge.
+  // On iOS 27, soft uses a local overlay rather than sampling edge-to-edge app content.
   return "automatic";
 }
 

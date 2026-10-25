@@ -198,8 +198,7 @@ export const buildDiscordReleaseAnnouncement = (
       ? suppressMentions(formatReleaseNotes(options.releaseNotes?.trim() ?? ""))
       : "";
   const description = notes ? `${intro}\n\n${notes}` : intro;
-  // One embed per message avoids Discord's URL deduplication. Reserve a full
-  // title and the version footer within the 6000-character aggregate limit.
+  // Separate embeds avoid URL deduplication; reserve title and footer space within Discord's 6000-character limit.
   const limit = Math.min(4096, 6000 - 256 - footerText.length);
   const descriptions = splitDescription(description, limit);
 

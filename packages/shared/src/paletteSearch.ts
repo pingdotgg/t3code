@@ -1,13 +1,4 @@
-/**
- * Word-aware fuzzy ranking for the command palettes (web, desktop, mobile) and
- * the MCP thread search, so every surface puts the same thread first.
- *
- * A match scores by quality: a whole word beats a word prefix, which beats
- * words typed together, a one-typo prefix, and then a mid-word substring.
- * Word starts include camelCase, kebab, path, and letter/digit boundaries.
- * Thread scores then multiply quality by how recently and often the thread
- * was used, within limits.
- */
+/** Shared ranking keeps command palettes and MCP thread search consistent across surfaces. */
 
 import type { OrchestrationV2ThreadOpens } from "@t3tools/contracts";
 
@@ -198,14 +189,9 @@ interface TokenMatch extends SearchRange {
 }
 
 /**
- * Best match of one folded query token in a field. Tokens shorter than four
- * characters only match at a word start ("del" should not find "model"), and
- * longer ones only inside a word where `midWord` allows it. With
- * `typos`, a three-character token may swap a pair and a longer one may carry
- * one typo in a word prefix that keeps its first letter. Numbers never match
- * with a typo: 22889 is not pull request 22189. In the primary field (the
- * name), the token may also be whole words typed together (see
- * `matchJoinedWords`).
+ * Mid-word hits need four or more characters and `midWord`, so "del" does not find "model".
+ * Typos preserve the first letter except for swaps; short tokens allow fewer edits to limit noise.
+ * Numbers never match with a typo because different pull request numbers must stay distinct.
  */
 function matchToken(
   field: SearchField,
@@ -249,7 +235,7 @@ function matchToken(
     if (joined) return joined;
   }
   if ((best !== null && best.score > MID_WORD) || !typos || token.length < 3) return best;
-  // Numbers skip typos: #22889 is not #22189. Words with digits ("t3code") do not.
+  // Numbers skip typos to keep pull requests distinct. Words with digits ("t3code") do not.
   if (LETTER.test(token)) {
     for (let index = 0; index < field.text.length; index++) {
       if (!field.wordStarts[index]) continue;
@@ -285,11 +271,8 @@ function matchToken(
 }
 
 /**
- * Whole words typed together: "vscode" is "VS Code", "fixsid" is "Fix
- * sid(ebar)". Every part is a whole word but the last. Short words before a
- * short prefix are a coincidence inside a title ("inth" is not "in th(read)"),
- * but not at its start ("t3co" is "T3 Co(de)"), before three letters
- * ("gomod"), or a whole word ("vscode").
+ * Short words followed by a short prefix are noise inside a title ("inth" in "in thread").
+ * Allow them at its start ("t3co"), before three letters ("gomod"), or a whole word ("vscode").
  */
 function matchJoinedWords(field: SearchField, token: string): TokenMatch | null {
   const firstWord = field.wordStarts.indexOf(1);
@@ -446,11 +429,9 @@ function matchSearchFields(
 const MESSAGE_TOKEN_MIN_LENGTH = 3;
 
 /**
- * Message search tokens, lowercased and NFC-composed but not stripped of
- * accents: the server's index folds Latin accents itself, and stripping marks
- * would break Korean and Japanese text. Every `long` token must appear in a
- * message; `short` ones only narrow those hits ("pnpm 12"). A query with no
- * long token searches no messages. Two CJK characters count as long.
+ * Keep accents: the server index folds Latin accents, and stripping marks breaks Korean/Japanese.
+ * Every `long` token must match; `short` tokens only narrow hits. No long tokens means no search.
+ * Two CJK characters count as long.
  */
 export function messageSearchTokens(query: string): {
   readonly long: ReadonlyArray<string>;
@@ -507,7 +488,7 @@ const MESSAGE_PREFIX = 0.8;
 
 function startsWordAt(text: string, index: number): boolean {
   const character = text[index]!;
-  // A token that opens with punctuation (".ts", "#22889") brings its own boundary.
+  // A token that opens with punctuation (such as ".ts") brings its own boundary.
   if (!ALPHANUMERIC.test(character) && !SYMBOL.test(character)) return true;
   return isWordStart(
     text[index - 2] ?? "",
@@ -820,11 +801,8 @@ function threadUsageBoost(thread: ThreadSearchSubject, now: number): number {
 
 const REFERENCE_PREFIX_MIN = 8;
 
-// IDs and URLs split into many word starts, so matching them as fields would
-// let a two-letter query hit every thread. Only a long piece of one matches: a
-// prefix, or, when it holds a digit like an ID or pull request number, any
-// part ("t3code#22889", a URL without its scheme). Both are ASCII, so
-// lowercasing is enough.
+// IDs and URLs have many word starts, so field matching would let short queries hit every thread.
+// Require a long prefix, or any long part containing a digit. Both are ASCII; lowercasing suffices.
 function matchReference(
   normalizedQuery: string,
   thread: ThreadSearchSubject,
@@ -850,12 +828,8 @@ function matchReference(
     : null;
 }
 
-// How long a pick lasts. While it does, typing the query again (or the start of
-// it) puts the thread first among its group's word matches, the exact query's
-// pick and then the latest first. A pick never moves the group itself, so a
-// thread picked once for "new" does not pass the command of that name. It runs
-// from the pick, so an old pick lets go even if the thread is opened in other
-// ways.
+// Picks expire from the pick time; opening a thread another way must not extend their priority.
+// They reorder word matches within a group, never the groups themselves.
 const PICK_WINDOW_MS = 21 * DAY_MS;
 // The start of a picked query counts from three letters: "n" is too little to
 // go on.
@@ -991,8 +965,7 @@ export function scoreThreadSearch(
   if (thread.environmentLabel) {
     fields.push({ value: thread.environmentLabel, weight: 0.25, context: true });
   }
-  // "#22889", "pr 22889", and a pasted "t3/branch" search without their
-  // prefixes, as the branch field is stored without the app's worktree prefix.
+  // Strip pull request prefixes and the worktree prefix so queries match the stored fields.
   const fieldQuery = normalizedQuery
     .replace(/^(?:pr|pull request|pull)\s*(?=#?\d)/, "")
     .replace(/^#\s*/, "")
@@ -1045,13 +1018,7 @@ function messageMatchWeight(hits: number): number {
   return 1 + Math.log2(1 + hits);
 }
 
-/**
- * Orders message matches from the server, from any number of environments:
- * word matches before matches inside words, then threads picked for the
- * query, then match quality, then hit count times use, then the newest
- * message. With `withoutTitleMatches`, threads that match by title are left
- * out: a palette lists them above, so they must not use up message rows.
- */
+/** `withoutTitleMatches` reserves message rows for threads the palette has not already listed. */
 export function rankMessageMatches<
   T extends {
     readonly quality?: number;
@@ -1105,12 +1072,7 @@ export const PALETTE_MESSAGE_LIMIT = 10;
 /** Next to matching threads, other groups show only their best few rows. */
 export const PALETTE_SECONDARY_LIMIT = 3;
 
-// The whole name typed (1.5 and up), every token at a word start of a main
-// field (0.7 and up), a typo in a main field (0.4 and up), or weaker. Whole
-// word against prefix is too fine a line for group order: "compact" must not
-// lift a setting named "Compact…" over the thread "Compaction…". But the
-// project named "lakebed" leads for "lakebed", and "keybindngs" is the setting
-// of that name, not a command that lists it as a keyword.
+// Whole words and prefixes share a class so "Compact" does not lift settings over "Compaction".
 function matchClass(quality: number): number {
   return quality >= WHOLE_NAME ? 3 : quality >= 0.7 ? 2 : quality >= 0.4 ? 1 : 0;
 }
@@ -1121,20 +1083,8 @@ export interface RankedSearchItem<T, M> {
 }
 
 /**
- * Ranks grouped items: within a group, word matches before weaker ones,
- * results picked for exactly the query first among them (the latest pick
- * first), then by match class, then results picked for a query that starts
- * with this one, then best score. Groups with no match are dropped. The rest order by the class of
- * their best match (the whole name, word starts in a name, typos in a name or
- * keyword matches, or weaker), and ties keep the given order. Classes
- * rather than scores keep the group order steady while a word is typed, and
- * keep use, which only counts for threads, from outweighing a command that
- * matches as well.
- *
- * Typos are only tried when no result matches every token at a word start:
- * next to a real match, typo matches are noise ("enter" finding "external"),
- * but they should beat a mid-word accident ("ilde" in "Builder" for "idle").
- * Skipping them also keeps a keystroke cheap.
+ * Rank groups by match class to keep typing stable and thread use from outweighing equal commands.
+ * Try typos only without word-start matches: they add noise beside real matches and cost per key.
  */
 export function rankSearchGroups<
   G,
@@ -1166,11 +1116,9 @@ export function rankSearchGroups<
   return ranked
     .flatMap(({ group, ranked: items }, order) => {
       if (items.length === 0) return [];
-      // Use decides within a match class, never across one: a busy thread
-      // matched through its project does not pass a title that holds the words.
-      // Picks reorder word matches but never lift a match inside a word or a
-      // typo above one, and a pick for a longer query ("lakebed perf") does not
-      // pass the result whose whole name is the query ("Lakebed").
+      // Use cannot lift a project-only match above a title match or cross match classes.
+      // Picks reorder word matches, keeping typos and mid-word hits below them.
+      // A longer-query pick must not pass a whole-name match for the current query.
       const wordMatch = (match: M) => Math.min(matchClass(match.quality), 2);
       const exactPickAt = (match: M) => (match.pickedExactly ? (match.pickedAt ?? 0) : 0);
       const sorted = [...items].sort(
@@ -1216,11 +1164,8 @@ const KEYWORD_QUALITY = 0.65;
 const KEYWORD_QUERY_MIN_LENGTH = 4;
 
 /**
- * Scores a non-thread result such as a command or project. The first term
- * names it; the others are keywords that help it match but count less, so a
- * keyword match ranks a group below a name match ("mcp" finds the thread
- * named for it before a command with that keyword). Keywords match only at
- * word starts, and for queries under four characters only as whole words.
+ * Keywords count less so hidden terms cannot lift a group above a matching name.
+ * Short queries need whole keywords to avoid listing most settings for common prefixes.
  */
 export function scoreSearchTerms(
   normalizedQuery: string,

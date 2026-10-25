@@ -2377,7 +2377,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     it.effect("Changes compares the default branch with its tracking upstream, not origin", () =>
       Effect.gen(function* () {
         // `origin` is a fork whose main is behind; the checkout tracks the
-        // canonical repository through a second remote (#15314).
+        // canonical repository through a second remote.
         const canonical = yield* makeTmpDir();
         yield* initRepoWithCommit(canonical);
         yield* git(canonical, ["branch", "-M", "main"]);
@@ -3012,7 +3012,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.deepEqual(yield* driver.listLocalBranchNames(cwd), branches);
         assert.isFalse(yield* fileSystem.exists(pathService.join(worktrees, "wt")));
 
-        // A lone "-" is still the previous checkout.
         yield* git(cwd, ["checkout", "-q", "keep"]);
         yield* git(cwd, ["checkout", "-q", initialBranch]);
         assert.equal((yield* driver.switchRef({ cwd, refName: "-" })).refName, "keep");
@@ -3228,9 +3227,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
 
-        // Git refuses `file:` submodule transports by default (CVE-2022-39253)
-        // and ignores repo-level config for it, so a local fixture needs the
-        // env allowance. Real submodules are https/ssh and need none of this.
+        // Git blocks file submodule transports (CVE-2022-39253) despite repo config; local fixtures need env permission.
         const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
         process.env.GIT_ALLOW_PROTOCOL = "file";
         yield* Effect.addFinalizer(() =>

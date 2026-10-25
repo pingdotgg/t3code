@@ -73,9 +73,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
 
-    // The request itself is issued after the cleanup transition inside
-    // activateSession, so the sheet never lists the previous account's
-    // environments; sign-out drops any not-yet-presented request instead.
+    // Request after activateSession cleanup to avoid listing the previous account; sign-out drops pending requests.
     const isAccountTransition =
       previousObservedAccount !== undefined && previousObservedAccount !== nextAccount;
     if (isAccountTransition && nextAccount === null) {
@@ -177,9 +175,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   useEffect(
     () => () => {
       previousTokenProviderRef.current = null;
-      // Unmounting is not a sign-out: the user is usually still signed in, so
-      // detach the provider without ending lock-screen activities or wiping the
-      // persisted registration (a remount reuses both).
+      // Unmounting does not imply sign-out; preserve registration and lock-screen activities.
       releaseAgentAwarenessRelayTokenProvider();
       setManagedRelaySession(appAtomRegistry, null);
     },

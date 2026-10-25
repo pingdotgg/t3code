@@ -125,11 +125,8 @@ export const definition = defineSourceControl({
       ? { kind: KIND, name: "Azure DevOps", baseUrl: `https://${host}` }
       : null,
   /**
-   * `az repos pr list --repository` takes a repository name, and takes the organisation and
-   * project from the checkout it detects, so the recorded `org/project/_git/repo` path is refused
-   * outright and the whole repository reads as unavailable. The segment comes from the remote URL,
-   * where a name with a space reads `my%20repo`; `az` looks that up literally and answers 404, so
-   * it goes out decoded.
+   * `az repos pr list --repository` takes a name; organisation and project come from checkout.
+   * Decode the remote URL's name segment: `az` treats escapes literally and returns 404.
    */
   repositorySelector: (identity) => {
     const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");

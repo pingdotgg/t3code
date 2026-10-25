@@ -29,10 +29,6 @@ export interface EnvironmentUsageStatus {
   readonly needsCursorKeychainAccess: boolean;
 }
 
-/**
- * Keyed by the serialised window so switching ranges does not thrash the atom cache, and so
- * each environment's query is shared with any other reader of the same window.
- */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;

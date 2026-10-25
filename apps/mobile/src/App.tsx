@@ -111,11 +111,7 @@ function AppContent() {
           <SafeAreaProvider>
             <VoiceInputProvider>
               <StatusBar barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"} />
-              {/* The navigation theme drives the NATIVE header appearance: native-stack
-                forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
-                this, React Navigation defaults to its light theme and every native
-                header (glass buttons, title, materials) is forced light even when
-                the system is in dark mode. */}
+              {/* native-stack needs the theme's dark flag to select dark native headers. */}
               <GlobalVoiceInputControl>
                 <NativeLayoutMetricsProvider>
                   <IncomingShareProvider>
@@ -130,8 +126,6 @@ function AppContent() {
                   <ProjectChipIconRasterizer />
                 </NativeLayoutMetricsProvider>
               </GlobalVoiceInputControl>
-              {/* Anchored-menu overlays render here — in-window, so the
-                keyboard stays up while a dropdown is open. */}
               <OverlayPortalHost />
             </VoiceInputProvider>
           </SafeAreaProvider>

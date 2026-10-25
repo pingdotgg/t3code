@@ -1373,11 +1373,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
                     <span
                       className={cn(
-                        // focus-visible, not focus-within: a mouse click leaves
-                        // the Settle button focused, and a plain focus-within
-                        // would keep the controls pinned over the status label
-                        // once the pointer moves away (e.g. after a failed
-                        // settle) instead of cross-fading back.
+                        // Mouse clicks leave Settle focused; focus-within would pin controls over
+                        // the status label after the pointer leaves. Use focus-visible instead.
                         "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100",
                         snoozeMenuOpen && "pointer-events-auto static opacity-100",
                       )}

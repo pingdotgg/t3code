@@ -216,7 +216,6 @@ const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
-// Its turn ended, but a background subagent it started still runs.
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
 const archivedBackground = threadCaller(archivedThreadId);

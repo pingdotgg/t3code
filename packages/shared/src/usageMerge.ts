@@ -38,10 +38,7 @@ export interface ModelTotals {
   readonly tokenShare: number;
 }
 
-/**
- * A model whose every record lacked rates has an unknown cost, not a zero one.
- * Clients must not present its `costUsd` as a real dollar figure.
- */
+/** When every record lacks rates, costUsd is unknown and must not be displayed as a dollar figure. */
 export function isModelCostUnknown(model: ModelTotals): boolean {
   return model.records > 0 && model.unpricedRecords >= model.records;
 }
@@ -111,10 +108,7 @@ export interface MergedUsage {
   readonly contractMismatches: readonly UsageContractMismatch[];
 }
 
-/**
- * `volumeId` is what stops two machines that happen to share a hostname and a home path, which is
- * every Mac in a fleet, from collapsing into one source and having one of them silently dropped.
- */
+// volumeId distinguishes machines sharing a hostname and home path.
 function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   return [
     fingerprint.hostId,
@@ -178,9 +172,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     }
   }
 
-  // A newer partial scan may contain usage recorded after an older complete
-  // scan. Keep cells absent from the complete scan. Aggregated cells do not
-  // reveal enough to reconcile overlapping records without double counting.
+  // Keep cells unique to newer partial scans; aggregates cannot reconcile overlapping records without double-counting.
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
       if (source.status !== "partial") continue;
@@ -243,8 +235,7 @@ function ownedContribution(
       const provider = source.fingerprint.provider;
       ownedProviders.add(provider);
       ownedSources.add(`${provider}\u0000${source.fingerprint.resolvedHomePath}`);
-      // Distinct within a directory. Summing per-bucket session counts instead
-      // would count a session once per day and model it spans.
+      // Count distinct sessions per directory; bucket sums overcount sessions spanning days/models.
       sessionsByProvider.set(
         provider,
         (sessionsByProvider.get(provider) ?? 0) +

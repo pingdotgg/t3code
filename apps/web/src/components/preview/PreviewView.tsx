@@ -234,8 +234,7 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  // Passing the snapshot's raw `undefined` through would reach the IPC layer
-  // as "every profile".
+  // IPC interprets undefined profile ids as all profiles.
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
@@ -245,7 +244,6 @@ export function PreviewView({
   const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
   const navTitle = navStatus._tag === "Success" ? navStatus.title : null;
   const latestHistoryUrl = recentHistoryEntries[0]?.url;
-  // Keyed on the ids rather than threadRef, which is recreated on every update.
   const { environmentId: threadEnvironmentId, threadId } = threadRef;
   useEffect(() => {
     if (!navUrl || !navTitle || !latestHistoryUrl) return;
@@ -769,9 +767,7 @@ export function PreviewView({
       void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       return;
     }
-    // Snapshot whatever the user was focused on (typically the chat composer
-    // textarea or the chrome-row pick button) BEFORE main steals focus into the
-    // guest webContents.
+    // Capture app focus before main moves it into guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
     const pickRequest = { cancelled: false };
@@ -795,7 +791,6 @@ export function PreviewView({
         } catch {}
       }
     };
-    // A failed pick is dropped silently; finishPick still releases the picker.
     const bridge = previewBridge;
     void settlePromise(async () => {
       await bridge.setAnnotationSendEnabled?.(
@@ -806,20 +801,15 @@ export function PreviewView({
       if (pickRequest.cancelled) return;
       const result = await bridge.pickElement(runtimeTabId);
       if (!result || pickRequest.cancelled) return;
-      // Nothing that happens after this point (a second picker click, a tab
-      // change, unmount) may discard it, so the pick stops being cancellable
-      // here rather than in finishPick.
+      // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
       if (pickActiveRef.current === pickRequest) {
         pickActiveRef.current = null;
         if (isMountedRef.current) setPickActive(false);
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
-      // The structured annotation is still sendable when its optional crop
-      // stalls or fails, so tell the user what they lost and keep going
-      // instead of holding the composer for an attachment that never lands.
-      // The stored copy drops the screenshot on failure, otherwise the prompt
-      // would tell the agent a crop is attached when none was sent.
+      // Send annotations even if the optional crop fails or stalls; drop failed screenshots so prompts cannot
+      // claim an attachment.
       const capture = capturePreviewAnnotationScreenshot(picked);
       const cropDropped = screenshotFailed || capture.status === "failed";
       const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
@@ -877,8 +867,7 @@ export function PreviewView({
     };
   }, [runtimeTabId]);
 
-  // Subscribe only while visible; `toggle-panel` is owned by ChatView's
-  // URL-aware handler regardless of whether the panel is currently mounted.
+  // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
   const onPreviewAction = useEffectEvent(
     (action: Parameters<Parameters<typeof subscribePreviewAction>[0]>[0]) => {
       switch (action) {

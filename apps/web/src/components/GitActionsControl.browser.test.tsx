@@ -54,7 +54,6 @@ vi.mock(import("~/state/entities"), async (original) => ({
 }));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
-  // Serves both the VCS status and the source-control discovery queries.
   useEnvironmentQuery: (() => ({
     data: {
       sourceControlProviders: [],
@@ -165,7 +164,6 @@ vi.mock(import("~/components/ui/toast"), async (original) => {
 import { useComposerDraftStore } from "~/composerDraftStore";
 import GitActionsControl from "./GitActionsControl";
 
-// ThreadDetailsPanel keeps this component mounted behind React.memo when threads change.
 const MemoGitActionsControl = memo(GitActionsControl);
 
 function control(thread = "thread", cwd = "/repo") {

@@ -112,16 +112,7 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
   useFocusEffect(() => activateAuxiliaryPaneRole(role));
 }
 
-/**
- * The column renders BESIDE the navigator — outside any screen — so the
- * registering screen's navigation and route contexts are captured here and
- * re-provided around the portal content.
- *
- * Registration is FOCUS-scoped, driven by navigation events rather than the
- * screen's own render cycle: react-native-screens freezes blurred screens, so a
- * cleanup that depends on the blurred subtree re-rendering never runs and would
- * leak the pane into the next route.
- */
+/** Capture inspector navigation contexts. Register on focus events because frozen blurred screens may never clean up. */
 export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefined) {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
   const navigation = use(NavigationContext);
@@ -141,8 +132,6 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
   const focusedRef = useRef(false);
   const deactivateRef = useRef<(() => void) | null>(null);
 
-  // An effect event reads this render's pane without making the focus
-  // subscription re-run (and deactivate) every time the pane closure changes.
   const syncRegistration = useEffectEvent(() => {
     if (!focusedRef.current || wrappedRender === undefined) {
       deactivateRef.current?.();
@@ -278,11 +267,9 @@ function AdaptiveWorkspaceLayoutContent(
   });
   const [composerEditing, setComposerEditing] = useState(false);
   const softKeyboardVisible = useKeyboardState((state) => state.isVisible);
-  // Keyed on the soft keyboard, not focus alone: a hardware keyboard leaves room
-  // for the sidebar, and Back closes the keyboard while the editor keeps focus.
-  // Deferred because the thread composer follows the keyboard only once its own render of this
-  // keyboard event commits; re-laying out the workspace in that commit held it behind the
-  // keyboard until the feed had reflowed.
+  // Keyed on the soft keyboard, not focus: a hardware keyboard leaves room for the sidebar, and
+  // Back closes the keyboard while the editor keeps focus. Deferred so the composer commits its
+  // keyboard render first; relaying out in the same commit held it behind the keyboard.
   const composerKeyboardActive = useDeferredValue(
     Platform.OS === "android" && baseLayout.usesSplitView && composerEditing && softKeyboardVisible,
   );
@@ -380,8 +367,7 @@ function AdaptiveWorkspaceLayoutContent(
     setWorkspaceInspector({ render, active: true });
 
     return () => {
-      // During a push/replace the outgoing screen deactivates AFTER the
-      // incoming screen registered — only the current owner may deactivate.
+      // Outgoing screens deactivate after incoming registration; only the current owner may deactivate.
       if (workspaceInspectorOwner.current !== owner) {
         return;
       }
@@ -597,8 +583,7 @@ function AdaptiveWorkspaceLayoutContent(
     return true;
   });
 
-  // Minted here (root stack navigation) so the sidebar pane stays free of
-  // navigation hooks — on iOS it renders inside an independent nav tree.
+  // Create at root: the iOS sidebar renders in an independent navigation tree.
   const handleOpenEnvironmentSettings = () => {
     openSettings(navigation, "SettingsEnvironments");
   };
@@ -665,8 +650,7 @@ function AdaptiveWorkspaceLayoutContent(
       workspacePage,
       sidebarVisible: panes.primarySidebarVisible,
       listPaneTarget: layout.listPaneWidth,
-      // While a hinge resizes the list, its width follows the pane edge within this span. A
-      // retarget mid-animation widens the span, since the edge is still somewhere inside it.
+      // Retargets widen the list-width span because the animated hinge edge may still be inside it.
       listPaneFloor: resizingSidebar
         ? Math.min(listPaneSizing.listPaneFloor ?? 0, layout.listPaneWidth ?? 0)
         : layout.listPaneWidth,
@@ -776,9 +760,7 @@ function AdaptiveWorkspaceLayoutContent(
     width: renderedSidebarWidth.value,
   }));
 
-  // The navigator (native header + markdown feed) lays out ONCE per pane toggle
-  // instead of re-measuring on every animation frame — the animating columns
-  // merely clip/reveal it over a matching background.
+  // Clip the navigator at its settled width so native headers and markdown reflow only once per pane toggle.
   const renderedInspectorWidth = useSharedValue(inspectorColumnTargetWidth);
   const renderedContentWidth = useDerivedValue(() =>
     Math.max(

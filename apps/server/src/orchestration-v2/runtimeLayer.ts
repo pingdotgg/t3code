@@ -223,8 +223,7 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       IdAllocator.layer,
       ProjectStore.layer,
       layerProviderAdapterRegistryProvided,
-      // Same layer reference as the continuation worker and the adapter
-      // infrastructure so layer memoization yields one shared request queue.
+      // Reuse the continuation worker's layer reference so memoization shares one request queue.
       ProviderContinuationRequests.layer,
       layerProviderEventIngestorProvided,
       layerRuntimePolicyProvided,

@@ -25,11 +25,7 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return value ?? null;
 }
 
-/**
- * Never throws: route params can arrive malformed from external deep links or restored state, the
- * branded id constructors throw on values failing their schema, and this runs during render of
- * the root stack layout — an uncaught throw here would take down the whole navigation tree.
- */
+/** Never throw: malformed deep-link or restored ids can fail schema constructors during root-stack render. */
 export function activeThreadRef(state: NavigationState): ScopedThreadRef | null {
   const route = state.routes[state.index];
   if (route?.name !== "Thread") {
@@ -63,13 +59,7 @@ function threadShortcutLabel(thread: RecentThreadShortcut): string {
   return title.length > 0 ? title : "Thread";
 }
 
-/**
- * In-app navigation path carried by a shortcut, or null for anything
- * malformed — shortcuts persist in the launcher across app updates, so this
- * allowlists the exact destinations shortcuts can produce rather than
- * trusting any path-shaped string (`//host`, arbitrary routes, stale
- * persisted junk all navigate nowhere).
- */
+/** Launcher shortcuts survive updates; allowlist destinations so malformed or stale paths cannot navigate. */
 export function shortcutHref(action: Action): string | null {
   const href = action.params?.href;
   if (typeof href !== "string") {
@@ -107,9 +97,7 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
       params: { href: NEW_TASK_SHORTCUT_HREF },
     },
     ...recents.slice(0, MAX_RECENT_THREAD_SHORTCUTS).map((thread): Action => ({
-      // The encoded href doubles as the launcher id: URI-encoding makes the
-      // env/thread join unambiguous (a plain `-` join lets different pairs
-      // collide and overwrite each other's launcher slots).
+      // URI-encoded hrefs avoid env/thread id collisions that plain hyphen joins allow.
       id: `thread:${threadShortcutHref(thread)}`,
       title: threadShortcutLabel(thread),
       icon: SHORTCUT_ICON,

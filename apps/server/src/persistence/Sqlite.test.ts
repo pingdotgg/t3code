@@ -22,7 +22,6 @@ it.effect("drops planner statistics a database already has", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`CREATE TABLE walk_probe(node_id TEXT PRIMARY KEY, parent_node_id TEXT)`;
       yield* sql`INSERT INTO walk_probe VALUES ('node-1', NULL), ('node-2', 'node-1')`;
-      // Stats from a nearly empty table, as an older build collected on a new install.
       yield* sql`ANALYZE walk_probe`;
     }).pipe(Effect.provide(persistence()));
 

@@ -34,8 +34,7 @@ export const AssetResource = Schema.Union([
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
     fileName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
     mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
-    /** Generic attachments download by default. Document viewers opt into an
-        inline response after deciding the file type is safe to preview. */
+    /** Defaults to download; viewers may request inline after checking the type is safe. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
   }),
@@ -46,8 +45,7 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
-    // A cache-key hint only. The server reads the authoritative path from the
-    // project projection before it issues the signed URL.
+    // Cache-key hint only; the project projection supplies the authoritative path.
     path: Schema.optional(ProjectFaviconPath),
   }),
   Schema.TaggedStruct("native-app-icon", {

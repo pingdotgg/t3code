@@ -429,8 +429,7 @@ describe("VS Code theme import", () => {
   });
 
   it("tells same-named variants apart by their file names", () => {
-    // Dracula ships dracula.json and dracula-soft.json that both say
-    // "Dracula" inside.
+    // Both Dracula theme files declare the same internal name.
     const dracula = (bg: string) =>
       parseVsCodeThemeFile({
         name: "Dracula",

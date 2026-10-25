@@ -208,7 +208,7 @@ function computeSnapshot(input: {
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;

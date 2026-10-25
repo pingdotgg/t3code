@@ -60,11 +60,9 @@ export function threadFamilyRowsMissingFromShell(input: {
 }
 
 /**
- * Shells that omit idle subagent children (`omitIdleSubagents`) leave those rows to thread
- * families: the active subagent tree that shares a thread's `lineage.rootThreadId`. A view, or a
- * queued message, mounts the family it needs; it is read once per shell generation. Family rows
- * merge behind shell rows and are never persisted. Shell deltas still carry every change, so a
- * changed child always arrives as a shell row, which wins.
+ * Shells with `omitIdleSubagents` leave idle children to families: the subagent tree sharing a
+ * `lineage.rootThreadId`, read once per shell generation and never persisted. Family rows merge
+ * behind shell rows; shell deltas still carry every change, so a changed child's shell row wins.
  */
 export function createThreadFamilyAtoms<R, ER, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,

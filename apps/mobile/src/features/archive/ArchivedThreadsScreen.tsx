@@ -412,8 +412,7 @@ export function ArchivedThreadsScreen(props: {
   }, [isFiltered, isInitialLoad]);
 
   return (
-    // Keep the list inside this native container. Form-sheet resizing otherwise
-    // treats the flattened background as a header and shrinks the list to zero.
+    // Without this native container, formSheet resizing mistakes the background for a header and collapses the list.
     <View collapsable={false} className="flex-1 bg-sheet">
       <ArchivedThreadsHeader
         environments={props.environments}

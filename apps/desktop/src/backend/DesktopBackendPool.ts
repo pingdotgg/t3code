@@ -106,16 +106,11 @@ export const layer = Layer.effect(
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const electronApp = yield* ElectronApp.ElectronApp;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    // Without this, instance scopes are orphaned: they only close via explicit unregister() calls,
-    // so on app shutdown the WSL backend child process gets hard-killed by the OS instead of
-    // receiving the graceful SIGTERM + grace period the instance's stop finalizer would otherwise
-    // run.
+    // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
 
-    // Fatal configuration failures persist the Windows fallback. Bounded
-    // transport failures use an in-memory fallback for this launch so the app
-    // opens without overwriting the user's WSL preference.
+    // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
       function* (failure: DesktopBackendManager.PreflightFailure) {
         const { reason, fatal } = failure;
@@ -139,9 +134,8 @@ export const layer = Layer.effect(
           "WSL backend couldn't start",
           `${reason}\n\nFalling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.`,
         );
-        // Clearing wslBackendEnabled alone would leave a stale wslOnly:true that silently re-traps
-        // the user in wsl-only mode the next time they enable WSL. If the persisted write fails,
-        // keep this process recoverable by applying the fallback to in-memory settings.
+        // Clear wslOnly too so enabling WSL cannot restore a failed mode.
+        // Keep the in-memory fallback if persistence fails.
         yield* appSettings.applyWslWindowsFallback.pipe(
           Effect.catch((error) =>
             logBackendPoolWarning(
@@ -158,14 +152,10 @@ export const layer = Layer.effect(
 
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
-      // Keep this lazy. The pool layer is initialized before startup loads
-      // persisted desktop settings, so resolving the primary label here would
-      // permanently capture DEFAULT_DESKTOP_SETTINGS and mislabel WSL-only
-      // primaries as Windows.
+      // Resolve lazily: startup loads persisted settings after pool initialization.
       label: configuration.resolvePrimaryLabel,
       configResolve: configuration.resolvePrimary,
-      // Window creation errors propagating out of handleBackendReady must not block the readiness
-      // callback (that would prevent restartAttempt from being reset), so we absorb them here.
+      // Absorb window errors so readiness can reset restartAttempt.
       onReady: (httpBaseUrl) =>
         desktopWindow.handleBackendReady(httpBaseUrl).pipe(
           Effect.catch((error) =>
@@ -219,10 +209,7 @@ export const layer = Layer.effect(
               ] as const);
             }
             return Effect.gen(function* () {
-              // Provide the child scope after the captured factory context. That
-              // context also holds the pool layer's Scope, so providing it last
-              // would let it shadow the child scope and leave the instance's
-              // stop finalizer and restart fibers running after unregister.
+              // Provide the child Scope last so the captured pool Scope cannot shadow it and orphan stop/restart finalizers.
               const instanceScope = yield* Scope.fork(layerScope, "sequential");
               const instance = yield* DesktopBackendManager.makeBackendInstance(spec).pipe(
                 Scope.provide(instanceScope),

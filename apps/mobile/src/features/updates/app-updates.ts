@@ -34,19 +34,9 @@ export interface AppUpdateClient {
 export interface AppUpdateEnvironment {
   readonly confirmInstallNow: () => Promise<boolean>;
   readonly flushPendingWrites: () => Promise<void>;
-  /**
-   * Whether a deferred restart may fire right now: the app must still be
-   * backgrounded (flush latency or an iOS suspend can push the continuation
-   * into the next foreground session) and not merely paused behind an
-   * app-initiated handoff like the Android image picker.
-   */
+  /** Re-check background state after flushing; exclude app-initiated handoffs such as image pickers. */
   readonly isSafeToRestartInBackground: () => Promise<boolean>;
-  /**
-   * With `includeCurrent`, an app that is already backgrounded fires
-   * immediately (so a backgrounding that raced module load is not missed);
-   * without it, only a future transition fires, so an attempt that already
-   * failed in the current background session cannot retry in a tight loop.
-   */
+  /** includeCurrent covers module-load backgrounding; omit after failure to prevent tight same-session retries. */
   readonly onNextBackground: (apply: () => void, includeCurrent: boolean) => void;
   readonly onForegroundStay: (apply: () => void) => void;
 }
@@ -188,8 +178,7 @@ function createDeferred(): Deferred {
 }
 
 function notifyListeners<A>(listeners: ReadonlySet<(value: A) => void>, value: A): void {
-  // A listener can synchronously subscribe another caller. Snapshot so that
-  // caller receives only observeAppUpdateCheck's explicit current-value replay.
+  // Snapshot listeners so reentrant subscribers receive only observeAppUpdateCheck's explicit replay.
   const snapshot = Array.from(listeners);
   for (const listener of snapshot) listener(value);
 }
@@ -238,8 +227,7 @@ async function performAppUpdateCheck(
     setState("idle");
     return;
   }
-  // A rollback directive (`eas update:rollback`) arrives as isAvailable: false
-  // with isRollBackToEmbedded: true. The running OTA still has to be dropped.
+  // Rollback directives report isAvailable: false and isRollBackToEmbedded: true; still drop the running OTA.
   if (!check.value.isAvailable && !check.value.isRollBackToEmbedded) {
     setState("current");
     return;
@@ -279,12 +267,7 @@ async function performAppUpdateCheck(
 
 type AppUpdateInstallOutcome = "installed" | "flush-failed" | "restart-failed";
 
-/**
- * Restarting mid-session while native surfaces are mounted is the crashiest
- * moment expo-updates has, so the restart flushes persistence first and, by
- * default, waits for a backgrounding — where nothing is rendering and the
- * teardown is invisible.
- */
+/** Flush persistence and wait for backgrounding before restarting mounted native surfaces. */
 async function installAppUpdate(
   client: AppUpdateClient,
   environment: AppUpdateEnvironment,
@@ -347,8 +330,7 @@ async function promptDeferredAppUpdateInstall(
   if (!deferral.pendingInstall || deferral.installInProgress) return;
   const installNow = await settlePromise(() => environment.confirmInstallNow());
   if (installNow._tag !== "Success" || !installNow.value) return;
-  // A backgrounding while the alert was up may have started the deferred
-  // restart already; the stale accept must not start a second one.
+  // Backgrounding may already have started deferred restart while the alert was open; ignore stale acceptance.
   if (!deferral.pendingInstall || deferral.installInProgress) return;
   await installPendingAppUpdate(client, environment, deferral, {});
 }
@@ -378,8 +360,7 @@ async function applyDeferredAppUpdateInstall(
       reportUpdateFailure(flushed, "Could not save pending state.", undefined);
     }
     deferral.installInProgress = false;
-    // This attempt already ran in the current background session; retrying
-    // before a fresh transition would just loop over the same failure.
+    // Wait for a fresh background transition after failure to avoid same-session retry loops.
     scheduleDeferredAppUpdateInstall(client, environment, deferral, false);
     return;
   }
@@ -437,10 +418,7 @@ function defaultOnNextBackground(apply: () => void, includeCurrent: boolean): vo
 
 export const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
 
-/**
- * iOS "inactive" blips (app switcher, a pulled-down notification shade) leave
- * the timer running.
- */
+/** iOS inactive blips, including the app switcher, leave this timer running. */
 function defaultOnForegroundStay(apply: () => void): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const arm = () => {

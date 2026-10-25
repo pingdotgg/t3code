@@ -362,7 +362,6 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   );
 }
 
-/** Adapts the rich-text link gesture to Menu's long-press trigger without wrapping text in a Pressable. */
 function MarkdownMenuAnchor(props: {
   readonly renderMarkdown: (openMenu?: () => void) => ReactNode;
   readonly onLongPress?: () => void;

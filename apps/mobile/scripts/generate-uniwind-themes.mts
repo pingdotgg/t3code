@@ -51,9 +51,7 @@ const color = (family: TailwindColorFamily, shade?: TailwindColorShade, opacity 
   return `color-mix(in srgb, ${value} ${percentage}%, transparent)`;
 };
 
-// A registered palette theme is neither literally `light` nor `dark`, so
-// appearance-sensitive values must also be represented as semantic variables for
-// custom themes.
+// Named palette themes need semantic appearance variables because their names are neither light nor dark.
 const ADAPTIVE_COLORS: Readonly<Record<string, readonly [light: string, dark: string]>> = {
   "--color-adaptive-amber-50-950-a40": [color("amber", 50), color("amber", 950, 0.4)],
   "--color-adaptive-amber-200-900-a60": [color("amber", 200), color("amber", 900, 0.6)],
@@ -177,8 +175,7 @@ const variablesFor = (themeId: BuiltInThemeId, appearance: MobileThemeAppearance
   ...clerkVariablesFor(appearance),
 });
 
-// Clerk's native screens use one build-time palette per appearance. Custom
-// profile pages must match it even when the rest of the app uses a named theme.
+// Profile pages must match Clerk's build-time palette even with a named app theme.
 const clerkColorsFor = (appearance: MobileThemeAppearance) => {
   const variables = createMobileThemeVariables(
     getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance),
@@ -297,8 +294,7 @@ if (import.meta.main) {
       }
       continue;
     }
-    // Metro watches the generated CSS. Replacing a complete temporary file keeps
-    // Tailwind from compiling a partially rewritten theme file.
+    // Atomic replacement prevents Metro from compiling partial CSS.
     writeFileAtomically(filename, contents);
   }
 }

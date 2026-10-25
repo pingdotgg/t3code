@@ -147,12 +147,7 @@ export function fileAttachmentCapabilityBlockReason(
   return null;
 }
 
-/**
- * When `capabilities.attachmentUploads` flips off (reconnect, version skew),
- * tear down only uploads that have not been persisted onto a draft file.
- * Once `uploadedAttachmentId` is stamped, the draft references that server
- * copy after reload even if its local `File` is still available in memory.
- */
+/** Release only unpersisted uploads; hydrated files still need their server copies. */
 export function attachmentsToReleaseOnUploadCapabilityLoss(
   attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
 ): Array<ComposerImageAttachment | ComposerFileAttachment> {

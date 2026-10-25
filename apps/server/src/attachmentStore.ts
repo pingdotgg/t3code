@@ -43,8 +43,7 @@ export function toSafeThreadAttachmentSegment(threadId: string): string | null {
 
 export function attachmentFileExtension(fileName: string): string {
   const extension = NodePath.extname(fileName).toLowerCase();
-  // ".part" is reserved for in-flight uploads; a stored "archive.part" would
-  // look stale to sweepStalePendingAttachments and get deleted.
+  // .part is reserved for pending uploads; the stale-upload sweep would delete stored files.
   if (extension === ".part" || !/^\.[a-z0-9]{1,10}$/.test(extension)) {
     return ".bin";
   }
@@ -103,12 +102,7 @@ export function createDeterministicAttachmentId(
   return `${threadSegment}-${uuid}`;
 }
 
-/**
- * A retry resends the same bytes and keeps its id. Editing a queued message
- * reuses the message id, so the bytes also stop a new image from taking an
- * earlier image's id and file. Clients cache attachment images by id, which
- * relies on ids never changing bytes.
- */
+/** Retries keep ids; changed bytes must get new ids because clients cache images by id. */
 export function chatAttachmentStableKey(
   messageId: string,
   index: number,
@@ -130,10 +124,7 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
   return match[1]?.toLowerCase() ?? null;
 }
 
-/**
- * Only ids minted for this thread count, so deleting a fork never removes its
- * source's pages.
- */
+/** Only this thread's ids qualify, preserving source pages when deleting a fork. */
 export function threadHtmlRenderAttachmentIds(
   threadId: string,
   items: Iterable<{ readonly toolName: string | null | undefined; readonly output?: unknown }>,

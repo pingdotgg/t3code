@@ -245,8 +245,7 @@ function resolveAcpRegistryPlatformTargetCandidates(
   platformTarget: AcpRegistryPlatformTarget | undefined,
 ): ReadonlyArray<AcpRegistryPlatformTarget> {
   if (platformTarget === undefined) return [];
-  // Windows 11 on ARM executes windows-x86_64 binaries under Prism emulation
-  // when an agent does not publish a native windows-aarch64 binary.
+  // Windows 11 ARM can emulate x86_64 binaries when no native build exists.
   if (platformTarget === "windows-aarch64") {
     return ["windows-aarch64", "windows-x86_64"];
   }
@@ -673,9 +672,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const target = path.isAbsolute(linkedTarget.value)
       ? linkedTarget.value
       : path.resolve(path.dirname(runner), linkedTarget.value);
-    // Some service installs expose npm/uv through a wrapper symlink into the
-    // actual toolchain bin directory. Do not mistake npm's internal
-    // `npm-cli.js` directory for the global command directory.
+    // Wrapper symlinks may identify the toolchain bin directory; npm-cli.js points inside npm instead.
     return path.basename(target) === path.basename(runner)
       ? path.dirname(target)
       : path.dirname(runner);
@@ -927,8 +924,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           detail: `ACP Registry install command '${command}' exited with code ${Number(exitCode)}: ${stderr.text.trim()}`,
         });
       }
-      // Archive listings feed validateArchiveEntries; a truncated listing would let
-      // unvalidated entries past the traversal check, so oversized output is fatal.
+      // Truncated listings would bypass archive traversal validation.
       if (stdout.truncated) {
         return yield* new AcpRegistryError({
           reason: options.truncatedOutputReason ?? "archive_invalid",
@@ -1446,8 +1442,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             ),
         }),
       );
-      // Hash while streaming: archives can be up to MAX_ARCHIVE_BYTES, and
-      // Effect's Crypto only digests a whole buffer.
+      // Stream hashes to avoid buffering large archives; Effect Crypto requires a whole buffer.
       const hash = sha256.create();
       let downloadedBytes = 0;
       yield* response.stream.pipe(
@@ -1644,8 +1639,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");
       if (distribution.kind === "binary") {
-        // A PATH executable can be a different version with different ACP
-        // capabilities. Only an explicit command override opts into that copy.
+        // Only explicit command overrides may use PATH copies with different ACP capabilities.
         yield* installSemaphore.withPermits(1)(
           installBinary(agent, distribution.binaryTarget!).pipe(
             Effect.tap(() => reservePreparedBinary(agent.id)),

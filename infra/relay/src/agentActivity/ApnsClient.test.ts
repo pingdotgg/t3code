@@ -244,8 +244,6 @@ describe("ApnsClient", () => {
       yield* send(window * 2);
 
       expect(authorizations).toHaveLength(3);
-      // Within the 45-minute window APNs must see the byte-identical token;
-      // refreshing it per push trips TooManyProviderTokenUpdates.
       expect(authorizations[1]).toBe(authorizations[0]);
       expect(authorizations[2]).not.toBe(authorizations[0]);
       ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();

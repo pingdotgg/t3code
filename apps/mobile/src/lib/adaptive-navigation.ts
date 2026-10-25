@@ -8,10 +8,7 @@ export function isBaseThreadRoute(pathname: string): boolean {
   return BASE_THREAD_ROUTE_PATTERN.test(pathname) || /^\/new\/draft\/?$/.test(pathname);
 }
 
-/**
- * From Home the selection pushes (never replaces) so Home stays beneath the
- * thread — collapsing back to a compact width keeps a sane back stack.
- */
+/** Push from Home so it stays beneath Thread when split view collapses. */
 export function resolveThreadSelectionNavigationAction(input: {
   readonly usesSplitView: boolean;
   readonly pathname: string;

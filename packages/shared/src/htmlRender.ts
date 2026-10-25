@@ -82,8 +82,7 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
   );
 }
 
-// The taller of the heights measured at the nearest widths on each side. A
-// breakpoint between two measured widths can make the page as tall as either.
+// Use the taller neighboring measurement because breakpoints can select either height.
 function measuredHeight(heights: NonNullable<HtmlRenderReference["heights"]>, width: number) {
   const above = heights.findIndex(([measuredWidth]) => measuredWidth >= width);
   const high = above === -1 ? heights.length - 1 : above;
@@ -144,10 +143,7 @@ export const HTML_RENDER_DEFAULT_FONTS: HtmlRenderFonts = {
   mono: '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace',
 };
 
-/**
- * Arial-metric faces stand in for the system UI fonts readers see, so measured
- * heights and preview screenshots wrap text close to how a client will.
- */
+/** Arial-metric substitutes keep measured wrapping close to client system fonts. */
 export const HTML_RENDER_MEASURE_FONTS: HtmlRenderFonts = {
   sans: '"Liberation Sans", Arimo, Arial, Helvetica, sans-serif',
   mono: '"Liberation Mono", Cousine, Menlo, Consolas, monospace',
@@ -175,10 +171,7 @@ const FIXED_COLORS = {
   },
 } as const;
 
-/**
- * Names follow the app's own tokens, except `--accent`, which is the theme's
- * brand color here rather than the app's neutral hover surface.
- */
+/** Uses app tokens, except --accent is the brand color rather than a neutral hover surface. */
 export function htmlRenderTheme(
   colors: ThemeColors,
   appearance: ThemeAppearance,
@@ -251,12 +244,9 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
 const HOST_CONTEXT_CHANGED_METHOD = "ui/notifications/host-context-changed";
 const OPEN_LINK_METHOD = "ui/open-link";
 const SIZE_CHANGED_METHOD = "ui/notifications/size-changed";
-// Not part of MCP Apps: a focused frame keeps its keys from the app, so the
-// client tells the page which chords are app shortcuts and the page passes
-// those on.
+// Custom bridge forwards app shortcuts because focused frames otherwise capture them.
 const SHORTCUTS_METHOD = "t3/notifications/shortcuts";
 const KEY_DOWN_METHOD = "t3/notifications/keydown";
-// Not part of MCP Apps: a click on a page image opens it in the app's image viewer.
 const OPEN_IMAGE_METHOD = "t3/notifications/open-image";
 
 export function readHtmlRenderContentHeight(data: unknown): number | undefined {
@@ -289,11 +279,7 @@ export function readHtmlRenderLinkRequest(data: unknown):
     : undefined;
 }
 
-/**
- * The image a framed render's reader clicked, if `data` is an open-image
- * notification for an http(s) or inline image URL. Server-side publishing
- * inlines local images, so most arrive as `data:image/` URLs.
- */
+/** Published local images arrive as `data:image/` URLs. */
 export function readHtmlRenderImageRequest(
   data: unknown,
 ): { readonly src: string; readonly name: string } | undefined {
@@ -307,7 +293,6 @@ export function readHtmlRenderImageRequest(
   return { src, name: label || "Image" };
 }
 
-/** The key a framed render passed on in a `t3/notifications/keydown` notification. */
 export function readHtmlRenderKeyDown(data: unknown):
   | {
       readonly key: string;
@@ -377,7 +362,6 @@ const BASE_CSS =
   "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}" +
   // Focus outlines paint inside the element, so the frame edge never clips them.
   ":where(:focus-visible){outline:2px solid var(--ring)}:focus-visible{outline-width:2px!important;outline-offset:-2px!important}" +
-  // An image outside a link or button opens in the app's viewer, as chat images do.
   ":where(img:not(a[href] img,button img)){cursor:zoom-in}";
 
 function rootRule(theme: HtmlRenderTheme): string {
@@ -387,21 +371,8 @@ function rootRule(theme: HtmlRenderTheme): string {
   return `:root{color-scheme:${theme.appearance};${declarations}}`;
 }
 
-// Runs synchronously in <head>, before the page's own styles and body, so the
-// first paint is already themed. It rewrites its own <style> element rather
-// than setting inline properties, so a page's later `:root` rules still win,
-// then drops the fragment so a page's own hash routing never sees it. A link
-// the reader clicks to another page never replaces the page inside the thread:
-// a framed page asks its client to open it, and a top-level page (mobile)
-// opens it as a new window, which the client sends to the browser. A plain
-// left click on a framed page's image, outside a link or button and not
-// prevented by any of the page's listeners, asks the client to open the image
-// in its viewer. A framed page also reports its content height, measured as the server measures it,
-// so its client can fit the frame to the page. A chord the client named as an
-// app shortcut is passed on rather than left to the browser, unless a text
-// field has focus or the page handled it: the deciding listener is added while
-// the key dispatches, so it runs after every listener the page has. Keys
-// match as resolveEventKeys reads them, so the client accepts what it claims.
+// Apply overridable theme CSS before paint and strip the fragment before routing; framed navigation uses the client.
+// Forward shortcuts after page handlers; text fields retain their keys.
 const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||""}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}})();`;
 
 function bootstrapMarkup(markup: string): string {
@@ -418,8 +389,7 @@ function bootstrapMarkup(markup: string): string {
   ].join("");
 }
 
-// Comments, raw text, and template contents are blanked to the same length,
-// so offsets still line up and inert tags cannot receive the bootstrap.
+// Blank inert content without shifting offsets so it cannot receive the bootstrap.
 const blankNonMarkup = (html: string) => {
   const scan = html.replace(
     /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)\b[\s\S]*?(?:<\/\1\s*>|$)|<plaintext\b[\s\S]*$/gi,

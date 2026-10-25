@@ -45,8 +45,7 @@ export class DesktopAppUpdate extends Context.Service<
         stage: ServerSelfUpdateProgressStage,
       ) => Effect.Effect<void, ServerSelfUpdateError>,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
-    /** Success stops this server, so this effect
-        returns only when installation fails or times out. */
+    /** Success stops the server; returns only on installation failure or timeout. */
     readonly commit: (
       requestId: string,
       onHandoffAccepted?: () => Effect.Effect<void>,
@@ -152,8 +151,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
                 failWith("Could not generate a desktop update request id.", error),
               ),
             );
-          // Subscribe before sending the request so a fast first report
-          // cannot be missed.
+          // Subscribe before requesting to catch fast reports.
           const { changes } = yield* receiver.desktopUpdates;
           yield* receiver
             .requestDesktopUpdate(requestId)

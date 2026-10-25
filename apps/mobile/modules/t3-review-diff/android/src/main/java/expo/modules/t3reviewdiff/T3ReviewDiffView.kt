@@ -846,7 +846,6 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
     super.onSizeChanged(width, height, oldWidth, oldHeight)
-    // Wrapped rows take their height from the width, so a new width is a new layout.
     if (style.wordWrap && width != oldWidth) layoutRows()
     onViewportSizeChanged?.invoke()
     setVerticalOffset(verticalOffset)
@@ -1283,7 +1282,6 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
     val selected = selectedRowIds.contains(row.id)
     if (selected) {
-      // Keep the diff and syntax colors intact; selection lives in the gutter.
       fill(
         canvas,
         withAlpha(theme.hunkText, 242),

@@ -21,13 +21,9 @@ import * as NodeCrypto from "node:crypto";
 import * as ServerConfig from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
 
-// To bump the pin, pick a version from
-// https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json,
-// download each platform's chrome-headless-shell zip, and replace the version and every byte count
-// and SHA-256 below.
-//
-// The headless shell never loads Chrome's CRLSet, so a certificate block reaches it only through
-// Chromium's compiled-in SPKI blocklist. Do not pin below 156.0.8078.70: earlier builds trust the
+// Update the version, sizes and hashes from each chrome-headless-shell zip listed at
+// https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json
+// Never pin below 156.0.8078.70: the shell has no CRLSet and older SPKI blocklists trust
 // compromised eMudhra intermediates (crrev.com/c/8627687).
 const VERSION = "156.0.8078.70";
 const ARCHIVES = {
@@ -130,11 +126,7 @@ export class PreviewBrowserUnsupportedError extends Schema.TaggedError<PreviewBr
 export class PreviewBrowser extends Context.Service<
   PreviewBrowser,
   {
-    /**
-     * Path to the installed headless shell. The first call starts the
-     * install; callers wait for it up to a bound and then get its progress
-     * instead, while the install keeps running.
-     */
+    /** Starts installation on first call; returns progress after a bounded wait while installation continues. */
     readonly executable: Effect.Effect<
       string,
       PreviewBrowserInstallError | PreviewBrowserInstallingError | PreviewBrowserUnsupportedError
@@ -329,8 +321,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
         yield* fs.remove(destination, { recursive: true, force: true });
         yield* fs.rename(unpacked, destination);
       }).pipe(Effect.scoped);
-      // Two servers can share a home, so a staging directory touched within the
-      // last hour may be another server's install in progress and stays.
+      // Shared homes may have another server installing; preserve staging directories touched within the last hour.
       const entries = yield* fs.readDirectory(installRoot);
       const now = yield* Clock.currentTimeMillis;
       yield* Effect.forEach(

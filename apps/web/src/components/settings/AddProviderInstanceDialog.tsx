@@ -53,10 +53,7 @@ import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 
-/**
- * Output is trimmed to 48 chars so the final composed id stays under the 64-char slug cap
- * enforced by `ProviderInstanceId` in `@t3tools/contracts`.
- */
+/** Limit the slug to 48 chars so the composed ProviderInstanceId fits its 64-char cap. */
 function slugifyLabel(value: string): string {
   return value
     .trim()
@@ -76,10 +73,6 @@ const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const DEFAULT_DRIVER_OPTION = providerClients.definitions[0]!;
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
-/**
- * Validate an instance id against the same slug rules the server applies in
- * `ProviderInstanceId` (see `packages/contracts/src/providerInstance.ts`).
- */
 function validateInstanceId(id: string, existing: ReadonlySet<string>): string | null {
   if (id.length === 0) return "Instance ID is required.";
   if (id.length > 64) return "Instance ID must be 64 characters or fewer.";
@@ -127,8 +120,8 @@ export function AddProviderInstanceDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [createdInstanceId, setCreatedInstanceId] = useState<ProviderInstanceId | null>(null);
 
-  // Codex and Claude run at their default slots before they are configured, so
-  // those ids stay reserved; other unconfigured default slots are free to take.
+  // Reserve Codex/Claude default ids because they run before configuration; other unconfigured slots are
+  // available.
   const existingIds = new Set([
     "codex",
     "claudeAgent",

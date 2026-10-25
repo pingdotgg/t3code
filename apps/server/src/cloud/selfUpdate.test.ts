@@ -372,14 +372,12 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
 
       yield* Deferred.await(sawDownloading);
-      // The socket drop ends the stream. The download is still held.
       yield* Fiber.interrupt(consumed);
       expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
         "A server update is already in progress.",
       );
 
       yield* Deferred.succeed(releaseDownload, undefined);
-      // `installing` is offered only after the stream queue has shut down.
       yield* Deferred.await(accepted);
       expect(order).toEqual(["download", "extract", "preflight", "accept"]);
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(

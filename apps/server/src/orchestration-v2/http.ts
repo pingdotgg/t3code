@@ -66,9 +66,7 @@ export const layer = HttpApiBuilder.group(
         Effect.forEach(
           projects,
           (project) =>
-            // Use immediately available enrichment only. Awaiting git-backed
-            // identity resolution can exceed the client shell-snapshot budget
-            // (ProcessRunner allows probes up to one minute).
+            // Use available enrichment only; git probes can take a minute and exceed shell-snapshot budgets.
             projectEnrichment.getAvailable(project.workspaceRoot).pipe(
               Effect.map((enrichment) => ({
                 ...project,

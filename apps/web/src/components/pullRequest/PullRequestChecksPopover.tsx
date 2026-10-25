@@ -26,11 +26,7 @@ import {
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 
-/**
- * Mounted by the popup, so the read starts when somebody opens it rather than once per row of a
- * listing — the detail read is a request per pull request, and a page of them at rest would be a
- * hundred.
- */
+// Fetch only on open to avoid per-row requests.
 function LazyChecksBody({
   environmentId,
   reference,
@@ -160,9 +156,6 @@ export function PullRequestChecksPopover({
   const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>
-      {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
-          not valid inside one. The click is stopped here so opening the checks does not also
-          select the row it sits on. */}
       <PopoverTrigger
         nativeButton={variant === "count"}
         aria-label={

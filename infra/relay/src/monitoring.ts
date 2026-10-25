@@ -49,7 +49,7 @@ interface RelayMonitor {
 }
 
 // Thresholds come from 2026-10-16..19 prod data: the worst healthy window,
-// and the #16810 outage (Cloudflare API 429s stalling every provision).
+// and the outage (Cloudflare API 429s stalling every provision).
 // Paging monitors need two bad runs in a row; warnings catch the slow
 // degradations an outage threshold has to ignore.
 const relayMonitors: ReadonlyArray<RelayMonitor> = [

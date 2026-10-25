@@ -47,8 +47,7 @@ export function PullRequestComposer({
   const reviewRef = useRef<HTMLTextAreaElement>(null);
   const pendingComments = usePendingReviewComments(reference);
   const clearComments = usePullRequestReviewStore((store) => store.clear);
-  // A summary typed but not sent is review work too, and it outlives the popover. Selected as a
-  // boolean rather than the text, so typing one does not re-render the composer per keystroke.
+  // Unsent summaries outlive the popover; select a boolean to avoid per-keystroke renders.
   const reviewKey = pullRequestReviewKey(reference);
   const summaryStarted = usePullRequestReviewStore(
     (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
@@ -148,8 +147,7 @@ export function PullRequestComposer({
             </PopoverClose>
           </div>
         </div>
-        {/* Keep both forms mounted across toggles and dismissal so drafts and in-flight
-            submit guards survive closing and reopening the composer. */}
+        {/* Keep forms mounted to preserve drafts and submit guards across dismissal. */}
         {verdicts.length > 0 ? (
           <div hidden={mode !== "review"}>
             <PullRequestReviewForm

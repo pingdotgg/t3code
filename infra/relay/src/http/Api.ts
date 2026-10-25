@@ -82,8 +82,7 @@ import { withSpanAttributes } from "../observability.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
 
-// Delegated thread IDs carry escaped command provenance and exceed the router's
-// default 100-character path parameter limit. Match the environment server.
+// Delegated IDs exceed the router's default 100-character limit; match the environment server.
 export const RELAY_HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
@@ -171,16 +170,9 @@ export const layerDocsRedirectRoute = HttpRouter.add(
   HttpServerResponse.redirect("/docs"),
 );
 
-// Shorter than the mobile client's 10s request timeout on purpose: when a
-// request hangs (e.g. a stuck upstream query), the client would otherwise
-// abort first, the invocation would die with the request span still open, and
-// the batched spans would never export — leaving no server-side trace at all.
+// Finish before the mobile client's 10 s timeout so request cancellation cannot discard unexported spans.
 export const RELAY_REQUEST_DEADLINE_MS = 9_000;
-/**
- * Webhook forwarding reads a body of up to 1 MiB, waits up to the upstream
- * timeout, and may then hold the request, so it needs more room than an API
- * call; cutting it off before the hold would drop a request it should keep.
- */
+/** Allow body reading, upstream wait, and inbox hold; an API-sized deadline would drop held webhooks. */
 export const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
 
 const relayRequestDeadline = <E, R>(
@@ -542,9 +534,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
           });
-    // Run it only after revocation commits so a database failure leaves a fully
-    // usable active link. Still run teardown when the link is already revoked,
-    // allowing a retry to finish cleanup after an earlier Cloudflare failure.
+    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
     const deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
@@ -991,9 +981,7 @@ export const layerClientApi = HttpApiBuilder.group(
         Effect.fn("relay.api.client.releaseEnvironmentTunnel")(function* (args) {
           const { params } = args;
           const { userId } = yield* RelayClientPrincipal;
-          // ok mirrors whether the connector token is now dead: false means a
-          // concurrent provision kept the recorded tunnel alive, so the caller
-          // must not discard its runtime config.
+          // False means concurrent provisioning retained the tunnel; the caller must keep its runtime config.
           const released = yield* managedEndpointProvider
             .release({
               userId,

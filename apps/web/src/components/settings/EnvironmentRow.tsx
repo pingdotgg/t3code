@@ -74,8 +74,7 @@ export function EnvironmentRow({
         className,
       )}
     >
-      {/* Dim only the identity so a switched-off row's controls stay readable
-          and distinct from disabled ones. */}
+      {/* Dim only identity so switched-off controls remain readable and distinct from disabled controls. */}
       <EnvironmentMachineIcon
         aria-hidden
         kind={kind}

@@ -132,7 +132,6 @@ const logInSpanThrough = (
     return { requests, spans };
   });
 
-/** Logs one warning through the server logger and returns what its console printed. */
 const printThroughConsole = (fields: object) =>
   Effect.gen(function* () {
     const printed: Array<string> = [];
@@ -247,7 +246,6 @@ describe("ServerLoggerLive", () => {
 
     it.effect("keeps the token out of traces when the browser fails to open", () =>
       Effect.gen(function* () {
-        // A failed launch records its error, which names the target, on its span.
         const failingLaunch = maybeOpenBrowser(pairingUrl).pipe(
           Effect.provide(
             Layer.mergeAll(

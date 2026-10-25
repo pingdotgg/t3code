@@ -83,7 +83,7 @@ export const definition = defineSourceControl({
   },
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
-  // Neither `fj` nor `tea` checks out by number, so fetch the pull ref from the repository itself.
+  // Neither `fj` nor `tea` checks out by number.
   checkoutCommand: ({ number, repositoryUrl }) =>
     repositoryUrl
       ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' ${changeRequestHeadRef(number)} && git checkout -B pulls/${number} FETCH_HEAD`

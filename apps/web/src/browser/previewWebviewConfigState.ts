@@ -58,15 +58,7 @@ const loadPreviewWebviewConfig = (
   });
 };
 
-/**
- * `Atom.family` keys on its argument, so the environment and profile are
- * folded into one string: passing an object would allocate a fresh entry on
- * every render.
- *
- * The profile is the tail rather than a second field, so an id containing the
- * delimiter round-trips whole instead of being truncated into a different
- * profile's key.
- */
+// Atom.family needs a primitive key; keep profile last so delimiter-containing ids round-trip.
 const CONFIG_KEY_DELIMITER = "\u0000";
 
 const configKey = (environmentId: EnvironmentId, profileId: string | undefined): string =>

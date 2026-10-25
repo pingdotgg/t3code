@@ -68,8 +68,7 @@ function EnabledPullRequestThreadLinks({
         })
       : null,
   );
-  // Refreshes can briefly clear the query value. Keep the last response so polling
-  // does not hide the linked-thread count between responses.
+  // Retain the last count while refresh temporarily clears query data.
   const [lastRelations, setLastRelations] = useState(relations.data);
   if (relations.data !== null && relations.data !== lastRelations) {
     setLastRelations(relations.data);

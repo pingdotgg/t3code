@@ -611,8 +611,7 @@ export function useThreadActions() {
             : message,
         }),
       );
-      // The thread was deleted. Cleanup has its own toast; returning its
-      // failure would make callers incorrectly report a thread deletion error.
+      // Cleanup has its own toast; reporting its failure would falsely imply deletion failed.
     }
     return deleteResult;
   };
@@ -629,8 +628,7 @@ export function useThreadActions() {
       );
     }
     ThreadUndo.invalidate("settle", scopedThreadKey(target));
-    // reason "user" pins the thread active: auto-settle (PR merged /
-    // inactivity) stays suppressed until real activity clears the pin.
+    // reason "user" pins active until real activity, suppressing auto-settle.
     return unsettleThreadMutation({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, reason: "user" },
@@ -665,8 +663,7 @@ export function useThreadActions() {
         ),
       );
     }
-    // orderKey rides only to servers that decode it; pre-reorder servers get the bare pin they
-    // understand and the thread stays keyless.
+    // Older servers cannot decode orderKey, so send only the pin to them.
     const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
       ? (opts.orderKey ?? topOfPinnedRunOrderKey())
       : undefined;

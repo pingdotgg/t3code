@@ -362,7 +362,7 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
     : null;
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
 
@@ -492,10 +492,7 @@ export const make = Effect.gen(function* () {
       ),
     createRepository: (input) => {
       const repository = parseRepositorySpecifier(input.repository);
-      // Azure Repos access is governed by project/organization permissions.
-      // `az repos create` does not expose a per-repository visibility flag, so
-      // the generic source-control visibility input is intentionally not
-      // translated into CLI args for this provider.
+      // Project/organization permissions control visibility; `az repos create` has no flag.
       return executeJson({
         cwd: input.cwd,
         args: [

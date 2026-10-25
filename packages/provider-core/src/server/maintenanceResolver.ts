@@ -238,11 +238,6 @@ function isMiseCommandPath(commandPath: string): boolean {
   return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
-/**
- * WinGet's Claude Code install under its user root (`<drive>:\Users\<name>\AppData\Local\Microsoft\WinGet`)
- * or machine root (`<drive>:\Program Files\WinGet`): the `Links\claude.exe` link or the binary in the
- * `Packages\Anthropic.ClaudeCode_…` directory.
- */
 const winGetClaudeCommandPath =
   /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
 
@@ -272,8 +267,7 @@ export function npmGlobalPrefixFromCommandPath(
   if (packageIndex < 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
   }
-  // Mise's npm backend uses a global-looking layout inside a tool version.
-  // Globals under its Node installation still belong to npm.
+  // Mise tool layouts resemble npm globals; only globals under its Node install belong to npm.
   const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(normalized.slice(0, packageIndex))?.[1];
   if (miseTool && miseTool !== "node") {
     return null;
@@ -316,7 +310,6 @@ const HomebrewInfoResponse = Schema.Struct({
 
 const decodeHomebrewInfo = Schema.decodeUnknownOption(Schema.fromJsonString(HomebrewInfoResponse));
 
-/** Cask versions may carry a build suffix after a comma (`1.2.3,456`). */
 export function parseHomebrewLatestVersion(
   infoJson: string,
   ownership: HomebrewOwnership,
@@ -443,8 +436,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   });
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
-  // WinGet owns these files: `claude update` only reports "managed by winget"
-  // and exits 0, and T3 Code does not run `winget upgrade` itself.
+  // WinGet-managed claude update exits 0 without updating; T3 does not run winget upgrade.
   if (
     definition.provider === "claudeAgent" &&
     context.platform === "win32" &&
@@ -500,10 +492,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
-    // pnpm 10 skips unapproved install scripts and still exits 0, leaving a
-    // package whose postinstall finishes the install broken. Global installs
-    // can only approve on the command line, and pnpm before 10.4 rejects the
-    // flag as an unknown option.
+    // pnpm 10 skips unapproved scripts; the approval flag requires 10.4+.
     const pnpmVersion = yield* runProbe("pnpm", ["--version"], context.env);
     const allowBuild =
       pnpmVersion !== null && satisfiesSemverRange(pnpmVersion, ">=10.4.0")
@@ -541,16 +530,10 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
 
-  // npm proof names the package, so it outranks a keg the path merely passes
-  // through: a Homebrew-installed Node keeps its globals under
-  // `Cellar/node/<ver>/lib/node_modules/`, and that is npm's install, not brew's.
+  // npm proof outranks a containing Homebrew keg; Homebrew Node globals still belong to npm.
   const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
   if (npmPrefix) {
-    // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
-    // and still exits 0, so a package whose postinstall finishes the install
-    // (claude copies its native binary over a placeholder stub) is left broken
-    // while the update reports success. Older npm warns about the unknown
-    // config and continues.
+    // npm 12 requires script approval to install native binaries; older npm only warns about the flag.
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -602,8 +585,7 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    // The keg's own brew works even when a GUI-launched server has no
-    // Homebrew on PATH; the prefix check below still applies to it.
+    // GUI servers may lack Homebrew on PATH; use the keg brew with the same prefix check.
     const kegBrewPath = path.join(homebrew.prefix, "bin", "brew");
     const brewPath = (yield* fileSystem.exists(kegBrewPath).pipe(Effect.orElseSucceed(() => false)))
       ? kegBrewPath
@@ -662,10 +644,7 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
   return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
 });
 
-/**
- * Volta's `bin/<cmd>` is a link to its `volta-shim`, which picks the package
- * at run time; the package's own image directory proves Volta installed it.
- */
+// Volta bin links only identify its shim; the package image proves ownership.
 const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
@@ -703,9 +682,7 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
     ...packageName.split("/"),
     "package.json",
   );
-  // npm writes both `<cmd>.cmd` and an extensionless sh script into the
-  // Windows prefix; either one sits directly beside `node_modules`. A POSIX
-  // project checkout has the same shape, which is why this is Windows-only.
+  // Windows npm shims sit beside node_modules; POSIX project checkouts can mimic this layout.
   const hasManifest = yield* fileSystem
     .exists(manifestPath)
     .pipe(Effect.orElseSucceed(() => false));
@@ -765,11 +742,6 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   });
 });
 
-/**
- * Turn a one-shot resolution into the shape drivers expose: a cached read for
- * advisories and a `fresh` read that update execution uses so it never trusts
- * ownership derived before the user clicked.
- */
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
 )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
@@ -783,10 +755,6 @@ export const makeCachedProviderMaintenanceResolution = Effect.fn(
     options?.fresh ? Cache.invalidate(cache, undefined).pipe(Effect.andThen(cached)) : cached;
 });
 
-/**
- * An install T3 Code cannot update gets no Update button or command, so its
- * message names the version and the executable instead.
- */
 function manualUpdateMessage(latestVersion: string, installPath: string | undefined): string {
   return installPath
     ? `Version ${latestVersion} is out. T3 Code runs ${installPath}; update it with the app or tool that installed it.`

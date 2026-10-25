@@ -67,7 +67,6 @@ const NO_PENDING_REQUESTS = { approvals: [], userInputs: [] } as const;
 const NO_PENDING_APPROVALS: ReturnType<typeof derivePendingApprovals> = [];
 const NO_PENDING_USER_INPUTS: ReturnType<typeof derivePendingUserInputs> = [];
 
-/** Writes the custom answer for a question of the pending user input the making render saw. */
 function makePendingCustomAnswerSetter(input: {
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingRequestKey: string;
@@ -97,15 +96,10 @@ function makePendingCustomAnswerSetter(input: {
         ),
       },
     }));
-    // The editor owns this selection. Resetting it before the answer renders
-    // can re-enter Lexical with offsets from the previous skill token.
+    // Resetting selection before rendering can re-enter Lexical with stale skill-token offsets.
   };
 }
 
-/**
- * Pending approvals and user-input questions for the active thread: what is
- * waiting, the user's in-progress answers, and the commands that respond.
- */
 export function usePendingThreadRequests(input: {
   readonly environmentId: EnvironmentId;
   readonly activeThreadId: ThreadId | null;
@@ -399,8 +393,6 @@ export function usePendingThreadRequests(input: {
     return result;
   };
 
-  // Closes an async question without messaging the agent. The server records
-  // the dismissal so every client releases the composer.
   const onDismissUserInput = async (requestId: RuntimeRequestId) => {
     if (!activeThreadId) return;
 

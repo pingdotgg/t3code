@@ -91,7 +91,6 @@ object AgentNotifications {
       .forEach { manager.cancel(it.tag, it.id) }
   }
 
-  /** Records the thread route the app is showing, or null when none is open. */
   @Volatile private var threadOnScreen: String? = null
 
   fun setThreadOnScreen(path: String?) {
@@ -220,7 +219,6 @@ object AgentNotifications {
     data: Map<String, String>,
     updatedAt: Long
   ) {
-    // Ignore reordered status updates without dropping an unrelated alert.
     if (updatedAt < prefs.getLong("lastUpdate", 0)) return
     prefs.edit().putLong("lastUpdate", updatedAt).apply()
     val active = data["active"] == "true"
@@ -269,8 +267,6 @@ object AgentNotifications {
       .setContentIntent(openThread)
       .setDeleteIntent(dismissIntent)
     presentation.applyTo(builder, context)
-    // A finished card is no longer ongoing, so it swipes away and a tap opens
-    // the thread; buttons would only repeat that.
     val action = presentation.action
     if (action != null) {
       if (openThread != null) builder.addAction(0, action, openThread)

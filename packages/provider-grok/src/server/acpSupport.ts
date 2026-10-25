@@ -36,21 +36,14 @@ interface GrokAcpRuntimeInput extends Omit<
   readonly runtimeMode?: RuntimeMode;
 }
 
-/**
- * The runtime modes `grok agent` can launch in: ask, its auto classifier, and
- * always-approve. It has no Auto-accept edits: `acceptEdits` only exists as a
- * settings-file `permissions.defaultMode`, and `grok agent` treats it as ask.
- */
+// grok agent treats settings-only acceptEdits as ask; it has no Auto-accept edits launch mode.
 export const GROK_SUPPORTED_RUNTIME_MODES = [
   "approval-required",
   "auto",
   "full-access",
 ] as const satisfies ReadonlyArray<RuntimeMode>;
 
-/**
- * `--permission-mode` on the argv beats the user's Grok config, so Supervised
- * cannot inherit a configured always-approve.
- */
+// argv overrides Grok config so Supervised cannot inherit always-approve.
 export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
   switch (runtimeMode) {
     case undefined:
@@ -94,37 +87,20 @@ function grokAcpRuntimeProcessOwnership(
   "ownDescendantProcessGroups" | "ownDetachedProcessGroup" | "processGroupPlatform"
 > {
   return {
-    // macOS keeps the prior provider-group teardown until a stable libproc
-    // identity provider can cover Grok's nested detached tool groups.
+    // macOS lacks a stable libproc identity provider for Grok's nested detached tool groups.
     ownDescendantProcessGroups: processGroupPlatform === "linux",
     ownDetachedProcessGroup: true,
     processGroupPlatform,
   };
 }
 
-/**
- * Current Grok treats Ctrl+C cancellation as a barrier against stale
- * background-task wake prompts until the next genuine user turn.
- */
+// Grok Ctrl+C blocks stale background wakes until the next genuine user turn.
 export const GROK_ACP_CANCEL_META = { cancelTrigger: "ctrl_c" } as const;
 
-/**
- * Grok's Auto mode asks the client about an action its classifier blocks only
- * when the client declares a type that can show a prompt; the default
- * (`generic`) gets a silent denial instead. `extension` is the prompting type
- * that keeps the permission options T3 already maps (no always-approve row,
- * no per-command persistent grants).
- */
+// generic silently denies Auto refusals; extension prompts without persistent command grants.
 export const GROK_ACP_INITIALIZE_META = { clientType: "extension" } as const;
 
-/**
- * Grok's only session-scoped `allow_always` answer: "Yes, allow all edits
- * during this session" on an edit prompt. Its bash, monitor and MCP
- * `always-allow` rows instead save a grant for the whole project that outlives
- * the session (grok-build `crates/codegen/xai-grok-workspace/src/permission/`
- * `prompter.rs` `ALLOW_EDITS_SESSION_OPTION_ID`, `grants.rs`
- * `record_prompt_outcome`).
- */
+// Only allow-edits-session is session-scoped; other allow-always choices persist project grants.
 const GROK_ALLOW_EDITS_SESSION_OPTION_ID = "allow-edits-session";
 
 export function grokApprovalOptions(
@@ -174,10 +150,7 @@ export const makeGrokAcpRuntime = Effect.fn("GrokAcpSupport.makeGrokAcpRuntime")
   return yield* makeXAiPromptCompletionRuntime(runtime);
 });
 
-/**
- * It is the CLI's product name, not a model id the ACP accepts, so selecting it
- * means "use whatever model the Grok session currently runs on".
- */
+// This product name is not an ACP model ID; it selects the current session model.
 export const GROK_DEFAULT_MODEL_SLUG = "grok-build";
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {

@@ -262,8 +262,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             ...identityArgs(config),
             "-o",
             "ExitOnForwardFailure=yes",
-            // A multiplexed client hands its -L forwards to the control master and exits,
-            // so the tunnel must own its own connection.
+            // Multiplexed clients exit after handing forwards to the master; own this connection.
             "-o",
             "ControlMaster=no",
             "-o",

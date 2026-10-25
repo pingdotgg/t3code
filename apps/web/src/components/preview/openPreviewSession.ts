@@ -34,8 +34,7 @@ interface OpenPreviewSessionInput<E> {
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
 ): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
-  // Resolved once: a tab opened before client settings hydrate would otherwise
-  // be born at the schema defaults and never corrected.
+  // Wait for settings hydration so new tabs cannot retain uncorrected schema defaults.
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );

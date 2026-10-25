@@ -1,21 +1,10 @@
-// Decides which CI jobs a change needs. Prints `key=value` lines for
-// $GITHUB_OUTPUT; a job runs unless its key is "false".
-//
-//   node ci-changes.cjs --paths <file>          gate by the listed paths
-//   node ci-changes.cjs --paths <file> --full   run every Linux job, gate only the macOS lint
-//   node ci-changes.cjs                         changed paths unknown: run everything
-//
-// scripts/check-changed.ts requires the same decisions so local runs match CI.
-//
-// Every changed path maps to workspace packages, which then pull in their
-// dependents from package.json. A path this file does not recognize runs
-// everything, so a new root file or directory can only cost minutes.
+// Unknown paths run every job; recognized packages pull in their dependents.
+// scripts/check-changed.ts shares these decisions so local checks match CI.
 const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "../..");
 
-// Never read by a build, typecheck, or test. Lint still formats them.
 const INERT = [
   /^docs\//,
   /^\.(agents|cursor|vscode|devcontainer|macroscope|repos)\//,
@@ -23,15 +12,13 @@ const INERT = [
   /^LICENSE$/,
 ];
 
-// Run everything: the root vite.config.ts loads the first as setup for every
-// package's tests, and the vendored mobile tarballs are installed dependencies.
+// Shared test setup and vendored mobile dependencies affect every package.
 const RUNS_EVERYTHING = [
   /^packages\/shared\/src\/(HostProcess|testing\/longTempDir)\.ts$/,
   /^apps\/mobile\/deps\//,
 ];
 
-// Paths outside a package, or files inside one that other packages read
-// through relative imports rather than a package.json dependency.
+// Includes cross-package reads absent from package.json dependencies.
 const EXTRA_OWNERS = [
   // Vite configs and tsconfigs of these apps import scripts/lib directly.
   [/^scripts\/lib\//, ["@t3tools/desktop", "@t3tools/mobile", "@t3tools/web", "t3"]],
@@ -43,9 +30,7 @@ const EXTRA_OWNERS = [
 ];
 const RUST = /^native\/(resource-monitor|kde-snap-shot|hyprland-snap-shot)\//;
 
-// Tests that read another package's files without declaring it. The scripts
-// tests read app manifests, assets, and sources (cursor-sdk-packaging,
-// third-party-licenses, brand-assets, build-desktop-artifact).
+// These tests read other packages without declaring dependencies.
 const TEST_ONLY_DEPS = {
   "@t3tools/provider-pi": ["@t3tools/client-runtime"],
   "@t3tools/scripts": [
@@ -56,17 +41,12 @@ const TEST_ONLY_DEPS = {
     "@t3tools/provider-cursor",
   ],
 };
-// Declared dependencies that only feed a build step: the server bundles the
-// built web app (apps/server/vite.config.ts) but never imports it.
+// The server bundles the web build without importing it.
 const BUILD_ONLY_DEPS = { t3: ["@t3tools/web"] };
 
-// Sources scripts/mobile-native-static-check.ts lints, plus the tool and rule
-// configuration that decides how it lints them, plus the root package.json
-// that defines the lint:mobile command.
 const MOBILE_NATIVE =
   /^apps\/mobile\/.*\.(swift|kt|kts)$|^apps\/mobile\/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts\/mobile-native-static-check\.ts$|^package\.json$|^\.github\/workflows\/ci\.yml$|^\.github\/scripts\/ci-changes\.cjs$|^\.github\/actions\/ci-changes\//;
 
-// Jobs that test every package except these, which have jobs of their own.
 const OWN_TEST_JOB = new Set(["t3", "@t3tools/web", "@t3tools/monorepo"]);
 
 function readWorkspace() {
@@ -108,8 +88,7 @@ function readWorkspace() {
   return packages;
 }
 
-// Returns the packages a path touches, [] for an inert path, or null when the
-// path is not understood and everything must run.
+// [] means inert; null means unknown and requires every job.
 function ownersOf(file, packages) {
   if (INERT.some((pattern) => pattern.test(file))) return [];
   // A manifest can change dependencies or versions other packages read.
@@ -148,7 +127,6 @@ function decide(files, packages, full) {
   if (everything) {
     affected = all;
   } else {
-    // Add dependents until nothing changes.
     let grew = true;
     while (grew) {
       grew = false;

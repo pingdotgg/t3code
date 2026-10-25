@@ -119,9 +119,6 @@ describe("isSourceRunning", () => {
           const context = yield* withSourceHome();
           assert.isFalse(yield* isSourceRunning(helium, context));
 
-          // Chromium points the lock at `<host>-<pid>`, a target that never
-          // exists on disk. A check that follows the link reports a running
-          // browser as closed, letting an import read a live, mid-write database.
           yield* fileSystem.symlink(
             "host-that-does-not-exist-1234",
             `${userDataDirectory(context)}/SingletonLock`,
@@ -209,9 +206,6 @@ describe("isSourceInstalled", () => {
         const context = yield* withSourceHome();
         const root = userDataDirectory(context);
 
-        // Installers for native messaging hosts create an empty user-data
-        // directory for every Chromium fork they know about, so treating the
-        // directory as evidence lists browsers the user does not have.
         yield* fileSystem.makeDirectory(`${root}/NativeMessagingHosts`, { recursive: true });
         assert.isFalse(yield* isSourceInstalled(helium, context));
 
@@ -307,8 +301,6 @@ describe("cookieDatabaseCandidatePaths", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const context = yield* withSourceHome();
         const root = userDataDirectory(context);
-        // Chromium 96+ keeps sessions in Network/; a root Cookies left behind
-        // by the move is stale and must not be the one imported.
         yield* fileSystem.makeDirectory(`${root}/Default/Network`, { recursive: true });
         yield* fileSystem.writeFileString(`${root}/Default/Network/Cookies`, "live");
         yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "stale");
@@ -565,14 +557,9 @@ describe("isSourceRunning for Firefox", () => {
         yield* fileSystem.writeFileString(`${root}/lock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
 
-        // `.parentlock` is deliberately left on disk after a clean exit as a
-        // last-used marker, so an unlocked one is not evidence of a running
-        // browser — treating it as one blocked every import after first use.
         yield* fileSystem.writeFileString(`${profile}/.parentlock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
 
-        // The `lock` symlink is what Firefox removes on exit; a live pid in
-        // its target means the profile is held.
         yield* fileSystem.symlink(`127.0.0.1:+${process.pid}`, `${profile}/lock`);
         assert.isTrue(yield* isSourceRunning(firefox, context));
       }),
@@ -582,11 +569,7 @@ describe("isSourceRunning for Firefox", () => {
   it.effect("reads a Firefox lock symlink's pid to tell live from crashed", () =>
     Effect.gen(function* () {
       const alive = (pid: number) => Effect.succeed(pid === 4242);
-      // The resolver may hand Firefox any of the machine's addresses, not
-      // just 127.0.0.1 — 127.0.1.1 on Debian-style hosts, a LAN address
-      // elsewhere — so every local address counts as ours.
       const local = new Set(["127.0.0.1", "127.0.1.1", "192.168.1.20"]);
-      // Both the plain and the fcntl-marked (`+`) forms carry the pid.
       assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:4242", local, alive));
       assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.1.1:+4242", local, alive));
       assert.isTrue(yield* firefoxSymlinkLockIsHeld("192.168.1.20:+4242", local, alive));
@@ -603,8 +586,7 @@ describe("isSourceRunning for Firefox", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
         const context = yield* sourcePathContext.pipe(
-          // Firefox's win32 root hangs off %APPDATA%; without it the root is
-          // undefined and the fixture would escape the sandbox into the repo.
+          // Without APPDATA, the Windows Firefox fixture would escape into the repo.
           Effect.provideService(HostProcess.Environment, {
             HOME: home,
             APPDATA: `${home}/AppData/Roaming`,
@@ -616,8 +598,6 @@ describe("isSourceRunning for Firefox", () => {
         yield* fileSystem.makeDirectory(profile, { recursive: true });
         yield* fileSystem.writeFileString(`${profile}/cookies.sqlite`, "db");
 
-        // On Windows, Firefox creates parent.lock as a regular file that
-        // persists after the process exits.
         yield* fileSystem.writeFileString(`${profile}/parent.lock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
       }),

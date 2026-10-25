@@ -431,15 +431,8 @@ describe("decodeItemContentJson", () => {
   });
 });
 
-/**
- * These are the shapes a real organisation answered with, read back through `az devops invoke`
- * rather than `az rest`: the extension hands over the route's own body with one key of its own
- * added, and a live repository leaves out fields the contract documents.
- */
 describe("what az devops invoke answers with", () => {
   it("reads the envelope the extension adds its own continuation token to", () => {
-    // Set on every JSON body it returns, from a response header these routes do not send, so it
-    // arrives as null rather than not at all.
     expect(
       expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
     ).toEqual([]);
@@ -470,8 +463,6 @@ describe("what az devops invoke answers with", () => {
   });
 
   it("keeps the files of a change that names neither their object type nor their page after it", () => {
-    // A live iteration states `changeType`, `item.path` and `item.objectId` and nothing else: no
-    // `gitObjectType`, no `isFolder`, and no `nextSkip` on the only page.
     const page = expectSuccess(
       decodeIterationChangesJson(
         asJson({
@@ -504,9 +495,6 @@ describe("what az devops invoke answers with", () => {
   });
 
   it("reads a text file whose content type Azure calls a stream", () => {
-    // `contentMetadata` comes back for a markdown file with `application/octet-stream` on it and
-    // no `isBinary` at all, so the content type is not the field to ask, and its absence is the
-    // answer that the text is text.
     expect(
       expectSuccess(
         decodeItemContentJson(

@@ -29,8 +29,7 @@ const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
 const PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT = Duration.minutes(1);
 const PINNED_RUNTIME_ARCHIVE_FILE = "t3-runtime-archive";
-// Boot-service setup and remote update can construct separate layers. Serialize
-// the complete install transaction across every caller in this process.
+// Separate layers share one install lock across this process.
 const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
 
 export interface PinnedRuntimePaths {
@@ -97,11 +96,7 @@ export type PinnedRuntimeProgress =
   | { readonly stage: "download"; readonly received: number; readonly total: number | undefined }
   | { readonly stage: "verify" | "extract" | "validate" | "cached" };
 
-/**
- * The sentinel is written only after extraction and validation succeed; checking the entry file
- * alone is not enough, since tar writes the executable before the last native package and a
- * killed install leaves a plausible-looking but broken tree behind.
- */
+/** Tar writes the executable before native packages; only a validated install gets a sentinel. */
 
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
@@ -230,8 +225,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     );
   input.onProgress?.({ stage: "extract" });
   const extractStep = "extracting the t3 release archive";
-  // The archive wraps everything in one directory named after its stem;
-  // strip it so the executable lands at <versionDir>/t3.
+  // Strip the archive's stem directory so the executable lands at <versionDir>/t3.
   yield* input.runner
     .run({
       command: cliArchiveTarCommand(input.platform, process.env),
@@ -598,12 +592,9 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
 });
 
 /**
- * Every update publishes a new immutable runtime, so without pruning they pile up. Removes
- * completed runtimes nothing can start again and keeps: the caller's versions, everything the
- * service state references (active, rollback, pending), and runtimes that a running process
- * executes, a `t3` launcher points at, or `references` (such as the service unit) name, plus
- * anything published within the last hour. Staging directories, symlinks, and unexpected entries
- * are never touched. Returns the versions removed.
+ * Keep runtimes named by callers, service state, running processes, launchers, or references,
+ * and anything published within an hour. Only prune completed runtimes; leave staging
+ * directories, symlinks, and unexpected entries untouched.
  */
 export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {
   readonly baseDir: string;

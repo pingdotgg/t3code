@@ -129,7 +129,6 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   const resolvedTheme = useRenderedAppearance();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const [workerPoolSize] = useState(resolveDiffWorkerPoolSize);
-  // A new subscribe identity makes React release and reacquire the shared pool on every render.
   const subscribe = useStableCallback((onStoreChange: () => void) => {
     if (typeof window === "undefined") return () => {};
     const entry = acquireDiffWorkerPool(diffThemeName, workerPoolSize);

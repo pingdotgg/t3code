@@ -133,8 +133,7 @@ it.effect.each([
       received.resolve();
     });
     yield* Effect.promise(() => received.promise);
-    // The ack follows every mutation on the socket, so this is also a barrier
-    // proving all preceding inputs were processed, without a timing sleep.
+    // The socket ack follows every mutation, providing a barrier without sleeps.
     yield* Effect.promise(() => acked.promise);
     expect(frames).toEqual([frame]);
     expect(viewports).toEqual([{ type: "viewport", width: 1280, height: 800 }]);
@@ -215,7 +214,6 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
     ]);
     yield* Effect.promise(() => next.promise);
     expect(received).toEqual([1, "probe"]);
-    // Frames 2 and 3 were superseded before they could be sent.
     expect(released).toEqual([2, 3]);
 
     next = Promise.withResolvers();

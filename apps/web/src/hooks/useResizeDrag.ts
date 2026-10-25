@@ -49,7 +49,6 @@ export function useResizeDrag<T extends HTMLElement>(
     if (commit) active.session.finish(active.width, active.moved);
   };
 
-  // The effects must not rerun while a drag is live: their cleanup cancels it.
   const finishDrag = useEffectEvent((commit: boolean) => finish(commit));
 
   const previousResetKey = useRef(resetKey);

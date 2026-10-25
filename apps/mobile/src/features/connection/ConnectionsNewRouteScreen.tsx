@@ -55,8 +55,7 @@ export function ConnectionsNewRouteScreen({
   const navigation = useNavigation();
   const routeName = useRoute().name;
   const params = route.params ?? {};
-  // Deep-link prefill exists for development automation only. A production
-  // link must not arrive with attacker-chosen host and token already filled.
+  // Dev-only prefill prevents production links from supplying an attacker-chosen host and token.
   const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
   const shouldAutoConnect =
     __DEV__ &&
@@ -166,8 +165,7 @@ export function ConnectionsNewRouteScreen({
         : Haptics.NotificationFeedbackType.Error,
     );
     if (AsyncResult.isSuccess(result)) {
-      // Return to whatever opened the sheet. Replacing it with Home would
-      // nest Home inside any sheet still below it.
+      // Replacing with Home would nest it inside any sheet below; return to the opener.
       if (!navigation.canGoBack()) {
         navigation.dispatch(StackActions.replace("Home"));
       } else {

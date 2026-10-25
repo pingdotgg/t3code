@@ -411,7 +411,6 @@ it.effect.each([
       });
       const providerThreadId = ProviderThreadId.make("provider-thread:duplicate-owner");
       const nativeTaskId = "native-task:duplicate-provider-thread-owner";
-      // The latest upsert moves the row off the later-created thread.
       for (const [appThreadId, owner] of [
         [otherThreadId, otherInstanceId],
         [threadId, providerInstanceId],
@@ -499,7 +498,6 @@ it.effect.each([
           modelSelection: { ...modelSelection, instanceId: otherInstanceId },
         },
       });
-      // The other thread's item reads its owner from a provider thread stored on another thread.
       assert.deepEqual((yield* store.getThreadProjection(otherThreadId)).providerThreads, []);
       const assertOwners = Effect.fnUntraced(function* (
         targetThreadId: ThreadId,

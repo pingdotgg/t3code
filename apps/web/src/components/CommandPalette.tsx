@@ -676,10 +676,7 @@ function OpenCommandPaletteDialog(props: {
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
   const browseEnvironmentIsDesktopLocal =
     browseEnvironment !== null && isDesktopLocalConnectionTarget(browseEnvironment.entry.target);
-  // Map the browsed desktop-local env to its desktop pool instance id (e.g.
-  // "wsl:ubuntu"). The catalog environmentId is descriptor-derived and won't
-  // route on the desktop side; pickFolder only recognizes the pool id, which
-  // the bootstrap list exposes.
+  // pickFolder routes desktop-local environments by pool id, not catalog environmentId.
   const browseDesktopInstanceId = (() => {
     if (!browseEnvironmentIsDesktopLocal || browseEnvironment === null) {
       return null;
@@ -922,8 +919,6 @@ function OpenCommandPaletteDialog(props: {
     )
     .slice(0, RECENT_THREAD_LIMIT);
 
-  // Stable so the item builders that capture it during render never see the
-  // highlight ref it writes.
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
     browseNavigation.invalidate();
     dispatchSearch({ type: "push", view });
@@ -1509,8 +1504,7 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
 
-  // The parent pushes an intent into this mounted dialog; applying it clears the
-  // parent's intent and may navigate, so it runs after commit but before paint.
+  // Apply intents after commit but before paint because they clear parent state and may navigate.
   const projectThreadItemCount = projectThreadItems.length;
   const applyOpenIntent = useEffectEvent((intent: CommandPaletteOpenIntent) => {
     clearOpenIntent();
@@ -1544,7 +1538,6 @@ function OpenCommandPaletteDialog(props: {
   });
   useLayoutEffect(() => {
     if (openIntent === null) return;
-    // A new-thread-in intent waits until the project items exist.
     if (openIntent.kind === "new-thread-in" && projectThreadItemCount === 0) return;
     // oxlint-disable-next-line react/set-state-in-effect -- applying the intent dispatches to the parent reducer and can navigate, neither of which may run during render.
     applyOpenIntent(openIntent);
@@ -1881,7 +1874,6 @@ function OpenCommandPaletteDialog(props: {
     );
     newProjectSubmittingRef.current = false;
     setIsCreatingNewProject(false);
-    // Same outcome as the old try/finally: the rejection still surfaces to the caller.
     if (created._tag === "Failure") throw squashAtomCommandFailure(created);
     if (created.value) setOpen(false);
   }
@@ -2019,8 +2011,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    // Older servers only offer the blocking clone: the palette has to wait
-    // for git so it can add the project afterwards.
+    // Older servers lack clone tracking; wait for the blocking clone before adding the project.
     if (browseEnvironment?.serverConfig?.environment.capabilities.projectCloneTracking !== true) {
       setIsRemoteProjectCloning(true);
       const cloneResult = await cloneRepository({
@@ -2410,8 +2401,7 @@ function OpenCommandPaletteDialog(props: {
       void copyActiveThreadReference();
       return;
     }
-    // ChatView ignores shortcuts while the palette is open, so handle find here
-    // instead of letting the browser's own Find open.
+    // ChatView ignores shortcuts while the palette is open, so intercept find here.
     if (command === "chat.find" && activeThreadId && !event.nativeEvent.isComposing) {
       event.preventDefault();
       event.stopPropagation();
@@ -2481,8 +2471,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    // Base UI clicks the highlighted row on Enter, which does nothing once the
-    // virtualized list has unmounted it, so run the tracked highlight directly.
+    // Virtualization may unmount the highlighted row; handle Enter directly instead of Base UI's click.
     if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
       const highlightedItem = findHighlightedCommandPaletteItem(
         displayedGroups,
@@ -2539,10 +2528,8 @@ function OpenCommandPaletteDialog(props: {
         browseEnvironmentId === primaryEnvironmentId && browseEnvironmentPlatform === "Linux"
           ? ((await window.desktopBridge?.getWslState().catch(() => null)) ?? null)
           : null;
-      // A WSL-only primary has no secondary bootstrap, so resolve its instance
-      // id from desktop settings. Windows and combo-mode primaries still omit
-      // the target to preserve the native primary picker. The desktop converts
-      // a WSL UNC selection back to a Linux path before returning.
+      // WSL-only primaries need their pool id from desktop settings; the native picker converts WSL UNC
+      // paths.
       const pickerTargetEnvironmentId = resolveProjectPickerTarget({
         browseEnvironmentId,
         primaryEnvironmentId,

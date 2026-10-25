@@ -46,8 +46,6 @@ const withImporter = Effect.fnUntraced(function* () {
   const root = helium.userDataDirectory(context);
   if (root === undefined) throw new Error("Helium has no macOS user-data directory");
   yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
-  // The cookie database is what marks a source as installed, so a fixture
-  // without one is reported as absent before any other check runs.
   yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
 
   const importer = yield* BrowserImport.BrowserImport.pipe(
@@ -96,8 +94,6 @@ describe("BrowserImport.importCookies", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const { importer, root } = yield* withImporter();
-        // The lock Chromium leaves while it is running, dangling target and
-        // all. This must stop the import before it ever asks the keychain.
         yield* fileSystem.symlink("host-that-does-not-exist-1234", `${root}/SingletonLock`);
 
         const error = yield* importer

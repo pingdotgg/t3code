@@ -37,9 +37,6 @@ const state = vi.hoisted(() => ({
   refreshScan: vi.fn(),
 }));
 
-// Session grants come from per-test atoms so a test can revoke or regrant mid-flow; the
-// real scope checks in ~/state/session read them through the app registry, which the
-// wizard is also rendered with.
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
   const actual = await original();
   return {

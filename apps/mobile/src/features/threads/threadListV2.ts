@@ -283,10 +283,7 @@ export interface ThreadListV2Layout {
   readonly snoozedShelfHeaderIndex: number | null;
   readonly settledCount: number;
   readonly settledShelfHeaderIndex: number | null;
-  /**
-   * Callers arm a timeout at this boundary so the list re-partitions the moment
-   * a snooze expires instead of on the next minute tick.
-   */
+  /** Arm a timeout here to repartition at snooze expiry rather than the next minute tick. */
   readonly nextSnoozeWakeAt: string | null;
   /** Threads listed only because their messages match the search. */
   readonly contentOnlyThreadKeys: ReadonlySet<string>;
@@ -300,11 +297,7 @@ export interface ThreadListV2ThreadListItem {
   readonly timeLabel: string;
   readonly snoozePresetMinute: string | undefined;
   readonly showTrailingDivider: boolean;
-  /**
-   * Carried on the item so an outbox write (which never touches the thread
-   * shell) reaches the row through recycled-list equality instead of leaving a
-   * stale icon.
-   */
+  /** Include queued state in item equality; outbox writes do not update thread shells. */
   readonly hasQueuedMessages: boolean;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
@@ -331,11 +324,7 @@ export interface ThreadListV2SnoozedShelfListItem {
   readonly key: "v2-snoozed-shelf";
   readonly count: number;
   readonly expanded: boolean;
-  /**
-   * Carried on the item because a recycled cell ignores the render closure —
-   * without it the header would stay visibly disabled (or enabled too early)
-   * after the preference load lands.
-   */
+  /** Include disabled state in item equality; recycled cells ignore render-closure updates. */
   readonly disabled: boolean;
 }
 
@@ -366,11 +355,7 @@ export function isThreadListV2ListItem(value: {
   );
 }
 
-/**
- * Item objects are rebuilt on every minute tick and every partition run;
- * without this the lists would consider every mounted row changed and re-render
- * all of them (each carrying a swipeable + a PR subscription).
- */
+/** Compare rebuilt items by content so minute ticks and partition runs do not re-render every mounted row. */
 export function threadListV2ListItemsAreEqual(
   previous: ThreadListV2ListItem,
   item: ThreadListV2ListItem,
@@ -469,9 +454,7 @@ export function buildThreadListV2ListItems(input: {
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
         : undefined;
-    // The minute clock belongs on the item, not the list's extraData, so the
-    // recycler's equality can confine the per-minute re-render to rows whose
-    // snooze menu actually shows preset times.
+    // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =
       !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
@@ -556,8 +539,7 @@ export function buildThreadListV2ListItems(input: {
   });
 }
 
-// Shells are immutable and the settled sort reads only their own fields, so an
-// element-identical input has an identical output.
+// Immutable shells and field-only sorting make element-identical inputs produce identical output.
 let lastSettledInput: ReadonlyArray<EnvironmentThreadShell> = [];
 let lastSettledOutput: ReadonlyArray<EnvironmentThreadShell> = [];
 

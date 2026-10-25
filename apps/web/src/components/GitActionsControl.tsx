@@ -1159,9 +1159,7 @@ export default function GitActionsControl({
         terminology: changeRequestTerminology,
       })
     : null;
-  // Follows the live status so the button tracks the tree while the dialog is open. Until the
-  // status loads, keep the option enabled: the server stays the authority and rejects a stale
-  // request with its own error.
+  // Keep enabled until live status loads; the server rejects stale requests.
   const featureBranchUnavailableReason = pendingDefaultBranchAction
     ? resolveFeatureBranchUnavailableReason({
         branchName: pendingDefaultBranchAction.branchName,
@@ -1202,8 +1200,7 @@ export default function GitActionsControl({
     };
   }, [activeEnvironmentId, gitCwd, refreshVcsStatus]);
 
-  // Not an effect event: retained toast actions must stay bound to the checkout and
-  // thread of the render that created them, not follow later selections.
+  // Toast actions must retain their original checkout/thread, so do not use an effect event.
   async function runGitActionWithToast({
     action,
     commitMessage,

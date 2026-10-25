@@ -382,7 +382,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
     row.wordDiffRanges.forEach { range ->
-      // A wrapped row splits the highlight at each visual line boundary.
       lines.starts.forEachIndexed { line, lineStart ->
         val start = max(range.start, lineStart)
         val end = min(range.end, lines.end(line, Int.MAX_VALUE))
@@ -400,7 +399,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     }
   }
 
-  /** Draws a code row's text, or its syntax [tokens] when present, one visual line per start. */
   @Suppress("LongParameterList")
   fun drawCode(
     canvas: Canvas,

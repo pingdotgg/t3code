@@ -43,8 +43,7 @@ import { VoiceInputSession } from "./voiceInputSession";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const VOICE_METERING_INTERVAL_MS = 80;
-// The native constructor takes platform-flattened options, as `useAudioRecorder`
-// builds them with expo-audio's internal `createRecordingOptions`.
+// The native constructor expects platform-flattened options, as built by useAudioRecorder.
 const { ios: IOS_RECORDING_OPTIONS, android: ANDROID_RECORDING_OPTIONS } =
   RecordingPresets.HIGH_QUALITY;
 const VOICE_RECORDING_OPTIONS = {
@@ -60,8 +59,7 @@ async function releaseVoiceRecordingAudio(): Promise<void> {
   try {
     await setAudioModeAsync({ allowsRecording: false });
   } finally {
-    // Expo does not deactivate AVAudioSession when recording stops or its
-    // category changes. Explicit deactivation resumes interrupted app audio.
+    // Expo never deactivates AVAudioSession after recording; do so to resume interrupted audio.
     await setIsAudioActiveAsync(false);
   }
 }
@@ -176,9 +174,7 @@ function useVoiceInputRuntime() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      // iOS reports `inactive` while its permission dialog is open. Only the
-      // real background state cancels preparation; recorder status handles
-      // calls and route interruptions during capture.
+      // iOS permission dialogs report inactive; cancel preparation only on background. Recorder status handles capture interruptions.
       if (nextState === "background") controller.appMovedToBackground();
     });
     return () => subscription.remove();

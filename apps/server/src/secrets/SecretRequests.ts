@@ -1,9 +1,5 @@
-/**
- * The user's answer goes straight to the server's secret store under a
- * one-use SecretRef; orchestration only records the request and its status.
- * A tool that needs the value takes the ref and consumes it, so the value
- * never reaches the transcript, projections, clients, or model context.
- */
+// Answers stay in the secret store behind one-use refs; orchestration records only request status.
+// Consuming tools keep values out of transcripts, projections, clients and model context.
 import {
   CommandId,
   SecretRef,
@@ -96,10 +92,8 @@ const make = Effect.gen(function* () {
       if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
-      // Store first: the card only says saved once the value is kept. Create,
-      // not set: a second answer racing this one must not replace the value.
-      // A value already there on a card still pending is an earlier save whose
-      // record failed and could not be cleaned up; recording it finishes that save.
+      // Create before recording so racing answers cannot overwrite values or show saved before storage.
+      // Existing values on pending cards finish earlier saves whose recording failed.
       if (input.answer.type === "save") {
         const encoded = yield* encodeStored({
           projectId: records.thread.projectId,
@@ -134,8 +128,7 @@ const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
-          // The card still says pending, so the user can save again; the value
-          // stored above would make that retry look already answered.
+          // Clear failed saves so the pending card can be answered again.
           Effect.tapError(() =>
             input.answer.type === "save"
               ? removeLogged(storeName(refFor(salt, input.threadId, item.id)))
@@ -143,9 +136,7 @@ const make = Effect.gen(function* () {
           ),
         );
       if (input.answer.type !== "save") return;
-      // A request is answered once: if the agent's wait closed the card between
-      // the checks above and this record, the record changed nothing. Nobody
-      // will receive the ref, so the value is deleted rather than left to expire.
+      // The wait may have closed the card; delete unrecorded answers because no one receives their refs.
       const recorded = yield* threadManagement
         .getThreadRecords(input.threadId, ["turnItems"], {
           turnItemTypes: ["secret_request"],
@@ -180,8 +171,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // get and remove are separate store calls; one consumer at a time keeps two
-  // concurrent calls from both reading a ref before either deletes it.
+  // Serialize get/remove so concurrent consumers cannot read the same one-use ref.
   const consumeLock = yield* Semaphore.make(1);
   const consume: SecretRequests["Service"]["consume"] = (input) =>
     consumeRef(input).pipe(

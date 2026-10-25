@@ -6,11 +6,8 @@ import { appAtomRegistry } from "./atomRegistry";
 
 const SLOW_RPC_ACK_THRESHOLD_MS = 15_000;
 /**
- * Some requests are slow by design. Provider and server updates shell out to a
- * package manager and only respond once the install finishes. A VCS status
- * refresh fetches, may auto-pull, looks up the pull request, and first waits for
- * any background refresh of the same repository, which often totals over 15s.
- * Warning about those after 15s is noise, so they get a much longer leash.
+ * Updates wait for package installs; VCS refreshes may wait for background work and network calls.
+ * Give these requests longer than the normal 15s warning threshold.
  */
 const LONG_RUNNING_RPC_ACK_THRESHOLD_MS = 120_000;
 const MAX_TRACKED_RPC_ACK_REQUESTS = 256;

@@ -223,8 +223,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         ),
       ).pipe(Effect.flatMap(decodeTokenResponse));
       accessToken = refreshed.access_token;
-      // Each machine's sign-in has its own refresh token, so the Google
-      // account id is what lets clients merge one account across environments.
+      // Use Google account IDs to merge accounts across environments; refresh tokens differ per machine.
       account = yield* request(
         HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
           HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
@@ -246,9 +245,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
-    // Endpoints can report different quota groups (the daily endpoint has
-    // returned the Claude/GPT group without Gemini), so merge every endpoint's
-    // windows. The most-used reading of a bucket wins, as in modelWindows.
+    // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
       parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], E>,

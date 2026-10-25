@@ -28,8 +28,7 @@ export function ProviderSubagentBar(props: {
     0,
   );
 
-  // The label is written from an effect, and live bars tick through DOM
-  // writes, so a running timer never re-renders the chat view.
+  // Write timer labels to the DOM to avoid chat renders on each tick.
   useLayoutEffect(() => {
     const update = () => {
       if (statusRef.current) {

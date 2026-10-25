@@ -46,8 +46,7 @@ export function splitForMiddleTruncate(
   value: string,
   tail?: number,
 ): { head: string; tail: string } | null {
-  // Code points, not UTF-16 units: a cut inside a surrogate pair would render two broken
-  // glyphs where an emoji or a CJK extension character used to be.
+  // Split by code point to avoid cutting surrogate pairs into broken glyphs.
   const chars = Array.from(value);
   let keep = tail ?? DEFAULT_TAIL;
   if (tail === undefined) {

@@ -9,8 +9,7 @@ import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 
 type PullRequestContext = { readonly environmentId: string; readonly projectId: string };
 
-// Route-free so navigator layouts such as the workspace sidebar, which have no
-// route context for useRoute, can open pull requests for any thread.
+// Avoid useRoute so layouts without route context can open any thread's pull requests.
 export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
   const navigation = useNavigation();
   const projects = useProjects();

@@ -1,9 +1,5 @@
-/**
- * The hub binds loopback and is never reachable directly: serve-sim exposes a shell-exec route
- * and serve-emu's action routes are unauthenticated, so the only way to a device stream is
- * through this route, which requires an environment session with read scope (operate scope for
- * input and tuning).
- */
+// Loopback-only hubs expose shell execution or unauthenticated actions.
+// Proxy with environment read scope for streams and operate scope for input and tuning.
 import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -61,8 +57,7 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "dpop",
   "content-length",
   "accept-encoding",
-  // Describes the client's HTTPS hop to T3. The hub builds its own origin from it and then
-  // rejects the loopback Origin set below, so every mutation fails over T3 Connect.
+  // The client's HTTPS hop makes the hub reject our loopback Origin over T3 Connect.
   "x-forwarded-proto",
 ]);
 
@@ -94,8 +89,6 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
     Effect.gen(function* () {
       const writeToClient = yield* client.writer;
       const writeToUpstream = yield* upstream.writer;
-      // Whichever side closes first ends the other via scope teardown: a close
-      // fails the pull with a SocketError, which loses the race.
       return yield* Effect.raceFirst(
         pumpFrames(upstream, writeToClient),
         pumpFrames(client, writeToUpstream),
@@ -189,7 +182,7 @@ const handler = Effect.gen(function* () {
   if (!ready) {
     return HttpServerResponse.text("Device hub is not running", { status: 503 });
   }
-  // The ticket authenticates here and must not travel on to the hub.
+  // Consume the auth ticket here; never forward it to the hub.
   const upstreamSearch = new URLSearchParams(url.value.search);
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");

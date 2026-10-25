@@ -36,9 +36,7 @@ export function resolveComposerControlledEventCount(
     }
   }
 
-  // A value emitted by native paired with a different selection is an
-  // intermediate React render. Keep it behind the native revision so it
-  // cannot move the caret while newer keystrokes are being processed.
+  // Mismatched native text/selection pairs are intermediate renders; keep their revision behind to avoid moving the caret.
   if (newestValueEventCount !== null && mostRecentEventCount > 0) {
     return Math.min(newestValueEventCount, mostRecentEventCount - 1);
   }
@@ -46,11 +44,7 @@ export function resolveComposerControlledEventCount(
   return mostRecentEventCount;
 }
 
-// A snapshot without a selection describes a state the editor applied itself
-// (an assumed controlled document, where the native side may have bounded the
-// caret). Echo detection must not reuse this wildcard: an echo payload
-// serializes `selection: null`, which would drop that caret move instead of
-// applying it.
+// Null-selection snapshots allow assumed bounded carets; echoes must not use that wildcard or drop caret moves.
 function snapshotSelectionMatches(
   snapshot: ComposerNativeEventSnapshot,
   selection: ComposerEditorSelection,
@@ -82,13 +76,7 @@ export function isComposerNativeEcho(
   return false;
 }
 
-/**
- * Records that a parent-driven controlled document was handed to the native
- * editor. From that point the acknowledged snapshot history describes a
- * superseded native state, so it is replaced with the assumed applied state; a
- * later parent update back to a previously acknowledged value must classify as
- * a fresh edit, not as a native echo the editor would drop.
- */
+/** Replace history with assumed controlled state so returning to old native values counts as fresh parent edits. */
 export function assumeComposerControlledState(
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
   eventCount: number,
@@ -104,10 +92,7 @@ export function pruneAcknowledgedComposerNativeEvents(
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
   acknowledgedEventCount: number,
 ): ComposerNativeEventSnapshot[] {
-  // The newest acknowledged snapshot must survive pruning: it is what lets a
-  // later, unrelated re-render classify the settled composer state as a native
-  // echo instead of a parent-driven edit that would re-control the caret (and
-  // reset the keyboard's autocorrect context on iOS).
+  // Retain the latest acknowledgement so unrelated renders stay echoes and do not reset caret or iOS autocorrect.
   let latestAcknowledgedIndex = -1;
   for (let index = snapshots.length - 1; index >= 0; index -= 1) {
     const snapshot = snapshots[index];

@@ -189,8 +189,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
 
       const stat = yield* fileSystem.stat(candidate).pipe(Effect.option);
       if (Option.isSome(stat)) {
-        // Directories are executable-looking on win32, where the exec-bit test
-        // below is skipped, and only fail later at spawn.
+        // Windows skips exec-bit checks, so directories would otherwise pass until spawn.
         const unusable =
           stat.value.type === "Directory" ||
           (platform !== "win32" && (stat.value.mode & 0o111) === 0);
