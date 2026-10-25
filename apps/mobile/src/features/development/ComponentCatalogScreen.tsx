@@ -4,6 +4,7 @@ import { Progress } from "../../components/ui/Progress";
 import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { View, type TextInputInstance } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText, AppTextInput } from "../../components/ui/AppText";
 import { Sheet } from "../../components/ui/Sheet";
@@ -34,6 +35,7 @@ const CHOICES = [
 ];
 
 export function ComponentCatalogScreen() {
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const appearance = useAppearancePreferences();
   const [page, setPage] = useState("controls");
@@ -204,22 +206,7 @@ export function ComponentCatalogScreen() {
           <View className="gap-3">
             <AppText className="text-lg font-t3-semibold">Feedback and presentation</AppText>
             <Notice message="This action could not finish. Try again." tone="danger" />
-            {notice ? (
-              <Toast
-                message="Changes are ready to review."
-                tone="success"
-                action={{
-                  label: "Undo",
-                  onPress: () => {
-                    setNotice(false);
-                    setText("Restored example");
-                  },
-                }}
-                onDismiss={() => setNotice(false)}
-              />
-            ) : (
-              <Button label="Show notice" onPress={announceAction} />
-            )}
+            <Button label="Show notice" onPress={announceAction} />
             <View className="flex-row flex-wrap gap-2">
               <Button label="Sheet" onPress={() => setSheet(true)} />
               <Button label="Dialog" onPress={confirm} />
@@ -275,6 +262,28 @@ export function ComponentCatalogScreen() {
           </View>
         ) : null}
       </ScreenScrollView>
+      {page === "feedback" && notice ? (
+        <View
+          collapsable={false}
+          className="absolute inset-x-3 z-[100]"
+          style={{ bottom: insets.bottom + 12 }}
+          pointerEvents="box-none"
+        >
+          <Toast
+            message="Changes are ready to review."
+            tone="success"
+            dismissMode="swipe"
+            action={{
+              label: "Undo",
+              onPress: () => {
+                setNotice(false);
+                setText("Restored example");
+              },
+            }}
+            onDismiss={() => setNotice(false)}
+          />
+        </View>
+      ) : null}
       {sheet ? (
         <Sheet title="Example sheet" onClose={() => setSheet(false)}>
           <ScreenScrollView
