@@ -6,11 +6,14 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { AtomRegistry } from "effect/reactivity";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
 import * as ManagedRelay from "./managedRelay.ts";
 import {
+  createManagedRelayQueryManager,
   createManagedRelaySession,
   deregisterManagedRelayEnvironment,
   ManagedRelaySessionError,
@@ -95,6 +98,49 @@ function clerkToken(expiresAtSeconds: number): string {
 
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
+
+  it.effect("logs a failed device listing once however many readers mount it", () =>
+    Effect.gen(function* () {
+      const logs: Array<unknown> = [];
+      const runtime = Atom.runtime(
+        Layer.mergeAll(
+          Layer.succeed(
+            ManagedRelay.ManagedRelayClient,
+            createClient({
+              listDevices: () =>
+                Effect.fail(
+                  new ManagedRelay.ManagedRelayRequestFailedError({
+                    action: "list relay client devices",
+                    cause: new Error("relay down"),
+                  }),
+                ),
+            }),
+          ),
+          Logger.layer([Logger.make(({ message }) => logs.push(message))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+      const manager = createManagedRelayQueryManager(runtime);
+      setSession();
+      const atom = manager.devicesAtom("account-1");
+
+      const failed = Promise.withResolvers<void>();
+      const readers = [0, 1].map(() =>
+        registry.subscribe(
+          atom,
+          (result) => {
+            if (result._tag === "Failure") failed.resolve();
+          },
+          { immediate: true },
+        ),
+      );
+      yield* Effect.promise(() => failed.promise);
+      for (const unsubscribe of readers) unsubscribe();
+
+      expect(logs).toEqual([["[t3-cloud] Relay device listing failed"]]);
+    }),
+  );
 
   it.effect("rejects deregistration after the account changes", () =>
     Effect.gen(function* () {

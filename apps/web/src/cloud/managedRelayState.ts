@@ -19,7 +19,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect } from "react";
 
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -67,14 +66,6 @@ export function useManagedRelayEnvironments() {
     : EMPTY_ENVIRONMENTS_ATOM;
   const result = useAtomValue(atom);
   const snapshot = readManagedRelaySnapshotState(result);
-  useEffect(() => {
-    if (snapshot.error) {
-      console.error("[t3-cloud] Relay environment listing failed", {
-        message: snapshot.error,
-        traceId: snapshot.errorTraceId,
-      });
-    }
-  }, [snapshot.error, snapshot.errorTraceId]);
   const refresh = () => {
     if (accountId) {
       managedRelayQueryManager.refreshEnvironments(appAtomRegistry, accountId);
@@ -94,14 +85,6 @@ export function useManagedRelayDevices() {
   const atom = accountId ? managedRelayQueryManager.devicesAtom(accountId) : EMPTY_DEVICES_ATOM;
   const result = useAtomValue(atom);
   const snapshot = readManagedRelaySnapshotState(result);
-  useEffect(() => {
-    if (snapshot.error) {
-      console.error("[t3-cloud] Relay device listing failed", {
-        message: snapshot.error,
-        traceId: snapshot.errorTraceId,
-      });
-    }
-  }, [snapshot.error, snapshot.errorTraceId]);
   const refresh = () => {
     if (accountId) {
       managedRelayQueryManager.refreshDevices(appAtomRegistry, accountId);

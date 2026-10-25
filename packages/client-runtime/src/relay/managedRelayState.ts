@@ -278,28 +278,48 @@ function validateEnvironmentStatus(
   return Effect.succeed(status);
 }
 
+function describeManagedRelayFailure(cause: Cause.Cause<unknown>): {
+  readonly message: string;
+  readonly traceId: string | null;
+} {
+  const error = Cause.squash(cause);
+  return {
+    message:
+      isManagedRelayRequestFailedError(error) && error.relayError
+        ? relayProtectedErrorMessage(error.relayError)
+        : error instanceof Error
+          ? error.message
+          : "Could not load T3 Connect data.",
+    traceId: findErrorTraceId(error),
+  };
+}
+
 export function readManagedRelaySnapshotState<A>(
   result: AsyncResult.AsyncResult<A, unknown>,
 ): ManagedRelaySnapshotState<A> {
-  let error: string | null = null;
-  let errorTraceId: string | null = null;
-  if (result._tag === "Failure") {
-    const cause = Cause.squash(result.cause);
-    error =
-      isManagedRelayRequestFailedError(cause) && cause.relayError
-        ? relayProtectedErrorMessage(cause.relayError)
-        : cause instanceof Error
-          ? cause.message
-          : "Could not load T3 Connect data.";
-    errorTraceId = findErrorTraceId(cause);
-  }
+  const failure = result._tag === "Failure" ? describeManagedRelayFailure(result.cause) : null;
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
-    error,
-    errorTraceId,
+    error: failure?.message ?? null,
+    errorTraceId: failure?.traceId ?? null,
     isPending: result.waiting,
   };
 }
+
+// Logged where the listing runs so each failed fetch reports once, however many
+// components read the atom.
+const logListingFailure =
+  (label: string) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    self.pipe(
+      Effect.tapCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+        const { message, traceId } = describeManagedRelayFailure(cause);
+        return Effect.logError(`[t3-cloud] Relay ${label} listing failed`).pipe(
+          Effect.annotateLogs({ message, traceId }),
+        );
+      }),
+    );
 
 export function createManagedRelayQueryManager(
   runtime: Atom.AtomRuntime<ManagedRelay.ManagedRelayClient>,
@@ -349,7 +369,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "relay-request" },
             relay.listEnvironments({ clerkToken }),
           );
-        }),
+        }).pipe(logListingFailure("environment")),
       )
       .pipe(
         Atom.swr({ staleTime, revalidateOnMount: true }),
@@ -372,7 +392,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "relay-request" },
             relay.listDevices({ clerkToken }),
           );
-        }),
+        }).pipe(logListingFailure("device")),
       )
       .pipe(
         Atom.swr({ staleTime, revalidateOnMount: true }),

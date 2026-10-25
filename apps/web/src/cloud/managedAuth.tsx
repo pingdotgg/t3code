@@ -1,17 +1,20 @@
-import { useAuth } from "@clerk/react";
-import { ManagedRelay, setManagedRelaySession } from "@t3tools/client-runtime/relay";
+import { useClerk } from "@clerk/react";
+import {
+  createCloudAccountService,
+  ManagedRelay,
+  setManagedRelaySession,
+} from "@t3tools/client-runtime/relay";
 import {
   reportAtomCommandResult,
+  runAtomCommand,
   settleAsyncResult,
-  settlePromise,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { useAtomCommand } from "../state/use-atom-command";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 export function deactivateManagedRelayAuthentication(): void {
@@ -28,81 +31,40 @@ export function activateManagedRelayAuthentication(
   });
 }
 
+type ClerkInstance = ReturnType<typeof useClerk>;
+
+function clerkTokenReader(clerk: ClerkInstance): () => Promise<string | null> {
+  return async () =>
+    clerk.session ? await clerk.session.getToken(resolveRelayClerkTokenOptions()) : null;
+}
+
+const managedRelayAccountService = createCloudAccountService<ClerkInstance>({
+  deactivate: deactivateManagedRelayAuthentication,
+  detach: deactivateManagedRelayAuthentication,
+  cleanUp: async () => {
+    const results = await Promise.all([
+      runAtomCommand(appAtomRegistry, environmentCatalog.removeRelayEnvironments, undefined, {
+        reportFailure: false,
+        reportDefect: false,
+      }),
+      settleAsyncResult(() =>
+        runtime.runPromiseExit(
+          ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+        ),
+      ),
+    ]);
+    for (const result of results) {
+      reportAtomCommandResult(result, { label: "cloud account cleanup" });
+    }
+  },
+  activate: ({ source, accountId }) =>
+    activateManagedRelayAuthentication(accountId, clerkTokenReader(source)),
+});
+
 export function ManagedRelayAuthProvider({ children }: { readonly children: ReactNode }) {
-  const { getToken, isLoaded, isSignedIn, userId } = useAuth({
-    treatPendingAsSignedOut: false,
-  });
-  const removeRelayEnvironments = useAtomCommand(environmentCatalog.removeRelayEnvironments, {
-    reportFailure: false,
-    reportDefect: false,
-  });
-  const observedAccountRef = useRef<string | null | undefined>(undefined);
-  const accountTransitionRef = useRef<Promise<void> | null>(null);
-
-  useEffect(() => {
-    if (!isLoaded) {
-      return;
-    }
-
-    let cancelled = false;
-    const previousAccount = observedAccountRef.current;
-    const nextAccount = isSignedIn && userId ? userId : null;
-    observedAccountRef.current = nextAccount;
-
-    const queueAccountCleanup = () => {
-      const previousTransition = accountTransitionRef.current ?? Promise.resolve();
-      accountTransitionRef.current = previousTransition.then(async () => {
-        const results = await Promise.all([
-          removeRelayEnvironments(),
-          settleAsyncResult(() =>
-            runtime.runPromiseExit(
-              ManagedRelay.ManagedRelayClient.pipe(
-                Effect.flatMap((client) => client.resetTokenCache),
-              ),
-            ),
-          ),
-        ]);
-        for (const result of results) {
-          reportAtomCommandResult(result, { label: "cloud account cleanup" });
-        }
-      });
-      return accountTransitionRef.current;
-    };
-
-    if (!isSignedIn || !userId) {
-      deactivateManagedRelayAuthentication();
-      if (previousAccount !== null) {
-        void queueAccountCleanup();
-      }
-    } else {
-      const tokenProvider = () => getToken(resolveRelayClerkTokenOptions());
-      const activateSession = () => {
-        if (!cancelled) {
-          activateManagedRelayAuthentication(userId, tokenProvider);
-        }
-      };
-      const activateAfterTransition = (transition: Promise<void>) => {
-        void (async () => {
-          const result = await settlePromise(async () => {
-            await transition;
-            activateSession();
-          });
-          reportAtomCommandResult(result, { label: "cloud account activation" });
-        })();
-      };
-      if (previousAccount !== undefined && previousAccount !== null && previousAccount !== userId) {
-        deactivateManagedRelayAuthentication();
-        activateAfterTransition(queueAccountCleanup());
-      } else {
-        activateAfterTransition(accountTransitionRef.current ?? Promise.resolve());
-      }
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [getToken, isLoaded, isSignedIn, removeRelayEnvironments, userId]);
-
-  useEffect(() => () => deactivateManagedRelayAuthentication(), []);
-
+  // ClerkProvider creates the Clerk instance and owns its lifetime, so the
+  // account service observes it for as long as this provider is mounted.
+  const clerk = useClerk();
+  useEffect(() => managedRelayAccountService.attach(clerk), [clerk]);
   return children;
 }
