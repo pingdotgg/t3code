@@ -757,6 +757,16 @@ export const OrchestrationV2SubagentWorkflow = Schema.Struct({
 });
 export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
 
+/**
+ * Wire-only. Set for clients that opted in with `acceptDedupedBodies` or `dedupeBodies=1` when the
+ * marked field was blanked because the client already holds the same value: in the record it
+ * received earlier on the same response or stream. Restore with
+ * `@t3tools/shared/orchestrationV2DedupedBodies` before use; never store or forward a marked
+ * value. Clients that opted in restore only these fields, so blanking another field needs a new
+ * opt-in.
+ */
+const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -791,6 +801,9 @@ export const OrchestrationV2Subagent = Schema.Struct({
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
+  /** Same as this subagent's previous record on this stream: its snapshot or `subagent.updated`. */
+  promptOmitted: DedupedBodyMarker,
+  resultOmitted: DedupedBodyMarker,
 });
 export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
 
@@ -1429,6 +1442,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
+    /** Same as the text of message `messageId`. */
+    textOmitted: DedupedBodyMarker,
     context: Schema.optional(OrchestrationMessageContext),
     attachments: Schema.Array(ChatAttachment),
   }),
@@ -1437,6 +1452,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("assistant_message"),
     messageId: MessageId,
     text: Schema.String,
+    textOmitted: DedupedBodyMarker,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,
   }),
@@ -1520,6 +1536,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     checkpointId: CheckpointId,
     scopeId: CheckpointScopeId,
     files: Schema.Array(OrchestrationV2CheckpointFileSummary),
+    /** Same as the files of checkpoint `checkpointId`. */
+    filesOmitted: DedupedBodyMarker,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1607,6 +1625,9 @@ export const OrchestrationV2TurnItem = Schema.Union([
     prompt: Schema.String,
     progress: Schema.optional(Schema.String),
     result: Schema.NullOr(Schema.String),
+    /** Same as the prompt and result of subagent `subagentId`. */
+    promptOmitted: DedupedBodyMarker,
+    resultOmitted: DedupedBodyMarker,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -3424,6 +3445,8 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
   acceptCompactTurnItems: Schema.optionalKey(Schema.Boolean),
+  /** The client restores `*Omitted` bodies from records it already holds. */
+  acceptDedupedBodies: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
 

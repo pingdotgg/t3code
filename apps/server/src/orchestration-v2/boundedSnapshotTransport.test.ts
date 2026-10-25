@@ -2,6 +2,9 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
@@ -20,6 +23,8 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2StoredEvent,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -59,8 +64,10 @@ const projectId = ProjectId.make("project:compact-transport");
 const PARENT = ThreadId.make("thread:compact-transport:parent");
 const FORK = ThreadId.make("thread:compact-transport:fork");
 const LONG = ThreadId.make("thread:compact-transport:long");
+const BODIES = ThreadId.make("thread:compact-transport:bodies");
 const parentRun = RunId.make("run:compact-transport:parent");
 const longRun = RunId.make("run:compact-transport:long");
+const bodiesRun = RunId.make("run:compact-transport:bodies");
 
 const store = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -74,7 +81,8 @@ const management = Layer.unwrap(
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
-      streamStoredEventsFrom: () => Stream.empty,
+      streamStoredEventsFrom: (input) =>
+        input?.threadId === BODIES ? Stream.fromIterable(bodiesLiveTail()) : Stream.empty,
     });
   }),
 );
@@ -203,6 +211,157 @@ function itemUpdated(
   };
 }
 
+// A conversation turn whose records (message, checkpoint, subagent) repeat in its turn items.
+function bodiesEvents(at: DateTime.Utc): OrchestrationV2DomainEvent[] {
+  const event = (key: string, rest: Pick<OrchestrationV2DomainEvent, "type" | "payload">) =>
+    ({
+      id: EventId.make(`event:${BODIES}:${key}`),
+      threadId: BODIES,
+      runId: bodiesRun,
+      occurredAt: at,
+      ...rest,
+    }) as OrchestrationV2DomainEvent;
+  const item = (key: string, ordinal: number, fields: object) =>
+    event(`${key}-item`, {
+      type: "turn-item.updated",
+      payload: {
+        id: TurnItemId.make(`turn-item:${BODIES}:${key}`),
+        threadId: BODIES,
+        runId: bodiesRun,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: null,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+        ...fields,
+      } as OrchestrationV2TurnItem,
+    });
+  const message = (key: string, role: "user" | "assistant", text: string) =>
+    event(`${key}-message`, {
+      type: "message.updated",
+      payload: {
+        id: MessageId.make(`message:${key === "prompt" ? bodiesRun : `${BODIES}:${key}`}`),
+        threadId: BODIES,
+        runId: bodiesRun,
+        nodeId: null,
+        role,
+        text,
+        attachments: [],
+        streaming: false,
+        createdBy: role === "user" ? "user" : "agent",
+        creationSource: role === "user" ? "web" : "provider",
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+  const files = [{ path: "src/index.ts", kind: "modified", additions: 4, deletions: 2 }];
+  return [
+    threadCreated(BODIES, at),
+    runCreated(BODIES, bodiesRun, at),
+    message("prompt", "user", "Please fix the build."),
+    item("prompt", 1, {
+      type: "user_message",
+      messageId: MessageId.make(`message:${bodiesRun}`),
+      inputIntent: "turn_start",
+      text: "Please fix the build.",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    }),
+    event("task-record", { type: "subagent.updated", payload: bodiesSubagent(at) }),
+    item("task", 2, {
+      type: "subagent",
+      subagentId: bodiesSubagent(at).id,
+      origin: "app_owned",
+      driver: "codex",
+      providerInstanceId: provider,
+      childThreadId: null,
+      prompt: bodiesSubagent(at).prompt,
+      result: bodiesSubagent(at).result,
+    }),
+    message("reply", "assistant", "Fixed the import."),
+    item("reply", 3, {
+      type: "assistant_message",
+      messageId: MessageId.make(`message:${BODIES}:reply`),
+      text: "Fixed the import.",
+      streaming: false,
+    }),
+    event("checkpoint-record", {
+      type: "checkpoint.captured",
+      payload: {
+        id: CheckpointId.make(`checkpoint:${BODIES}`),
+        threadId: BODIES,
+        scopeId: CheckpointScopeId.make(`scope:${BODIES}`),
+        runId: bodiesRun,
+        nodeId: NodeId.make(`node:${bodiesRun}`),
+        parentCheckpointId: null,
+        ordinalWithinScope: 1,
+        appRunOrdinal: 1,
+        ref: CheckpointRef.make(`refs/t3/${BODIES}`),
+        status: "ready",
+        files,
+        capturedAt: at,
+      },
+    }),
+    item("checkpoint", 4, {
+      type: "checkpoint",
+      checkpointId: CheckpointId.make(`checkpoint:${BODIES}`),
+      scopeId: CheckpointScopeId.make(`scope:${BODIES}`),
+      files,
+    }),
+  ];
+}
+
+function bodiesSubagent(at: DateTime.Utc): OrchestrationV2Subagent {
+  return {
+    id: NodeId.make(`node:${BODIES}:task`),
+    threadId: BODIES,
+    runId: bodiesRun,
+    parentNodeId: NodeId.make(`node:${bodiesRun}`),
+    origin: "app_owned",
+    createdBy: "agent",
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: provider,
+    providerThreadId: null,
+    childThreadId: null,
+    nativeTaskRef: null,
+    prompt: "Find the failing import.",
+    title: null,
+    model: null,
+    status: "completed",
+    result: "It was src/index.ts.",
+    startedAt: at,
+    completedAt: at,
+    updatedAt: at,
+  };
+}
+
+// Live after the snapshot: a reply pair, then a subagent update that repeats its prompt.
+function bodiesLiveTail(): OrchestrationV2StoredEvent[] {
+  const at = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+  const [reply, replyItem] = bodiesEvents(at).filter((event) =>
+    String(event.id).includes(":reply-"),
+  );
+  return [
+    reply!,
+    replyItem!,
+    {
+      id: EventId.make(`event:${BODIES}:task-progress`),
+      type: "subagent.updated",
+      threadId: BODIES,
+      runId: bodiesRun,
+      occurredAt: at,
+      payload: { ...bodiesSubagent(at), progress: "Checked the build." },
+    } as OrchestrationV2DomainEvent,
+  ].map((event, index) => ({ sequence: 1_000 + index, commandId: null, event }));
+}
+
 const seed = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const at = yield* DateTime.now;
@@ -219,6 +378,7 @@ const seed = Effect.gen(function* () {
       itemUpdated(LONG, longRun, `tool-${index}`, index + 2, at),
     ),
     itemUpdated(LONG, longRun, "result", 92, at, "run_interrupt_result"),
+    ...bodiesEvents(at),
   ];
   for (const event of events) yield* projections.apply(event);
 });
@@ -363,6 +523,72 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
           { ...legacy.decoded, turnItemsOmitLocalVisible: undefined },
         );
       }),
+    );
+  });
+
+  describe("deduped bodies", () => {
+    const markers = ["textOmitted", "filesOmitted", "promptOmitted", "resultOmitted"];
+
+    it.effect(
+      "HTTP: opted-in snapshots blank repeated bodies and restore to the same snapshot",
+      () =>
+        withHttp(async (get) => {
+          const base = `/api/orchestration/threads/${encodeURIComponent(BODIES)}/bounded`;
+          const compactBody = await (await get(`${base}?compactTurnItems=1`)).text();
+          const dedupedBody = await (await get(`${base}?compactTurnItems=1&dedupeBodies=1`)).text();
+
+          for (const marker of markers) {
+            assert.notInclude(compactBody, marker);
+            assert.include(dedupedBody, marker);
+          }
+          assert.isBelow(dedupedBody.length, compactBody.length);
+          assert.deepStrictEqual(
+            boundedSnapshotProjection(decodeBounded(dedupedBody)),
+            boundedSnapshotProjection(decodeBounded(compactBody)),
+          );
+        }),
+    );
+
+    it.effect(
+      "WS: bounded and full snapshots restore, and the live tail sends each body once",
+      () =>
+        Effect.gen(function* () {
+          const subscribe = (
+            input: Partial<Parameters<typeof subscribeOrchestrationV2Thread>[0]>,
+          ) =>
+            subscribeOrchestrationV2Thread({ threadId: BODIES, ...input }).pipe(
+              Effect.flatMap(Stream.runCollect),
+              Effect.map((items) =>
+                Array.from(items, (item) =>
+                  decodeStreamItem(JSON.parse(JSON.stringify(encodeStreamItem(item)))),
+                ),
+              ),
+            );
+          const bounded = { acceptBoundedSnapshot: true, acceptCompactTurnItems: true };
+          for (const mode of [bounded, {}]) {
+            const [plainSnapshot, ...plainTail] = yield* subscribe(mode);
+            const [dedupedSnapshot, ...dedupedTail] = yield* subscribe({
+              ...mode,
+              acceptDedupedBodies: true,
+            });
+            if (plainSnapshot?.kind !== "snapshot" || dedupedSnapshot?.kind !== "snapshot") {
+              throw new Error("No snapshot");
+            }
+            assert.deepStrictEqual(
+              boundedSnapshotProjection(dedupedSnapshot),
+              boundedSnapshotProjection(plainSnapshot),
+            );
+            const payloads = (tail: typeof plainTail) =>
+              tail.map((item) => (item.kind === "event" ? item.event.payload : null));
+            const [reply, replyItem, progress] = payloads(plainTail);
+            assert.deepStrictEqual(payloads(dedupedTail), [
+              reply,
+              { ...replyItem, text: "", textOmitted: true },
+              // The snapshot delivered this subagent's record, so its unchanged bodies repeat.
+              { ...progress, prompt: "", promptOmitted: true, result: null, resultOmitted: true },
+            ]);
+          }
+        }),
     );
   });
 });

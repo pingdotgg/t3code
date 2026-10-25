@@ -63,6 +63,7 @@ import {
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadStreamItem,
   type ApplicationStoredEvent,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
@@ -157,9 +158,11 @@ import {
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
 } from "./orchestration-v2/threadHistoryPaging.ts";
 import {
+  makeLiveBodyDeduper,
   projectDomainEventForWire,
   projectThreadProjectionForWire,
 } from "./orchestration-v2/WireProjection.ts";
+import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
@@ -788,8 +791,13 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly requestCompletionMarker?: boolean;
     readonly acceptBoundedSnapshot?: boolean;
     readonly acceptCompactTurnItems?: boolean;
+    readonly acceptDedupedBodies?: boolean;
   }) {
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const dedupeBodies = input.acceptDedupedBodies === true;
+    // Replay, snapshot, and live tail share one deduper: it must see every delivered record.
+    const withLiveDedupe = <E, R>(stream: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>) =>
+      dedupeBodies ? Stream.suspend(() => Stream.map(stream, makeLiveBodyDeduper())) : stream;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
 
     yield* Effect.annotateCurrentSpan({
@@ -888,15 +896,21 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         ? buildBoundedThreadStreamSnapshot({
             ...snapshot,
             compactTurnItems: input.acceptCompactTurnItems === true,
+            dedupeBodies,
           })
-        : {
-            kind: "snapshot" as const,
-            snapshotSequence,
-            projection: projectThreadProjectionForWire(snapshot.projection),
-          };
-      return Stream.concat(
-        Stream.concat(rpcInitialItems([snapshotItem]), completionMarker),
-        eventStreamFrom(snapshotSequence),
+        : (() => {
+            const projection = projectThreadProjectionForWire(snapshot.projection);
+            return {
+              kind: "snapshot" as const,
+              snapshotSequence,
+              projection: dedupeBodies ? dedupeSnapshotBodies(projection) : projection,
+            };
+          })();
+      return withLiveDedupe(
+        Stream.concat(
+          Stream.concat(rpcInitialItems([snapshotItem]), completionMarker),
+          eventStreamFrom(snapshotSequence),
+        ),
       );
     });
 
@@ -967,9 +981,11 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (plan.mode === "snapshot") {
         return yield* snapshotThenLive();
       }
-      return Stream.concat(
-        Stream.concat(rpcInitialItems(replay), completionMarker),
-        eventStreamFrom(highWater),
+      return withLiveDedupe(
+        Stream.concat(
+          Stream.concat(rpcInitialItems(replay), completionMarker),
+          eventStreamFrom(highWater),
+        ),
       );
     }
 

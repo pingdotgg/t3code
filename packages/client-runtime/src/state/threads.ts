@@ -963,6 +963,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ...(acceptBoundedSnapshot
             ? { acceptBoundedSnapshot: true as const, acceptCompactTurnItems: true as const }
             : {}),
+          acceptDedupedBodies: true as const,
         };
       }),
       {
