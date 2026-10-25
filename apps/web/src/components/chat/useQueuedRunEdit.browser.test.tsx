@@ -126,6 +126,16 @@ async function beginChangedEdit(hook: { current: HookResult | null }) {
   );
 }
 
+const savedContent = (prompt: string) => ({
+  prompt,
+  images: [],
+  files: [],
+  terminalContexts: [],
+  reviewComments: [],
+  previewAnnotations: [],
+  threadContexts: [],
+});
+
 const promptOf = (ref: ScopedThreadRef) =>
   useComposerDraftStore.getState().getComposerDraft(ref)?.prompt ?? "";
 
@@ -169,18 +179,7 @@ describe("useQueuedRunEdit", () => {
     await beginChangedEdit(hook);
 
     // Not inside act(): act would hold the projection update until the save settles.
-    const saved = requireHook(hook).saveEdit(
-      {
-        prompt: "changed",
-        images: [],
-        files: [],
-        terminalContexts: [],
-        reviewComments: [],
-        previewAnnotations: [],
-        threadContexts: [],
-      },
-      () => {},
-    );
+    const saved = requireHook(hook).saveEdit(savedContent("changed"), () => {});
     await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
     // The server applied the edit and then started the run; the projection
     // reports the start before the edit's acknowledgement arrives.
@@ -191,5 +190,38 @@ describe("useQueuedRunEdit", () => {
 
     expect(requireHook(hook).isEditing).toBe(false);
     expect(promptOf(THREAD_A)).toBe("");
+  });
+
+  it("leaves a newer edit alone when a save from before navigation finishes", async () => {
+    const { hook } = setup();
+    let finishSave: (result: { readonly _tag: "Success" }) => void = () => {};
+    mocks.editQueuedRun.mockReturnValue(
+      new Promise((resolve) => {
+        finishSave = resolve;
+      }),
+    );
+    await using screen = await render(view(THREAD_A, "queued", hook));
+    await beginChangedEdit(hook);
+    // Not inside act(): act would hold the rerenders until the save settles.
+    const saved = requireHook(hook).saveEdit(savedContent("changed"), () => {});
+    await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+
+    // Leaving the thread unmounts the chat view; coming back mounts a new one.
+    await screen.rerender(<AppAtomRegistryProvider>{null}</AppAtomRegistryProvider>);
+    await screen.rerender(view(THREAD_A, "queued", hook));
+    expect(requireHook(hook).isSaving).toBe(true);
+    await beginChangedEdit(hook);
+    await act(() =>
+      useComposerDraftStore.getState().setPrompt(requireHook(hook).draftTarget, "newer"),
+    );
+
+    finishSave({ _tag: "Success" });
+    await act(() => saved);
+
+    expect(requireHook(hook).editingRunId).toBe(RUN);
+    expect(requireHook(hook).isSaving).toBe(false);
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt,
+    ).toBe("newer");
   });
 });

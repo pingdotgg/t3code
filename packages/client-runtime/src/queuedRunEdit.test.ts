@@ -78,11 +78,48 @@ describe("makeQueuedRunEditStore", () => {
   it("holds the exit during a save and replays it when the save fails", () => {
     const { registry, runs, store, exits, begin } = setup();
     begin();
-    store.suspendExitWatch("env:thread");
+    const finishSave = store.startSave("env:thread");
     registry.set(runs, []);
     expect(exits).toEqual([]);
-    store.resumeExitWatch("env:thread");
+    expect(finishSave?.(false)).toBe(true);
     expect(exits).toHaveLength(1);
+  });
+
+  it("allows one save at a time and ends the edit when it succeeds", () => {
+    const { registry, store, begin } = setup();
+    begin();
+    const finishSave = store.startSave("env:thread");
+    expect(registry.get(store.savingAtom)).toEqual({ "env:thread": true });
+    expect(store.startSave("env:thread")).toBeNull();
+    expect(finishSave?.(true)).toBe(true);
+    expect(store.get("env:thread")).toBeNull();
+    expect(registry.get(store.savingAtom)).toEqual({});
+  });
+
+  it("leaves an edit begun again during a save to that edit", () => {
+    const { registry, runs, store, exits, begin } = setup();
+    begin();
+    const finishStale = store.startSave("env:thread");
+    begin();
+    store.update("env:thread", (edit) => ({ ...edit, text: "newer" }));
+    expect(registry.get(store.savingAtom)).toEqual({});
+
+    expect(finishStale?.(true)).toBe(false);
+    expect(finishStale?.(false)).toBe(false);
+    expect(store.get("env:thread")).toEqual({ runId: RUN, text: "newer" });
+    registry.set(runs, []);
+    expect(exits).toEqual([{ threadKey: "env:thread", text: "newer" }]);
+  });
+
+  it("does not revive a cancelled edit when its save fails", () => {
+    const { registry, runs, store, exits, begin } = setup();
+    begin();
+    const finishSave = store.startSave("env:thread");
+    store.end("env:thread");
+    expect(finishSave?.(false)).toBe(false);
+    registry.set(runs, []);
+    expect(exits).toEqual([]);
+    expect(registry.get(store.savingAtom)).toEqual({});
   });
 
   // The runs read the thread's detail, a live server subscription; a thread
@@ -122,10 +159,10 @@ describe("makeQueuedRunEditStore", () => {
     expect(mounted).toBe(0);
 
     begin();
-    store.suspendExitWatch("env:thread");
+    const finishSave = store.startSave("env:thread");
     settle();
     expect(mounted).toBe(0);
-    store.resumeExitWatch("env:thread");
+    finishSave?.(false);
     expect(mounted).toBe(1);
 
     registry.set(source, []);
