@@ -15,6 +15,33 @@ const project = {
 };
 
 describe("resolveLinkPullRequestInput", () => {
+  it.each(["git.cafe", "staging.git.cafe"])("canonicalizes both GitCafe routes on %s", (host) => {
+    for (const [repository, route] of [
+      ["web", "pull"],
+      ["web", "pulls"],
+      ["pull", "pull"],
+      ["pull", "pulls"],
+      ["pulls", "pull"],
+      ["pulls", "pulls"],
+    ]) {
+      const url = `https://${host}/acme/${repository}/${route}/42`;
+      expect(
+        sourceControlClients.get("gitcafe").parseChangeRequestUrl(new URL(url)),
+      ).not.toBeNull();
+      expect(parsePullRequestReference(url)).toBe(url);
+      expect(
+        resolveLinkPullRequestInput({ reference: url, project: null, hasProject: () => true }),
+      ).toEqual({
+        link: {
+          host,
+          repository: `acme/${repository}`,
+          number: 42,
+          url: `https://${host}/acme/${repository}/pulls/42`,
+        },
+      });
+    }
+  });
+
   it.each([
     ["https://bitbucket.org/acme/web/pull-requests/42", "bitbucket.org"],
     ["https://github.acme.test/acme/web/pull/42", "github.acme.test"],

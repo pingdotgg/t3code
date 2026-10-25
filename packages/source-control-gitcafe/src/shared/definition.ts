@@ -22,6 +22,12 @@ const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
 /** GitCafe serves pull requests at `/pull/<n>` and redirects the older `/pulls/<n>` there. */
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pulls?\/(\d+)(?:\/|$)/u;
 
+function parseChangeRequestUrl(url: URL) {
+  return GITCAFE_HOSTS.has(url.hostname.toLowerCase())
+    ? parseChangeRequestPath(url, CHANGE_REQUEST_PATH)
+    : null;
+}
+
 const KIND = SourceControlProviderKind.make("gitcafe");
 
 export const settings = makeProviderSettingsSchema({
@@ -61,10 +67,7 @@ export const definition = defineSourceControl({
       : `https://${host}/${repository}/pulls/${number}`,
   // `/pull/` and `/pulls/` are GitHub's and Forgejo's shapes too, so only GitCafe's own hosts
   // claim them.
-  parseChangeRequestUrl: (url) =>
-    GITCAFE_HOSTS.has(url.hostname.toLowerCase())
-      ? parseChangeRequestPath(url, CHANGE_REQUEST_PATH)
-      : null,
+  parseChangeRequestUrl,
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([
     "ready",
@@ -79,7 +82,7 @@ export const definition = defineSourceControl({
   authorProfileUrl: () => null,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
-  isChangeRequestReference: () => false,
+  isChangeRequestReference: (url) => parsePullRequestUrl(url) !== null,
   checkoutChangeRequestHost: () => null,
   recognizeRemote: ({ hostname }) =>
     GITCAFE_HOSTS.has(hostname)
@@ -91,3 +94,16 @@ export const definition = defineSourceControl({
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   settings,
 });
+
+export function parsePullRequestUrl(value: string) {
+  try {
+    return parseChangeRequestUrl(new URL(value));
+  } catch {
+    return null;
+  }
+}
+
+export function canonicalizePullRequestUrl(value: string): string {
+  const link = parsePullRequestUrl(value);
+  return link === null ? value : definition.changeRequestUrl(link);
+}

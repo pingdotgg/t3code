@@ -353,6 +353,39 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("canonicalizes GitCafe links independently of the thread's project host", () =>
+    Effect.gen(function* () {
+      for (const host of ["git.cafe", "staging.git.cafe"]) {
+        for (const project of [makeProject(), makeProject(null)]) {
+          for (const target of [
+            { host, repository: "PingDotGG/T3Code", number: 21353 },
+            { url: `https://${host}/PingDotGG/T3Code/pull/21353` },
+            { url: `https://${host}/PingDotGG/T3Code/pulls/21353` },
+          ]) {
+            const harness = yield* makeHarness({ project });
+            const result = yield* harness.call("link_pull_request", target);
+            const url = `https://${host}/pingdotgg/t3code/pulls/21353`;
+            expect(result).toMatchObject({
+              host,
+              repository: "pingdotgg/t3code",
+              number: 21353,
+              url,
+            });
+            expect(yield* Ref.get(harness.commands)).toMatchObject([
+              {
+                type: "thread.pull-request.link",
+                host,
+                repository: "pingdotgg/t3code",
+                number: 21353,
+                url,
+              },
+            ]);
+          }
+        }
+      }
+    }),
+  );
+
   it.effect("builds the URL in the project host's own shape", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

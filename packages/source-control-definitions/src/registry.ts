@@ -6,6 +6,8 @@ import * as GitCafe from "@t3tools/source-control-gitcafe/shared/definition";
 import * as GitHub from "@t3tools/source-control-github/shared/definition";
 import * as GitLab from "@t3tools/source-control-gitlab/shared/definition";
 
+export { canonicalizePullRequestUrl as canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-gitcafe/shared/definition";
+
 /**
  * The server and every client read hosts through this one registry, so they agree on which host
  * owns a URL or remote. GitHub comes first because a repository that has not reported its host

@@ -20,6 +20,7 @@ import {
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { parsePullRequestUrl } from "../shared/definition.ts";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
@@ -166,8 +167,6 @@ const cloneUrls = (target: Target) => ({
 const isSshRemote = (remoteUrl: string | undefined) =>
   remoteUrl !== undefined && (/^ssh:\/\//iu.test(remoteUrl) || /^[^/:]+@[^/:]+:/u.test(remoteUrl));
 
-const pullUrlPattern = /^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pulls\/(\d+)\/?(?:[?#].*)?$/u;
-
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
   const host = yield* SourceControlHost.SourceControlHost;
@@ -242,15 +241,15 @@ export const make = Effect.gen(function* () {
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly reference: string;
   }) {
-    const match = pullUrlPattern.exec(input.reference.trim());
-    const urlHost = match?.[1] ? GitCafeHosts.gitCafeHost(match[1]) : null;
+    const match = parsePullRequestUrl(input.reference.trim());
+    const urlHost = match === null ? null : GitCafeHosts.gitCafeHost(match.host);
     const target: Target =
-      urlHost && match?.[2]
-        ? { host: urlHost, repository: match[2] }
+      urlHost && match
+        ? { host: urlHost, repository: match.repository }
         : yield* resolveTarget("getChangeRequest", input);
     const number = match
       ? urlHost
-        ? match[3]
+        ? String(match.number)
         : undefined
       : /^#?([1-9]\d*)$/u.exec(input.reference.trim())?.[1];
     if (number === undefined)
