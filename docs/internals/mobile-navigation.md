@@ -53,11 +53,12 @@ preserves behavior that is easy to break when changing native headers:
   columns pad their content away from the iPhone Duo's vertical bar. Register a
   header scroll view only through
   [`NativeScrollViewMarker`](../../apps/mobile/src/native/NativeScrollViewMarker.tsx)
-  or `NativeScrollView`: their native wrapper widens the scroll view to the right
-  under that bar, so the blur reaches it while the content keeps its React Native
-  frame. It never bleeds left: that would need a horizontal content offset, which
-  React Native rewrites on its own layout passes. Lint rejects `ScrollViewMarker`
-  imported anywhere else.
+  or `NativeScrollView`: their native wrapper widens the scroll view under that
+  bar, so the blur reaches it while the content stays in the safe area. On the
+  left it shifts React Native's content view back through its bounds origin,
+  never with a content offset: React Native rewrites offsets on its own layout
+  passes, which left threads shifted under the bar. Lint rejects
+  `ScrollViewMarker` imported anywhere else.
 
 The patch adds native header props that require code generation and a new binary.
 Patch rebuild guidance lives in the
