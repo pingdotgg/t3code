@@ -600,13 +600,8 @@ function cancelledAppOwnedTask(
   };
 }
 
-/**
- * Whether a message sent into a delegated child may become a follow-up task the parent hears
- * back from. Besides a person or agent writing to the child, a provider wake counts, such as a
- * background command finishing: the child acts on it after its original result was delivered.
- * A monitor update does not, since it reports progress rather than asking for new work.
- * Dispatch takes the parent's lock for exactly these, because intake writes the parent.
- */
+// Provider wakes can start follow-up work; monitor updates only report progress.
+// Dispatch takes the parent's lock for follow-ups because intake writes the parent.
 function mayStartSubagentFollowup(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
 ): boolean {
