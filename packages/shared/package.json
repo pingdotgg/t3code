@@ -59,6 +59,10 @@
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
     },
+    "./releaseResource": {
+      "types": "./src/releaseResource.ts",
+      "import": "./src/releaseResource.ts"
+    },
     "./observability": {
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"

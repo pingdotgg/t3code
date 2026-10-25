@@ -50,10 +50,6 @@ const RETRY_MAX_DELAY_MS = 300_000;
 // These statuses reject the batch itself; unlike 408/429, retrying cannot help.
 const REJECTED_BATCH_STATUSES = new Set([400, 401, 413]);
 
-// Official release workflows set this telemetry channel; other builds report dev.
-// Unlike __T3CODE_BUILD_CHANNEL__, this is not the sign-in page's latest/nightly channel.
-declare const __T3CODE_TELEMETRY_CHANNEL__: "stable" | "nightly" | "preview" | "dev" | undefined;
-
 /** `random` is in [0, 1). */
 function retryDelayMs(failures: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
@@ -142,8 +138,6 @@ export const make = Effect.gen(function* () {
   // The background flush and the shutdown flush must not send the same batch at once.
   const flushLock = yield* Semaphore.make(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
-  const telemetryChannel =
-    typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
 
@@ -198,7 +192,7 @@ export const make = Effect.gen(function* () {
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
           t3CodeVersion: packageJson.version,
-          telemetryChannel,
+          telemetryChannel: ServerConfig.telemetryChannel,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,
