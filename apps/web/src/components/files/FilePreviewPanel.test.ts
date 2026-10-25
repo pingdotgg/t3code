@@ -110,11 +110,26 @@ describe("workspaceAssetResource", () => {
     absolutePath: "/repo/docs/index.html",
   };
 
+  // regression: #21067 images outside the workspace load through the host media resource
+  it("serves a file outside the workspace as host media and keeps workspace files on workspace access", () => {
+    expect(
+      workspaceAssetResource({ ...input, absolutePath: "/tmp/screenshots/shot.png", draft: false }),
+    ).toEqual({ _tag: "media-file", threadId: "thread-1", path: "/tmp/screenshots/shot.png" });
+    expect(workspaceAssetResource({ ...input, draft: false })).toEqual({
+      _tag: "workspace-file",
+      threadId: "thread-1",
+      path: "/repo/docs/index.html",
+    });
+  });
+
   it("names the workspace root for a draft, which the server cannot resolve from a thread", () => {
     expect(workspaceAssetResource({ ...input, draft: true })).toEqual({
       _tag: "draft-workspace-file",
       cwd: "/repo",
       path: "/repo/docs/index.html",
     });
+    expect(
+      workspaceAssetResource({ ...input, absolutePath: "/tmp/screenshots/shot.png", draft: true }),
+    ).toEqual({ _tag: "draft-workspace-file", cwd: "/repo", path: "/tmp/screenshots/shot.png" });
   });
 });
