@@ -2,7 +2,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo } from "react";
 
 import { useProjects } from "../../state/entities";
-import { useWorkspaceEnvironments } from "../../state/workspace";
+import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 import {
   pullRequestFallbackEnvironment,
   type PullRequestEnvironmentTarget,
@@ -11,13 +11,11 @@ import {
 export function usePullRequestEnvironmentFallback(params: PullRequestEnvironmentTarget) {
   const navigation = useNavigation();
   const projects = useProjects();
-  const connected = useWorkspaceEnvironments()
-    .filter((environment) => environment.connectionState === "connected")
-    .map((environment) => String(environment.environmentId))
-    .join("\n");
+  const isReady = useConnectionsReady();
+  const environments = useWorkspaceEnvironments();
   const fallback = useMemo(
-    () => pullRequestFallbackEnvironment(params, projects, new Set(connected.split("\n"))),
-    [params, projects, connected],
+    () => (isReady ? pullRequestFallbackEnvironment(params, projects, environments) : null),
+    [params, projects, environments, isReady],
   );
   useEffect(() => {
     if (fallback) navigation.setParams(fallback);
