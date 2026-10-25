@@ -22,6 +22,7 @@ import { Argument, Flag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
+import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -403,13 +404,23 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     () => 443,
   );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
-  const host = Option.getOrElse(
-    resolveOptionPrecedence(
-      normalizedFlags.host,
-      Option.fromUndefinedOr(env.host),
-      Option.fromUndefinedOr(bootstrap?.host),
-    ),
-    () => (mode === "desktop" ? "127.0.0.1" : undefined),
+  const explicitHost = resolveOptionPrecedence(
+    normalizedFlags.host,
+    Option.fromUndefinedOr(env.host),
+    Option.fromUndefinedOr(bootstrap?.host),
+  );
+  // A background service exists to be reached from other devices, so it
+  // listens on private networks unless `service.env` sets `T3CODE_HOST`.
+  // Clients then learn its LAN address and prefer it over T3 Connect.
+  const privateNetworkOnly =
+    Option.isNone(explicitHost) &&
+    mode === "web" &&
+    (yield* resolveServiceLauncherMode().pipe(
+      Effect.map((launcher) => launcher.managed),
+      Effect.orElseSucceed(() => false),
+    ));
+  const host = Option.getOrElse(explicitHost, () =>
+    privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
   );
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
@@ -475,6 +486,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...derivedPaths,
     serverTracePath,
     host,
+    ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
     staticDir,
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),

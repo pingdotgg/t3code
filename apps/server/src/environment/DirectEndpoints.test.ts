@@ -148,6 +148,23 @@ describe("resolveBoundEndpoints", () => {
       resolveBoundEndpoints({ host: "203.0.113.20", port: 3773, interfaces: INTERFACES }),
     ).toEqual([]);
   });
+
+  it("reports only the tailnet address on a cloud VM, whose private network no client shares", () => {
+    expect(
+      resolveBoundEndpoints({
+        host: "0.0.0.0",
+        port: 3773,
+        interfaces: INTERFACES,
+        onCloudVm: true,
+      }),
+    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
+  });
+
+  it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
+    expect(
+      resolveBoundEndpoints({ host: "::ffff:127.0.0.1", port: 3773, interfaces: INTERFACES }),
+    ).toEqual([]);
+  });
 });
 
 const TAILSCALE_STATUS_JSON = JSON.stringify({

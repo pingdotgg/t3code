@@ -72,6 +72,8 @@ export class ServerConfig extends Context.Service<
     readonly mode: RuntimeMode;
     readonly port: number;
     readonly host: string | undefined;
+    /** Set when the host was defaulted to a private-network listener for the service. */
+    readonly privateNetworkOnly?: boolean | undefined;
     readonly cwd: string;
     readonly baseDir: string;
     readonly staticDir: string | undefined;
