@@ -18,6 +18,22 @@ import {
 } from "./composerAttachmentFiles";
 
 describe("composer attachment files", () => {
+  it("attaches SVG as a file and rejects other unsupported images", () => {
+    expect(classifyComposerAttachmentFile({ name: "diagram.svg", type: "image/svg+xml" })).toBe(
+      "file",
+    );
+    expect(classifyComposerAttachmentFile({ name: "diagram.SVG", type: "" })).toBe("file");
+    expect(
+      classifyComposerAttachmentFile({ name: "diagram.svg", type: "application/octet-stream" }),
+    ).toBe("file");
+    expect(classifyComposerAttachmentFile({ name: "photo.tiff", type: "image/tiff" })).toBe(
+      "unsupported-image",
+    );
+    expect(classifyComposerAttachmentFile({ name: "report.pdf", type: "application/pdf" })).toBe(
+      "file",
+    );
+  });
+
   it("keeps DNG originals on the file path without changing their bytes", async () => {
     const bytes = new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0x08, 0, 0, 0, 0xfe, 0xff, 0x00, 0x80]);
     const files = [
@@ -94,6 +110,22 @@ describe("composer attachment files", () => {
         plainText: "Copied text",
       }),
     ).toBe(false);
+  });
+
+  it("claims SVG and unsupported image pastes even when text is present", () => {
+    const images = [
+      new File(["svg"], "diagram.svg", { type: "image/svg+xml" }),
+      new File(["tiff"], "photo.tiff", { type: "image/tiff" }),
+    ];
+
+    for (const image of images) {
+      expect(
+        shouldHandleComposerAttachmentPaste({
+          files: [image],
+          plainText: "Image caption",
+        }),
+      ).toBe(true);
+    }
   });
 
   it("uses the hard local limit while server config is unknown", () => {

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { isSvgAttachment } from "@t3tools/shared/image";
 
 import {
   parseThreadSegmentFromAttachmentId,
@@ -106,6 +107,12 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           const normalized: ChatAttachment = {
             ...attachment,
             id: ChatAttachmentId.make(claim.finalId),
+            name:
+              attachment.type === "file" &&
+              isSvgAttachment(attachment) &&
+              !/\.svg$/i.test(attachment.name)
+                ? `${attachment.name}.svg`
+                : attachment.name,
             mimeType: attachment.mimeType.toLowerCase(),
           };
           const expectedPath = resolveAttachmentPath({

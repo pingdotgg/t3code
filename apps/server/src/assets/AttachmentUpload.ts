@@ -3,6 +3,7 @@ import {
   type AttachmentCreateUploadUrlInput,
   AttachmentUploadSigningKeyError,
 } from "@t3tools/contracts";
+import { isSvgAttachment } from "@t3tools/shared/image";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -93,8 +94,12 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
   }
 
   const attachmentType = input.type ?? "image";
+  const name =
+    attachmentType === "file" && isSvgAttachment(input) && !/\.svg$/i.test(input.name)
+      ? `${input.name}.svg`
+      : input.name;
   const attachmentId = createPendingAttachmentId(
-    attachmentType === "file" ? attachmentFileExtension(input.name) : undefined,
+    attachmentType === "file" ? attachmentFileExtension(name) : undefined,
   );
   const expiresAt = nowMs + ATTACHMENT_UPLOAD_URL_TTL_MS;
   const encodedPayload = base64UrlEncode(
@@ -103,7 +108,7 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
       kind: "attachment-upload",
       type: attachmentType,
       attachmentId,
-      name: input.name,
+      name,
       mimeType: input.mimeType,
       sizeBytes: input.sizeBytes,
       expiresAt,
