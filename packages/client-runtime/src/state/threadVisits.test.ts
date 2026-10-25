@@ -130,13 +130,18 @@ it("drops a pending visit when the thread is no longer viewed", () => {
   expect(t.visits).toHaveLength(1);
 });
 
-it("records the open while the thread is shown before its shell arrives", () => {
+it("sends the open with the first visit when the shell arrives after the thread is shown", () => {
   using t = setup("thread-shell-missing", null);
   t.mount();
   expect(claimThreadOpen(environmentId, t.ref.threadId, Date.UTC(2026, 0, 1))).toBe(false);
+  expect(t.visits).toEqual([]);
 
   t.update({ updatedAt: at(10), lastVisitedAt: at(0), latestRun: null });
-  expect(t.visits).toEqual([{ threadId: t.ref.threadId, visitedAt: at(10) }]);
+  expect(t.visits).toEqual([{ threadId: t.ref.threadId, visitedAt: at(10), opened: true }]);
+
+  t.update({ updatedAt: at(10), lastVisitedAt: at(10) });
+  vi.advanceTimersByTime(VISIT_DISPATCH_THROTTLE_MS);
+  expect(t.visits).toHaveLength(1);
 });
 
 it("advances the watermark to a wake without waiting for the throttle", () => {
