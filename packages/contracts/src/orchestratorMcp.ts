@@ -670,6 +670,10 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   placeholder: Schema.optional(TrimmedNonEmptyString).annotate({
     description: "Hint inside the input, e.g. 'Paste your GitHub token'.",
   }),
+  delivery: Schema.optional(Schema.Literals(["secretRef", "file"])).annotate({
+    description:
+      'secretRef (default): for a T3 tool that takes one. file: for a shell CLI; the result is a private file path to read inside your command, e.g. CLOUDFLARE_API_TOKEN="$(cat <file>)" wrangler whoami.',
+  }),
   timeoutMs: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
   ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
@@ -686,6 +690,13 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
     secretRef: SecretRef.annotate({
       description:
         "Pass it to a tool that accepts a secretRef; it works once, and you never see the value.",
+    }),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("saved").annotate({ description: "file holds the value." }),
+    file: Schema.String.annotate({
+      description:
+        "Owner-only file with the value. Read it inside commands and never print it. Deleted after 24 hours.",
     }),
   }),
   Schema.Struct({

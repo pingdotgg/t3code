@@ -1,9 +1,9 @@
 import {
   SECRET_REQUEST_DEFAULT_PLACEHOLDER,
-  SECRET_REQUEST_PRIVACY_NOTE,
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
+  secretRequestPrivacyNote,
   type SecretRequestItem,
 } from "@t3tools/client-runtime/secret-request";
 import {
@@ -150,7 +150,7 @@ function PendingSecretRequestForm(props: {
           className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
         >
           <ShieldCheckIcon className="size-3.5 shrink-0" aria-hidden />
-          {SECRET_REQUEST_PRIVACY_NOTE}
+          {secretRequestPrivacyNote(item)}
         </p>
         <Button
           type="button"
