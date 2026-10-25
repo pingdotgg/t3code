@@ -521,6 +521,42 @@ describe("composerDraftStore file attachments", () => {
     expect(draft?.files.map((file) => file.id)).toEqual(["file-accepted"]);
   });
 
+  it("reattaches a DNG with an older generic-MIME marker at attachment capacity", () => {
+    const store = useComposerDraftStore.getState();
+    const file = new File(["raw"], "photo.DNG", { type: "image/x-adobe-dng" });
+    const marker: ComposerFileAttachment = {
+      type: "file",
+      id: "dng-marker",
+      name: file.name,
+      mimeType: "application/octet-stream",
+      sizeBytes: file.size,
+      file: null,
+    };
+    store.addFiles(threadRef, [marker]);
+    store.addImages(
+      threadRef,
+      Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 }, (_, index) =>
+        makeImage({
+          id: `image-${index}`,
+          name: `image-${index}.png`,
+          previewUrl: `blob:image-${index}`,
+        }),
+      ),
+    );
+
+    const repicked: ComposerFileAttachment = {
+      ...marker,
+      id: "dng-repicked",
+      mimeType: file.type,
+      file,
+    };
+    store.addFiles(threadRef, [repicked]);
+
+    const files = store.getComposerDraft(threadRef)?.files;
+    expect(files).toEqual([repicked]);
+    expect(files?.some(composerFileNeedsReattach)).toBe(false);
+  });
+
   it("replaces a needs-reattach marker when the same file is picked again", () => {
     const store = useComposerDraftStore.getState();
     const marker: ComposerFileAttachment = { ...makeFile("file-marker"), file: null };

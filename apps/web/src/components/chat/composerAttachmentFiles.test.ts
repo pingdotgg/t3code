@@ -1,15 +1,90 @@
-import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  getProviderAttachmentLimitError,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { isFileAttachment, isImageAttachment } from "../../types";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  classifyComposerAttachmentFile,
+  composerFileAttachmentMimeType,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
+  normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
 
 describe("composer attachment files", () => {
+  it("keeps DNG originals on the file path without changing their bytes", async () => {
+    const bytes = new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0x08, 0, 0, 0, 0xfe, 0xff, 0x00, 0x80]);
+    const files = [
+      new File([bytes], "photo.DNG", { type: "image/tiff" }),
+      new File([bytes], "photo.dng", { type: "image/png" }),
+      new File([bytes], "photo.dng", { type: "image/jpeg" }),
+      new File([bytes], "clipboard", { type: "image/dng" }),
+      new File([bytes], "clipboard", { type: "image/x-dng" }),
+      new File([bytes], "clipboard", { type: "image/x-adobe-dng" }),
+    ];
+
+    const attachments = await Promise.all(
+      files.map(async (file) => ({
+        kind: classifyComposerAttachmentFile(file),
+        bytes: new Uint8Array(await normalizeComposerImageFileMimeType(file).arrayBuffer()),
+      })),
+    );
+
+    expect(attachments).toEqual(files.map(() => ({ kind: "file", bytes })));
+  });
+
+  it("keeps misleading DNG MIME labels out of downstream image detection and budgets", () => {
+    for (const type of ["image/png", "image/jpeg", "image/tiff", "image/dng", ""]) {
+      const attachment = {
+        type: "file" as const,
+        id: "raw",
+        name: "photo.DNG",
+        mimeType: composerFileAttachmentMimeType({ name: "photo.DNG", type }),
+        sizeBytes: 81 * 1024 * 1024,
+      };
+
+      expect(isImageAttachment(attachment)).toBe(false);
+      expect(isFileAttachment(attachment)).toBe(true);
+      expect(getProviderAttachmentLimitError([attachment])).toBeUndefined();
+    }
+  });
+
+  it("claims a captioned DNG paste even when its MIME is generic", () => {
+    const file = new File(["raw"], "photo.dng", { type: "application/octet-stream" });
+
+    expect(
+      shouldHandleComposerAttachmentPaste({ files: [file], plainText: "Inspect this original" }),
+    ).toBe(true);
+  });
+
+  it("keeps ordinary images on their existing paths", () => {
+    const files = [
+      { name: "photo.jpg", type: "image/jpeg" },
+      { name: "export.dng.png", type: "image/png" },
+      { name: "photo.webp", type: "image/webp" },
+      { name: "photo.gif", type: "image/gif" },
+      { name: "photo.heic", type: "" },
+      { name: "scan.tif", type: "image/tiff" },
+      { name: "photo.cr2", type: "image/x-canon-cr2" },
+    ];
+
+    expect(files.map(classifyComposerAttachmentFile)).toEqual([
+      "image",
+      "image",
+      "image",
+      "image",
+      "image",
+      "unsupported-image",
+      "unsupported-image",
+    ]);
+  });
+
   it("preserves text paste when an application adds a synthetic generic file", () => {
     const file = new File(["clipboard"], "clipboard.rtf", { type: "application/rtf" });
 

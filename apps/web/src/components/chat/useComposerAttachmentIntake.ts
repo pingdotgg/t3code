@@ -25,6 +25,7 @@ import {
 } from "../../questionAttachments";
 import {
   classifyComposerAttachmentFile,
+  composerFileAttachmentMimeType,
   normalizeComposerImageFileMimeType,
 } from "./composerAttachmentFiles";
 import {
@@ -45,7 +46,6 @@ import {
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
-import { videoMimeType } from "../../types";
 import {
   addPreparingComposerImages,
   isPreparingComposerImage,
@@ -162,10 +162,7 @@ export function useComposerAttachmentIntake(input: {
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
       const fileMimeType =
-        attachmentKind === "file"
-          ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
-            (file.type || "application/octet-stream"))
-          : file.type;
+        attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
       const matchingReattachMarker =
         attachmentKind === "file"
           ? reattachMarkers.find(

@@ -1,4 +1,5 @@
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
+import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ElementContextDetails,
@@ -804,6 +805,17 @@ export function composerFileMatchesReattachMarker(
 ): boolean {
   if (marker.name !== file.name || marker.sizeBytes !== file.sizeBytes) return false;
   if (marker.mimeType === file.mimeType) return true;
+  const normalizedMarkerMimeType = composerFileAttachmentMimeType({
+    name: marker.name,
+    type: marker.mimeType,
+  });
+  if (
+    normalizedMarkerMimeType === "image/x-adobe-dng" &&
+    normalizedMarkerMimeType ===
+      composerFileAttachmentMimeType({ name: file.name, type: file.mimeType })
+  ) {
+    return true;
+  }
   const markerMimeType = marker.mimeType.toLowerCase();
   return (
     (markerMimeType === "" || markerMimeType === "application/octet-stream") &&
