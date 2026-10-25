@@ -147,6 +147,10 @@
       "types": "./src/webhookAddress.ts",
       "default": "./src/webhookAddress.ts"
     },
+    "./queued-run-edit": {
+      "types": "./src/queuedRunEdit.ts",
+      "default": "./src/queuedRunEdit.ts"
+    },
     "./delayed-status": {
       "types": "./src/delayedStatus.ts",
       "default": "./src/delayedStatus.ts"

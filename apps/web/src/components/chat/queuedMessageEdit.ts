@@ -1,3 +1,4 @@
+import { resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
 import type { ChatAttachment } from "@t3tools/contracts";
 import {
   composerDraftHasUserContent,
@@ -14,15 +15,18 @@ export function recoverQueuedMessageEdit(input: {
 }): "kept" | "discarded" | "clean" {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(input.editTarget);
-  const dirty =
-    draft !== null &&
-    (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0);
-  if (dirty && !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget))) {
+  const recovery = resolveQueuedEditExit({
+    editChanged:
+      draft !== null &&
+      (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0),
+    threadDraftEmpty: !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
+  });
+  if (recovery === "kept") {
     store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
-    return "kept";
+  } else {
+    store.clearComposerContent(input.editTarget);
   }
-  store.clearComposerContent(input.editTarget);
-  return dirty ? "discarded" : "clean";
+  return recovery;
 }
 
 export async function prepareQueuedEditAttachments(input: {
