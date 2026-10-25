@@ -168,6 +168,12 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     );
   }
 
+  if (provider.driver === ProviderDriverKind.make("grok")) {
+    // Grok reports ready only after it discovers a model list; the pending,
+    // ACP-failed, empty-inventory, and logged-out probes are warning/error.
+    return !(provider.installed && provider.status === "ready");
+  }
+
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
   if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {

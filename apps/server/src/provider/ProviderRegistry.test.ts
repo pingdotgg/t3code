@@ -693,6 +693,44 @@ it.layer(
       );
     });
 
+    it("drops Grok models a completed probe no longer advertises", () => {
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("grok"),
+        driver: ProviderDriverKind.make("grok"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-09-30T00:00:00.000Z",
+        version: "1.0.44",
+        models: [
+          { slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null },
+          { slug: "codexhub-removed", name: "Removed", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-09-30T00:01:00.000Z",
+        models: [previousProvider.models[0]],
+      } satisfies ServerProvider;
+      const acpFailedProvider = {
+        ...refreshedProvider,
+        status: "warning",
+        message: "Grok CLI is installed but ACP initialize failed.",
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [previousProvider.models[0]],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, acpFailedProvider).models,
+        [...previousProvider.models],
+      );
+    });
+
     it("retains stale OpenCode models when a refresh fails", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("opencode"),
