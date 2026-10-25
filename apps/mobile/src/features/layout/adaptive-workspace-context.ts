@@ -41,6 +41,11 @@ interface AdaptiveWorkspaceContextValue {
    * sidebar and rail step aside and the thread header drops to one line.
    */
   readonly composerKeyboardActive: boolean;
+  /**
+   * Whether the sidebar shows in each orientation, where it floats over the content in portrait
+   * (the unfolded Duo). The native split switches between them as a rotation starts.
+   */
+  readonly sidebarByOrientation: { readonly landscape: boolean; readonly portrait: boolean } | null;
   /** The thread composer reports its focus so the layout can make room for typing. */
   readonly setComposerEditing: (editing: boolean) => void;
 }
@@ -73,6 +78,7 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   openWorkspaceTab: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
   composerKeyboardActive: false,
+  sidebarByOrientation: null,
   setComposerEditing: () => undefined,
 });
 

@@ -182,6 +182,7 @@ function WorkspaceColumns(
     toggleAuxiliaryPane,
     startNewTask,
     openWorkspaceTab,
+    sidebarByOrientation,
   } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
   const settingsDetailIn = (detail: readonly Route[]) =>
@@ -302,7 +303,13 @@ function WorkspaceColumns(
     <Split.Host
       ref={hostRef}
       testID="adaptive-workspace-layout"
-      preferredSplitBehavior={layout.primarySidebarOverlaysContent ? "overlay" : "tile"}
+      preferredSplitBehavior={
+        !sidebarByOrientation && layout.primarySidebarOverlaysContent ? "overlay" : "tile"
+      }
+      portraitPreferredSplitBehavior={sidebarByOrientation ? "overlay" : undefined}
+      portraitPreferredDisplayMode={
+        sidebarByOrientation ? sidebarDisplayMode(sidebarByOrientation.portrait, true) : undefined
+      }
       primaryBackgroundStyle={deviceType === "pad" ? "none" : "default"}
       topColumnForCollapsing={compactColumn}
       onCollapse={() => {
@@ -326,14 +333,17 @@ function WorkspaceColumns(
         openWorkspaceTab(tab ?? "threads", { columns: true });
       }}
       preferredDisplayMode={
-        // UIKit applies the mode as a collapsed split expands, before the new width reaches JS, so a
-        // collapsed split already carries the sidebar the expanded one will show.
-        (layout.usesSplitView ? panes.primarySidebarVisible : panes.primarySidebarWhenExpanded) ||
-        (!layout.usesSplitView && !activeDetailKey)
-          ? layout.primarySidebarOverlaysContent
-            ? "oneOverSecondary"
-            : "oneBesideSecondary"
-          : "secondaryOnly"
+        sidebarByOrientation
+          ? sidebarDisplayMode(sidebarByOrientation.landscape, false)
+          : sidebarDisplayMode(
+              // UIKit applies the mode as a collapsed split expands, before the new width reaches
+              // JS, so a collapsed split already carries the sidebar the expanded one will show.
+              (layout.usesSplitView
+                ? panes.primarySidebarVisible
+                : panes.primarySidebarWhenExpanded) ||
+                (!layout.usesSplitView && !activeDetailKey),
+              layout.primarySidebarOverlaysContent,
+            )
       }
       onDisplayModeWillChange={({ nativeEvent }) => {
         if (!layout.primarySidebarOverlaysContent) return;
@@ -603,4 +613,9 @@ export function createWorkspaceStackNavigator<
   const Config extends StaticConfig<TypeBag> = StaticConfig<TypeBag>,
 >(config?: Config): TypedNavigator<TypeBag, Config> {
   return createNavigatorFactory(WorkspaceStackNavigator)(config);
+}
+
+function sidebarDisplayMode(visible: boolean, overlay: boolean) {
+  if (!visible) return "secondaryOnly";
+  return overlay ? "oneOverSecondary" : "oneBesideSecondary";
 }
