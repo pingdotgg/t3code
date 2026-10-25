@@ -1,7 +1,9 @@
 import type { ResourceTelemetryProcess } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
 import { metricAttributes } from "../observability/Metrics.ts";
@@ -113,10 +115,28 @@ export const layer = Layer.effectDiscard(
         yield* Metric.update(Metric.withAttributes(processCount, attributes), total.count);
       }
     });
-    yield* sample().pipe(
-      Effect.catch((error) =>
-        Effect.logDebug("process group metrics sample failed", { error: error.message }),
+    // A failing collector would otherwise leave these series silently absent, so the first
+    // failure and the recovery are logged; the repeats stay at debug.
+    const failing = yield* Ref.make(false);
+    const recordSuccess = Ref.getAndSet(failing, false).pipe(
+      Effect.flatMap((wasFailing) =>
+        wasFailing ? Effect.logInfo("process group metrics sample recovered") : Effect.void,
       ),
+    );
+    const recordFailure = (error: ResourceTelemetry.ResourceTelemetryRefreshFailed) => {
+      const cause = Cause.fail(error);
+      return Ref.getAndSet(failing, true).pipe(
+        Effect.flatMap((wasFailing) =>
+          wasFailing
+            ? Effect.logDebug("process group metrics sample failed", cause)
+            : Effect.logWarning("process group metrics are not exported: sample failed", cause),
+        ),
+        Effect.annotateLogs({ operation: error.operation }),
+      );
+    };
+    yield* sample().pipe(
+      Effect.andThen(recordSuccess),
+      Effect.catch(recordFailure),
       Effect.andThen(Effect.sleep(SAMPLE_INTERVAL)),
       Effect.forever,
       Effect.forkScoped,
