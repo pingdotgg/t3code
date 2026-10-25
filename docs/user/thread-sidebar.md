@@ -165,8 +165,10 @@ Turn on **Settings → Labs → Sort inbox by last message** on web and desktop 
 the active list by the last message you sent, newest first, instead of your saved order. Agent
 activity does not move a thread, so rows only change place when you send, create, or un-settle a
 thread, or, with the Working section on, when a thread comes back to you. You cannot drag or move
-threads within the active list while this is on. Each device keeps its own choice, and your saved
-order returns when you turn it off.
+threads within the active list while this is on. The boring sidebar already lists each folder by
+your last message, so this setting only changes the list without folders. Each device keeps its own
+choice. Turning it off brings back your saved order, or return-time order if the Working section is
+still on.
 
 ## Settle finished work
 
