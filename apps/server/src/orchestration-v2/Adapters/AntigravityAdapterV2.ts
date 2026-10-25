@@ -20,6 +20,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
+  buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
@@ -155,6 +156,16 @@ export function makeAntigravityAcpAdapterFlavor(
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
     makeRuntime,
+    buildPrompt: ({ text, attachments, promptCapabilities }) =>
+      buildAntigravityPrompt({
+        input: text,
+        attachments,
+        attachmentsDir: options.host.paths.attachmentsDir,
+        promptCapabilities,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+        Effect.provideService(Path.Path, options.path),
+      ),
     // Loading history replays tool calls; resume avoids replay.
     preferResumeSession: true,
     subagentsIdleOnTurnCompletion: true,
