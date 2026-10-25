@@ -324,6 +324,7 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
+        nativeWorkspace,
         primarySidebarPreferredVisible: showPrimarySidebar,
         auxiliaryPanePreferredVisible,
         auxiliaryPaneRole,
@@ -334,6 +335,7 @@ function AdaptiveWorkspaceLayoutContent(
       auxiliaryPaneRole,
       auxiliaryPanePreferredWidth,
       layout,
+      nativeWorkspace,
       showPrimarySidebar,
       width,
     ],

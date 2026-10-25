@@ -118,7 +118,7 @@
   "apps/mobile/src/features/threads/ThreadMarkdownImage.tsx": 3,
   "apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx": 3,
   "apps/mobile/src/features/threads/ThreadQueueControl.tsx": 2,
-  "apps/mobile/src/features/threads/ThreadRouteScreen.tsx": 2,
+  "apps/mobile/src/features/threads/ThreadRouteScreen.tsx": 3,
   "apps/mobile/src/features/threads/ThreadScreenHost.tsx": 2,
   "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx": 2,
   "apps/mobile/src/features/threads/UsageLimitRecoveryCard.tsx": 1,

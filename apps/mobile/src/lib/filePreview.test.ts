@@ -63,6 +63,7 @@ vi.mock("expo-audio", () => ({
 vi.mock("@react-navigation/native", () => ({
   useIsFocused: () => true,
   useNavigation: () => ({ navigate: audio.navigate }),
+  useRoute: () => ({ name: "Thread", params: {} }),
   useFocusEffect: (callback: () => (() => void) | undefined) => useEffect(callback, [callback]),
 }));
 vi.mock("react-native", () => ({
@@ -264,6 +265,9 @@ vi.mock("../features/threads/CopyTextButton", () => ({ CopyTextButton: () => nul
 vi.mock("../features/threads/thread-work-log", () => ({ THREAD_DISCLOSURE_TRANSITION_MS: 100 }));
 vi.mock("../features/threads/HtmlRenderWebView", () => ({}));
 vi.mock("../features/threads/McpAppWebView", () => ({}));
+vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
+  useAdaptiveWorkspaceLayout: () => ({ fileInspector: { supported: false } }),
+}));
 vi.mock("../features/threads/thread-workflow-opening", () => ({ useWorkflowOpening: () => null }));
 vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () => vi.fn() }));
 vi.mock("../features/threads/ThreadMarkdownImage", async () => {

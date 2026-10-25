@@ -56,7 +56,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   return (
     <GestureDetector gesture={resizeGesture}>
       <Pressable
-        className="relative z-[100] -mx-[22px] w-11 self-stretch justify-center"
+        className="relative z-[100] -mx-[22px] w-[44px] self-stretch justify-center"
         accessibilityActions={[
           { name: "increment", label: "Make pane wider" },
           { name: "decrement", label: "Make pane narrower" },

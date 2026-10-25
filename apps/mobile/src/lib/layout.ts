@@ -189,6 +189,7 @@ export function isPrimarySidebarPinned(input: {
 export function deriveWorkspacePaneLayout(input: {
   readonly layout: Layout;
   readonly viewportWidth: number;
+  readonly nativeWorkspace?: boolean;
   readonly primarySidebarPreferredVisible: boolean;
   readonly auxiliaryPanePreferredVisible: boolean;
   readonly auxiliaryPaneRole?: WorkspaceAuxiliaryPaneRole;
@@ -212,6 +213,7 @@ export function deriveWorkspacePaneLayout(input: {
     });
     const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
     const primarySidebarSuppressedByAuxiliary =
+      !input.nativeWorkspace &&
       preferredPrimarySidebarVisible &&
       !input.layout.primarySidebarOverlaysContent &&
       auxiliaryPaneVisible &&
