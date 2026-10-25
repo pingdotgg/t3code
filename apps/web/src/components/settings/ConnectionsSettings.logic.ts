@@ -67,6 +67,22 @@ export function missingTailscaleEndpointDescription(
     : "Start Tailscale to set up HTTPS access through MagicDNS.";
 }
 
+export function resolveTailscaleServeBaseUrl(
+  endpoint: Pick<AdvertisedEndpoint, "httpBaseUrl"> | null,
+  port: number,
+  isPortValid: boolean,
+): string | null {
+  if (!endpoint) return null;
+  if (!isPortValid) return endpoint.httpBaseUrl;
+  try {
+    const url = new URL(endpoint.httpBaseUrl);
+    url.port = String(port);
+    return url.toString().replace(/\/$/u, "");
+  } catch {
+    return endpoint.httpBaseUrl;
+  }
+}
+
 export function isWslSettingsRowVisible(input: {
   readonly state: DesktopWslState | null;
   readonly error: string | null;
