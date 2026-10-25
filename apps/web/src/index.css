@@ -2135,10 +2135,21 @@ code {
   font-size: 0.75rem;
 }
 
+/* Top-aligned so wrapped rows share a first line, and the outer columns sit
+   flush with the surrounding prose. */
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
   text-align: start;
+  vertical-align: top;
+}
+
+.chat-markdown :is(th, td):first-child {
+  padding-inline-start: 0;
+}
+
+.chat-markdown :is(th, td):last-child {
+  padding-inline-end: 0;
 }
 
 .chat-markdown thead th {
