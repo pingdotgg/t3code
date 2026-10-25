@@ -8,6 +8,7 @@ import * as Redacted from "effect/Redacted";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Admission from "./Admission.ts";
 import * as Cache from "./Cache.ts";
+import * as NativeClients from "./NativeClients.ts";
 import * as Savings from "./Savings.ts";
 import type { ProtocolBindings } from "./protocolTypes.ts";
 import * as Resources from "./resources.ts";
@@ -26,6 +27,7 @@ export const layer = Worker.make(
     const savings = yield* Cloudflare.D1.QueryDatabase(yield* Resources.Savings);
     const database = yield* Cloudflare.D1.QueryDatabase(yield* Resources.Index);
     const artifacts = yield* Cloudflare.R2.ReadWriteBucket(yield* Resources.Artifacts);
+    const nativeClients = yield* Cloudflare.R2.ReadWriteBucket(yield* Resources.NativeClients);
     const developerKeys = yield* Config.Redacted("DEVELOPER_KEYS");
     const readerKeys = yield* Config.Redacted("READER_KEYS");
     const reads = yield* Cloudflare.RateLimit("READ_LIMITER", {
@@ -47,6 +49,22 @@ export const layer = Worker.make(
         storeLimit: yield* writes.raw,
       });
     });
+    const nativeRuntime = NativeClients.layer.pipe(
+      Layer.provide(
+        Layer.effect(
+          NativeClients.Bindings,
+          Effect.gen(function* () {
+            return NativeClients.Bindings.of({
+              CLIENTS: yield* nativeClients.raw,
+              developerKeys: Redacted.value(developerKeys),
+              readerKeys: Redacted.value(readerKeys),
+              readLimit: yield* reads.raw,
+              storeLimit: yield* writes.raw,
+            });
+          }),
+        ),
+      ),
+    );
     const admission = yield* Admission.Admission.pipe(Effect.provide(Admission.layer));
     const savingsLayer = Savings.layer.pipe(
       Layer.provide(Layer.effect(Savings.Database, savings.raw)),
@@ -75,6 +93,10 @@ export const layer = Worker.make(
     return {
       fetch: Effect.gen(function* () {
         const request = yield* Cloudflare.Workers.Request;
+        if (new URL(request.url).pathname.startsWith(NativeClients.routePrefix)) {
+          const native = yield* NativeClients.NativeClients.pipe(Effect.provide(nativeRuntime));
+          return HttpServerResponse.fromWeb(yield* native.handle(request));
+        }
         const context = yield* Cloudflare.Workers.WorkerExecutionContext;
         const cache = yield* Cache.Cache;
         return HttpServerResponse.fromWeb(yield* cache.handle(request, context.raw));

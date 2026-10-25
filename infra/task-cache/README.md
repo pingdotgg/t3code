@@ -51,6 +51,10 @@ vp run --filter @t3tools/task-cache typecheck
 
 The smoke check uploads a unique fixture, restores its output into a cold second directory, changes its input, and confirms recomputation. It also checks that anonymous reads and uploads are rejected. Cacheable commands must run through `vp run`; direct `vp test` or `vp check` invocations do not use this cache.
 
+## Native clients
+
+`/projects/t3code/native-clients/<platform>/<variant>/<expo-fingerprint>` stores simulator and emulator development clients for `scripts/mobile-native-client.ts` in a separate `-native-clients` R2 bucket with 30-day retention. Unlike Vite Task entries, the Expo fingerprint is portable, so a client built on any Mac or Linux machine serves every other one. Readers download; writers upload through R2 multipart in 64 MB parts, because Workers cap request bodies. The uploader's bundle digest is stored as object metadata and checked by the client before it installs anything.
+
 ## Current limits
 
 - Vite Task separates operating systems and CPU architectures. macOS results do not satisfy Linux CI; Linux developer machines can populate compatible CI results.

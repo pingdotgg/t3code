@@ -31,11 +31,15 @@ when inspecting or seeding SQLite. Stop the test server before fixture writes.
 From the checkout being tested on the selected device host, run:
 
 ```bash
-node scripts/mobile-native-client.ts ensure <ios|android> <device-id>
+vp run mobile:install <ios|android> <device-id>
 ```
 
-This reuses a matching native client or builds and installs one. Authorized
-mobile verification includes that build step unless the user prohibits it.
+This installs the dev client for the checkout's native fingerprint: from the
+device, the local cache, or the shared cache in seconds, building once only
+when no machine has that fingerprint yet (5-15 minutes, logged to the file it
+names). The device id may be omitted when exactly one device is booted. It
+prints one JSON line; on failure it names the next command. Authorized mobile
+verification includes that step unless the user prohibits it.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice
