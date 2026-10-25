@@ -799,7 +799,18 @@ const reportTelemetry = Effect.fn("nativeClient.reportTelemetry")(
     if (!remote) return;
     const environment = yield* HostProcess.Environment;
     const recordedAt = yield* Clock.currentTimeMillis;
-    const host = yield* HostProcess.Hostname;
+    // Same machine label as Vite task reports (infra/task-cache/src/telemetry.ts).
+    const fs = yield* FileSystem.FileSystem;
+    const machine = yield* fs.readFileString(`${home}/.agents/MACHINE`).pipe(
+      Effect.map((value) => value.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    const host =
+      environment.T3_TASK_CACHE_HOST ||
+      machine ||
+      (environment.GITHUB_ACTIONS === "true"
+        ? `${environment.RUNNER_ENVIRONMENT || "github"}/${environment.RUNNER_OS}/${environment.RUNNER_ARCH}`
+        : yield* HostProcess.Hostname);
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
     yield* client.execute(
       authorized(remote, HttpClientRequest.post(remote.telemetry)).pipe(
