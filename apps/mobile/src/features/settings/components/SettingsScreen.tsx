@@ -17,7 +17,7 @@ import {
 export { SettingsScreenContent };
 
 export function SettingsScreen(
-  props: Pick<AppBarProps, "title" | "actions" | "trailing"> & {
+  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search"> & {
     readonly children: ReactNode;
     readonly formSheet?: boolean;
     readonly workspaceRoot?: boolean;
@@ -44,6 +44,7 @@ export function SettingsScreen(
       <AppBar
         title={props.title}
         actions={props.actions}
+        search={props.search}
         trailing={Platform.OS === "android" ? props.trailing : undefined}
         sidebar={false}
         onBack={workspaceRoot ? undefined : () => navigation.goBack()}

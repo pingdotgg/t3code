@@ -14,6 +14,7 @@ import {
 import {
   initialWorkspaceTabsState,
   workspaceTabsReducer,
+  type WorkspaceSearchTab,
   type WorkspaceTab,
   type WorkspaceTabsAction,
   type WorkspaceTabsState,
@@ -25,8 +26,8 @@ export const WorkspaceTabsContext = createContext<{
   readonly isTabActive: (tab: WorkspaceTab) => boolean;
   readonly bottomClearance: number;
   readonly settingsOpen: boolean;
-  readonly getScrollOffset: (tab: WorkspaceTab) => number;
-  readonly recordScrollOffset: (tab: WorkspaceTab, offset: number) => void;
+  readonly getScrollOffset: (tab: WorkspaceSearchTab) => number;
+  readonly recordScrollOffset: (tab: WorkspaceSearchTab, offset: number) => void;
 } | null>(null);
 
 export function useWorkspaceTabs() {
@@ -47,9 +48,9 @@ export function WorkspaceTabsProvider(props: {
     activeTab.current = state.selectedTab;
   }, [state.selectedTab]);
   const isTabActive = useCallback((tab: WorkspaceTab) => activeTab.current === tab, []);
-  const scrollOffsets = useRef({ threads: 0, pullRequests: 0, usage: 0 });
-  const getScrollOffset = useCallback((tab: WorkspaceTab) => scrollOffsets.current[tab], []);
-  const recordScrollOffset = useCallback((tab: WorkspaceTab, offset: number) => {
+  const scrollOffsets = useRef({ threads: 0, pullRequests: 0, usage: 0, settings: 0 });
+  const getScrollOffset = useCallback((tab: WorkspaceSearchTab) => scrollOffsets.current[tab], []);
+  const recordScrollOffset = useCallback((tab: WorkspaceSearchTab, offset: number) => {
     scrollOffsets.current[tab] = offset;
   }, []);
   const context = useMemo(

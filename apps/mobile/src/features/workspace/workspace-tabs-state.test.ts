@@ -110,6 +110,20 @@ describe("workspace root navigation", () => {
     expect(workspaceTabsReducer(state, { type: "cancel" }).tabs.threads.scrollOffset).toBe(500);
   });
 
+  it("keeps the Settings search apart from the tab Settings opened over", () => {
+    let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
+      type: "query",
+      query: "diff",
+      tab: "threads",
+    });
+    state = workspaceTabsReducer(state, { type: "search", tab: "settings" });
+    state = workspaceTabsReducer(state, { type: "query", query: "theme", tab: "settings" });
+    expect(state.tabs.settings).toMatchObject({ query: "theme", searchMode: "active" });
+    state = workspaceTabsReducer(state, { type: "cancel", tab: "settings" });
+    expect(state.tabs.settings).toMatchObject({ query: "", searchMode: "resting" });
+    expect(state.tabs.threads.query).toBe("diff");
+  });
+
   it("a late native blur cannot reopen a cancelled search", () => {
     let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
     state = workspaceTabsReducer(state, { type: "cancel" });
