@@ -88,8 +88,9 @@ function sortNewestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environm
 
 /**
  * Keep one at module scope so the inbox order survives routes that unmount the
- * list. Call `observe` with every thread shell on each list rebuild, or with
- * null to reset while the beta is off.
+ * list. Call `observe` with every thread shell whenever the shells change, or
+ * with null to reset while the beta is off. It returns the return times as of
+ * that observation, which stay fixed so a list built from them can be cached.
  */
 export function createInboxReturnTracker() {
   const keyOf = (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) =>
@@ -97,11 +98,13 @@ export function createInboxReturnTracker() {
   let lastWorkingKeys: ReadonlySet<string> | null = null;
   const returns = new Map<string, number>();
   return {
-    observe(threads: ReadonlyArray<WorkingThreadInput & InboxThreadInput> | null): void {
+    observe(
+      threads: ReadonlyArray<WorkingThreadInput & InboxThreadInput> | null,
+    ): (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) => number | undefined {
       if (threads === null) {
         lastWorkingKeys = null;
         returns.clear();
-        return;
+        return () => undefined;
       }
       const working = new Set<string>();
       const present = new Set<string>();
@@ -119,6 +122,8 @@ export function createInboxReturnTracker() {
         if (present.has(key) && !working.has(key)) returns.set(key, at);
       }
       lastWorkingKeys = working;
+      const observed = new Map(returns);
+      return (thread) => observed.get(keyOf(thread));
     },
     returnedAt: (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) =>
       returns.get(keyOf(thread)),

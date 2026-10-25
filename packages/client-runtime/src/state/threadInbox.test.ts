@@ -32,13 +32,16 @@ function thread(id: string, working: boolean) {
 describe("createInboxReturnTracker", () => {
   it("stamps a thread when it stops working, but never on the first observation", () => {
     const tracker = createInboxReturnTracker();
-    tracker.observe([thread("a", true), thread("b", false)]);
-    expect(tracker.returnedAt(thread("a", true))).toBeUndefined();
-    expect(tracker.returnedAt(thread("b", false))).toBeUndefined();
+    const first = tracker.observe([thread("a", true), thread("b", false)]);
+    expect(first(thread("a", true))).toBeUndefined();
+    expect(first(thread("b", false))).toBeUndefined();
 
-    tracker.observe([thread("a", false), thread("b", false)]);
-    expect(tracker.returnedAt(thread("a", false))).toBeDefined();
-    expect(tracker.returnedAt(thread("b", false))).toBeUndefined();
+    const second = tracker.observe([thread("a", false), thread("b", false)]);
+    expect(second(thread("a", false))).toBeDefined();
+    expect(second(thread("b", false))).toBeUndefined();
+    expect(tracker.returnedAt(thread("a", false))).toBe(second(thread("a", false)));
+    // An earlier observation keeps its answer, so lists built from it stay valid.
+    expect(first(thread("a", false))).toBeUndefined();
   });
 });
 
