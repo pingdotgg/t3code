@@ -2849,6 +2849,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "The pull request watch ended or its thread settled while it was read.",
         });
       }
+      if (
+        sortedWatchEvents(link.watch.events)?.join() !==
+        sortedWatchEvents(command.expectedEvents)?.join()
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The pull request watch events changed while it was read.",
+        });
+      }
       yield* dispatchThreadMutation(command, events, effects);
       if (command.wake === undefined) return;
       yield* dispatchMessage(

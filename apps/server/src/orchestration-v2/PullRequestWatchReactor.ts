@@ -93,7 +93,8 @@ interface ReadPlan {
   readonly activity: boolean;
 }
 
-const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
+const watchKey = ({ thread, watch }: WatchTarget) =>
+  `${thread.id} ${watch.startedAt} ${watch.events?.join() ?? "all"}`;
 
 type WatchEndReason =
   | "merged"
@@ -283,6 +284,7 @@ export const make = Effect.gen(function* () {
       threadId: target.thread.id,
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
+      ...(target.watch.events === undefined ? {} : { expectedEvents: target.watch.events }),
       watch: next,
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined

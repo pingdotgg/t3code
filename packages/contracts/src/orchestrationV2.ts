@@ -3390,6 +3390,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     startedAt: IsoDateTime,
+    /** The selection used to evaluate this read; omitted means all events. */
+    expectedEvents: Schema.optional(ThreadPullRequestWatchEvents),
     watch: Schema.NullOr(ThreadPullRequestWatch),
     /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
     endedWatch: Schema.optional(ThreadPullRequestWatch),
