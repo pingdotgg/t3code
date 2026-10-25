@@ -327,7 +327,7 @@ export function useThreadActionMenu(input: {
               api.dialogs.confirm(
                 [
                   `Delete thread "${thread.title}"?`,
-                  "The thread can't be restored. Its history stays in T3 Code's database.",
+                  "You can't restore it. Its conversation history stays in T3 Code's database.",
                 ].join("\n"),
                 { variant: "destructive" },
               ),
