@@ -165,7 +165,7 @@ describe("terminatePosixOwnedProcessTree", () => {
         AcpSessionRuntime.resolveLinuxCgroupTargetCommand("grok", scratch, { PATH: undefined }),
       ).toBeUndefined();
       expect(
-        AcpSessionRuntime.resolveLinuxCgroupTargetCommand("node", scratch, { PATH: undefined }),
+        AcpSessionRuntime.resolveLinuxCgroupTargetCommand("sh", scratch, { PATH: undefined }),
       ).toBeDefined();
       expect(
         AcpSessionRuntime.resolveLinuxCgroupTargetCommand("grok", scratch, {
