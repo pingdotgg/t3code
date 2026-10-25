@@ -937,21 +937,20 @@ const program = Effect.gen(function* () {
             },
           });
         });
-        yield* Effect.sleep("1200 millis")
-          .pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                writeJsonRpcNotification("_x.ai/task_completed", {
-                  sessionId: cancelledSessionId,
-                  update: {
-                    sessionUpdate: "task_completed",
-                    task_snapshot: { task_id: "task-bg-1", command: "sleep 30" },
-                  },
-                });
-              }),
-            ),
-          )
-          .pipe(Effect.forkDetach);
+        yield* Effect.sleep("1200 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              writeJsonRpcNotification("_x.ai/task_completed", {
+                sessionId: cancelledSessionId,
+                update: {
+                  sessionUpdate: "task_completed",
+                  task_snapshot: { task_id: "task-bg-1", command: "sleep 30" },
+                },
+              });
+            }),
+          ),
+          Effect.forkDetach,
+        );
       }
     }),
   );

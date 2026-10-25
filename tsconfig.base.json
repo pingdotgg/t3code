@@ -24,6 +24,7 @@
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "effectFn": ["span", "inferred-span", "suggested-span"],
         "diagnosticSeverity": {
+          "unnecessaryPipeChain": "error",
           "effectFnOpportunity": "suggestion",
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
