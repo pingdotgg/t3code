@@ -3,7 +3,7 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 export type ThreadFeedLiveFollowEvent =
   | { readonly type: "reset" }
   | { readonly type: "user-scroll-begin" }
-  | { readonly type: "content-size-change"; readonly isAtEnd: boolean }
+  | { readonly type: "content-size-change" | "layout"; readonly isAtEnd: boolean }
   | {
       readonly type: "user-scroll-end";
       readonly isAtEnd: boolean;
@@ -80,6 +80,7 @@ export function resolveThreadFeedLiveFollow(
     case "user-scroll-begin":
       return false;
     case "content-size-change":
+    case "layout":
       return current;
     case "user-scroll-end":
       return event.userScrollSessionActive ? (event.releaseIsAtEnd ?? event.isAtEnd) : current;
@@ -196,9 +197,11 @@ export function resolveThreadFeedIsAtEnd(
     case "scroll":
       // Native scroll frames can precede momentum-begin. Keep the displayed
       // position stable until that callback or the release timer remeasures it.
-      return userScrollSettling ? current : event.isAtEnd;
+      // A follow scroll can also arrive before the newest streamed layout is pinned.
+      return userScrollSettling || (endFollowEnabled && !event.isAtEnd) ? current : event.isAtEnd;
     case "content-size-change":
-      return shouldMeasureThreadFeedContentSize(endFollowEnabled, userScrollSettling)
+    case "layout":
+      return shouldMeasureThreadFeedGeometry(endFollowEnabled, userScrollSettling)
         ? event.isAtEnd
         : current;
     default:
@@ -206,7 +209,7 @@ export function resolveThreadFeedIsAtEnd(
   }
 }
 
-export function shouldMeasureThreadFeedContentSize(
+export function shouldMeasureThreadFeedGeometry(
   endFollowEnabled: boolean,
   userScrollSettling: boolean,
 ): boolean {

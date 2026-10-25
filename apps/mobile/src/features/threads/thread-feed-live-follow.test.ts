@@ -9,7 +9,7 @@ import {
   resolveThreadFeedSubmissionAnchor,
   resolveThreadWorkGroupInitialScroll,
   shouldCatchUpThreadFeedOnScrollEnd,
-  shouldMeasureThreadFeedContentSize,
+  shouldMeasureThreadFeedGeometry,
   shouldFollowThreadWorkGroupAppend,
   type ThreadFeedLiveFollowEvent,
 } from "./thread-feed-live-follow";
@@ -359,7 +359,7 @@ describe("thread feed position and follow", () => {
 
   it("ignores transient streaming measurements while following, including before a drag", () => {
     const update = createFeed();
-    expect(shouldMeasureThreadFeedContentSize(true, false)).toBe(false);
+    expect(shouldMeasureThreadFeedGeometry(true, false)).toBe(false);
     expect(update({ type: "content-size-change", isAtEnd: false })).toEqual({
       following: true,
       isAtEnd: true,
@@ -370,13 +370,52 @@ describe("thread feed position and follow", () => {
       isAtEnd: true,
       showScrollToEnd: false,
     });
-    expect(shouldMeasureThreadFeedContentSize(false, false)).toBe(true);
+    expect(shouldMeasureThreadFeedGeometry(false, false)).toBe(true);
+  });
+
+  it("ignores a follow scroll that arrives before the newest streamed layout is pinned", () => {
+    const update = createFeed();
+    expect(update({ type: "scroll", isAtEnd: false, userScrollSessionActive: false })).toEqual({
+      following: true,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+    expect(update({ type: "user-scroll-begin" })).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("updates a paused feed after a viewport resize without resuming follow", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    expect(update({ type: "layout", isAtEnd: false })).toEqual({
+      following: false,
+      isAtEnd: false,
+      showScrollToEnd: true,
+    });
+    expect(update({ type: "layout", isAtEnd: true })).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("holds the release position through layout changes until settling finishes", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    expect(update({ type: "layout", isAtEnd: false }, true)).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
   });
 
   it("catches the last chunk after release without flashing the button or claiming it is visible", () => {
     const update = createFeed();
     update({ type: "user-scroll-begin" });
-    expect(shouldMeasureThreadFeedContentSize(false, true)).toBe(false);
+    expect(shouldMeasureThreadFeedGeometry(false, true)).toBe(false);
     expect(update({ type: "content-size-change", isAtEnd: false }, true)).toEqual({
       following: false,
       isAtEnd: true,
