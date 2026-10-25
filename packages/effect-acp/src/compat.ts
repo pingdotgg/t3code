@@ -242,6 +242,7 @@ export type PromptRequest = Omit<V2.PromptRequest, "prompt"> & {
 export interface PromptResponse {
   readonly stopReason: StopReason;
   readonly usage?: V2.Usage | null;
+  readonly error?: V2.Error | null;
   readonly _meta?: Meta;
 }
 

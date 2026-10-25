@@ -962,6 +962,124 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+      const idleError = process.env.T3_ACP_IDLE_ERROR;
+      if (idleError === "grok-background" && promptCount === 1) {
+        // The structured completion lands before the prompt settles, so it is buffered.
+        const taskId = "call-idle-error-background";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: taskId,
+            title: "run_terminal_command",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: "sleep 1; echo done" },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: taskId,
+            status: "completed",
+            rawOutput: {
+              type: "BackgroundTaskStarted",
+              task_id: taskId,
+              task_type: "bash",
+              status: "running",
+              command: "sleep 1; echo done",
+            },
+          },
+        });
+        writeJsonRpcNotification("_x.ai/task_completed", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "task_completed",
+            task_snapshot: { task_id: taskId, kind: "bash", exit_code: 0, output: "done\n" },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: { sessionUpdate: "state_update", state: "idle", stopReason: "error" },
+        });
+        return {};
+      }
+      if (idleError !== undefined && promptCount === 1) {
+        const toolCallId = "tool-call-idle-error-1";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            title: "Terminal",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: ["long-running-tool"] },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-idle-error-monitor",
+            title: "Monitor",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: ["background-monitor"] },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-idle-error-subagent",
+            title: "Subagent",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {},
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: "mock-child-session-idle-error",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-idle-error-child",
+            title: "Child tool",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: ["child-tool"] },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "state_update",
+            state: "idle",
+            stopReason: "error",
+            ...(idleError === "details"
+              ? { error: { code: -32000, message: "Missing Authentication header" } }
+              : {}),
+          },
+        });
+        // The agent outlives the failed prompt, so its subagent finishes afterwards.
+        yield* Effect.sleep("50 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() =>
+              writeJsonRpcNotification("session/update", {
+                sessionId: requestedSessionId,
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "tool-call-idle-error-subagent",
+                  status: "completed",
+                },
+              }),
+            ),
+          ),
+          Effect.forkDetach,
+        );
+        return {};
+      }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")

@@ -1850,6 +1850,17 @@ it.effect.each([null, "run:nested-sdk"] as const)(
     }),
 );
 
+it.effect("keeps ingesting a failed root's background item when its work continues", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario("bg-failed-continues", (ids) => [
+      backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+      { ...rootTerminalEvent(ids, "failed"), childTurnsContinue: true },
+      backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
+    ]);
+    assert.deepEqual(observed, ["turn_item:running", "root-finalized", "turn_item:completed"]);
+  }),
+);
+
 it.effect("does not pin ingestion on background items when the root turn is interrupted", () =>
   Effect.gen(function* () {
     const observed = yield* runBackgroundItemScenario("bg-interrupted", (ids) => [

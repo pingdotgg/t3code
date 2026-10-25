@@ -1307,6 +1307,37 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       }),
   );
 
+  it.effect("returns the ACP v2 idle error as the prompt result", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const error = { code: -32000, message: "Missing Authentication header" };
+      const prompt = yield* acp.agent
+        .prompt({ sessionId: "idle-error", prompt: [{ type: "text", text: "Hello" }] })
+        .pipe(Effect.forkScoped);
+      const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        concatBytes([
+          yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { messageId: `user-${request.id}` },
+          }),
+          yield* encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "idle-error",
+              update: { sessionUpdate: "state_update", state: "idle", stopReason: "error", error },
+            },
+          }),
+        ]),
+      );
+      assert.deepEqual(yield* Fiber.join(prompt), { stopReason: "error", error });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("routes MCP-over-ACP connect, message, notification, and disconnect callbacks", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({ ACP_MOCK_MCP_OVER_ACP: "1" });
