@@ -233,6 +233,21 @@ describe("usage pricing", () => {
     );
   });
 
+  it("keeps a bare alias when a reseller entry omits the fast tier", () => {
+    const table = parseRateTable({
+      "provider-a/example-model": {
+        ...rate(1),
+        input_cost_per_token_priority: 2,
+        output_cost_per_token_priority: 10,
+      },
+      "provider-b/example-model": rate(1),
+    });
+
+    expect(lookupRate(table, "example-model")).toEqual(
+      lookupRate(table, "provider-a/example-model"),
+    );
+  });
+
   it("leaves an ambiguous bare name unpriced", () => {
     const table = parseRateTable({
       "provider-a/example-model": rate(1),

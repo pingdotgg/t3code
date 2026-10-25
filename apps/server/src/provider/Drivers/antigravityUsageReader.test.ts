@@ -162,6 +162,36 @@ describe("readAntigravityUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("prices ACP effort variants at the base model rate", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "effort.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          for (const [idx, name] of ["gemini-4-argon-high", "gemini-4-argon"].entries()) {
+            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+              idx,
+              new Uint8Array(protoBytes(1, protoText(19, name))),
+            ]);
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              idx,
+              new Uint8Array(protoBytes(9, protoNumber(2, 10 + idx))),
+            ]);
+          }
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(
+        records(result).map(({ model, rateModel }) => [model, rateModel]),
+        [
+          ["gemini-4-argon-high", "gemini-4-argon"],
+          ["gemini-4-argon", undefined],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("merges Antigravity aliases that bridge previously separate step records", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

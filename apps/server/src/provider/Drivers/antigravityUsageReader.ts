@@ -101,6 +101,12 @@ const MODEL_IDS: Record<number, string> = {
   1047: "gemini-3-flash-preview",
 };
 
+// ACP slugs append the thinking level, which shares the base model's price.
+function withRateModel(record: UsageRecord): UsageRecord {
+  const rateModel = record.model.replace(/-(?:low|medium|high)$/, "");
+  return rateModel === record.model ? record : { ...record, rateModel };
+}
+
 function modelName(name: string, id: number): string {
   if (name) {
     const normalized = name
@@ -470,7 +476,7 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
   }
   for (const [index, group] of groups.entries()) {
     if (group.parent === index && group.record.timestampMs >= sinceMs) {
-      files[group.fileIndex]!.records.push(group.record);
+      files[group.fileIndex]!.records.push(withRateModel(group.record));
     }
   }
   return { files, errors };
