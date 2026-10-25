@@ -3295,3 +3295,107 @@ it.effect("loads a shell snapshot while the writer connection is occupied", () =
     }).pipe(Effect.provide(projectionLayer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] as const)(
+  "preserves event consistency and allows later writes after %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const paused = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const committed = scenario === "cancel publication";
+      const pause = Deferred.succeed(paused, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const layerPausingOutbox = Layer.effect(
+        EffectOutbox.EffectOutboxV2,
+        Effect.gen(function* () {
+          const delegate = yield* EffectOutbox.EffectOutboxV2;
+          return EffectOutbox.EffectOutboxV2.of({
+            ...delegate,
+            enqueue: (effects) =>
+              delegate
+                .enqueue(effects)
+                .pipe(
+                  Effect.andThen(!committed && effects.length > 0 ? pause : Effect.void),
+                  Effect.andThen(
+                    scenario === "fail transaction" && effects.length > 0
+                      ? Effect.die("Injected transaction failure")
+                      : Effect.void,
+                  ),
+                ),
+            notifyAvailable: (count) =>
+              (committed ? pause : Effect.void).pipe(
+                Effect.andThen(delegate.notifyAvailable(count)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(layerEffectOutboxProvided));
+      const layerEventSink = EventSink.layerFromStores.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerStoresProvided,
+            layerPausingOutbox,
+            layerCommandReceiptStoreProvided,
+            ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
+            TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const now = yield* DateTime.now;
+        const first = makeThread(ThreadId.make("thread:interrupted-publish:first"), now);
+        const marker = makeThread(ThreadId.make("thread:interrupted-publish:marker"), now);
+        const published = yield* eventSink
+          .stream({ afterSequence: yield* eventSink.latestSequence() })
+          .pipe(
+            Stream.takeUntil((stored) => stored.event.threadId === marker.id),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        const writer = yield* eventSink
+          .writeWithEffects({
+            events: [
+              threadCreatedEvent({ id: "event:interrupted-publish:first", thread: first, now }),
+            ],
+            effects: [
+              {
+                id: "effect:interrupted-publish:first",
+                commandId: CommandId.make("command:interrupted-publish:first"),
+                threadId: first.id,
+                request: { type: "terminal.cleanup" },
+              },
+            ],
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(paused);
+        if (scenario !== "fail transaction") writer.interruptUnsafe();
+        if (scenario !== "cancel transaction") yield* Deferred.succeed(release, undefined);
+        assert.equal((yield* Fiber.await(writer))._tag, "Failure");
+        assert.equal(
+          (yield* projections.getThreadShell(first.id))?.id ?? null,
+          committed ? first.id : null,
+        );
+        assert.equal(
+          Option.isSome(yield* outbox.get("effect:interrupted-publish:first")),
+          committed,
+        );
+        yield* eventSink.write({
+          events: [
+            threadCreatedEvent({ id: "event:interrupted-publish:marker", thread: marker, now }),
+          ],
+        });
+        assert.deepEqual(
+          Array.from(yield* Fiber.join(published), (stored) => stored.event.threadId),
+          committed ? [first.id, marker.id] : [marker.id],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layerEventSink, layerStoresProvided, layerEffectOutboxProvided),
+        ),
+      );
+    }).pipe(Effect.provide(layerDatabase)),
+);

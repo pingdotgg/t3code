@@ -2335,6 +2335,72 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
+  it.effect(
+    "recovers an unpublished child failure after its completion delivery was disposed",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:unpublished-failure-parent");
+        const projectId = ProjectId.make("project:unpublished-failure-parent");
+        const runId = RunId.make("run:unpublished-failure-parent");
+        const rootNodeId = NodeId.make("node:unpublished-failure-parent-root");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("node:unpublished-failure-parent-settled"),
+          deliveryState: "delivered",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: "unpublished-failure-child",
+          completionWake: "always",
+          continuationPending: false,
+          now,
+        });
+        // Skip the live terminal listener to model a committed failure whose
+        // publication was interrupted. task_cancel then disposed its delivery.
+        yield* eventSink.write({
+          commandId: reconcileCommandId("unpublished-failure"),
+          events: [
+            runEvent({
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              ordinal: 1,
+              status: "failed",
+              now,
+            }),
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.dispose",
+          commandId: CommandId.make("command:unpublished-failure-dispose"),
+          parentThreadId: threadId,
+          taskId: child.taskId,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const recovered = yield* orchestrator.getThreadProjection(threadId);
+        const task = recovered.subagents.find((row) => row.id === child.taskId);
+        assert.equal(task?.status, "failed");
+        assert.equal(task?.result, "Child task ended with status failed.");
+        assert.equal(task?.completionDelivery?.state, "disposed");
+        assert.lengthOf(recovered.runs, 1);
+        assert.lengthOf(
+          recovered.contextTransfers.filter((transfer) => transfer.type === "subagent_result"),
+          1,
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), recovered);
+      }),
+  );
+
   it.effect("wakes the parent for a settled_only task once its spawning turn ended", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

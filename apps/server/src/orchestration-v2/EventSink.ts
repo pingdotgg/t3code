@@ -258,7 +258,7 @@ const layerBase: Layer.Layer<
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
     ) =>
-      Effect.suspend(() => {
+      Effect.uninterruptibleMask((restore) => {
         let holdsLane = false;
         const takeLane = publishLane.take(1).pipe(
           Effect.andThen(
@@ -268,8 +268,11 @@ const layerBase: Layer.Layer<
           ),
           Effect.uninterruptible,
         );
+        // Cancellation may roll back the transaction's work. Once it commits,
+        // every subscriber must hear about it before this writer can exit.
+        // Otherwise a failed child run can leave its parent's task running.
         return sql
-          .withTransaction(Effect.tap(transaction, () => takeLane))
+          .withTransaction(Effect.tap(restore(transaction), () => takeLane))
           .pipe(
             Effect.tap(publish),
             Effect.ensuring(
