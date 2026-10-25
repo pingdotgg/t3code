@@ -205,6 +205,14 @@ function remoteDetailKind(detail: unknown): RemoteDetailKind {
   }
 }
 
+const readRemoteTimeoutMs = (detail: unknown): number | undefined => {
+  if (typeof detail !== "object" || detail === null || !("timeoutMs" in detail)) return undefined;
+  const timeoutMs = detail.timeoutMs;
+  return typeof timeoutMs === "number" && Number.isInteger(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : undefined;
+};
+
 const MAX_REASON_CHARS = 500;
 
 const classifyResponseError = (
@@ -253,11 +261,16 @@ const classifyResponseError = (
         ...context,
         ...remoteDiagnostics,
       });
-    case "PreviewAutomationTimeoutError":
+    case "PreviewAutomationTimeoutError": {
+      const remoteTimeoutMs = readRemoteTimeoutMs(error.detail);
       return new PreviewAutomationTimeoutError({
         ...context,
         ...remoteDiagnostics,
+        ...(remoteTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: Math.min(context.timeoutMs, remoteTimeoutMs) }),
       });
+    }
     case "PreviewAutomationControlInterruptedError": {
       const reason = decodeControlReason(error.detail);
       return new PreviewAutomationControlInterruptedError({

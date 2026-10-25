@@ -902,7 +902,9 @@ const make = Effect.gen(function* () {
         (desktop || adopted) && page.url() === snapshot.navStatus.url
           ? page.reload(options)
           : page.goto(snapshot.navStatus.url, options)
-      ).then(constVoid);
+      ).then(constVoid, (cause: unknown) => {
+        throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
+      });
 
       if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
       else void tab.initialNavigation.catch(constVoid);
@@ -1458,7 +1460,7 @@ const make = Effect.gen(function* () {
           `Navigation to ${url} failed: ${ServerBrowserPage.parseNetError(message).description}`,
         );
       }
-      throw cause;
+      throw ServerBrowserPage.toOperationError(cause, timeout);
     });
   };
 
