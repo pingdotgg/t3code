@@ -46,6 +46,10 @@ public final class T3NativeControlsModule: Module {
       Events("onMetricsChange")
     }
 
+    View(T3ScrollEdgeBleedView.self) {
+      ViewName("ScrollEdgeBleed")
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,
