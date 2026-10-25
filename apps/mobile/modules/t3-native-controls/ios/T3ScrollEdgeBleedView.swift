@@ -1,8 +1,8 @@
 import ExpoModulesCore
 import UIKit
 
-/// Wraps a screen's header scroll view. Where a column pads its content away from a side safe
-/// area (the iPhone Duo's vertical bar), this widens the scroll view under that band. UIKit draws
+/// Wraps a screen's header scroll view. Where a column pads its content away from the iPhone Duo's
+/// vertical bar, this widens the scroll view under the bar. UIKit draws
 /// the header's scroll-edge effect inside the scroll view, so the blur reaches the bar like in the
 /// system apps while the content stays in the safe area. Everything happens in UIKit layout, so
 /// folds move the blur and the content together.
@@ -11,10 +11,23 @@ final class T3ScrollEdgeBleedView: ExpoView {
   // the window, which unmounting does before any recycling.
   private var scrollView: UIScrollView?
   private var container: UIView?
-  private var bleed = UIEdgeInsets.zero
+  private var bleed: CGFloat = 0
+  /// Whether the scroll view currently carries this view's changes.
+  private var applied = false
   /// React Native's clipping, saved while bleeding. React Native only rewrites it when the
   /// `overflow` style changes, so it stays off while bleeding.
   private var containerClipped: Bool?
+
+  required init(appContext: AppContext? = nil) {
+    super.init(appContext: appContext)
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *) {
+      registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (view: T3ScrollEdgeBleedView, _: UITraitCollection) in
+        view.setNeedsLayout()
+      }
+    }
+    #endif
+  }
 
   deinit {
     MainActor.assumeIsolated { detach() }
@@ -43,37 +56,54 @@ final class T3ScrollEdgeBleedView: ExpoView {
       scrollView = found
       container = parent
     }
-    bleed = flushSafeAreaBand()
+    bleed = verticalBarBleed()
     apply()
   }
 
-  /// The side safe areas this view sits flush against: an ancestor padded its content away from
-  /// them. Only those bands are bled into, so a screen with its own margins is left alone.
-  private func flushSafeAreaBand() -> UIEdgeInsets {
+  /// How far the vertical bar's safe area reaches past this view's right edge, when this view sits
+  /// flush against the padding its column added for it. Nothing else is bled into: not a sidebar
+  /// column overlapping this one, not a notch, and not a bar on the left, where widening would
+  /// move the content and need a horizontal offset React Native keeps rewriting.
+  private func verticalBarBleed() -> CGFloat {
+    guard verticalBarIsOnTheRight() else { return 0 }
     var ancestor = superview
     while let view = ancestor {
-      let insets = view.safeAreaInsets
-      if insets.left > 0 || insets.right > 0 {
+      let inset = view.safeAreaInsets.right
+      if inset > 0 {
         let frame = convert(bounds, to: view)
-        let left = insets.left > 0 && abs(frame.minX - insets.left) < 0.5 ? insets.left : 0
-        let right = insets.right > 0 && abs(view.bounds.maxX - insets.right - frame.maxX) < 0.5
-          ? insets.right : 0
-        return UIEdgeInsets(top: 0, left: left, bottom: 0, right: right)
+        return abs(view.bounds.maxX - inset - frame.maxX) < 0.5 ? inset : 0
       }
       ancestor = view.superview
     }
-    return .zero
+    return 0
   }
 
-  /// Widening to the right leaves the content in place. Widening to the left moves it with the
-  /// frame, so a left inset and offset put it back.
+  private func verticalBarIsOnTheRight() -> Bool {
+    // The vertical-bar API ships in the iOS 27.1 SDK (UIKit 9127.0.85); see T3LayoutMetricsView.
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *) {
+      let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
+      switch traitCollection.verticalBarEdge {
+      case .leading: return rtl
+      case .trailing: return !rtl
+      default: return false
+      }
+    }
+    #endif
+    return false
+  }
+
+  /// Widening to the right leaves the content where React Native laid it out, so only the frame,
+  /// the container's clipping and the scroll indicator change; contentInset and contentOffset are
+  /// never touched. Nothing at all is written unless this view is bleeding or undoing its bleed.
   private func apply() {
     guard let scrollView, let container else { return }
+    guard bleed > 0 || applied else { return }
     // React Native sizes the scroll view's component view; the UIScrollView inside follows it by
     // autoresizing, so the widened frame survives React Native's own layout updates.
-    let frame = container.bounds.inset(by: UIEdgeInsets(top: 0, left: -bleed.left, bottom: 0, right: -bleed.right))
+    let frame = container.bounds.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: 0, right: -bleed))
     if scrollView.frame != frame { scrollView.frame = frame }
-    if bleed == .zero {
+    if bleed == 0 {
       if let clipped = containerClipped {
         containerClipped = nil
         container.layer.masksToBounds = clipped
@@ -84,25 +114,17 @@ final class T3ScrollEdgeBleedView: ExpoView {
       containerClipped = containerClipped ?? true
       container.layer.masksToBounds = false
     }
-    var inset = scrollView.contentInset
-    if inset.left != bleed.left {
-      inset.left = bleed.left
-      scrollView.contentInset = inset
-    }
     var indicators = scrollView.verticalScrollIndicatorInsets
-    if indicators.right != bleed.right {
-      indicators.right = bleed.right
+    if indicators.right != bleed {
+      indicators.right = bleed
       scrollView.verticalScrollIndicatorInsets = indicators
     }
-    let x = -scrollView.adjustedContentInset.left
-    if scrollView.contentOffset.x != x {
-      scrollView.contentOffset = CGPoint(x: x, y: scrollView.contentOffset.y)
-    }
+    applied = bleed > 0
   }
 
   private func detach() {
     guard scrollView != nil else { return }
-    bleed = .zero
+    bleed = 0
     apply()
     scrollView = nil
     container = nil
