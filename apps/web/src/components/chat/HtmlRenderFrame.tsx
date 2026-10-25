@@ -8,7 +8,8 @@ import {
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
+import { useAssetUrlRefresh } from "~/assets/assetUrls";
+import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
@@ -47,9 +48,15 @@ export function HtmlRenderFrame(props: {
     mimeType: "text/html",
     disposition: "inline" as const,
   };
-  // Re-mint near-expiry URLs because frames cannot report failed loads.
-  const [src, setSrc] = useState<string | null>(null);
-  const srcExpiresAt = useRef(0);
+  // The frame keeps the first URL it loads, so later mints do not reload the page.
+  const [loaded, setLoaded] = useState<{ src: string; expiresAt: number } | null>(null);
+  const assetUrl = useLongLivedAssetUrl(loaded === null ? props.environmentId : null, resource);
+  if (loaded === null && assetUrl._tag === "Success") {
+    setLoaded({ src: assetUrl.url, expiresAt: assetUrl.expiresAt });
+  }
+  const src = loaded?.src ?? null;
+  const failed = loaded === null && assetUrl._tag === "Failure";
+  const refresh = useAssetUrlRefresh(props.environmentId, resource);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
   const { onFullscreenChange } = props;
   useEffect(() => {
@@ -57,33 +64,6 @@ export function HtmlRenderFrame(props: {
     onFullscreenChange?.(true);
     return () => onFullscreenChange?.(false);
   }, [expandedSrc, onFullscreenChange]);
-  const [failed, setFailed] = useState(false);
-  const assetUrl = useAssetUrlState(src === null ? props.environmentId : null, resource);
-  const cachedUrl = assetUrl._tag === "Success" ? assetUrl.url : null;
-  const cachedExpiresAt = assetUrl._tag === "Success" ? assetUrl.expiresAt : 0;
-  const cacheFailed = assetUrl._tag === "Failure";
-  const refresh = useAssetUrlRefresh(props.environmentId, resource);
-  // Mint once per mount to prevent clock skew from causing repeated mints.
-  const minting = useRef(false);
-  useEffect(() => {
-    if (src !== null || minting.current) return;
-    if (cacheFailed) {
-      // oxlint-disable-next-line react/set-state-in-effect -- Mirrors the cached URL's failure.
-      setFailed(true);
-      return;
-    }
-    if (cachedUrl === null) return;
-    if (cachedExpiresAt - Date.now() > MIN_URL_LIFE_MS) {
-      srcExpiresAt.current = cachedExpiresAt;
-      setSrc(cachedUrl);
-      return;
-    }
-    minting.current = true;
-    void refresh().then(
-      (url) => (url === null ? setFailed(true) : setSrc(url)),
-      () => setFailed(true),
-    );
-  }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
 
   return (
     <div ref={boxRef} className="group/html-render relative" style={{ height }}>
@@ -107,7 +87,7 @@ export function HtmlRenderFrame(props: {
                     variant="glass"
                     onClick={async () => {
                       const url =
-                        srcExpiresAt.current - Date.now() > MIN_URL_LIFE_MS
+                        loaded !== null && loaded.expiresAt - Date.now() > MIN_URL_LIFE_MS
                           ? src
                           : await refresh().catch(() => null);
                       if (url !== null) setExpandedSrc(url);
