@@ -1,6 +1,7 @@
 import {
   CommandId,
   isOrchestrationV2WorkActive,
+  type OrchestrationV2TurnItem,
   type PullRequestSummary,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -48,6 +49,127 @@ const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
     (definition) => definition.changeRequestCloseCommand?.test(command) === true,
   );
+
+// Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
+// A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
+const COMMAND_START =
+  "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
+  ({ kind, changeRequestCreateCommand: command }) =>
+    command === undefined
+      ? []
+      : // The subcommand must end its shell word: `gh pr create#x` runs another one.
+        [
+          {
+            kind,
+            command,
+            run: new RegExp(`${COMMAND_START}${command.source}(?=$|[\\s;&|)])`, "gu"),
+          },
+        ],
+);
+const createCommandCount = (code: string) =>
+  CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
+
+// Codex runs each command as `/bin/zsh -lc <script>`, quoting the script in pieces such as
+// `"a "'`b`'" c"`.
+const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(?=["'])([\s\S]*)$/u;
+const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
+// Heredoc bodies, quoted strings and comments are text a command carries, not commands it runs.
+const HEREDOC_BODY =
+  /<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\2[ \t]*(?=\n|$)|[\s\S]*$)/gu;
+const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|[\s;&|(])#[^\n]*/gmu;
+const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
+// Commands that print other change requests' URLs, so output beside them proves nothing.
+const LISTS_CHANGE_REQUESTS =
+  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
+const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
+
+/** The script a shell input runs, unwrapped from Codex's `sh -lc`. */
+function shellScript(input: string): string {
+  const [, wrapped] = SHELL_WRAPPER.exec(input) ?? [];
+  return wrapped === undefined
+    ? input
+    : Array.from(
+        wrapped.matchAll(SHELL_WORD_PIECE),
+        ([, double, single, escaped, bare]) =>
+          double?.replace(/\\(["\\$`])/gu, "$1") ?? single ?? escaped ?? bare,
+      ).join("");
+}
+
+/** A script split at command separators that sit outside quotes. */
+function shellSegments(script: string): ReadonlyArray<string> {
+  const segments: Array<string> = [];
+  let current = "";
+  let quote: string | null = null;
+  for (let index = 0; index < script.length; index++) {
+    const char = script[index] ?? "";
+    if (quote !== null) {
+      current += char;
+      if (char === "\\" && quote === '"') current += script[++index] ?? "";
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') quote = char;
+    if (char === "\\") {
+      current += char + (script[++index] ?? "");
+      continue;
+    }
+    const pair = script.slice(index, index + 2);
+    if (pair === "&&" || pair === "||" || char === ";" || char === "|" || char === "\n") {
+      segments.push(current);
+      current = "";
+      if (pair === "&&" || pair === "||") index++;
+      continue;
+    }
+    current += char;
+  }
+  segments.push(current);
+  return segments;
+}
+
+/** The commands a script runs, without the text it carries. */
+const shellCode = (script: string) =>
+  script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
+
+type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
+
+/**
+ * The change requests a shell command opened: URLs on lines of their own in the output of a
+ * command that runs a host's create command. One the command also names, as `gh pr view 12`
+ * does, existed before it ran. More URLs than create commands means something else printed
+ * some, such as `gh pr list`, so none are taken.
+ */
+function changeRequestsCreatedBy(input: string, output: string) {
+  if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
+  const script = shellScript(input);
+  const code = shellCode(script);
+  const creates = createCommandCount(code);
+  if (creates === 0) return [];
+  const otherCommands = code
+    .split(COMMAND_SEPARATOR)
+    .filter((part) => createCommandCount(part) === 0)
+    .join("\n");
+  if (LISTS_CHANGE_REQUESTS.test(otherCommands)) return [];
+  const otherScript = shellSegments(script)
+    .filter((segment) => createCommandCount(shellCode(segment)) === 0)
+    .join("\n");
+  const creators = new Set(
+    CREATE_COMMANDS.filter(({ run }) => code.match(run) !== null).map(({ kind }) => kind),
+  );
+  const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
+  for (const [, url = ""] of output.matchAll(URL_LINE)) {
+    const parsed = sourceControlDefinitions.parseChangeRequestUrl(url);
+    // Only the host whose create command ran can have printed a new change request.
+    if (parsed === null || !creators.has(parsed.definition.kind)) continue;
+    const { link } = parsed;
+    const named = new RegExp(`(?:^|(?<=[\\s#/=("']))${link.number}(?=$|[\\s);&|/"'])`, "u");
+    // Quoted text in the other commands counts, as in `printf '.../pull/12'`.
+    if (named.test(otherScript)) continue;
+    const key = normalizeThreadPullRequestKey(link);
+    created.set(threadPullRequestKeyOf(key), { ...key, url });
+  }
+  return created.size > creates ? [] : [...created.values()];
+}
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 
@@ -500,6 +622,34 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(logSkipped("pull request refresh after run skipped", { threadId })),
     );
 
+  // An agent that opens a pull request from a shell gets it linked as link_pull_request would.
+  const linkCreatedChangeRequests = Effect.fn("PullRequestSyncReactor.linkCreatedChangeRequests")(
+    function* (threadId: ThreadId, item: CommandExecution) {
+      if (isOrchestrationV2WorkActive(item.status)) return;
+      yield* Effect.forEach(
+        changeRequestsCreatedBy(item.input, item.output ?? ""),
+        (created) =>
+          engine
+            .dispatch({
+              type: "thread.pull-request.link",
+              // Stable per command, so a repeated settlement cannot relink one the user unlinked.
+              commandId: CommandId.make(
+                `server:pr-created-link:${threadId}:${item.id}:${threadPullRequestKeyOf(created)}`,
+              ),
+              threadId,
+              ...created,
+              source: "created",
+            })
+            .pipe(
+              Effect.catchCause(
+                logSkipped("linking a pull request a command created failed", { threadId }),
+              ),
+            ),
+        { discard: true },
+      );
+    },
+  );
+
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
@@ -532,14 +682,14 @@ export const make = Effect.gen(function* () {
           // ends. Read again when the run ends, since `merge --auto` returns before it merges.
           case "turn-item.updated": {
             const item = event.payload;
-            if (item.type !== "command_execution" || !isChangeRequestCloseCommand(item.input)) {
-              return Effect.void;
-            }
+            if (item.type !== "command_execution") return Effect.void;
+            const linked = linkCreatedChangeRequests(event.threadId, item);
+            if (!isChangeRequestCloseCommand(item.input)) return linked;
             const ended = closeCommands.get(event.threadId) ?? new Set<string>();
             closeCommands.set(event.threadId, ended);
-            if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return Effect.void;
+            if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return linked;
             ended.add(item.id);
-            return refreshOpenLinks(event.threadId);
+            return Effect.andThen(linked, refreshOpenLinks(event.threadId));
           }
           case "run.updated":
             return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)

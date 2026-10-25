@@ -332,17 +332,22 @@ function runUpdated(
   };
 }
 
-function commandRan(threadId: ThreadId, input: string): OrchestrationV2DomainEvent {
+function commandRan(
+  threadId: ThreadId,
+  input: string,
+  output?: string,
+  name = "command",
+): OrchestrationV2DomainEvent {
   const runId = RunId.make(`run:${threadId}:1`);
   const at = DateTime.makeUnsafe(NOW);
   return {
     type: "turn-item.updated",
-    id: EventId.make(`event:${threadId}:command`),
+    id: EventId.make(`event:${threadId}:${name}`),
     threadId,
     runId,
     occurredAt: at,
     payload: {
-      id: TurnItemId.make(`item:${threadId}:command`),
+      id: TurnItemId.make(`item:${threadId}:${name}`),
       threadId,
       runId,
       nodeId: null,
@@ -358,6 +363,7 @@ function commandRan(threadId: ThreadId, input: string): OrchestrationV2DomainEve
       updatedAt: at,
       type: "command_execution",
       input,
+      ...(output === undefined ? {} : { output }),
     },
   };
 }
@@ -465,6 +471,29 @@ const requestAndApply = Effect.fn("requestPullRequestSyncHarness")(function* (
   yield* reactor.drain;
   yield* applyRecordedSyncs(fixture);
 });
+
+/** A thread with an open pull request whose merge command marks the end of earlier events. */
+const MERGING_THREAD = ThreadId.make("merging");
+
+/** The link commands `events` dispatch, read once the reactor has handled them all. */
+const linksFrom = Effect.fn("linksFrom")(function* (
+  fixture: Harness,
+  reactor: PullRequestSyncReactor.PullRequestSyncReactor["Service"],
+  events: ReadonlyArray<OrchestrationV2DomainEvent>,
+) {
+  yield* Ref.set(fixture.linkCommands, []);
+  yield* Queue.offerAll(fixture.domainEvents, [
+    ...events,
+    commandRan(MERGING_THREAD, "gh pr merge 7", undefined, "merge"),
+  ]);
+  yield* Queue.take(fixture.snapshotReads);
+  yield* Queue.take(fixture.snapshotReads);
+  yield* reactor.drain;
+  return yield* Ref.get(fixture.linkCommands);
+});
+
+const mergingSnapshot = () =>
+  makeSnapshot([makeThread(MERGING_THREAD, { pullRequests: [makeLink(7, { state: "open" })] })]);
 
 describe("PullRequestSyncReactor", () => {
   it.effect("retries a failed stack read after the summary becomes terminal", () =>
@@ -1476,6 +1505,185 @@ describe("PullRequestSyncReactor", () => {
             ]),
             [[7, "merged"]],
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "a plain create",
+      input:
+        'gh pr create --base main --head feature --title "fix: 7 things" --body-file /tmp/body.md',
+      output: "https://github.com/owner/repository/pull/124\n",
+      linked: [124],
+    },
+    {
+      name: "a Codex shell wrapper after a push",
+      input: '/bin/zsh -lc "git push -u origin feature 2>&1 | tail -2 && gh pr create --fill"',
+      output: [
+        "remote: Create a pull request for 'feature' on GitHub by visiting:",
+        "remote:      https://github.com/owner/repository/pull/new/feature",
+        "https://github.com/owner/repository/pull/124",
+      ].join("\n"),
+      linked: [124],
+    },
+    {
+      name: "a Codex script quoted in pieces around a heredoc",
+      input:
+        "/bin/zsh -lc \"cat > /tmp/body.md <<'EOF'\nSet the \"'`hidden`'\" flag.\nEOF\ngh pr create --fill --body-file /tmp/body.md\"",
+      output: "https://github.com/owner/repository/pull/62\n",
+      linked: [62],
+    },
+    {
+      name: "an older pull request read in the same command",
+      input: "gh pr view 120 --json url --jq .url && gh pr create --fill",
+      output:
+        "https://github.com/owner/repository/pull/120\nhttps://github.com/owner/repository/pull/124",
+      linked: [124],
+    },
+    {
+      name: "both layers of a stack",
+      input: "gh pr create --base main --head a --fill && gh pr create --base a --head b --fill",
+      output:
+        "https://github.com/owner/repository/pull/124\nhttps://github.com/owner/repository/pull/125",
+      linked: [124, 125],
+    },
+    {
+      name: "the first pull request of a new repository",
+      input: "cargo test 2>&1 | tail -1 && timeout 60 gh pr create -R owner/repository --fill",
+      output: "test result: ok\nhttps://github.com/owner/repository/pull/1",
+      linked: [1],
+    },
+    {
+      name: "a GitLab merge request",
+      input: "glab mr create --fill --yes",
+      output:
+        "!3 Fix the thing (feature)\n https://gitlab.com/owner/repository/-/merge_requests/3\n",
+      linked: [3],
+    },
+    {
+      name: "a new pull request whose number appears in the create command",
+      input: "timeout 60 gh pr create --fill",
+      output: "https://github.com/owner/repository/pull/60",
+      linked: [60],
+    },
+    {
+      name: "a create subcommand that does not end its shell word",
+      input: "gh pr create#typo; gh pr view --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create after an empty heredoc",
+      input: "cat > /tmp/notes.md <<'EOF'\nEOF\ngh pr create --fill",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [124],
+    },
+    {
+      name: "a read with no create",
+      input: "gh pr view 124 --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command quoted in another program's query",
+      input: `sqlite3 audit.db "select output from items where input like '%gh pr create%'"`,
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command with a separator inside quotes",
+      input: "echo 'example: gh pr create; gh pr create --fill' && gh pr view --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "more URLs than create commands",
+      input: "gh pr view --json url --jq .url && gh pr create --fill",
+      output:
+        "https://github.com/owner/repository/pull/120\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command only in heredoc text",
+      input:
+        "cat > notes.md <<'EOF'\nOpen it with gh pr create.\nEOF\ngh pr list --json url --jq '.[].url'",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command after a comment that starts at a separator",
+      input: "gh pr view --json url --jq .url;# note; gh pr create --fill",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create beside a command that lists other pull requests",
+      input: "gh pr list --json url --jq '.[].url' && gh pr create --fill > /dev/null",
+      output: "https://github.com/owner/repository/pull/120",
+      linked: [],
+    },
+    {
+      name: "another host's URL beside a create command",
+      input: "gh pr create --fill",
+      output: "https://gitlab.com/owner/repository/-/merge_requests/3",
+      linked: [],
+    },
+    {
+      name: "an existing pull request quoted in another command",
+      input:
+        "printf '%s\\n' 'https://github.com/owner/repository/pull/120'; gh pr create --fill > /dev/null",
+      output: "https://github.com/owner/repository/pull/120",
+      linked: [],
+    },
+  ])("links what the command created: $name", ({ input, output, linked }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({ snapshot: mergingSnapshot() });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const child = ThreadId.make("delegated-child");
+          const links = yield* linksFrom(fixture, reactor, [commandRan(child, input, output)]);
+
+          assert.deepStrictEqual(
+            links.map((command) => [command.threadId, command.number, command.source]),
+            linked.map((number) => [child, number, "created"]),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("links a created pull request once its command settles, with one command id", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({ snapshot: mergingSnapshot() });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const settled = commandRan(
+            ThreadId.make("agent"),
+            "gh pr create --fill",
+            "https://github.com/owner/repository/pull/124",
+          );
+          assert.strictEqual(settled.type, "turn-item.updated");
+          if (settled.type !== "turn-item.updated") return;
+
+          const links = yield* linksFrom(fixture, reactor, [
+            { ...settled, payload: { ...settled.payload, status: "running" } },
+            settled,
+            settled,
+          ]);
+
+          assert.deepStrictEqual(
+            links.map((command) => command.number),
+            [124, 124],
+          );
+          assert.strictEqual(links[0]!.commandId, links[1]!.commandId);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

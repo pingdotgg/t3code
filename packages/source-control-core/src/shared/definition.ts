@@ -234,6 +234,11 @@ export interface SourceControlDefinition {
    * sends T3 no notification of its own. Absent for a host with no such CLI.
    */
   readonly changeRequestCloseCommand?: RegExp;
+  /**
+   * Matches a shell command that opens a change request with this host's CLI and prints its URL
+   * on a line of its own. Absent for a host with no such CLI.
+   */
+  readonly changeRequestCreateCommand?: RegExp;
   readonly authorProfileUrl: (login: string, repositoryUrl: string) => string | null;
   /**
    * The references this host's own renderer links in plain text, such as `#12` or a commit SHA,

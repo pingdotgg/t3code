@@ -105,6 +105,7 @@ export const definition = defineSourceControl({
   ] as const),
   checkoutCommand: ({ number }) => `gh pr checkout ${number}`,
   changeRequestCloseCommand: /\bgh\s+(?:pr\s+(?:merge|close)|stack\s+merge)\b/u,
+  changeRequestCreateCommand: /\bgh\s+pr\s+create\b/u,
   authorProfileUrl: (login, repositoryUrl) =>
     login.endsWith("[bot]")
       ? null
