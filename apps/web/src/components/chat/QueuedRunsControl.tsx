@@ -118,6 +118,11 @@ export function QueuedRunsControl({
     workflow?.canSendNow === true ||
     (workflow?.canPromoteToSteer === true &&
       (!freshContext || workflow.promoteSkipsCompaction === true));
+  const nextSteerable = queued.find(
+    ({ run, steerRejectionReason }) =>
+      canSendRun(run.freshContext === true) &&
+      (workflow?.canSendNow || steerRejectionReason === null),
+  );
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -128,28 +133,32 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
-      key: run.id,
-      message,
-      runId: run.id,
-      messageId: run.userMessageId,
-      freshContext: run.freshContext === true,
-      serverIndex,
-      text,
-      // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
-      attachments,
-      thumbnails: attachments
-        .filter((attachment) => attachment.type === "image")
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: queuedImageUrlById.get(attachment.id) ?? null,
-        })),
-      pending: false,
-    })),
+    ...queued.map(
+      ({ run, text, attachments, context, message, steerRejectionReason }, serverIndex) => ({
+        key: run.id,
+        steerRejectionReason,
+        message,
+        runId: run.id,
+        messageId: run.userMessageId,
+        freshContext: run.freshContext === true,
+        serverIndex,
+        text,
+        // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
+        editable: context?.guest === undefined,
+        attachments,
+        thumbnails: attachments
+          .filter((attachment) => attachment.type === "image")
+          .map<QueuedRowThumbnail>((attachment) => ({
+            key: attachment.id,
+            name: attachment.name,
+            url: queuedImageUrlById.get(attachment.id) ?? null,
+          })),
+        pending: false,
+      }),
+    ),
     ...optimisticQueued.map((message) => ({
       key: message.id,
+      steerRejectionReason: null,
       message: undefined,
       runId: null,
       messageId: null,
@@ -193,8 +202,8 @@ export function QueuedRunsControl({
 
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
-      const next = queued[0];
-      if (!next || !canSendRun(next.run.freshContext === true)) return false;
+      const next = nextSteerable;
+      if (!next) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -282,7 +291,11 @@ export function QueuedRunsControl({
                         <Button
                           size="xs"
                           variant="ghost-muted"
-                          disabled={item.runId === null || busyRunId !== null}
+                          disabled={
+                            item.runId === null ||
+                            busyRunId !== null ||
+                            (!workflow?.canSendNow && item.steerRejectionReason !== null)
+                          }
                           onClick={() => {
                             if (item.runId !== null) {
                               void sendQueuedMessage(item.runId);
@@ -294,7 +307,9 @@ export function QueuedRunsControl({
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {`${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                        {!workflow?.canSendNow && item.steerRejectionReason
+                          ? item.steerRejectionReason
+                          : `${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.runId === nextSteerable?.run.id && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                   </>

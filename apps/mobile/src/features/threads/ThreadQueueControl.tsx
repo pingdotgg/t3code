@@ -230,7 +230,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+      {queuedRuns.map((item, index) => {
+        const { run, text, attachments, context, message, steerRejectionReason } = item;
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
           // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
@@ -241,6 +242,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
+          steerRejectionReason,
           text,
         });
         const title =
@@ -263,6 +265,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                           {
                             id: "steer",
                             title: "Send now",
+                            ...(!workflow?.canSendNow && steerRejectionReason
+                              ? { subtitle: steerRejectionReason }
+                              : {}),
                             attributes: { disabled: !controls.canSend },
                             image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
                           },
@@ -332,6 +337,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Send now, queued message ${index + 1}`}
+                    {...(!workflow?.canSendNow && steerRejectionReason
+                      ? { accessibilityHint: steerRejectionReason }
+                      : {})}
                     disabled={!controls.canSend}
                     onPress={() => void act(run.id, "steer")}
                     className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"

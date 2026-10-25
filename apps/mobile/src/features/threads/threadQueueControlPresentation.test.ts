@@ -16,12 +16,24 @@ describe("threadQueueControlPresentation", () => {
         isEditing,
         canPromoteToSteer: false,
         canSendNow: true,
-        text: "Queued message",
+        steerRejectionReason: "Goal commands must run as a separate turn.",
+        text: "/goal finish the refactor",
       });
 
       expect(controls.canSend).toBe(expected);
     },
   );
+
+  it("rejects steering a goal into an active turn", () => {
+    const controls = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canSendNow: false,
+      steerRejectionReason: "Goal commands must run as a separate turn.",
+      text: "/goal finish the refactor",
+    });
+    expect(controls.canSend).toBe(false);
+  });
 
   it("shows an assistant quote as its quoted text", () => {
     const href = formatAssistantCitationHref({
@@ -39,6 +51,7 @@ describe("threadQueueControlPresentation", () => {
       busy: false,
       canPromoteToSteer: true,
       canSendNow: false,
+      steerRejectionReason: null,
       text: `[Assistant quote](${href}) Can we add a backoff here?`,
     });
 
@@ -53,6 +66,7 @@ describe("threadQueueControlPresentation", () => {
       canPromoteToSteer: true,
       canSendNow: false,
       isEditing: true,
+      steerRejectionReason: null,
       text: "Being edited",
     });
 
@@ -68,6 +82,7 @@ describe("threadQueueControlPresentation", () => {
       canPromoteToSteer: true,
       canSendNow: false,
       isGuestMessage: true,
+      steerRejectionReason: null,
       text: "Why?",
     });
 

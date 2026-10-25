@@ -1,7 +1,7 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
-import type { ComponentProps } from "react";
+import { createRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
@@ -42,7 +42,7 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 
 import "~/index.css";
 import { render as renderUi } from "../../../test/render";
-import { QueuedRunsControl } from "./QueuedRunsControl";
+import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsControl";
 
 function setup() {
   state.projection = null;
@@ -202,4 +202,50 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   await expect.element(page.getByText("Later", { exact: true })).toBeInTheDocument();
   const column = screen.getByTestId("column").element();
   expect(column.scrollHeight).toBe(column.clientHeight);
+});
+
+it.each([false, true])("gates queued command sending with send-now %s", async (canSendNow) => {
+  setup();
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canSendNow,
+    canPromoteToSteer: !canSendNow,
+    canReorder: true,
+    queuedRuns: [
+      {
+        run: { id: "run:goal", userMessageId: "message:goal" },
+        text: "/goal finish the refactor",
+        attachments: [],
+        steerRejectionReason: "Goal commands must run as a separate turn.",
+      },
+      {
+        run: { id: "run:plain", userMessageId: "message:plain" },
+        text: "Also update the docs",
+        attachments: [],
+        steerRejectionReason: null,
+      },
+    ],
+  };
+  const ref = createRef<QueuedRunsControlHandle>();
+  await using _screen = await renderQueue({ ref });
+
+  const steerButtons = page.getByRole("button", {
+    name: "Send now",
+    exact: true,
+  });
+  if (canSendNow) await expect.element(steerButtons.nth(0)).toBeEnabled();
+  else await expect.element(steerButtons.nth(0)).toBeDisabled();
+  await expect.element(steerButtons.nth(1)).toBeEnabled();
+
+  expect(ref.current?.steerNext(false)).toBe(true);
+  expect(state.runCommand).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      input: expect.objectContaining(
+        canSendNow
+          ? { runId: "run:goal" }
+          : { queuedRunId: "run:plain", targetRunId: "run:active" },
+      ),
+    }),
+  );
 });
