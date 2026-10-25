@@ -1,5 +1,19 @@
 import UIKit
 
+/// Fixed-pitch line boundaries need no storage proportional to the text length.
+struct ReviewDiffCodeLineStarts: RandomAccessCollection {
+  let startIndex = 0
+  let endIndex: Int
+  let columns: Int
+
+  init(length: Int, columns: Int?) {
+    self.columns = Swift.max(1, columns ?? length)
+    endIndex = (Swift.max(1, length) - 1) / self.columns + 1
+  }
+
+  subscript(index: Int) -> Int { index * columns }
+}
+
 /// ASCII uses fixed-pitch columns. TextKit handles shaping, tabs, and Unicode highlights.
 /// Pass `unboundedWidth` to lay a row out on one line for horizontal scrolling.
 final class ReviewDiffCodeLayout: NSObject {
@@ -19,7 +33,7 @@ final class ReviewDiffCodeLayout: NSObject {
     return cache
   }()
   let text: String
-  let starts: [Int]
+  let starts: ReviewDiffCodeLineStarts
   let lineHeight: CGFloat
   let firstLineHeight: CGFloat
   let extraHeight: CGFloat
@@ -36,10 +50,10 @@ final class ReviewDiffCodeLayout: NSObject {
     self.width = width
     self.characterWidth = characterWidth
     lineHeight = ceil(font.lineHeight)
-    if text.utf8.allSatisfy({ $0 >= 32 && $0 <= 126 }) {
+    if Self.isPrintableASCII(text) {
       let length = max(1, text.utf8.count)
       let columns = max(1, Int(min(width / characterWidth, CGFloat(length))))
-      starts = Array(stride(from: 0, to: length, by: columns))
+      starts = ReviewDiffCodeLineStarts(length: length, columns: columns)
       firstLineHeight = font.lineHeight
       extraHeight = CGFloat(starts.count - 1) * lineHeight
       usedWidth = CGFloat(min(text.utf8.count, columns)) * characterWidth
@@ -50,13 +64,17 @@ final class ReviewDiffCodeLayout: NSObject {
       let manager = layout.manager
       let container = layout.container
       usesNativeLayout = true
-      starts = [0]
+      starts = ReviewDiffCodeLineStarts(length: 0, columns: nil)
       firstLineHeight = manager.numberOfGlyphs > 0
         ? manager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).height : font.lineHeight
       let used = manager.usedRect(for: container)
       extraHeight = max(0, used.height - firstLineHeight)
       usedWidth = ceil(used.width)
     }
+  }
+
+  static func isPrintableASCII(_ text: String) -> Bool {
+    text.utf8.allSatisfy { $0 >= 32 && $0 <= 126 }
   }
 
   private func nativeLayout() -> ReviewDiffTextLayout {

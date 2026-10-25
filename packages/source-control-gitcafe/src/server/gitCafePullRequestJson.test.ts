@@ -336,6 +336,115 @@ describe("toStack", () => {
 });
 
 describe("toDiff", () => {
+  it("marks the unterminated 93-byte tunnel-release migration as missing its final newline", () => {
+    const content =
+      'ALTER TABLE "relay_managed_endpoint_allocations" ADD COLUMN "tunnel_released_at" varchar(64);';
+    assert.strictEqual(Buffer.byteLength(content), 93);
+    const { patch } = GitCafePullRequestJson.toDiff(
+      decodeDiff({
+        items: [
+          {
+            path: "infra/relay/migrations/postgres/20261005232034_managed_endpoint_tunnel_released_at/migration.sql",
+            status: "added",
+            hunks: [
+              {
+                oldStart: 1,
+                oldLines: 0,
+                newStart: 1,
+                newLines: 1,
+                lines: [{ origin: "+", content }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    assert.isTrue(patch.endsWith(`+${content}\n\\ No newline at end of file\n`));
+  });
+
+  it.each(["+", "-", " "])("marks unterminated ordinary %j lines", (origin) => {
+    const { patch } = GitCafePullRequestJson.toDiff(
+      decodeDiff({
+        items: [
+          {
+            path: "file.ts",
+            status: "modified",
+            hunks: [
+              {
+                oldStart: 1,
+                oldLines: origin === "+" ? 0 : 1,
+                newStart: 1,
+                newLines: origin === "-" ? 0 : 1,
+                lines: [{ origin, content: "value" }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    assert.isTrue(patch.endsWith(`${origin}value\n\\ No newline at end of file\n`));
+  });
+
+  it.each([
+    ["+", ">"],
+    ["-", "<"],
+    [" ", "="],
+  ])("emits one marker for an explicit %s/%s EOF pair", (origin, marker) => {
+    const { patch } = GitCafePullRequestJson.toDiff(
+      decodeDiff({
+        items: [
+          {
+            path: "file.ts",
+            status: "modified",
+            hunks: [
+              {
+                oldStart: 1,
+                oldLines: origin === "+" ? 0 : 1,
+                newStart: 1,
+                newLines: origin === "-" ? 0 : 1,
+                lines: [
+                  { origin, content: "value" },
+                  { origin: marker, content: "\n" },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    assert.strictEqual(patch.split("\\ No newline at end of file").length - 1, 1);
+  });
+
+  it.each([false, true])("preserves rename metadata for changed=%s", (changed) => {
+    const { patch } = GitCafePullRequestJson.toDiff(
+      decodeDiff({
+        items: [
+          {
+            path: "after.ts",
+            oldPath: "before.ts",
+            status: "renamed",
+            hunks: changed
+              ? [
+                  {
+                    oldStart: 1,
+                    oldLines: 1,
+                    newStart: 1,
+                    newLines: 1,
+                    lines: [
+                      { origin: "-", content: "before\n" },
+                      { origin: "+", content: "after\n" },
+                    ],
+                  },
+                ]
+              : [],
+          },
+        ],
+      }),
+    );
+    assert.include(patch, changed ? "similarity index 0%\n" : "similarity index 100%\n");
+    assert.include(patch, "rename from before.ts\nrename to after.ts\n");
+  });
+
   it("converts numeric hunk coordinates into a unified patch", () => {
     const diff = decodeDiff({
       items: [

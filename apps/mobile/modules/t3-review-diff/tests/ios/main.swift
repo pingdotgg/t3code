@@ -77,7 +77,7 @@ for text in ["\t\t\"extends\": \"@riptech/tsconfig/tsconfig.test.json\",", "æ¼¢å
 let unwrappedAscii = ReviewDiffCodeLayout(
   text: "const value = 123;", font: font, width: ReviewDiffCodeLayout.unboundedWidth, characterWidth: characterWidth
 )
-check(unwrappedAscii.starts == [0] && unwrappedAscii.usedWidth == 18 * characterWidth)
+check(Array(unwrappedAscii.starts) == [0] && unwrappedAscii.usedWidth == 18 * characterWidth)
 
 let ascii = String(repeating: "const value = 123; ", count: 100)
 let layout = ReviewDiffCodeLayout(text: ascii, font: font, width: 280, characterWidth: characterWidth)

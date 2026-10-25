@@ -3,6 +3,123 @@ import { describe, expect, it } from "vite-plus/test";
 import { applyReviewDiffMetadata, buildReviewParsedDiff } from "./reviewModel";
 
 describe("buildReviewParsedDiff", () => {
+  it("keeps UI identities compact, stable, and isolated from parser cache keys", () => {
+    const patch =
+      "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-before\n+after\n";
+    const scope = JSON.stringify({ target: 'remote\\"scope'.repeat(100) });
+    const parsed = buildReviewParsedDiff(patch + patch, scope);
+    const repeated = buildReviewParsedDiff(patch + patch, scope);
+    const otherSection = buildReviewParsedDiff(patch + patch, `${scope}:other`);
+    const changed = buildReviewParsedDiff((patch + patch).replaceAll("after", "changed"), scope);
+    if (
+      parsed.kind !== "files" ||
+      repeated.kind !== "files" ||
+      otherSection.kind !== "files" ||
+      changed.kind !== "files"
+    )
+      throw new Error("Expected structured diffs");
+
+    expect(parsed.files).toHaveLength(2);
+    expect(parsed.files.map((file) => file.id)).toEqual(repeated.files.map((file) => file.id));
+    expect(parsed.files.map((file) => file.cacheKey)).toEqual(
+      repeated.files.map((file) => file.cacheKey),
+    );
+    const ids = parsed.files.flatMap((file) => [file.id, ...file.rows.map((row) => row.id)]);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id.length).toBeLessThan(48);
+    for (const variant of [otherSection, changed]) {
+      const otherIds = variant.files.flatMap((file) => [
+        file.id,
+        ...file.rows.map((row) => row.id),
+      ]);
+      expect(otherIds.some((id) => ids.includes(id))).toBe(false);
+    }
+    expect(parsed.files[0]!.cacheKey.length).toBeGreaterThan(scope.length);
+    expect(parsed.files[0]!.id).not.toBe(parsed.files[0]!.cacheKey);
+    expect(repeated.files[0]!.rows.map((row) => row.id)).toEqual(
+      parsed.files[0]!.rows.map((row) => row.id),
+    );
+  });
+
+  it.each(["", "\n\n[truncated]"])(
+    "preserves the final blank context in the resourceTelemetry excerpt with suffix %j",
+    (suffix) => {
+      const parsed = buildReviewParsedDiff(
+        [
+          "diff --git a/packages/contracts/src/resourceTelemetry.ts b/packages/contracts/src/resourceTelemetry.ts",
+          "--- a/packages/contracts/src/resourceTelemetry.ts",
+          "+++ b/packages/contracts/src/resourceTelemetry.ts",
+          "@@ -350,6 +371,7 @@",
+          "   DesktopTelemetryRequestDesktopUpdate,",
+          "   DesktopTelemetryCommitDesktopUpdate,",
+          "   DesktopTelemetryCancelDesktopUpdate,",
+          "+  DesktopUpdateRestartPolicyResult,",
+          " ]);",
+          " export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;",
+          " ",
+          "",
+        ].join("\n") + suffix,
+        "resource-telemetry",
+      );
+      expect(parsed.kind).toBe("files");
+      if (parsed.kind !== "files") return;
+      expect(parsed.files[0]?.rows.at(-1)).toMatchObject({
+        kind: "line",
+        change: "context",
+        oldLineNumber: 355,
+        newLineNumber: 377,
+        content: "",
+      });
+      expect(parsed.files[0]?.additionLines.at(-1)).toBe("\n");
+      expect(parsed.files[0]?.deletionLines.at(-1)).toBe("\n");
+    },
+  );
+
+  it("preserves final content whitespace and gives distinct patches distinct cache keys", () => {
+    const patch = "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -0,0 +1 @@\n+value \t\n";
+    const parsed = buildReviewParsedDiff(patch, "whitespace");
+    const withoutWhitespace = buildReviewParsedDiff(
+      patch.replace("value \t", "value"),
+      "whitespace",
+    );
+    expect(parsed.kind).toBe("files");
+    expect(withoutWhitespace.kind).toBe("files");
+    if (parsed.kind !== "files" || withoutWhitespace.kind !== "files") return;
+    expect(parsed.files[0]?.rows.at(-1)).toMatchObject({ content: "value \t" });
+    expect(parsed.files[0]?.additionLines).toEqual(["value \t\n"]);
+    expect(parsed.files[0]?.cacheKey).not.toBe(withoutWhitespace.files[0]?.cacheKey);
+  });
+
+  it.each([
+    [true, false],
+    [false, true],
+    [true, true],
+    [false, false],
+  ])("preserves missing-newline flags for old=%s and new=%s", (oldMissing, newMissing) => {
+    const parsed = buildReviewParsedDiff(
+      [
+        "diff --git a/a.ts b/a.ts",
+        "--- a/a.ts",
+        "+++ b/a.ts",
+        "@@ -1 +1 @@",
+        "-value",
+        ...(oldMissing ? ["\\ No newline at end of file"] : []),
+        "+value",
+        ...(newMissing ? ["\\ No newline at end of file"] : []),
+        "",
+      ].join("\n"),
+      "eof",
+    );
+    expect(parsed.kind).toBe("files");
+    if (parsed.kind !== "files") return;
+    expect(parsed.files[0]).toMatchObject({
+      noEOFCRDeletions: oldMissing,
+      noEOFCRAdditions: newMissing,
+      deletionLines: [oldMissing ? "value" : "value\n"],
+      additionLines: [newMissing ? "value" : "value\n"],
+    });
+  });
+
   it.each([
     ["a/example.ts", "a/example.ts"],
     ["a/before.ts", "b/after.ts"],

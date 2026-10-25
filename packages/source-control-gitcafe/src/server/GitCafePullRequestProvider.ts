@@ -116,6 +116,30 @@ const Listed = Schema.Struct({
 });
 const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const BranchCommit = Schema.Struct({ oid: TrimmedNonEmptyString });
+const CommitOid = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/u));
+const isCommitOid = Schema.is(CommitOid);
+const SourceSnapshot = Schema.Struct({
+  version: NonNegativeInt,
+  headOid: CommitOid,
+  comparisonBaseOid: CommitOid,
+});
+const SourceBlob = Schema.Struct({
+  commit: CommitOid,
+  path: Schema.String,
+  size: NonNegativeInt,
+  binary: Schema.Boolean,
+  content: Schema.NullOr(Schema.String),
+});
+const MAX_DIFF_FILE_BYTES = 1024 * 1024;
+
+class GitCafeDiffSourceUnavailableError extends Schema.TaggedError<GitCafeDiffSourceUnavailableError>()(
+  "GitCafeDiffSourceUnavailableError",
+  {
+    path: Schema.String,
+    reason: Schema.Literals(["oversized", "binary", "unavailable"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 const Snapshot = {
   version: NonNegativeInt,
   headOid: TrimmedNonEmptyString,
@@ -270,6 +294,58 @@ export const make = Effect.gen(function* () {
     pullPath(operation, input).pipe(
       Effect.flatMap((path) => read(operation, input, { path }, Json.GitCafePullDetail)),
     );
+
+  const readDiffSource = Effect.fn("GitCafePullRequestProvider.readDiffSource")(function* (
+    input: ProviderRepositoryRef,
+    revision: string,
+    filePath: string,
+  ) {
+    const operation = "getDiffFileContents";
+    const base = yield* repositoryPath(operation, input);
+    const query = new URLSearchParams({ oid: revision, path: filePath });
+    const blob = yield* read(operation, input, { path: `${base}/blob?${query}` }, SourceBlob).pipe(
+      Effect.catchIf(
+        (error) =>
+          isApiError(error.cause) && (error.cause.status === 413 || error.cause.status === 501),
+        (error) =>
+          Effect.fail(
+            failure(
+              operation,
+              "GitCafe cannot provide this source file as bounded text.",
+              new GitCafeDiffSourceUnavailableError({
+                path: filePath,
+                reason:
+                  isApiError(error.cause) && error.cause.status === 413
+                    ? "oversized"
+                    : "unavailable",
+                cause: error,
+              }),
+            ),
+          ),
+      ),
+    );
+    if (blob.commit !== revision || blob.path !== filePath)
+      return yield* failure(
+        operation,
+        "GitCafe answered with a different source revision or path.",
+      );
+    const reason =
+      blob.size > MAX_DIFF_FILE_BYTES ||
+      (blob.content !== null && Buffer.byteLength(blob.content, "utf8") > MAX_DIFF_FILE_BYTES)
+        ? "oversized"
+        : blob.binary || blob.content?.includes("\0")
+          ? "binary"
+          : blob.content === null
+            ? "unavailable"
+            : null;
+    if (reason !== null)
+      return yield* failure(
+        operation,
+        "GitCafe cannot provide this source file as bounded text.",
+        new GitCafeDiffSourceUnavailableError({ path: filePath, reason }),
+      );
+    return blob.content!;
+  });
 
   const readPages = Effect.fn("GitCafePullRequestProvider.readPages")(function* <
     S extends Schema.Codec<Paged<unknown>, unknown, never, never>,
@@ -926,6 +1002,53 @@ export const make = Effect.gen(function* () {
         nextCursor: page.next === null ? null : encodeDiffCursor({ ...revision, after: page.next }),
       };
     }),
+    getDiffFileContents: Effect.fn("GitCafePullRequestProvider.getDiffFileContents")(
+      function* (input) {
+        const operation = "getDiffFileContents";
+        if (input.commit !== undefined)
+          return yield* failure(operation, "GitCafe commit diff contents are not supported yet.");
+        const pull = yield* readPull(operation, input);
+        if (!isCommitOid(pull.headOid))
+          return yield* failure(
+            operation,
+            "GitCafe has not reported an immutable pull request head.",
+          );
+        const path = yield* pullPath(operation, input);
+        const query = new URLSearchParams({ expectedVersion: String(pull.version), limit: "1" });
+        // observedBaseOid is the target tip, not necessarily the diff's merge base.
+        const snapshot = yield* read(
+          operation,
+          input,
+          { path: `${path}/changes?${query}` },
+          SourceSnapshot,
+        );
+        if (snapshot.version !== pull.version || snapshot.headOid !== pull.headOid)
+          return yield* failure(
+            operation,
+            "GitCafe changed the pull request revision. Refresh the diff.",
+          );
+        const sourceRepository =
+          pull.sourceRepo === null
+            ? input.repository
+            : `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`;
+        const [oldContents, newContents] = yield* Effect.all(
+          [
+            input.changeType === "new"
+              ? Effect.succeed("")
+              : readDiffSource(input, snapshot.comparisonBaseOid, input.oldPath),
+            input.changeType === "deleted"
+              ? Effect.succeed("")
+              : readDiffSource(
+                  { ...input, repository: sourceRepository },
+                  snapshot.headOid,
+                  input.newPath,
+                ),
+          ],
+          { concurrency: 2 },
+        );
+        return { oldContents, newContents };
+      },
+    ),
     runAction: Effect.fn("GitCafePullRequestProvider.runAction")(function* (input) {
       if (input.stackNumber !== undefined)
         return yield* runStackAction({ ...input, stackNumber: input.stackNumber });

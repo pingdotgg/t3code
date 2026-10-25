@@ -65,7 +65,8 @@ export function combinePullRequestDiffPages(
     additions: files.reduce((total, file) => total + file.additions, 0),
     deletions: files.reduce((total, file) => total + file.deletions, 0),
     notice:
-      pages.some((page) => page.result.truncated) || parsed.some((page) => page.kind === "raw")
+      pages.some((page) => page.result.truncated) ||
+      parsed.some((page) => page.kind === "raw" || (page.kind === "files" && page.notice !== null))
         ? `Some file contents are unavailable. Open the ${terminology.singular} on its provider to see the full changes.`
         : null,
   };

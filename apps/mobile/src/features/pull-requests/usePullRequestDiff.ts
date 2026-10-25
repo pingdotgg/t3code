@@ -87,10 +87,15 @@ export function usePullRequestDiff(
     if (!canLoadMore) return;
     setState({ key, cursor: nextCursor, pages });
   }, [canLoadMore, key, nextCursor, pages, setState]);
+  const { error, refresh: refreshPage } = query;
   const refresh = useCallback(() => {
+    if (cursor !== null && error !== null) {
+      refreshPage();
+      return;
+    }
     setState({ key, cursor: null, pages: NO_PAGES });
     refreshFirstPage();
-  }, [key, refreshFirstPage, setState]);
+  }, [cursor, error, refreshPage, key, refreshFirstPage, setState]);
   const onPullRefresh = useCallback(() => {
     setState({ key, cursor: null, pages: NO_PAGES });
     onRefresh();

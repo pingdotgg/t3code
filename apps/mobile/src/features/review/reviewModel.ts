@@ -2,6 +2,7 @@ import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
@@ -60,6 +61,13 @@ export interface ReviewRenderableFile {
   readonly languageHint: string | null;
   readonly additionLines: ReadonlyArray<string>;
   readonly deletionLines: ReadonlyArray<string>;
+  // Only populated after validating the entire raw file block against its original hunk count.
+  readonly completePatchSource?: () => {
+    readonly oldContents: string;
+    readonly newContents: string;
+  };
+  readonly noEOFCRAdditions?: boolean;
+  readonly noEOFCRDeletions?: boolean;
   readonly rows: ReadonlyArray<ReviewRenderableRow>;
 }
 
@@ -139,13 +147,13 @@ function splitTruncationMarker(diff: string): {
   readonly text: string;
   readonly truncated: boolean;
 } {
-  const trimmed = diff.trimEnd();
-  if (!trimmed.endsWith("[truncated]")) {
-    return { text: trimmed, truncated: false };
+  const marker = /(?:(?:\r?\n){1,2}|^)\[truncated\]\s*$/.exec(diff);
+  if (!marker) {
+    return { text: diff, truncated: false };
   }
 
   return {
-    text: trimmed.replace(/\n*\[truncated\]\s*$/, "").trimEnd(),
+    text: diff.slice(0, marker.index),
     truncated: true,
   };
 }
@@ -219,14 +227,22 @@ function fnv1a32(input: string, seed: number, multiplier: number): number {
 }
 
 function buildPatchCacheKey(patch: string, scope: string): string {
-  const normalizedPatch = patch.trim();
-  const primary = fnv1a32(normalizedPatch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(
-    normalizedPatch,
-    SECONDARY_HASH_SEED,
-    SECONDARY_HASH_MULTIPLIER,
-  ).toString(36);
-  return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+  const primary = fnv1a32(patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
+  const secondary = fnv1a32(patch, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
+  return `${scope}:${patch.length}:${primary}:${secondary}`;
+}
+
+// Re-parsing an unchanged page must preserve selection/collapse state. Intern only
+// its cache key (never patch contents), keeping scoped Pierre keys off every UI row.
+const reviewPatchIds = new Map<string, string>();
+
+function getReviewPatchId(cacheKey: string): string {
+  let id = reviewPatchIds.get(cacheKey);
+  if (id === undefined) {
+    id = `p${reviewPatchIds.size.toString(36)}`;
+    reviewPatchIds.set(cacheKey, id);
+  }
+  return id;
 }
 
 function getFileExtension(path: string): string | null {
@@ -276,14 +292,17 @@ function fallbackHunkHeader(hunk: FileDiffMetadata["hunks"][number]): string {
   return `@@ -${hunk.deletionStart},${hunk.deletionCount} +${hunk.additionStart},${hunk.additionCount} @@`;
 }
 
-function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRenderableRow> {
+function buildRenderableRows(
+  file: FileDiffMetadata,
+  fileId: string,
+): ReadonlyArray<ReviewRenderableRow> {
   const rows: ReviewRenderableRow[] = [];
   let rowIndex = 0;
 
   file.hunks.forEach((hunk, hunkIndex) => {
     rows.push({
       kind: "hunk",
-      id: `${file.cacheKey ?? file.name}:hunk:${hunkIndex}`,
+      id: `${fileId}:hunk:${hunkIndex}`,
       header: fallbackHunkHeader(hunk),
       context: hunk.hunkContext ? stripTrailingNewline(hunk.hunkContext) : null,
     });
@@ -298,7 +317,7 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
         for (let index = 0; index < segment.lines; index += 1) {
           rows.push({
             kind: "line",
-            id: `${file.cacheKey ?? file.name}:row:${rowIndex++}`,
+            id: `${fileId}:row:${rowIndex++}`,
             change: "context",
             oldLineNumber: deletionLineNumber,
             newLineNumber: additionLineNumber,
@@ -326,7 +345,7 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
       for (let index = 0; index < segment.deletions; index += 1) {
         rows.push({
           kind: "line",
-          id: `${file.cacheKey ?? file.name}:row:${rowIndex++}`,
+          id: `${fileId}:row:${rowIndex++}`,
           change: "delete",
           oldLineNumber: deletionLineNumber,
           newLineNumber: null,
@@ -348,7 +367,7 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
       for (let index = 0; index < segment.additions; index += 1) {
         rows.push({
           kind: "line",
-          id: `${file.cacheKey ?? file.name}:row:${rowIndex++}`,
+          id: `${fileId}:row:${rowIndex++}`,
           change: "add",
           oldLineNumber: null,
           newLineNumber: additionLineNumber,
@@ -372,7 +391,74 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
   return rows;
 }
 
-function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
+function completePatchSource(file: FileDiffMetadata, rawPatch: string | null | undefined) {
+  if (!rawPatch || (file.type !== "new" && file.type !== "deleted") || file.hunks.length !== 1) {
+    return undefined;
+  }
+  const added = file.type === "new";
+  const a = quoteGitPatchPath(`a/${file.name}`);
+  const b = quoteGitPatchPath(`b/${file.name}`);
+  const lines = rawPatch.split("\n");
+  if (lines.pop() !== "" || rawPatch.includes("\0")) return undefined;
+  let index = 0;
+  if (lines[index++] !== `diff --git ${a} ${b}`) return undefined;
+  if (
+    !new RegExp(`^${added ? "new" : "deleted"} file mode 100(644|755)$`).test(lines[index++] ?? "")
+  ) {
+    return undefined;
+  }
+  if (lines[index]?.startsWith("index ")) {
+    if (!/^index [0-9a-f]+\.\.[0-9a-f]+(?: 100(?:644|755))?$/.test(lines[index++] ?? "")) {
+      return undefined;
+    }
+  }
+  if (lines[index++] !== `--- ${added ? "/dev/null" : a}`) return undefined;
+  if (lines[index++] !== `+++ ${added ? b : "/dev/null"}`) return undefined;
+  // Pierre repairs both underfull and overfull hunks. Its resulting counts cannot
+  // prove that patch lines cover the whole file; read the original header instead.
+  const header = lines[index++] ?? "";
+  // GitCafe's structured hunks can start the empty side at 1 instead of git's 0.
+  // Its explicit zero count still proves that side contributes no source lines.
+  const match = (added ? /^@@ -[01],0 \+1(?:,(\d+))? @@$/ : /^@@ -1(?:,(\d+))? \+[01],0 @@$/).exec(
+    header,
+  );
+  if (!match) return undefined;
+  const count = Number(match[1] ?? 1);
+  if (!Number.isSafeInteger(count) || count <= 0) return undefined;
+  const hunk = file.hunks[0]!;
+  if (
+    hunk.hunkSpecs !== `${header}\n` ||
+    (added ? hunk.additionCount : hunk.deletionCount) !== count ||
+    (added ? file.additionLines : file.deletionLines).length !== count ||
+    (added ? file.deletionLines : file.additionLines).length !== 0
+  )
+    return undefined;
+  const bodyStart = lines.slice(0, index).reduce((length, line) => length + line.length + 1, 0);
+  const prefix = added ? "+" : "-";
+  for (let line = 0; line < count; line++) {
+    if (!lines[index++]?.startsWith(prefix)) return undefined;
+  }
+  let bodyEnd = rawPatch.length;
+  if (lines[index] === "\\ No newline at end of file") {
+    // Only the patch's LF is synthetic, including when the source ends in a bare CR.
+    bodyEnd -= "\\ No newline at end of file\n".length + 1;
+    index++;
+  }
+  if (index !== lines.length) return undefined;
+  // Keep reconstruction lazy so only requested source enters the bounded source cache.
+  return () => {
+    const contents = rawPatch.slice(bodyStart + 1, bodyEnd).replace(/\n[+-]/g, "\n");
+    return added
+      ? { oldContents: "", newContents: contents }
+      : { oldContents: contents, newContents: "" };
+  };
+}
+
+function mapRenderableFile(
+  file: FileDiffMetadata,
+  id: string,
+  rawPatch?: string | null,
+): ReviewRenderableFile {
   const path = file.name || file.prevName || "";
   const previousPath = file.prevName || null;
   const additions = file.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
@@ -380,7 +466,7 @@ function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
   const cacheKey = file.cacheKey ?? `${previousPath ?? "none"}:${path}:${file.type}`;
 
   return {
-    id: cacheKey,
+    id,
     cacheKey,
     path,
     previousPath,
@@ -390,7 +476,10 @@ function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
     languageHint: file.lang ?? null,
     additionLines: file.additionLines,
     deletionLines: file.deletionLines,
-    rows: buildRenderableRows(file),
+    completePatchSource: completePatchSource(file, rawPatch),
+    noEOFCRAdditions: file.hunks.some((hunk) => hunk.noEOFCRAdditions),
+    noEOFCRDeletions: file.hunks.some((hunk) => hunk.noEOFCRDeletions),
+    rows: buildRenderableRows(file, id),
   };
 }
 
@@ -471,12 +560,11 @@ export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
 ): ReviewParsedDiff {
-  const normalized = diff?.trim();
-  if (!normalized) {
+  if (!diff?.trim()) {
     return { kind: "empty" };
   }
 
-  const { text, truncated } = splitTruncationMarker(normalized);
+  const { text, truncated } = splitTruncationMarker(diff);
   if (text.length === 0) {
     return { kind: "empty" };
   }
@@ -486,13 +574,28 @@ export function buildReviewParsedDiff(
     : null;
 
   try {
-    const parsedPatches = runDiffParserSilently(() =>
-      parsePatchFiles(text, buildPatchCacheKey(text, cacheScope)),
-    );
+    const cacheKey = buildPatchCacheKey(text, cacheScope);
+    const patchId = getReviewPatchId(cacheKey);
+    const parsedPatches = runDiffParserSilently(() => parsePatchFiles(text, cacheKey));
+    const rawFiles = new Map<string, string | null>();
+    if (!truncated) {
+      for (const rawFile of text.split(/(?=^diff --git )/m)) {
+        const header = rawFile.slice(0, rawFile.indexOf("\n"));
+        rawFiles.set(header, rawFiles.has(header) ? null : rawFile);
+      }
+    }
     const files = pipe(
       parsedPatches,
       Arr.flatMap((patch) => patch.files),
-      Arr.map(mapRenderableFile),
+      Arr.map((file, index) =>
+        mapRenderableFile(
+          file,
+          `${patchId}:f${index.toString(36)}`,
+          rawFiles.get(
+            `diff --git ${quoteGitPatchPath(`a/${file.name}`)} ${quoteGitPatchPath(`b/${file.name}`)}`,
+          ),
+        ),
+      ),
     );
 
     if (files.length === 0) {

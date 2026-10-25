@@ -24,50 +24,71 @@ const nativeHighlights = requireOptionalNativeModule<{
   tokenize(source: string, language: number): ArrayBuffer | null;
 }>("T3Highlights");
 
-function plainLines(code: string): HighlightedLines {
-  return code
-    .split(/\r?\n/u)
-    .map((line) => (line ? [{ content: line, color: null, fontStyle: null }] : []));
+export interface TokenizedCode {
+  /** Retained UTF-16 source, compact native records, and line indexes. */
+  readonly byteLength: number;
+  readonly lineCount: number;
+  readonly highlightLine: (
+    index: number,
+    scheme: HighlightScheme,
+  ) => ReadonlyArray<HighlightedToken> | undefined;
 }
 
-/**
- * Tokenizes `code` synchronously, one token array per line. Lines split at LF
- * and CRLF, and a trailing line break yields a final empty line.
- */
-export function highlightCode(
-  code: string,
-  language: string,
-  scheme: HighlightScheme,
-): HighlightedLines {
+/** Keep native records compact; expand only lines a client will display. */
+export function tokenizeCode(code: string, language: string): TokenizedCode {
   const id = highlightLanguageId(language);
   const buffer = id === 0 ? null : (nativeHighlights?.tokenize(code, id) ?? null);
-  if (!buffer) return plainLines(code);
-
-  // `(endUtf16, tokenId)` pairs. A LINE_END token ID ends a line, and its end
-  // is where the next line starts. Mirrors @pierre/highlights' lineRecordsToTokens.
-  const records = new Uint32Array(buffer);
-  const styles = HIGHLIGHTS_THEME_STYLES[scheme];
-  const lines: HighlightedToken[][] = [];
-  let start = 0;
-  for (let record = 0; ; record += 2) {
-    const first = record;
-    while (record < records.length && records[record + 1] !== LINE_END) record += 2;
-    const end = record === first ? start : records[record - 2]!;
-    if (end - start > MAX_HIGHLIGHTED_LINE_LENGTH) {
-      lines.push([{ content: code.slice(start, end), color: null, fontStyle: null }]);
-    } else {
+  const records = buffer ? new Uint32Array(buffer) : null;
+  const offsets = [0];
+  if (records) {
+    for (let record = 0; record < records.length; record += 2) {
+      if (records[record + 1] === LINE_END) offsets.push(record + 2);
+    }
+  } else {
+    for (let at = code.indexOf("\n"); at !== -1; at = code.indexOf("\n", at + 1))
+      offsets.push(at + 1);
+  }
+  const lineStarts = Uint32Array.from(offsets);
+  return {
+    byteLength: code.length * 2 + (records?.byteLength ?? 0) + lineStarts.byteLength,
+    lineCount: lineStarts.length,
+    highlightLine(index, scheme) {
+      if (index < 0 || index >= lineStarts.length) return undefined;
+      const first = lineStarts[index]!;
+      const next = lineStarts[index + 1];
+      if (!records) {
+        const end = next === undefined ? code.length : next - (code[next - 2] === "\r" ? 2 : 1);
+        const content = code.slice(first, end);
+        return content ? [{ content, color: null, fontStyle: null }] : [];
+      }
+      let start = first === 0 ? 0 : records[first - 2]!;
+      const last = next === undefined ? records.length : next - 2;
+      const end = last === first ? start : records[last - 2]!;
+      if (end - start > MAX_HIGHLIGHTED_LINE_LENGTH) {
+        return [{ content: code.slice(start, end), color: null, fontStyle: null }];
+      }
+      const styles = HIGHLIGHTS_THEME_STYLES[scheme];
       const line: HighlightedToken[] = [];
-      for (let at = first; at < record; at += 2) {
+      for (let at = first; at < last; at += 2) {
         const tokenEnd = records[at]!;
         if (tokenEnd <= start) continue;
         const [color, fontStyle] = styles[records[at + 1]!] ?? styles[0]!;
         line.push({ content: code.slice(start, tokenEnd), color, fontStyle });
         start = tokenEnd;
       }
-      lines.push(line);
-    }
-    if (record >= records.length) break;
-    start = records[record]!;
-  }
-  return lines;
+      return line;
+    },
+  };
+}
+
+/** LF and CRLF split lines; a trailing line break yields a final empty line. */
+export function highlightCode(
+  code: string,
+  language: string,
+  scheme: HighlightScheme,
+): HighlightedLines {
+  const source = tokenizeCode(code, language);
+  return Array.from({ length: source.lineCount }, (_, index) =>
+    source.highlightLine(index, scheme)!,
+  );
 }
