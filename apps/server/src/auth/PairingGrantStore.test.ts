@@ -149,7 +149,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
     ),
   );
 
-  it.effect("reports seeded desktop bootstrap credentials as expired after their ttl", () =>
+  it.effect("accepts the configured legacy desktop credential after a long suspend", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
 
@@ -158,10 +158,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       expect(stillValid.method).toBe("desktop-bootstrap");
 
       yield* TestClock.adjust(Duration.hours(13));
-      const expired = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
-
-      expect(expired._tag).toBe("ExpiredBootstrapCredentialError");
-      expect(expired.message).toContain("Bootstrap credential expired");
+      const renewed = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
+      expect(renewed.method).toBe("desktop-bootstrap");
+      const wrong = yield* Effect.flip(bootstrapCredentials.consume("wrong-desktop-token"));
+      expect(wrong._tag).toBe("UnknownBootstrapCredentialError");
     }).pipe(
       Effect.provide(
         Layer.merge(
