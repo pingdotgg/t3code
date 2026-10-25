@@ -744,12 +744,10 @@ export const OrchestrationV2SubagentWorkflow = Schema.Struct({
 export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
 
 /**
- * Wire-only. Set for clients that opted in with `acceptDedupedBodies` or `dedupeBodies=1` when the
- * marked field was blanked because the client already holds the same value: in the record it
- * received earlier on the same response or stream. Restore with
- * `@t3tools/shared/orchestrationV2DedupedBodies` before use; never store or forward a marked
- * value. Clients that opted in restore only these fields, so blanking another field needs a new
- * opt-in.
+ * Wire-only, for clients that opted in with `acceptDedupedBodies` or `dedupeBodies=1`: the field
+ * was blanked because an earlier record on the same response or stream holds the same value.
+ * Restore with `@t3tools/shared/orchestrationV2DedupedBodies`; never store or forward a marked
+ * value. Clients restore only these fields, so blanking another field needs a new opt-in.
  */
 const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
 
