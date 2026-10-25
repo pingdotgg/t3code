@@ -79,8 +79,25 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+export const ThreadPullRequestWatchEvent = Schema.Literals([
+  "comment",
+  "review",
+  "checks_failed",
+  "checks_passed",
+  "no_checks",
+  "conflict",
+]);
+export type ThreadPullRequestWatchEvent = typeof ThreadPullRequestWatchEvent.Type;
+
+export const ThreadPullRequestWatchEvents = Schema.Array(ThreadPullRequestWatchEvent).check(
+  Schema.isMinLength(1),
+);
+export type ThreadPullRequestWatchEvents = typeof ThreadPullRequestWatchEvents.Type;
+
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
+  /** The only changes that wake the thread; absent means all. Ending the watch always wakes. */
+  events: Schema.optional(ThreadPullRequestWatchEvents),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   passed: Schema.Boolean,

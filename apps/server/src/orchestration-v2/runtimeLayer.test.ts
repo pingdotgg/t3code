@@ -31,6 +31,7 @@ import {
   RunId,
   ScheduledTaskId,
   ThreadId,
+  type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -3534,6 +3535,106 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         watching: false,
       });
+    }),
+  );
+
+  it.effect("a watch with an events filter wakes only for the listed changes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("pr-watch-events-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch events",
+        workspaceRoot: "/workspace/watch-events",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 14 };
+      const filtered = ThreadId.make("runtime-pull-request-watch-events");
+      const unfiltered = ThreadId.make("runtime-pull-request-watch-all-events");
+      const watch = (threadId: ThreadId, id: string, events?: ThreadPullRequestWatch["events"]) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-events-${id}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+          ...(events === undefined ? {} : { events }),
+        });
+      for (const threadId of [filtered, unfiltered]) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-events-create-${threadId}`),
+          threadId,
+          projectId,
+          title: "Watch events",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+      }
+      yield* watch(filtered, "start", ["comment", "review", "checks_failed"]);
+      yield* watch(unfiltered, "start-all");
+
+      const reviewAt = "2026-10-02T12:05:00.000Z";
+      const comments: Array<PullRequestComment> = [];
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.succeed({
+              ...watchedPullRequestDetail({ projectId, number: 14, at: reviewAt }),
+              mergeability: "conflicting" as const,
+              checks: [{ name: "lint", status: "success", description: null, url: null }],
+            }),
+          activity: () =>
+            Effect.sync(() => ({
+              comments: [...comments],
+              commentCount: comments.length,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            })),
+        }),
+      );
+      const summaries = (threadId: ThreadId) =>
+        Effect.map(orchestrator.getThreadRecords(threadId, ["messages"]), ({ messages }) =>
+          messages.flatMap((message) => message.notification?.summary ?? []),
+        );
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(filtered),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      assert.deepEqual(yield* summaries(filtered), []);
+      assert.deepEqual(yield* summaries(unfiltered), ["#14: checks passed, merge conflict"]);
+      assert.include(yield* watchOf, { passed: true, conflicting: true });
+
+      comments.push({
+        id: "reviewer-review",
+        kind: "review",
+        author: { login: "reviewer", name: null, avatarUrl: null },
+        body: "Needs a test.",
+        createdAt: reviewAt,
+        url: "https://github.com/pingdotgg/t3code/pull/14#review",
+        path: null,
+        reviewState: "CHANGES_REQUESTED",
+      });
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      assert.deepEqual(yield* summaries(filtered), ["#14: new comments"]);
+      assert.deepEqual((yield* watchOf)?.events, ["checks_failed", "comment", "review"]);
+
+      yield* watch(filtered, "widen");
+      assert.isUndefined((yield* watchOf)?.events);
+      assert.include(yield* watchOf, { passed: true, conflicting: true });
     }),
   );
 

@@ -78,6 +78,28 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
+  it("wakes only for the events a watch lists, and still records the rest", () => {
+    const green = detail({ checks: [check("lint", "success")], mergeability: "conflicting" });
+    const comment = {
+      ...remark("reviewer", "2026-10-02T12:01:00.000Z"),
+      kind: "issue-comment" as const,
+    };
+    const review = { ...remark("reviewer", "2026-10-02T12:02:00.000Z"), kind: "review" as const };
+    const remarks: ReadonlyArray<PullRequestComment> = [comment, review];
+    assert.deepEqual(
+      evaluatePullRequestWatch(watch(), green, noRemarks).changes.map((change) => change.kind),
+      ["checks-passed", "conflicting"],
+    );
+
+    const quiet = evaluatePullRequestWatch(watch({ events: ["comment"] }), green, noRemarks);
+    assert.deepEqual(quiet.changes, []);
+    assert.include(quiet.next, { passed: true, conflicting: true, wakes: 0 });
+
+    const reviews = evaluatePullRequestWatch(watch({ events: ["review"] }), green, remarks);
+    assert.deepEqual(reviews.changes, [{ kind: "remarks", remarks: [review] }]);
+    assert.equal(reviews.next.remarksThrough, review.createdAt);
+  });
+
   it("reports each failure at once, even while another check never finishes", () => {
     const bot = check("CodeRabbit", "pending");
     const first = detail({ checks: [check("lint", "failure"), check("test", "pending"), bot] });
