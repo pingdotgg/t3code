@@ -88,7 +88,15 @@ const make = Effect.gen(function* () {
   // so restarting does not trigger another scan before the six-hour interval.
   const compactedAtPath = path.join(path.dirname(config.dbPath), "compacted-at");
   const compact = Effect.gen(function* () {
-    const result = yield* maintenance.compactEventStore;
+    let sliceStarted = yield* Clock.monotonicTimeNanos;
+    const betweenPages = Effect.gen(function* () {
+      const elapsed = (yield* Clock.monotonicTimeNanos) - sliceStarted;
+      if (elapsed < 25_000_000n) return;
+      // Keep background maintenance at 10% duty, including pages that exceed the budget.
+      yield* Effect.sleep((Number(elapsed) / 1_000_000) * 9);
+      sliceStarted = yield* Clock.monotonicTimeNanos;
+    });
+    const result = yield* maintenance.compactEventStore(betweenPages);
     const completedAt = yield* Clock.currentTimeMillis;
     yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
     if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
