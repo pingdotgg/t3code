@@ -191,12 +191,12 @@ it("does not continue settled root runs with restart-cancelled background work",
 });
 
 it.effect.each(["completed", "waiting", "cancelled"] as const)(
-  "wakes a %s run whose monitor the restart cancelled, with the note as its prompt",
+  "wakes a %s run whose awaited monitor the restart cancelled, with the note as its prompt",
   (status) =>
     Effect.gen(function* () {
       const base = makeProjection();
       const work = [
-        { kind: "monitor" as const, label: "Watch CI run 42" },
+        { kind: "monitor" as const, label: "Watch CI run 42", awaited: true as const },
         { kind: "shell" as const, label: "vp run dev" },
       ];
       const projection = {
