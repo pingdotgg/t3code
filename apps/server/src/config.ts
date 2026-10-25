@@ -10,7 +10,11 @@ import * as Schema from "effect/Schema";
 
 import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
-import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
+import {
+  DEFAULT_SIGNAL_EXPORT,
+  processServiceInstanceId,
+  type SignalExport,
+} from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { type ReleaseChannel, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import packageJson from "../package.json" with { type: "json" };
@@ -121,6 +125,7 @@ export const otlpResource = (
     "service.namespace": "t3code",
     "service.runtime": "t3-server",
     "t3code.server.managed_by": config.mode === "desktop" ? "desktop" : "standalone",
+    "service.instance.id": processServiceInstanceId(config.otelEnvironment.resourceAttributes),
     ...releaseResourceAttributes(telemetryChannel, config.otelEnvironment.resourceAttributes),
     "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
   },

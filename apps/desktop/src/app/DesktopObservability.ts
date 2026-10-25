@@ -2,6 +2,7 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import {
   makeLocalFileTracer,
   makeTraceSink,
+  processServiceInstanceId,
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -607,6 +608,7 @@ const layerTelemetry = Layer.unwrap(
         "service.namespace": "t3code",
         "service.runtime": "desktop",
         "service.mode": environment.isDevelopment ? "development" : "packaged",
+        "service.instance.id": processServiceInstanceId(endpoints.resourceAttributes),
         ...releaseResourceAttributes(
           environment.isDevelopment ? "dev" : releaseChannelOf(serviceVersion),
           endpoints.resourceAttributes,

@@ -26,6 +26,7 @@ const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
   attributes: {
     "service.namespace": "t3code",
+    "service.instance.id": ClientTracer.serviceInstanceId,
     ...releaseResourceAttributes(RELEASE_CHANNEL),
     "service.runtime": "t3-web",
     "t3code.client.surface": isElectron ? "desktop" : "web",

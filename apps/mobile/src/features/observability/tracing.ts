@@ -12,6 +12,7 @@ export interface TracingConfig {
 
 export interface TracingResource {
   readonly serviceVersion?: string;
+  readonly serviceInstanceId: string;
   readonly appVariant: string;
 }
 
@@ -39,6 +40,7 @@ export function layerFromConfig(config: TracingConfig | null, resource: TracingR
     serviceName: "t3code-mobile",
     serviceVersion: resource.serviceVersion,
     runtime: "react-native",
+    serviceInstanceId: resource.serviceInstanceId,
     client: `mobile-${resource.appVariant}`,
     attributes: channel && releaseResourceAttributes(channel),
   });
@@ -46,6 +48,7 @@ export function layerFromConfig(config: TracingConfig | null, resource: TracingR
 
 export const layer = layerFromConfig(resolveTracingConfig(), {
   serviceVersion: Constants.expoConfig?.version,
+  serviceInstanceId: Constants.sessionId,
   appVariant:
     typeof Constants.expoConfig?.extra?.appVariant === "string"
       ? Constants.expoConfig.extra.appVariant
