@@ -101,20 +101,14 @@ export function WorkspaceToolbar(props: {
       tab.searchMode !== "resting"
     ) {
       searchRef.current?.setText(tab.query);
-      if (duoSearch) {
+      // Integrated search collapses to its button when its screen reappears,
+      // which would hide the query that still filters the list.
+      if (NATIVE_LIQUID_GLASS_SUPPORTED) {
         searchRef.current?.setActive(true);
         if (tab.searchMode === "active") searchRef.current?.focus();
       }
     }
-  }, [
-    searchHostVisible,
-    duoSearch,
-    isTabActive,
-    selectedTab,
-    tab.searchMode,
-    tab.query,
-    searchVisible,
-  ]);
+  }, [searchHostVisible, isTabActive, selectedTab, tab.searchMode, tab.query, searchVisible]);
   useFocusEffect(
     useCallback(() => {
       const frame = requestAnimationFrame(restoreSearch);
