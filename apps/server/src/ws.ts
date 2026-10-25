@@ -1262,18 +1262,21 @@ export const layerWsRpc = (
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
-        if (command.type === "message.dispatch") {
-          return analytics.record("client.turn.requested", originProps).pipe(Effect.ignore);
-        }
         const usage = commandFeatureUsage(command);
-        return usage === undefined
-          ? Effect.void
-          : analytics
-              .record("feature.used", {
-                ...usage,
-                ...(originProps.surface === undefined ? {} : { surface: originProps.surface }),
-              })
-              .pipe(Effect.ignore);
+        return Effect.all(
+          [
+            command.type === "message.dispatch"
+              ? analytics.record("client.turn.requested", originProps)
+              : Effect.void,
+            usage === undefined
+              ? Effect.void
+              : analytics.record("feature.used", {
+                  ...usage,
+                  ...(originProps.surface === undefined ? {} : { surface: originProps.surface }),
+                }),
+          ],
+          { discard: true },
+        ).pipe(Effect.ignore);
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
