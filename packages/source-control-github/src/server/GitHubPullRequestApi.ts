@@ -1816,7 +1816,7 @@ export const make = Effect.gen(function* () {
         );
       // Unindexed repositories silently return no search rows; fall back to the repository listing.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
-      return read(true).pipe(
+      const listed = read(true).pipe(
         Effect.filterOrElse(
           (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
           () => read(false),
@@ -1856,6 +1856,33 @@ export const make = Effect.gen(function* () {
               Effect.map((items) => ({ ...batch, items })),
             ),
         ),
+      );
+      // GitHub answers a private repository the token cannot see as missing, so the reader is
+      // told which credential that was: a saved token quietly overrides GH_TOKEN and gh. The
+      // listing is pinned to the credential it names, so a token changed mid-read is not blamed.
+      const host = normalizeHost(input.host);
+      return api.credential(host).pipe(
+        Effect.flatMap(({ token, fingerprint, source }) => {
+          // App requests retain the policy's fallback to a personal credential.
+          if (source === undefined || source === "app") return listed;
+          return listed.pipe(
+            Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+              host,
+              token,
+              credentialFingerprint: fingerprint,
+            }),
+            Effect.catchTags({
+              GitHubApiNotFoundError: (error) =>
+                Effect.fail(
+                  new GitHubRequestPolicy.GitHubApiNotFoundError({
+                    host: error.host,
+                    operation: error.operation,
+                    credential: source,
+                  }),
+                ),
+            }),
+          );
+        }),
       );
     }),
 

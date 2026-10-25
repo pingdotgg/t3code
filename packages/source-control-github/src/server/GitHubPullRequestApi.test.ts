@@ -187,7 +187,7 @@ const layer = it.layer(
     Layer.provideMerge(
       Layer.succeed(GitHubCredentials.GitHubCredentials, {
         get: (host) =>
-          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+          Effect.map(mockedCredential(host), (held) => ({ source: "gh" as const, ...held, host })),
         saved: () => Effect.succeedNone,
         fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
         invalidate: () => Effect.void,
@@ -1273,6 +1273,79 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       assert.isTrue(batch.truncated);
+    }),
+  );
+
+  /** Lists a repository GitHub will not return, under the saved token `token` reads. */
+  const listUnreadableRepository = (token: () => string) => {
+    mockedCredential.mockImplementation((host) =>
+      Effect.sync(() => {
+        const value = token();
+        return {
+          token: Redacted.make(value),
+          fingerprint: `${host}:${value}`,
+          source: "settings" as const,
+        };
+      }),
+    );
+    route(
+      ["PullRequestSearch", { data: { search: { pageInfo: lastPage, nodes: [] } } }],
+      [
+        "PullRequestList",
+        {
+          data: { repository: null },
+          errors: [
+            {
+              type: "NOT_FOUND",
+              path: ["repository"],
+              message: "Could not resolve to a Repository with the name 'acme/private'.",
+            },
+          ],
+        },
+      ],
+    );
+    return GitHubPullRequestProvider.make.pipe(
+      Effect.flatMap((provider) =>
+        Effect.flip(
+          provider.listChangeRequests({
+            cwd: "/w",
+            repository: "acme/private",
+            host: "github.com",
+            state: "open",
+            involvement: "all",
+            viewer: "bilal",
+            limit: 10,
+          }),
+        ),
+      ),
+    );
+  };
+
+  it.effect("names the saved token when GitHub will not return a repository to it", () =>
+    Effect.gen(function* () {
+      const error = yield* listUnreadableRepository(() => "token");
+
+      assert.strictEqual(error.reason, "not-found");
+      expect(error.accessHint).toContain("token saved in Settings");
+    }),
+  );
+
+  it.effect("reads the whole listing with the token it names, even if it changes mid-read", () =>
+    Effect.gen(function* () {
+      let token = "first";
+      const error = yield* listUnreadableRepository(() => {
+        const current = token;
+        token = "replaced";
+        return current;
+      });
+
+      assert.strictEqual(error.reason, "not-found");
+      expect(error.accessHint).toContain("token saved in Settings");
+      const sentWith = mockedExecute.mock.calls.map(([call]) =>
+        call.kind === "graphql" ? call.authorization : undefined,
+      );
+      assert.isAbove(sentWith.length, 1);
+      for (const authorization of sentWith) expect(authorization).toContain("first");
     }),
   );
 

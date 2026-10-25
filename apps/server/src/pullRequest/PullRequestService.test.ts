@@ -2570,6 +2570,39 @@ it.effect("believes a search's silence about a repository it vouches for", () =>
     );
   }),
 );
+it.effect("says why a host would not return a repository, when the provider knows", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "private", workspaceRoot: "/a", repository: "acme/private" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "listChangeRequests",
+                reason: "not-found",
+                detail: "GitHub could not find the requested resource.",
+                accessHint: "Give the saved token access to this repository.",
+              }),
+            ),
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(result.errors, [
+      {
+        projectId: "p1" as ProjectId,
+        projectTitle: "private",
+        message: "acme/private could not be read. Give the saved token access to this repository.",
+      },
+    ]);
+  }),
+);
 it.effect("fills in the line counts for the rows it is given", () =>
   Effect.gen(function* () {
     const asked: Array<unknown> = [];

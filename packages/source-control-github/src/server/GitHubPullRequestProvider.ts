@@ -24,6 +24,7 @@ import {
   type PullRequestProviderApi,
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { GitHubCredentialSource } from "./GitHubCredentials.ts";
 import type {
   GitHubRepositoryAccess,
   GitHubViewerAccess,
@@ -120,11 +121,20 @@ function gitHubProviderFailure(
     case "SourceControlRateLimitPausedError":
       return { reason: "rate-limited", retryAt: error.retryAt };
     case "GitHubApiNotFoundError":
-      return { reason: "not-found" };
+      return error.credential === undefined || error.credential === "app"
+        ? { reason: "not-found" }
+        : { reason: "not-found", accessHint: REPOSITORY_ACCESS_HINTS[error.credential] };
     default:
       return { reason: "failed" };
   }
 }
+
+const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
+  settings:
+    "GitHub did not return it to the token saved in Settings, which overrides the server's environment token (such as GH_TOKEN) and the gh login. Give that token access to this repository, or change it in Settings → Source Control.",
+  env: "GitHub did not return it to the token in the server's environment, which overrides the gh login. Give that token access to this repository, or unset it.",
+  gh: "GitHub did not return it to the gh login. Check that its account can see this repository, or save a token that can in Settings → Source Control.",
+};
 
 function withAvatar(
   actor: PullRequestActor | null,

@@ -65,7 +65,12 @@ export class GitHubApiRateLimitError extends Schema.TaggedError<GitHubApiRateLim
 
 export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFoundError>()(
   "GitHubApiNotFoundError",
-  { host: Schema.String, operation: Schema.String },
+  {
+    host: Schema.String,
+    operation: Schema.String,
+    /** The credential GitHub could not find it with, when the reader looked. */
+    credential: Schema.optionalKey(GitHubCredentials.GitHubCredentialSource),
+  },
 ) {
   override get message(): string {
     return "GitHub could not find the requested resource, or the credential cannot see it.";
@@ -214,6 +219,7 @@ export class GitHubRequestPolicy extends Context.Service<
 >()("@t3tools/source-control-github/server/GitHubRequestPolicy") {}
 
 export interface GitHubHeldCredential {
+  readonly source?: GitHubCredentials.GitHubCredentialSource;
   readonly token: Redacted.Redacted<string>;
   readonly fingerprint: string;
 }
@@ -255,6 +261,7 @@ export const make = Effect.gen(function* () {
       Effect.map((held): ChosenCredential => ({
         token: held.token,
         fingerprint: held.fingerprint,
+        source: held.source,
         fromApp: false,
       })),
     );
@@ -265,6 +272,7 @@ export const make = Effect.gen(function* () {
     const token = yield* appSignIn.token(normalizeHost(host));
     if (Option.isNone(token)) return Option.none();
     return Option.some({
+      source: "app" as const,
       token: Redacted.make(token.value),
       fingerprint: yield* credentials.fingerprint(normalizeHost(host), token.value),
     });
@@ -284,7 +292,12 @@ export const make = Effect.gen(function* () {
     }
     const saved = yield* credentials.saved(host);
     if (Option.isSome(saved)) {
-      return { token: saved.value.token, fingerprint: saved.value.fingerprint, fromApp: false };
+      return {
+        token: saved.value.token,
+        fingerprint: saved.value.fingerprint,
+        source: saved.value.source,
+        fromApp: false,
+      };
     }
     if (personal) return yield* personalCredential(host);
     const app = yield* Effect.result(appCredential(host));
@@ -298,7 +311,11 @@ export const make = Effect.gen(function* () {
 
   const credential: GitHubRequestPolicy["Service"]["credential"] = (host, options) =>
     choose(normalizeHost(host), options?.personal === true).pipe(
-      Effect.map(({ token, fingerprint }) => ({ token, fingerprint })),
+      Effect.map(({ token, fingerprint, source }) => ({
+        token,
+        fingerprint,
+        ...(source === undefined ? {} : { source }),
+      })),
     );
 
   // The REST/GraphQL transport span owns request and quota metadata.
