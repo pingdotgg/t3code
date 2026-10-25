@@ -14,8 +14,9 @@ export function resolveWorkspaceTabOrder(saved: readonly unknown[] | undefined) 
 export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-export function workspaceUsesColumns(tab: WorkspaceTab, detailRoute?: string) {
-  return (tab === "threads" || tab === "pullRequests") && detailRoute !== "SettingsSheet";
+/** Settings, Chats and pull requests pair a list with a detail column; Usage is one page. */
+export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
+  return settingsOpen || tab === "threads" || tab === "pullRequests";
 }
 
 export interface WorkspaceTabState {

@@ -39,6 +39,9 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { leaveSettingsPage } from "./settings-navigation";
+import { workspaceHasColumns } from "../workspace/workspace-selection-store";
+import { DEFAULT_SETTINGS_PAGE } from "../workspace/workspace-tab-navigation";
 
 export function SettingsProjectOverviewRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -63,7 +66,8 @@ export function SettingsProjectOverviewRouteScreen() {
   // The filter can move to another project while a removal is still running.
   const finishProjectRemoval = (projectKey: string | null) => {
     if (latestProjectKey.current !== projectKey) return;
-    if (navigation.isFocused()) navigation.goBack();
+    if (navigation.isFocused())
+      leaveSettingsPage(navigation, workspaceHasColumns(), DEFAULT_SETTINGS_PAGE);
     // Otherwise the filter keeps pointing at the removed project as an unavailable one.
     selectProject(null);
   };

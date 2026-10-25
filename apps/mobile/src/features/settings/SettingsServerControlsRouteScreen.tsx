@@ -451,12 +451,8 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                           label={target.label}
                           value="Server and provider updates"
                           onPress={() =>
-                            navigation.navigate("SettingsSheet", {
-                              screen: "SettingsContent",
-                              params: {
-                                screen: "SettingsEnvironmentDetail",
-                                params: { environmentId: target.environmentId },
-                              },
+                            navigation.navigate("SettingsEnvironmentDetail", {
+                              environmentId: target.environmentId,
                             })
                           }
                         />

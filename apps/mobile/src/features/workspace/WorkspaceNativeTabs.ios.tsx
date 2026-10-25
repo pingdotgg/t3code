@@ -1,17 +1,11 @@
-import { useNavigation } from "@react-navigation/native";
 import {
   WORKSPACE_TAB_LABELS,
   NAVIGATION_TAB_ICONS,
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { Keyboard, View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
-import {
-  Tabs,
-  type TabSelectedEvent,
-  type TabSelectionPreventedEvent,
-  type TabSelectionRejectedEvent,
-} from "react-native-screens";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
+import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import {
@@ -20,12 +14,16 @@ import {
   workspaceUsesColumns,
   type WorkspaceTab,
 } from "./workspace-tabs-state";
-import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
+import {
+  NativeWorkspaceTabActivityContext,
+  WorkspaceSlotOptionsContext,
+} from "../../native/v5-workspace-context";
 import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
@@ -36,14 +34,31 @@ function RetainedWorkspaceTab(props: {
   readonly children: ReactNode;
 }) {
   const workspace = useWorkspaceTabs()!;
-  const { isTabActive } = workspace;
-  const isActive = useCallback(() => isTabActive(props.tab), [isTabActive, props.tab]);
+  // Whether this slot is the visible one, read by cleanups after the switch has committed.
+  const activeRef = useRef(props.active);
+  useLayoutEffect(() => {
+    activeRef.current = props.active;
+  }, [props.active]);
+  const isActive = useCallback(() => activeRef.current, []);
   const activity = useMemo(
     () => ({
       active: props.active,
       isActive,
     }),
     [props.active, isActive],
+  );
+  const [optionsByRoute, setOptionsByRoute] = useState<ReadonlyMap<string, object>>(new Map());
+  // Stable, so writers and the cleanups that depend on them don't re-run on every write.
+  const setRouteOptions = useCallback(
+    (routeKey: string, options: object) =>
+      setOptionsByRoute((current) =>
+        new Map(current).set(routeKey, { ...current.get(routeKey), ...options }),
+      ),
+    [],
+  );
+  const slotOptions = useMemo(
+    () => ({ byRoute: optionsByRoute, set: setRouteOptions }),
+    [optionsByRoute, setRouteOptions],
   );
   const [content, setContent] = useState(
     props.active ? { workspace, children: props.children } : null,
@@ -52,7 +67,9 @@ function RetainedWorkspaceTab(props: {
     setContent({ workspace, children: props.children });
   return content ? (
     <NativeWorkspaceTabActivityContext value={activity}>
-      <WorkspaceTabsContext value={content.workspace}>{content.children}</WorkspaceTabsContext>
+      <WorkspaceSlotOptionsContext value={slotOptions}>
+        <WorkspaceTabsContext value={content.workspace}>{content.children}</WorkspaceTabsContext>
+      </WorkspaceSlotOptionsContext>
     </NativeWorkspaceTabActivityContext>
   ) : null;
 }
@@ -60,13 +77,12 @@ function RetainedWorkspaceTab(props: {
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
-  readonly onSelect: () => void;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
   const primaryTabs = order.slice(0, 4);
   const overflow = order[4];
-  const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
   const deviceType = useDeviceType();
@@ -95,16 +111,6 @@ export function WorkspaceNativeTabs(props: {
           tabBarMinimizeBehavior: "never",
           tabBarTintColor: colors["--color-primary"],
         }}
-        onTabSelectionPrevented={({
-          nativeEvent,
-        }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
-          if (nativeEvent.preventedScreenKey === "settings") {
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "Settings" },
-            });
-          }
-        }}
         onTabSelectionRejected={({
           nativeEvent,
         }: NativeSyntheticEvent<TabSelectionRejectedEvent>) =>
@@ -114,18 +120,7 @@ export function WorkspaceNativeTabs(props: {
           setProvenance(nativeEvent.provenance);
           if (nativeEvent.actionOrigin === "programmatic-js") return;
           const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
-          // UIKit sends reselects here even when preventNativeSelection is enabled.
-          if (tab === "settings") {
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "Settings" },
-            });
-            return;
-          }
-          if (!tab) return;
-          Keyboard.dismiss();
-          props.onSelect();
-          workspace.dispatch({ type: "select", tab });
+          if (tab) selectTab(tab);
         }}
       >
         {NATIVE_WORKSPACE_TAB_SLOTS.map((slot, index) => {
@@ -139,7 +134,6 @@ export function WorkspaceNativeTabs(props: {
               screenKey={slot}
               title=""
               tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
-              preventNativeSelection={settings}
               ios={{
                 icon: settings
                   ? { type: "sfSymbol", name: "gearshape" }
@@ -166,7 +160,7 @@ export function WorkspaceNativeTabs(props: {
       {(deviceType === "pad" ||
         compactTabs ||
         (layout.primarySidebarOverlaysContent &&
-          (workspace.settingsOpen || !workspaceUsesColumns(selectedTab)))) &&
+          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
       !props.hidden ? (
         <View
           pointerEvents="box-none"

@@ -32,6 +32,9 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { splitEnvironmentSections } from "./environmentSections";
+import { openSettings } from "../settings/settings-navigation";
+import { leaveSettingsPage } from "../settings/settings-navigation";
+import { workspaceHasColumns } from "../workspace/workspace-selection-store";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -168,7 +171,8 @@ export function ConnectionsNewRouteScreen({
       if (!navigation.canGoBack()) {
         navigation.dispatch(StackActions.replace("Home"));
       } else {
-        navigation.goBack();
+        // Added from the Settings list, the new environment shows on Environments.
+        leaveSettingsPage(navigation, workspaceHasColumns(), "SettingsEnvironments");
       }
     }
   };
@@ -390,7 +394,7 @@ function T3ConnectSection() {
           label="Sign in to T3 Connect"
           description="Reach your machines from anywhere, no network setup."
           disabled={!isLoaded}
-          onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
+          onPress={() => navigation.navigate("SettingsAuth")}
         />
       )}
     </View>

@@ -1,9 +1,8 @@
-import { useNavigation, useRoute, type ParamListBase } from "@react-navigation/native";
+import { useRoute } from "@react-navigation/native";
 import type {
   NativeStackHeaderItem,
   NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
-  NativeStackNavigationProp,
 } from "@react-navigation/native-stack";
 import {
   Children,
@@ -17,11 +16,7 @@ import {
 import type { ColorValue } from "react-native";
 import type { HeaderBarButtonSearchBarPlacementItem } from "react-native-screens";
 import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
-import { NativeStackScreenOptions } from "./StackHeader";
-
-function useNativeStackNavigation(): NativeStackNavigationProp<ParamListBase> | null {
-  return useNavigation<NativeStackNavigationProp<ParamListBase>>();
-}
+import { NativeStackScreenOptions, useScreenOptionsWriter } from "./StackHeader";
 
 function labelFromChildren(children: ReactNode): string {
   const parts: string[] = [];
@@ -230,7 +225,7 @@ function NativeHeaderToolbarRoot(props: {
   readonly placement?: "left" | "right" | "bottom";
   readonly children?: ReactNode;
 }) {
-  const navigation = useNativeStackNavigation();
+  const setOptions = useScreenOptionsWriter();
   const route = useRoute();
   const tabActivity = use(NativeWorkspaceTabActivityContext);
   const isTabActive = tabActivity?.isActive;
@@ -242,20 +237,20 @@ function NativeHeaderToolbarRoot(props: {
   );
 
   useLayoutEffect(() => {
-    if (!navigation) return;
+    if (!setOptions) return;
     return () => {
       if (isTabActive && !isTabActive()) return;
       if (props.placement === "bottom") {
-        navigation.setOptions({
+        setOptions({
           unstable_headerToolbarItems: () => [],
         } as NativeStackOptionsWithToolbar);
       } else if (props.placement === "left") {
-        navigation.setOptions({ unstable_headerLeftItems: () => [] });
+        setOptions({ unstable_headerLeftItems: () => [] });
       } else {
-        navigation.setOptions({ unstable_headerRightItems: () => [] });
+        setOptions({ unstable_headerRightItems: () => [] });
       }
     };
-  }, [navigation, props.placement, isTabActive]);
+  }, [setOptions, props.placement, isTabActive]);
 
   return (
     <NativeStackScreenOptions

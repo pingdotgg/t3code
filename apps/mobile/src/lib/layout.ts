@@ -175,12 +175,17 @@ export function alignListPaneToHinge(input: {
  * collapse it there. Compact layouts stay pinned so a reveal request (such as
  * focusing search) cannot flip the saved preference for a later split view.
  */
+/** Home's list, or the Settings list in its place, with no detail selected. */
+export function isWorkspaceListPath(pathname: string): boolean {
+  return pathname === "/" || pathname === "/settings";
+}
+
 export function isPrimarySidebarPinned(input: {
   readonly pathname: string;
   readonly nativeWorkspace: boolean;
   readonly usesSplitView: boolean;
 }): boolean {
-  return input.pathname === "/" && !(input.nativeWorkspace && input.usesSplitView);
+  return isWorkspaceListPath(input.pathname) && !(input.nativeWorkspace && input.usesSplitView);
 }
 
 export function deriveWorkspacePaneLayout(input: {

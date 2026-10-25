@@ -1,14 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  createContext,
-  use,
-  useMemo,
-  useCallback,
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-} from "react";
+import { useMemo, useCallback, type Dispatch, type SetStateAction } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
 import {
@@ -28,19 +20,8 @@ import {
   type ScheduledTaskEditor,
 } from "./scheduled-task-editor-state";
 
-const ScheduledTaskEditorContext = createContext<{
-  readonly editor: ScheduledTaskEditor | null;
-  readonly voiceOwnerKey: string;
-  readonly readEditor: () => ScheduledTaskEditor | null;
-  readonly setEditor: Dispatch<SetStateAction<ScheduledTaskEditor | null>>;
-  readonly startEditor: (editor: ScheduledTaskEditor | null) => void;
-  readonly hasChanges: boolean;
-  readonly resetEditor: () => void;
-  readonly draftForEnvironment: (environmentId: EnvironmentId) => ScheduledTaskDraft;
-} | null>(null);
-
-/** Keeps the form draft alive while its native picker routes are on top. */
-export function ScheduledTaskEditorProvider({ children }: { readonly children: ReactNode }) {
+/** The form draft lives in an atom, so it survives while its native picker routes are on top. */
+export function useScheduledTaskEditor() {
   const { selectedTargets, selectedProjectKey, projectGroups } = useSettingsEnvironmentFilter();
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
   const configs = useServerConfigs();
@@ -102,7 +83,7 @@ export function ScheduledTaskEditorProvider({ children }: { readonly children: R
     () => readScheduledTaskEditor(voiceOwnerKey, defaultEditor),
     [defaultEditor, voiceOwnerKey],
   );
-  const value = useMemo(
+  return useMemo(
     () => ({
       editor,
       voiceOwnerKey,
@@ -124,11 +105,4 @@ export function ScheduledTaskEditorProvider({ children }: { readonly children: R
       draftForEnvironment,
     ],
   );
-  return <ScheduledTaskEditorContext value={value}>{children}</ScheduledTaskEditorContext>;
-}
-
-export function useScheduledTaskEditor() {
-  const context = use(ScheduledTaskEditorContext);
-  if (!context) throw new Error("Scheduled task editor provider is missing.");
-  return context;
 }

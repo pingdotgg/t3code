@@ -19,7 +19,9 @@ const harness = vi.hoisted(() => ({
 
 // Native headers retain the actions materialized when navigation applies options. Like React
 // Navigation, the header renders again only when the options are no longer shallowly equal.
-vi.mock("@react-navigation/native", () => {
+vi.mock("@react-navigation/native", async () => {
+  // vi.mock factories run before the file's imports.
+  const { createContext } = await vi.importActual<typeof import("react")>("react");
   const navigation = {
     setOptions(options: HeaderOptions) {
       harness.setOptionsCalls += 1;
@@ -39,6 +41,8 @@ vi.mock("@react-navigation/native", () => {
     },
   };
   return {
+    // Outside a workspace tab slot the header writes to the route's navigation.
+    NavigationRouteContext: createContext(undefined),
     useNavigation: () => navigation,
     useRoute: () => ({ key: "file", name: "ThreadFile", params: harness.params }),
   };

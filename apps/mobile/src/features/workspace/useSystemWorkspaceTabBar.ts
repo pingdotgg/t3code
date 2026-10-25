@@ -8,8 +8,7 @@ import { workspaceUsesColumns } from "./workspace-tabs-state";
 function useWorkspacePage() {
   const workspace = useWorkspaceTabs();
   return (
-    workspace !== null &&
-    (workspace.settingsOpen || !workspaceUsesColumns(workspace.state.selectedTab))
+    workspace !== null && !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen)
   );
 }
 

@@ -176,7 +176,7 @@ export function useRemoteConnections() {
             { text: "Cancel", style: "cancel" },
             {
               text: "Open T3 Account",
-              onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
+              onPress: () => navigation.navigate("SettingsAuth"),
             },
             remove,
           ],

@@ -1,6 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
 import { View } from "react-native";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { openSettings } from "../settings/settings-navigation";
 
 export function WorkspaceNoTabs() {
   const navigation = useNavigation();
@@ -11,12 +12,7 @@ export function WorkspaceNoTabs() {
         detail="Show a section to add it back to navigation."
         actionLabel="Edit navigation tabs"
         variant="plain"
-        onAction={() =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsNavigation", initial: false },
-          })
-        }
+        onAction={() => openSettings(navigation, "SettingsNavigation")}
       />
     </View>
   );

@@ -65,10 +65,7 @@ export function SettingsEnvironmentsRouteScreen() {
   }
 
   const openEnvironment = (environmentId: EnvironmentId) => {
-    navigation.navigate("SettingsSheet", {
-      screen: "SettingsContent",
-      params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
-    });
+    navigation.navigate("SettingsEnvironmentDetail", { environmentId });
   };
   const handleUpdateEnvironment = (
     environmentId: EnvironmentId,
@@ -127,11 +124,7 @@ export function SettingsEnvironmentsRouteScreen() {
           accessibilityLabel: "Add environment",
           icon: "plus",
           tintColor: headerIconColor,
-          onPress: () =>
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "SettingsEnvironmentNew" },
-            }),
+          onPress: () => navigation.navigate("SettingsEnvironmentNew"),
         },
       ]}
     >

@@ -151,18 +151,12 @@ function PoolWindowCard({
   const navigation = useNavigation();
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   const openAccount = (account: LimitAccount) =>
-    navigation.navigate("SettingsSheet", {
-      screen: "SettingsContent",
-      params: {
-        screen: "SettingsUsageAccount",
-        params: {
-          accountKey: account.key,
-          windowId: pool.id,
-          windowKind: pool.kind,
-          environmentIds,
-          now,
-        },
-      },
+    navigation.navigate("SettingsUsageAccount", {
+      accountKey: account.key,
+      windowId: pool.id,
+      windowKind: pool.kind,
+      environmentIds,
+      now,
     });
   return (
     <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">

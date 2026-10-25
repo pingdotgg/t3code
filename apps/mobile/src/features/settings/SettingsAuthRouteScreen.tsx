@@ -4,7 +4,7 @@ import {
   type UserProfileCustomPage,
   UserProfileView,
 } from "@clerk/expo/native-components";
-import { StackActions, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { View } from "react-native";
 
@@ -25,7 +25,7 @@ export function SettingsAuthRouteScreen() {
 
   useLayoutEffect(() => {
     if (!hasCloudPublicConfig()) {
-      navigation.dispatch(StackActions.replace("SettingsContent"));
+      navigation.goBack();
     }
   }, [navigation]);
 
@@ -35,7 +35,7 @@ export function SettingsAuthRouteScreen() {
 function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const navigation = useNavigation();
-  const handleHostBack = () => navigation.dispatch(StackActions.popTo("SettingsContent"));
+  const handleHostBack = () => navigation.goBack();
   // Once signed in, stay on the profile view so signing out pops back instead of
   // flashing the sign-in form.
   const [hasBeenSignedIn, setHasBeenSignedIn] = useState(isSignedIn === true);
@@ -43,7 +43,7 @@ function ConfiguredSettingsAuthRouteScreen() {
 
   useEffect(() => {
     if (hasBeenSignedIn && isLoaded && isSignedIn === false) {
-      navigation.dispatch(StackActions.popTo("SettingsContent"));
+      navigation.goBack();
     }
   }, [hasBeenSignedIn, isLoaded, isSignedIn, navigation]);
 

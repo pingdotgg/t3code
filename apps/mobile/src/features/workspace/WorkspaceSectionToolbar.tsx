@@ -49,12 +49,7 @@ export function WorkspaceTabToolbarButtons() {
         accessibilityLabel="Settings"
         icon="gearshape"
         tintColor={selected === "settings" ? selectedTint : undefined}
-        onPress={() =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "Settings" },
-          })
-        }
+        onPress={() => selectTab("settings")}
       />
     </>
   );

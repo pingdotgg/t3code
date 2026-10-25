@@ -1,10 +1,17 @@
-import { useNavigation, type ParamListBase } from "@react-navigation/native";
+import {
+  NavigationRouteContext,
+  useNavigation,
+  type ParamListBase,
+} from "@react-navigation/native";
 import type {
   NativeStackNavigationOptions,
   NativeStackNavigationProp,
 } from "@react-navigation/native-stack";
 import { isValidElement, use, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
+import {
+  NativeWorkspaceTabActivityContext,
+  WorkspaceSlotOptionsContext,
+} from "./v5-workspace-context";
 import type { ColorValue } from "react-native";
 
 export {
@@ -160,6 +167,23 @@ function stabilizeOptionFunctions(
   return value;
 }
 
+/**
+ * Sets the current screen's options. Inside a workspace tab slot they're kept for that slot, so
+ * slots rendering the same route never overwrite each other's header.
+ */
+export function useScreenOptionsWriter() {
+  const navigation = useNativeStackNavigation();
+  const setSlotOptions = use(WorkspaceSlotOptionsContext)?.set;
+  const routeKey = use(NavigationRouteContext)?.key;
+  return useMemo(() => {
+    if (setSlotOptions && routeKey !== undefined)
+      return (options: NativeStackNavigationOptions) => setSlotOptions(routeKey, options);
+    return navigation
+      ? (options: NativeStackNavigationOptions) => navigation.setOptions(options)
+      : null;
+  }, [navigation, routeKey, setSlotOptions]);
+}
+
 export function NativeStackScreenOptions(props: {
   readonly options?: AppNativeStackNavigationOptions;
   /**
@@ -173,6 +197,7 @@ export function NativeStackScreenOptions(props: {
   readonly name?: string;
 }) {
   const navigation = useNativeStackNavigation();
+  const setOptions = useScreenOptionsWriter();
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const lastAppliedOptionsSignatureRef = useRef<string | undefined>(undefined);
   const latestOptionFunctionsRef = useRef(new Map<string, (...args: unknown[]) => unknown>());
@@ -192,7 +217,7 @@ export function NativeStackScreenOptions(props: {
       lastAppliedOptionsSignatureRef.current = undefined;
       return;
     }
-    if (!navigation || !stableOptions) {
+    if (!setOptions || !stableOptions) {
       return;
     }
     const signature = optionsSignature([stableOptions, props.optionsVersion]);
@@ -204,7 +229,7 @@ export function NativeStackScreenOptions(props: {
     // stabilized factories keep their identity, so one whose output changed needs a new wrapper
     // to reach the header.
     optionFunctionWrappersRef.current = new Map();
-    navigation.setOptions(
+    setOptions(
       stabilizeOptionFunctions(
         normalizedOptions,
         "options",
@@ -212,7 +237,7 @@ export function NativeStackScreenOptions(props: {
         optionFunctionWrappersRef.current,
       ) as NativeStackNavigationOptions,
     );
-  }, [navigation, normalizedOptions, props.optionsVersion, stableOptions, tabActive]);
+  }, [setOptions, normalizedOptions, props.optionsVersion, stableOptions, tabActive]);
 
   useEffect(() => {
     if (!navigation || !props.listeners) {

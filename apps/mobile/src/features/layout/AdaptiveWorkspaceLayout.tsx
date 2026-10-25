@@ -1,3 +1,4 @@
+import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveWorkspaceContext, useAdaptiveWorkspaceLayout } from "./adaptive-workspace-context";
 import { createDeferredNavigation } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
@@ -43,6 +44,7 @@ import {
   type VerticalHinge,
   deriveWorkspacePaneLayout,
   isPrimarySidebarPinned,
+  isWorkspaceListPath,
   type WorkspaceAuxiliaryPaneRole,
 } from "../../lib/layout";
 import {
@@ -91,6 +93,16 @@ import {
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
+import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
+import { openSettings } from "../settings/settings-navigation";
+import { dispatchRootStackReset, rootStackState } from "../../lib/root-stack-reset";
+import {
+  currentWorkspaceSelections,
+  workspaceSelectionCheck,
+} from "../workspace/workspace-selection-store";
+import { workspaceTabNavigationState } from "../workspace/workspace-tab-navigation";
+import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
+import { workspaceRoutesOf } from "./workspace-overlay-routes";
 
 export { useAdaptiveWorkspaceLayout };
 
@@ -207,9 +219,10 @@ function AdaptiveWorkspaceLayoutContent(
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
   // Settings and Usage occupy the workspace rather than a list/detail pair.
+  const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
+  const safeAreaInsets = useSafeAreaInsets();
   const workspacePage =
-    Platform.OS === "android" &&
-    (pathname.startsWith("/settings") || workspace?.state.selectedTab === "usage");
+    Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
@@ -233,10 +246,13 @@ function AdaptiveWorkspaceLayoutContent(
     () => deriveLayout({ width: viewportWidth, height, nativeMetrics, nativeWorkspace }),
     [height, viewportWidth, nativeMetrics, nativeWorkspace],
   );
+  // The overlay sidebar closes when a page opens from it, and stays open on a list or on the
+  // page a tab switch opened (`keepOpenFor`, set by that switch).
   const [overlaySidebar, setOverlaySidebar] = useState({
     active: baseLayout.primarySidebarOverlaysContent,
     pathname,
-    visible: pathname === "/",
+    visible: isWorkspaceListPath(pathname),
+    keepOpenFor: null as string | null,
   });
   if (
     overlaySidebar.active !== baseLayout.primarySidebarOverlaysContent ||
@@ -245,7 +261,11 @@ function AdaptiveWorkspaceLayoutContent(
     setOverlaySidebar({
       active: baseLayout.primarySidebarOverlaysContent,
       pathname,
-      visible: pathname === "/",
+      visible:
+        isWorkspaceListPath(pathname) ||
+        (overlaySidebar.keepOpenFor !== null &&
+          overlaySidebar.keepOpenFor === props.workspaceRouteKey),
+      keepOpenFor: null,
     });
   }
   const preferredSidebarVisible = baseLayout.primarySidebarOverlaysContent
@@ -457,12 +477,35 @@ function AdaptiveWorkspaceLayoutContent(
     }
     setSupplementaryPanePreferredWidth(nextWidth);
   };
-  const handleOpenSettings = () => {
-    navigation.navigate("SettingsSheet", {
-      screen: "SettingsContent",
-      params: { screen: "Settings" },
-    });
+  /**
+   * The one way to open a workspace tab: replaces the workspace with the tab's list and, when the
+   * window has columns, the page it last showed, keeping any sheet on top. An overlay sidebar
+   * stays open over that page.
+   */
+  const openWorkspaceTab = (
+    tab: WorkspaceTab | "settings",
+    options?: { readonly columns?: boolean },
+  ) => {
+    const state = rootStackState(navigation);
+    if (!state) return;
+    const { workspace, overlays } = workspaceRoutesOf(state.routes.slice(0, state.index + 1));
+    const next = workspaceTabNavigationState(
+      { ...state, routes: workspace },
+      tab,
+      currentWorkspaceSelections(),
+      {
+        columns: Platform.OS === "ios" && (options?.columns ?? layout.usesSplitView),
+        check: workspaceSelectionCheck,
+        overlays,
+      },
+    );
+    if (layout.primarySidebarOverlaysContent) {
+      const opened = next.routes.at(-1 - overlays.length)?.key ?? null;
+      setOverlaySidebar((current) => ({ ...current, visible: true, keepOpenFor: opened }));
+    }
+    dispatchRootStackReset(navigation, state, next);
   };
+  const handleOpenSettings = () => openWorkspaceTab("settings");
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
   const deferredThreadSelection = useMemo(() => createDeferredNavigation(), []);
@@ -521,6 +564,8 @@ function AdaptiveWorkspaceLayoutContent(
   }
 
   const projects = useProjects();
+  const compactAndroidSettings =
+    Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
   const handleStartNewTask = () => {
     const thread = appAtomRegistry
       .get(environmentThreadShells.navigationThreadShellsAtom)
@@ -555,10 +600,7 @@ function AdaptiveWorkspaceLayoutContent(
   // Minted here (root stack navigation) so the sidebar pane stays free of
   // navigation hooks — on iOS it renders inside an independent nav tree.
   const handleOpenEnvironmentSettings = () => {
-    navigation.navigate("SettingsSheet", {
-      screen: "SettingsContent",
-      params: { screen: "SettingsEnvironments" },
-    });
+    openSettings(navigation, "SettingsEnvironments");
   };
 
   const handleOpenThreadPullRequests = useOpenThreadPullRequests();
@@ -771,6 +813,7 @@ function AdaptiveWorkspaceLayoutContent(
     toggleAuxiliaryPane,
     togglePrimarySidebar,
     setPrimarySidebarVisible,
+    openWorkspaceTab,
     setAuxiliaryPaneWidth,
     composerKeyboardActive,
     setComposerEditing,
@@ -891,7 +934,17 @@ function AdaptiveWorkspaceLayoutContent(
                       Platform.OS === "android" && layout.usesSplitView ? contentTargetWidth : null
                     }
                   >
-                    {props.children}
+                    {/* Compact Settings keeps the bottom navigation under all of its pages. */}
+                    <SafeAreaInsetsContext
+                      value={
+                        compactAndroidSettings ? { ...safeAreaInsets, bottom: 0 } : safeAreaInsets
+                      }
+                    >
+                      <View className="flex-1">{props.children}</View>
+                    </SafeAreaInsetsContext>
+                    {compactAndroidSettings ? (
+                      <AndroidWorkspaceNavigation onNewThread={handleStartNewTask} />
+                    ) : null}
                   </WorkspaceSettledContentWidthContext>
                 </WorkspaceContentWidthContext>
               </View>

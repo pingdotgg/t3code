@@ -1,4 +1,4 @@
-import { useNavigation, useNavigationState, useRoute } from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
@@ -22,7 +22,6 @@ export function SettingsScreen(
 ) {
   const navigation = useNavigation();
   const route = useRoute();
-  const index = useNavigationState((state) => state.index);
   const workspace = useWorkspaceTabs();
   const surface = useWorkspaceSurface();
   const deviceType = useDeviceType();
@@ -31,7 +30,7 @@ export function SettingsScreen(
   // Android opens Settings as a workspace tab; its root page has nothing to go back to.
   const workspaceRoot =
     props.workspaceRoot ||
-    (Platform.OS === "android" && workspace !== null && index === 0 && route.name === "Settings");
+    (Platform.OS === "android" && workspace !== null && route.name === "Settings");
 
   return (
     <View

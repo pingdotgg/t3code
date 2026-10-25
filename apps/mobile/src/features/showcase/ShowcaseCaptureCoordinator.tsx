@@ -33,6 +33,7 @@ import {
   subscribeToShowcaseRenderSignal,
 } from "./showcaseRenderSignal";
 import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
+import { openSettings } from "../settings/settings-navigation";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const SHOWCASE_THREAD_ID = "remote-command-center";
@@ -243,12 +244,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       return;
     }
     if (requestedScene === "environments") {
-      navigation.dispatch(
-        CommonActions.navigate("SettingsSheet", {
-          screen: "SettingsContent",
-          params: { screen: "SettingsEnvironments" },
-        }),
-      );
+      openSettings(navigation, "SettingsEnvironments");
     } else if (requestedScene === "terminal") {
       navigation.dispatch(
         CommonActions.navigate("ThreadTerminal", { ...params, terminalId: "term-1" }),

@@ -39,7 +39,7 @@ describe("resolveThreadSelectionOverlayState", () => {
     key: "workspace",
     type: "stack",
     stale: false as const,
-    routeNames: ["Home", "Thread", "ThreadFiles", "SettingsSheet", "SettingsLegal"],
+    routeNames: ["Home", "Thread", "ThreadFiles", "Connections", "SettingsLegal"],
   };
   const home = { key: "home", name: "Home" };
   const thread = {
@@ -48,7 +48,7 @@ describe("resolveThreadSelectionOverlayState", () => {
     params: { environmentId: "environment", threadId: "old-thread" },
   };
   const files = { key: "files", name: "ThreadFiles", params: thread.params };
-  const settings = { key: "settings", name: "SettingsSheet" };
+  const settings = { key: "settings", name: "Connections" };
   const params = { environmentId: "environment", threadId: "new-thread" };
 
   it("replaces the underlying file route and dismisses every overlay above it", () => {
@@ -98,11 +98,11 @@ it("replacing a draft underneath an overlay removes its draft identity", () => {
       key: "root",
       type: "stack",
       stale: false,
-      routeNames: ["Thread", "SettingsSheet"],
+      routeNames: ["Thread", "Connections"],
       index: 1,
       routes: [
         { key: "draft", name: "Thread", params: { draft: { draftId: "old" } } },
-        { key: "settings", name: "SettingsSheet" },
+        { key: "settings", name: "Connections" },
       ],
     },
     workspaceRouteKey: "draft",

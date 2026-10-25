@@ -1,20 +1,9 @@
-import type { CommonActions, NavigationState } from "@react-navigation/native";
+import type { NavigationState } from "@react-navigation/native";
+import { resetRootStack, type RootStackNavigation } from "./root-stack-reset";
 
 export type AndroidWorkspaceDestination =
   | { readonly name: "Thread"; readonly params: ReactNavigation.RootParamList["Thread"] }
   | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] };
-
-export type AndroidWorkspaceResetAction = ReturnType<typeof CommonActions.reset> & {
-  readonly target: string;
-};
-
-interface WorkspaceNavigation {
-  readonly dispatch: (action: AndroidWorkspaceResetAction) => void;
-  readonly getParent: () => WorkspaceNavigation | undefined;
-  readonly getState: () => NavigationState | undefined;
-  /** Only on the navigation container, whose `getState` stays empty until the first action. */
-  readonly getRootState?: () => NavigationState | undefined;
-}
 
 function androidWorkspaceBackReturnsToThread(state: NavigationState) {
   const current = state.routes[state.index];
@@ -55,27 +44,15 @@ export function androidWorkspaceNavigationState(
   };
 }
 
-/**
- * Resets the root stack to a workspace list or detail. Always reads and targets the root
- * navigator: the sidebar and rail render in the root layout, where `useNavigation()` is the
- * container, and a container dispatch runs on the deepest focused navigator. With Settings
- * or New task open, that is their nested stack, which rejects the reset.
- */
+/** Resets the root stack to a workspace list or detail. */
 export function resetAndroidWorkspace(
-  navigation: WorkspaceNavigation,
+  navigation: RootStackNavigation,
   destination?: AndroidWorkspaceDestination,
   reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
 ) {
-  let root = navigation;
-  for (let parent = root.getParent(); parent; parent = root.getParent()) root = parent;
-  const state = root.getRootState?.() ?? root.getState();
-  if (!state) return;
-  // Same shape as `CommonActions.reset`, which would pull React Native into node tests.
-  navigation.dispatch({
-    type: "RESET",
-    payload: androidWorkspaceNavigationState(state, destination, reviewers),
-    target: state.key,
-  });
+  resetRootStack(navigation, (state) =>
+    androidWorkspaceNavigationState(state, destination, reviewers),
+  );
 }
 
 export function parentThreadIsBelow(
@@ -114,7 +91,7 @@ export function linkedThreadStep(
 }
 
 export function returnToAndroidWorkspaceList(
-  navigation: WorkspaceNavigation & { readonly goBack: () => void },
+  navigation: RootStackNavigation & { readonly goBack: () => void },
   selectTab: () => void,
 ) {
   const state = navigation.getState();

@@ -1,3 +1,4 @@
+import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
 import { createContext, use, type ReactNode } from "react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -26,6 +27,11 @@ interface AdaptiveWorkspaceContextValue {
   readonly toggleAuxiliaryPane: () => void;
   readonly togglePrimarySidebar: () => void;
   readonly setPrimarySidebarVisible: (visible: boolean) => void;
+  /** Opens a workspace tab with its list and, with columns, the page it last showed. */
+  readonly openWorkspaceTab: (
+    tab: WorkspaceTab | "settings",
+    options?: { readonly columns?: boolean },
+  ) => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
   /**
    * Android split view while the thread composer has the soft keyboard: the
@@ -63,6 +69,7 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   toggleAuxiliaryPane: () => undefined,
   togglePrimarySidebar: () => undefined,
   setPrimarySidebarVisible: () => undefined,
+  openWorkspaceTab: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
   composerKeyboardActive: false,
   setComposerEditing: () => undefined,

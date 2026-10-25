@@ -49,16 +49,11 @@ describe("Duo list clearance", () => {
 });
 
 describe("workspace root navigation", () => {
-  it("keeps Usage and Settings out of the list/detail layout", () => {
+  it("pairs Settings, chats and pull requests with a detail column, and keeps Usage one page", () => {
     expect(workspaceUsesColumns("usage")).toBe(false);
-    expect(workspaceUsesColumns("threads", "SettingsSheet")).toBe(false);
-    expect(workspaceUsesColumns("pullRequests", "SettingsSheet")).toBe(false);
-  });
-
-  it("restores columns for chat and pull request lists and their details", () => {
+    expect(workspaceUsesColumns("usage", true)).toBe(true);
     expect(workspaceUsesColumns("threads")).toBe(true);
-    expect(workspaceUsesColumns("threads", "Thread")).toBe(true);
-    expect(workspaceUsesColumns("pullRequests", "PullRequest")).toBe(true);
+    expect(workspaceUsesColumns("pullRequests")).toBe(true);
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {

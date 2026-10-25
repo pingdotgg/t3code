@@ -13,7 +13,10 @@ export function projectWorkspaceStack(
   const firstOverlay = state.routes.findIndex(isOverlay);
   const workspaceRoutes = state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay);
   const primary = workspaceRoutes.find((route) => route.name === "Home");
-  const detail = workspaceRoutes.filter((route) => route.name !== "Home");
+  // The Settings tab's route only selects what Home shows; its pages are the detail.
+  const detail = workspaceRoutes.filter(
+    (route) => route.name !== "Home" && route.name !== "Settings",
+  );
   const overlays = firstOverlay < 0 ? [] : state.routes.slice(firstOverlay);
   return { primary, detail, overlays };
 }
@@ -50,10 +53,13 @@ export function nativeStackPopAction(
   destinationKey?: string,
 ) {
   const sourceIndex = state.routes.findIndex((route) => route.key === dismissedKey);
-  const destinationIndex =
+  let destinationIndex =
     destinationKey === undefined
       ? sourceIndex - 1
       : state.routes.findIndex((route) => route.key === destinationKey);
+  // Home's screen draws the Settings list, so going back to it from a Settings page stops there.
+  if (destinationIndex >= 0 && state.routes[destinationIndex + 1]?.name === "Settings")
+    destinationIndex += 1;
   if (
     sourceIndex <= 0 ||
     sourceIndex > state.index ||

@@ -202,13 +202,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
               environmentId={environmentId}
               connected={connected}
               onAddRoute={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: {
-                    screen: "SettingsEnvironmentNew",
-                    params: { routeFor: environmentId },
-                  },
-                })
+                navigation.navigate("SettingsEnvironmentNew", { routeFor: environmentId })
               }
             />
             {outdated ? (

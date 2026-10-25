@@ -23,7 +23,7 @@ const { StackRouter } = requireNavigation("@react-navigation/routers") as {
 const home = { key: "home", name: "Home" };
 const thread = { key: "thread", name: "Thread", params: { threadId: "draft-thread" } };
 const files = { key: "files", name: "ThreadFiles", params: thread.params };
-const settings = { key: "settings", name: "SettingsSheet" };
+const settings = { key: "settings", name: "Settings" };
 const legal = { key: "legal", name: "SettingsLegal" };
 
 function history(
@@ -34,7 +34,7 @@ function history(
     type: "stack",
     stale: false,
     index: routes.length - 1,
-    routeNames: ["Home", "Thread", "ThreadFiles", "SettingsSheet", "SettingsLegal"],
+    routeNames: ["Home", "Thread", "ThreadFiles", "Settings", "SettingsLegal"],
     routes,
     preloadedRoutes: [],
   };
@@ -44,18 +44,34 @@ describe("workspace router projection", () => {
   it("keeps workspace flows beside Home and restores them after a modal closes", () => {
     const draft = { key: "draft", name: "Thread", params: { draft: {} } };
     const modal = { key: "connect", name: "ConnectOnboarding" };
-    const routes = [home, thread, draft, settings, legal];
+    const routes = [home, thread, draft, legal];
     const isOverlay = (route: { name: string }) => route.name === "ConnectOnboarding";
     expect(projectWorkspaceStack(history([...routes, modal]), isOverlay)).toEqual({
       primary: home,
-      detail: [thread, draft, settings, legal],
+      detail: [thread, draft, legal],
       overlays: [modal],
     });
     expect(projectWorkspaceStack(history(routes), isOverlay)).toEqual({
       primary: home,
-      detail: [thread, draft, settings, legal],
+      detail: [thread, draft, legal],
       overlays: [],
     });
+  });
+
+  it("shows the Settings list as the primary content and its pages as the detail", () => {
+    const environments = { key: "environments", name: "SettingsEnvironments" };
+    expect(projectWorkspaceStack(history([home, settings, environments]), () => false)).toEqual({
+      primary: home,
+      detail: [environments],
+      overlays: [],
+    });
+  });
+
+  it("returns from a Settings page to the Settings list that Home is showing", () => {
+    const environments = { key: "environments", name: "SettingsEnvironments" };
+    expect(
+      nativeStackPopAction(history([home, settings, environments]), environments.key, home.key),
+    ).toMatchObject({ payload: { count: 1 } });
   });
 
   it("retains a cold-linked detail route without changing the router history", () => {
@@ -330,7 +346,7 @@ describe("v5 stack handoff", () => {
     expect(
       partitionStackPresentations(
         [home, thread, settings, legal, secondModal],
-        (route) => route.name === "SettingsSheet",
+        (route) => route.name === "Settings",
       ),
     ).toEqual([[home, thread], [settings, legal], [secondModal]]);
   });

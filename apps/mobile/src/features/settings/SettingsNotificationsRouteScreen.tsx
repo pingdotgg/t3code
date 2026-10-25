@@ -209,7 +209,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         { text: "Cancel", style: "cancel" },
         {
           text: "Continue",
-          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
+          onPress: () => navigation.navigate("SettingsAuth"),
         },
       ],
     );
