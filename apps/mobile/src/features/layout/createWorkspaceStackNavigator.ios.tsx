@@ -19,7 +19,16 @@ import {
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { use, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  Fragment,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -158,14 +167,14 @@ function ColumnScreen(props: {
             }
           />
           <ColumnContent
-            key={key}
             primary={props.primary}
             insetHorizontally={
               (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
             }
           >
             <NativePrimaryColumnContext value={primaryColumn}>
-              {descriptor.render()}
+              {/* The Settings slot swaps pages here; its column keeps its measured insets. */}
+              <Fragment key={key}>{descriptor.render()}</Fragment>
             </NativePrimaryColumnContext>
           </ColumnContent>
         </NavigationRouteContext>
