@@ -89,7 +89,7 @@ export function SidebarEnvironmentFilter(props: {
               />
               <span className="min-w-0 flex-1 truncate">{environment.label}</span>
               {environment.environmentId === props.primaryEnvironmentId ? (
-                <span className="text-xs text-muted-foreground">Primary</span>
+                <span className="text-xs text-muted-foreground">This machine</span>
               ) : null}
             </label>
           ))}
