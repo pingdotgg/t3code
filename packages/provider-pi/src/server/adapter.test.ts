@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
+  ChatAttachmentId,
   EnvironmentId,
   NodeId,
   ProviderInstanceId,
@@ -25,6 +26,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -38,6 +40,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -518,6 +521,92 @@ const startTurn = Effect.fnUntraced(function* (
 });
 
 describe("PiAdapterV2", () => {
+  it.effect("keeps native image bytes and the saved path in the prompt", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const attachment: ChatAttachment = {
+        id: ChatAttachmentId.make("image"),
+        type: "image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      };
+      const path = host.resolveAttachmentPath(attachment)!;
+      yield* fileSystem.writeFile(path, new Uint8Array([1, 2, 3]));
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [attachment]);
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.include(String(prompt["message"]), path);
+      assert.deepEqual(prompt["images"], [{ type: "image", data: "AQID", mimeType: "image/png" }]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("lists unavailable attachments alongside resolvable files in the native prompt", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake).pipe(
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          resolveAttachmentPath: (attachment) =>
+            attachment.id === "available" ? host.resolveAttachmentPath(attachment) : null,
+        }),
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const attachments: ReadonlyArray<ChatAttachment> = [
+        {
+          id: ChatAttachmentId.make("available"),
+          type: "file",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        },
+        {
+          id: ChatAttachmentId.make("missing-file"),
+          type: "file",
+          name: "missing.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        },
+        {
+          id: ChatAttachmentId.make("missing-image"),
+          type: "image",
+          name: "missing.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+        },
+        {
+          id: ChatAttachmentId.make("missing-future"),
+          type: "future",
+          name: "future.bin",
+          mimeType: "application/octet-stream",
+          sizeBytes: 1,
+        },
+      ];
+      yield* startTurn(runtime, providerThread, "default", attachments);
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.isString(prompt["message"]);
+      const message = String(prompt["message"]);
+      assert.include(message, host.resolveAttachmentPath(attachments[0]!)!);
+      for (const attachment of attachments.slice(1)) {
+        assert.include(message, attachment.name);
+        assert.include(message, attachment.id);
+      }
+      assert.equal((message.match(/unavailable/g) ?? []).length, 3);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "completes a resumed user turn before native wake events arrive, Pi streaming=%s",
     (streaming) =>

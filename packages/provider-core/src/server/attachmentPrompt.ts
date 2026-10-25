@@ -162,20 +162,28 @@ export function providerMessageTextWithAttachmentPaths(input: {
   readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
 }): string {
   let text = input.text;
+  // The text-input budget must never hide the existence of an attachment.
+  for (const attachment of input.attachments) {
+    const path = input.resolveAttachmentPath(attachment);
+    const context =
+      path === null
+        ? `[Attached ${attachment.type} "${attachment.name}" is unavailable: could not resolve a saved path for attachment '${attachment.id}'.]`
+        : `[Attached ${attachment.type} "${attachment.name}" is saved at: ${path}]`;
+    text = text ? `${text}\n\n${context}` : context;
+  }
+
+  const truncationNotice =
+    "[Optional captured-window context was truncated to fit the prompt budget. Attachments are listed above.]";
+  let truncated = false;
   const appendContext = (context: string | undefined) => {
     if (context === undefined) return;
     const candidate = text ? `${text}\n\n${context}` : context;
-    if (candidate.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS) text = candidate;
+    if (candidate.length + 2 + truncationNotice.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      text = candidate;
+    } else {
+      truncated = true;
+    }
   };
-
-  for (const attachment of input.attachments) {
-    const path = input.resolveAttachmentPath(attachment);
-    appendContext(
-      path === null
-        ? undefined
-        : `[Attached ${attachment.type} "${attachment.name}" is saved at: ${path}]`,
-    );
-  }
 
   for (const attachment of input.attachments) {
     const source =
@@ -213,5 +221,5 @@ export function providerMessageTextWithAttachmentPaths(input: {
     );
   }
 
-  return text;
+  return truncated ? `${text}\n\n${truncationNotice}` : text;
 }
