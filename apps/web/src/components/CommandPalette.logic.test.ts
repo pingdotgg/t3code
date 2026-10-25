@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  buildNestedSearchItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
@@ -166,6 +167,56 @@ describe("buildThreadActionItems", () => {
       "thread:environment-local:thread-title-match",
       "thread:environment-local:thread-context-match",
     ]);
+  });
+
+  it("searches submenu options from the root and from a submenu with no match", () => {
+    const action = (value: string, title: string) => ({
+      kind: "action" as const,
+      value,
+      searchTerms: [title],
+      title,
+      icon: null,
+      run: async () => undefined,
+    });
+    const projects = [action("new-thread-in:t3code", "t3code"), action("new-thread-in:web", "web")];
+    const newThreadIn = {
+      kind: "submenu" as const,
+      value: "action:new-thread-in",
+      searchTerms: ["new thread"],
+      title: "New thread in...",
+      icon: null,
+      addonIcon: null,
+      groups: [{ value: "projects", label: "Projects", items: projects }],
+    };
+    const addProject = action("action:add-project", "Add project");
+    const rootGroups = [{ value: "actions", label: "Actions", items: [newThreadIn, addProject] }];
+    const search = (query: string, isInSubmenu: boolean) =>
+      filterCommandPaletteGroups({
+        activeGroups: isInSubmenu ? newThreadIn.groups : rootGroups,
+        query,
+        isInSubmenu,
+        allOptions: {
+          rootGroups,
+          nestedItems: buildNestedSearchItems([newThreadIn, addProject], query),
+        },
+        projectSearchItems: [],
+        threadSearchItems: [
+          ...buildThreadActionItems({
+            threads: [makeThread({ title: "Thread about t3code" })],
+            projectByKey: new Map(),
+            icon: null,
+            runThread: async () => undefined,
+          }),
+        ],
+      }).map((group) => [group.label, group.items.map((item) => item.title)]);
+
+    expect(search("new thread in t3code", false)[0]).toEqual([
+      "Suggestions",
+      ["New thread in t3code"],
+    ]);
+    expect(search("new thread", false).map(([label]) => label)).not.toContain("Suggestions");
+    expect(search("t3", true)).toEqual([["Projects", ["t3code"]]]);
+    expect(search("add project", true)).toEqual([["Actions", ["Add project"]]]);
   });
 
   it("lists message matches last, once, without moving the title matches above them", () => {
