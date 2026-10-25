@@ -141,6 +141,7 @@ function ComboboxPopup({
   align = "start",
   collisionAvoidance,
   anchor: anchorProp,
+  maxHeight = "default",
   ...props
 }: ComboboxPrimitive.Popup.Props & {
   align?: ComboboxPrimitive.Positioner.Props["align"];
@@ -149,6 +150,7 @@ function ComboboxPopup({
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
   collisionAvoidance?: ComboboxPrimitive.Positioner.Props["collisionAvoidance"];
+  maxHeight?: "default" | "available";
 }) {
   const { chipsRef, multiple } = React.use(ComboboxContext);
   const anchor = anchorProp ?? (multiple ? chipsRef : undefined);
@@ -172,8 +174,12 @@ function ComboboxPopup({
           )}
         >
           <ComboboxPrimitive.Popup
-            // Electron drag hit-testing ignores z-index; items over a drag region would swallow clicks.
-            className="flex min-w-0 max-h-[min(var(--available-height),23rem)] flex-1 flex-col overflow-hidden text-foreground [-webkit-app-region:no-drag]"
+            className={cn(
+              "flex min-w-0 flex-1 flex-col overflow-hidden text-foreground [-webkit-app-region:no-drag]",
+              maxHeight === "available"
+                ? "max-h-(--available-height)"
+                : "max-h-[min(var(--available-height),23rem)]",
+            )}
             data-slot="combobox-popup"
             {...props}
           >

@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useShallow } from "zustand/react/shallow";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -143,6 +144,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
+  excludedEnvironmentIds: ReadonlySet<EnvironmentId>;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
@@ -178,6 +180,9 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     const rows: SidebarDraftRowData[] = [];
     for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
       if (session.promotedTo != null) {
+        continue;
+      }
+      if (props.excludedEnvironmentIds.has(session.environmentId)) {
         continue;
       }
       if (

@@ -34,6 +34,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  filterSidebarV2VisibleThreads,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -58,6 +59,65 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("sidebar environment filtering", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const local = {
+    ...makeThreadFixture({ id: ThreadId.make("local") }),
+    environmentId: localEnvironmentId,
+  };
+  const remote = {
+    ...makeThreadFixture({ id: ThreadId.make("remote") }),
+    environmentId: remoteEnvironmentId,
+  };
+
+  it("excludes an environment independently of project scope", () => {
+    expect(
+      filterSidebarV2VisibleThreads(
+        [local, remote],
+        null,
+        new Set(),
+        new Set([remoteEnvironmentId]),
+      ),
+    ).toEqual([local]);
+    expect(
+      filterSidebarV2VisibleThreads(
+        [local, remote],
+        new Set([`${remoteEnvironmentId}:${remote.projectId}`]),
+        new Set(),
+        new Set([remoteEnvironmentId]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps newly connected environments visible and clears back to all environments", () => {
+    const added = { ...remote, environmentId: EnvironmentId.make("environment-new") };
+    expect(
+      filterSidebarV2VisibleThreads(
+        [local, remote, added],
+        null,
+        new Set(),
+        new Set([remoteEnvironmentId]),
+      ),
+    ).toEqual([local, added]);
+    expect(filterSidebarV2VisibleThreads([local, remote], null, new Set())).toEqual([
+      local,
+      remote,
+    ]);
+  });
+
+  it("can hide every environment, including threads without a listed project", () => {
+    const scratch = { ...local, projectId: ProjectId.make("scratch") };
+    expect(
+      filterSidebarV2VisibleThreads(
+        [scratch, remote],
+        null,
+        new Set(),
+        new Set([localEnvironmentId, remoteEnvironmentId]),
+      ),
+    ).toEqual([]);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
