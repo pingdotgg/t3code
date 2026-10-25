@@ -9,7 +9,10 @@ import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
 import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
-import { ScreenScrollViewBottomInset } from "../../../components/ui/ScreenScrollView";
+import {
+  ScreenScrollViewBottomInset,
+  ScreenScrollViewSurface,
+} from "../../../components/ui/ScreenScrollView";
 
 export { SettingsScreenContent };
 
@@ -32,11 +35,12 @@ export function SettingsScreen(
     props.workspaceRoot ||
     (Platform.OS === "android" && workspace !== null && route.name === "Settings");
 
+  // Settings' grouped cards only lift off the screen surface, so the folded Duo doesn't take
+  // the workspace's drawer surface here.
+  const surfaceClassName = cover ? "bg-screen" : workspaceRoot ? surface.className : "bg-sheet";
+
   return (
-    <View
-      collapsable={false}
-      className={`flex-1 ${workspaceRoot || cover ? surface.className : "bg-sheet"}`}
-    >
+    <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>
       <AppBar
         title={props.title}
         actions={props.actions}
@@ -46,11 +50,13 @@ export function SettingsScreen(
         hideBottomBorder={!props.formSheet}
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
-        {props.formSheet ? (
-          props.children
-        ) : (
-          <SettingsScreenContent>{props.children}</SettingsScreenContent>
-        )}
+        <ScreenScrollViewSurface value={surfaceClassName}>
+          {props.formSheet ? (
+            props.children
+          ) : (
+            <SettingsScreenContent>{props.children}</SettingsScreenContent>
+          )}
+        </ScreenScrollViewSurface>
       </ScreenScrollViewBottomInset>
     </View>
   );
