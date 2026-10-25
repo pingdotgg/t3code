@@ -8,11 +8,9 @@ import * as Socket from "effect/socket/Socket";
  */
 export const SOCKET_FRAME_PARTS_QUERY_PARAM = "frameParts";
 
-// The RPC client's ping is answered behind whatever the server is already
-// sending, and a WebSocket message only arrives once all of it has. On a slow
-// link a multi-megabyte config snapshot outlasts the ping timeout, so the
-// client drops a healthy server and asks for the same snapshot again. Parts
-// this size keep a frame arriving within the timeout down to a few KB/s.
+// A WebSocket message only arrives once all of it has, so on a slow link a
+// multi-megabyte config snapshot outlasts the RPC ping timeout and the client
+// drops a healthy server. Parts this size arrive within it down to a few KB/s.
 export const SOCKET_FRAME_PART_BYTES = 64 * 1024;
 
 // No JSON message starts with a record separator. It marks every part but the last.
