@@ -98,6 +98,14 @@ describe("thread links", () => {
     );
   });
 
+  it("writes the thread id verbatim so the link opens that exact thread", () => {
+    const link = formatThreadLink("thread:delegated-task:mcp%3A1", "Fix");
+    expect(link).toBe("[Fix](t3-thread://v1/thread:delegated-task:mcp%3A1)");
+    expect(parseThreadLinkHref(link.slice(link.indexOf("](") + 2, -1))).toBe(
+      "thread:delegated-task:mcp%3A1",
+    );
+  });
+
   it("formats a label that would otherwise break the Markdown link", () => {
     expect(formatThreadLink("t1", "Fix [ci] \\ build")).toBe("[Fix ci build](t3-thread://v1/t1)");
     expect(formatThreadLink("t1", " ] ")).toBe("[t1](t3-thread://v1/t1)");
