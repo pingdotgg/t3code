@@ -71,6 +71,8 @@ const WorkspaceSelections = Schema.Struct({
   ),
   settings: Schema.optional(Schema.String),
   settingsKey: Schema.optional(Schema.String),
+  /** A draft the threads tab showed after its last chat; only meaningful in its session. */
+  threadsDraft: Schema.optional(Schema.Struct({ key: Schema.String, params: Schema.Unknown })),
 });
 export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 

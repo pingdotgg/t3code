@@ -499,6 +499,9 @@ function ThreadVisitWatermark(props: {
   return null;
 }
 
+// Past the composer's 180 ms height animation.
+const COMPOSER_HEIGHT_SETTLE_MS = 220;
+
 export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
@@ -601,6 +604,24 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
+  // The composer animates its height and reports a layout every frame. The feed follows those
+  // frames on the UI thread through onComposerLayout; this is only an estimate, so committing
+  // each frame would re-render the whole screen for the length of the animation.
+  const composerHeightSettle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleComposerHeightChange = useCallback((height: number) => {
+    setComposerHeight((current) => current ?? height);
+    if (composerHeightSettle.current !== null) clearTimeout(composerHeightSettle.current);
+    composerHeightSettle.current = setTimeout(() => {
+      composerHeightSettle.current = null;
+      setComposerHeight(height);
+    }, COMPOSER_HEIGHT_SETTLE_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (composerHeightSettle.current !== null) clearTimeout(composerHeightSettle.current);
+    },
+    [],
+  );
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
@@ -1804,7 +1825,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         onUpdateModelSelection={props.onUpdateThreadModelSelection}
                         onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                         onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-                        onHeightChange={setComposerHeight}
+                        onHeightChange={handleComposerHeightChange}
                         onEditorFocusChange={handleOwnedInputFocusChange}
                       />
                     </>

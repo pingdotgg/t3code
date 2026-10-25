@@ -51,7 +51,7 @@ function save() {
 function withoutRouteKeys(saved: WorkspaceSelections | undefined): WorkspaceSelections {
   const omitKey = <Selection extends { readonly key?: string }>({ key: _, ...rest }: Selection) =>
     rest;
-  const { threads, pullRequests, settingsKey: _, ...rest } = saved ?? {};
+  const { threads, pullRequests, settingsKey: _, threadsDraft: _draft, ...rest } = saved ?? {};
   return {
     ...rest,
     ...(threads ? { threads: omitKey(threads) } : {}),

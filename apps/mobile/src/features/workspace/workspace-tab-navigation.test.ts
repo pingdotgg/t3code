@@ -96,6 +96,30 @@ describe("opening a workspace tab", () => {
     expect(back.routes.at(-1)).toMatchObject({ key: "thread", params: thread.params });
   });
 
+  it("reopens a draft the tab showed after its last chat, until another chat opens", () => {
+    const columns = { columns: true, check: available };
+    const draft = { key: "draft", name: "Thread", params: { draft: { requestId: "r" } } };
+    const withDraft = workspaceSelectionsIn(
+      [home, draft],
+      workspaceSelectionsIn([home, thread], {}),
+    );
+    const back = workspaceTabNavigationState(
+      { routes: [home, settings] },
+      "threads",
+      withDraft,
+      columns,
+    );
+    expect(back.routes.at(-1)).toEqual(draft);
+    const afterChat = workspaceSelectionsIn([home, thread], withDraft);
+    const again = workspaceTabNavigationState(
+      { routes: [home, settings] },
+      "threads",
+      afterChat,
+      columns,
+    );
+    expect(again.routes.at(-1)).toMatchObject({ key: "thread", params: thread.params });
+  });
+
   it("falls back to the list for a chat that no longer exists, or an unknown Settings page", () => {
     const missing = { thread: () => false, pullRequest: () => true };
     expect(

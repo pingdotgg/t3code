@@ -66,6 +66,7 @@ import {
   type WorkspaceDetail,
   type WorkspaceDetailSheet,
 } from "../workspace/workspace-detail-selection";
+import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
@@ -498,6 +499,7 @@ function AdaptiveWorkspaceLayoutContent(
         type: "select",
         tab: detail.name === "Thread" ? "threads" : "pullRequests",
       });
+      startOpeningDetail(detail);
       navigation.dispatch(selectWorkspaceDetail(detail, sheet));
     });
   }

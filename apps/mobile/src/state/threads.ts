@@ -46,6 +46,18 @@ export function useThreadFamily(
   }, [environmentId, rootThreadId]);
 }
 
+// Long enough for the opened screen to subscribe; its subscription keeps the thread after this.
+const OPENING_THREAD_HOLD_MS = 3_000;
+
+/**
+ * Starts loading a thread being opened before its screen renders and subscribes, which
+ * otherwise waits for navigation to commit.
+ */
+export function startOpeningEnvironmentThread(environmentId: EnvironmentId, threadId: ThreadId) {
+  const release = appAtomRegistry.mount(environmentThreads.stateAtom(environmentId, threadId));
+  setTimeout(release, OPENING_THREAD_HOLD_MS);
+}
+
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("mobile-environment-thread:empty"),
 );
