@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import "../index.css";
@@ -17,6 +18,10 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { Tooltip, TooltipTrigger } from "./ui/tooltip";
 
+function setup({ hoverPreviews }: { hoverPreviews: boolean }) {
+  settingsOverrides.hoverPreviews = hoverPreviews;
+}
+
 function openCard() {
   return render(
     <Tooltip open>
@@ -30,15 +35,17 @@ function openCard() {
 
 describe("ThreadHoverCardPopup", () => {
   it("renders the card when hover previews are on", async () => {
-    settingsOverrides.hoverPreviews = true;
+    setup({ hoverPreviews: true });
     await using _ = await openCard();
-    await expect.poll(() => document.body.textContent).toContain("Card title");
+
+    await expect.element(page.getByText("Card title")).toBeVisible();
   });
 
   it("renders nothing when hover previews are off", async () => {
-    settingsOverrides.hoverPreviews = false;
+    setup({ hoverPreviews: false });
     await using _ = await openCard();
-    expect(document.body.textContent).toContain("Thread");
-    expect(document.body.textContent).not.toContain("Card title");
+
+    await expect.element(page.getByRole("button", { name: "Thread" })).toBeVisible();
+    await expect.element(page.getByText("Card title")).not.toBeInTheDocument();
   });
 });

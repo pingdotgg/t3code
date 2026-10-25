@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../../test/render";
+import { render } from "../../../test/render";
 import "../../index.css";
 
 const settingsOverrides = vi.hoisted(() => ({ hoverPreviews: true }));
@@ -22,53 +23,48 @@ const items: ReadonlyArray<TimelineMinimapItem> = [
   { id: "b", rowIndex: 1, userText: "Second question", assistantText: "Second answer" },
 ];
 
-async function renderMinimap(onSelect = vi.fn()) {
-  const screen = await render(
-    <div style={{ position: "relative", height: 400 }}>
-      <TimelineMinimap
-        hasPersistentGutter
-        hitStripWidth={24}
-        currentIndex={0}
-        items={items}
-        stripMap={new Map()}
-        onWheel={() => {}}
-        onSelect={onSelect}
-      />
-    </div>,
+function setup({ hoverPreviews }: { hoverPreviews: boolean }) {
+  settingsOverrides.hoverPreviews = hoverPreviews;
+}
+
+async function renderFocusedMinimap(onSelect = vi.fn()) {
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
+      <div className="relative h-[400px]">
+        <TimelineMinimap
+          hasPersistentGutter
+          hitStripWidth={24}
+          currentIndex={0}
+          items={items}
+          stripMap={new Map()}
+          onWheel={() => {}}
+          onSelect={onSelect}
+        />
+      </div>,
+    ),
   );
-  const jump = screen.container.querySelector<HTMLButtonElement>(
-    'button[aria-label^="Jump to message"]',
-  );
-  if (!jump) throw new Error("missing minimap jump button");
-  return { screen, jump, onSelect };
+  const jump = page.getByRole("button", { name: /Jump to message/ });
+  await expect.element(jump).toBeInTheDocument();
+  jump.element().focus();
+  const disposables = stack.move();
+  return { screen, onSelect, [Symbol.asyncDispose]: () => disposables.disposeAsync() };
 }
 
 describe("TimelineMinimap hover previews", () => {
   it("shows the message preview by default", async () => {
-    settingsOverrides.hoverPreviews = true;
-    const { screen, jump } = await renderMinimap();
-    await using _ = screen;
+    setup({ hoverPreviews: true });
+    await using _ = await renderFocusedMinimap();
 
-    await act(() => jump.focus());
-
-    const preview = screen.container.querySelector("[data-minimap-preview]");
-    expect(preview?.textContent).toContain("First question");
+    await expect.element(page.getByText("First answer")).toBeVisible();
   });
 
   it("hides the preview but keeps navigation when previews are off", async () => {
-    settingsOverrides.hoverPreviews = false;
-    const { screen, jump, onSelect } = await renderMinimap();
-    await using _ = screen;
+    setup({ hoverPreviews: false });
+    await using minimap = await renderFocusedMinimap();
 
-    await act(() => jump.focus());
-    expect(screen.container.querySelector("[data-minimap-preview]")).toBeNull();
-
-    await act(() => {
-      jump.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
-    });
-    await act(() => {
-      jump.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
-    expect(onSelect).toHaveBeenCalledWith(items[1]);
+    await expect.element(page.getByText("First answer")).not.toBeInTheDocument();
+    await userEvent.keyboard("{ArrowDown}{Enter}");
+    await vi.waitFor(() => expect(minimap.onSelect).toHaveBeenCalledWith(items[1]));
   });
 });
