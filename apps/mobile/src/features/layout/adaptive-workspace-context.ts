@@ -1,6 +1,9 @@
 import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
 import { createContext, use, type ReactNode } from "react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  WorkspaceDetail,
+  WorkspaceDetailSheet,
+} from "../workspace/workspace-detail-selection";
 import {
   deriveFileInspectorPaneLayout,
   deriveLayout,
@@ -18,8 +21,8 @@ interface AdaptiveWorkspaceContextValue {
   readonly primarySidebarSearchQuery: string;
   readonly startNewTask: () => void;
   readonly deferThreadSelectionUntil: (operation: Promise<unknown>) => void;
-  readonly selectThread: (thread: EnvironmentThreadShell) => void;
-  readonly selectThreadRoute: (params: ReactNavigation.RootParamList["Thread"]) => void;
+  /** Use `useSelectWorkspaceDetail`, which also works outside the layout. */
+  readonly selectDetail?: (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
   readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
@@ -60,8 +63,6 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   primarySidebarSearchQuery: "",
   startNewTask: () => undefined,
   deferThreadSelectionUntil: () => undefined,
-  selectThread: () => undefined,
-  selectThreadRoute: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,

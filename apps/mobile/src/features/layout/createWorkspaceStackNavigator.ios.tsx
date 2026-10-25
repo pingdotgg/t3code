@@ -29,6 +29,7 @@ import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
 import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
+import { setNativelyPoppingWorkspaceRoute } from "../workspace/workspace-detail-selection";
 import { useWorkspaceSidebarHeaderItem } from "./useWorkspaceSidebarHeaderItem";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
@@ -71,18 +72,12 @@ const isPullRequestRoute = (route: Route) =>
   route.name === "PullRequestFile" ||
   route.name === "PullRequestFiles";
 
-/** Only these screens follow the sidebar's state; a thread's header draws its own toggle. */
-function SidebarToggleHeader(props: ComponentProps<typeof V5StackHeader>) {
-  const sidebarItem = useWorkspaceSidebarHeaderItem();
-  const options = {
-    ...props.options,
-    unstable_headerLeftItems: () => [sidebarItem],
-  } as AppNativeStackNavigationOptions as typeof props.options;
-  return <V5StackHeader {...props} options={options} />;
-}
+/** Beside the list, the first Settings page shows on one native screen that swaps its content. */
+const SETTINGS_DETAIL_SCREEN = "settings-detail";
 
 function ColumnScreen(props: {
   readonly descriptor: Descriptor;
+  readonly screenKey?: string;
   readonly primary?: boolean;
   readonly attached?: boolean;
   readonly selectedThreadKey?: string | null;
@@ -96,13 +91,20 @@ function ColumnScreen(props: {
 }) {
   const { descriptor } = props;
   // Options a screen set inside this workspace tab slot, over its route's.
-  const options = slotScreenOptions(
+  const slotOptions = slotScreenOptions(
     use(WorkspaceSlotOptionsContext),
     descriptor.route.key,
     descriptor.options,
   );
-  const Header =
-    props.sidebarToggle && !options.unstable_headerLeftItems ? SidebarToggleHeader : V5StackHeader;
+  const sidebarItem = useWorkspaceSidebarHeaderItem();
+  // Swapping header components would unmount the native header config, which hides the bar.
+  const options =
+    props.sidebarToggle && !slotOptions.unstable_headerLeftItems
+      ? ({
+          ...slotOptions,
+          unstable_headerLeftItems: () => [sidebarItem],
+        } as AppNativeStackNavigationOptions as typeof slotOptions)
+      : slotOptions;
   const [presented, setPresented] = useState(false);
   const primaryColumn = useMemo(
     () =>
@@ -118,7 +120,7 @@ function ColumnScreen(props: {
   const key = descriptor.route.key;
   return (
     <Split.Screen
-      screenKey={key}
+      screenKey={props.screenKey ?? key}
       activityMode={props.attached === false ? "detached" : "attached"}
       onDismiss={(event) => {
         props.onDismiss(key, event.nativeEvent.isNativeDismiss);
@@ -143,7 +145,7 @@ function ColumnScreen(props: {
     >
       <NavigationContext value={descriptor.navigation}>
         <NavigationRouteContext value={descriptor.route}>
-          <Header
+          <V5StackHeader
             options={options}
             canGoBack={!props.primary}
             column={props.primary ? "primary" : "detail"}
@@ -156,6 +158,7 @@ function ColumnScreen(props: {
             }
           />
           <ColumnContent
+            key={key}
             primary={props.primary}
             insetHorizontally={
               (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
@@ -184,6 +187,8 @@ function WorkspaceColumns(
     openWorkspaceTab,
   } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
+  const settingsDetailIn = (detail: readonly Route[]) =>
+    layout.usesSplitView && detail[0] && isSettingsRoute(detail[0].name) ? detail[0] : undefined;
   // Split screens must remain mounted while UIKit animates a detached route away.
   const [screens, setScreens] = useState({
     routes: props.detail,
@@ -196,9 +201,13 @@ function WorkspaceColumns(
     screens.observedRoutes !== props.detail ||
     screens.observedDescriptors !== props.descriptors
   ) {
-    const routes = reconcileStackScreens(screens.routes, props.detail, screens.completed);
-    const retained = new Set(routes.map((route) => route.key));
     const active = new Set(props.detail.map((route) => route.key));
+    const settingsSlot = settingsDetailIn(props.detail);
+    const routes = reconcileStackScreens(screens.routes, props.detail, screens.completed).filter(
+      // The slot's native screen stays; the pages it showed, and any above them, just go.
+      (route) => !settingsSlot || active.has(route.key) || !isSettingsRoute(route.name),
+    );
+    const retained = new Set(routes.map((route) => route.key));
     setScreens({
       routes,
       descriptors: Object.fromEntries(
@@ -280,6 +289,7 @@ function WorkspaceColumns(
       props.primary.key,
     );
     collapsedColumn.current = transition.column;
+    setNativelyPoppingWorkspaceRoute(transition.column.leaving);
     if (transition.pop) props.navigation.dispatch(transition.pop);
   };
 
@@ -301,9 +311,11 @@ function WorkspaceColumns(
       onCollapse={() => {
         collapsed.current = true;
         collapsedColumn.current = { visible: compactColumn, leaving: null };
+        setNativelyPoppingWorkspaceRoute(null);
       }}
       onExpand={() => {
         collapsed.current = false;
+        setNativelyPoppingWorkspaceRoute(null);
         // Native callbacks can outlive the render that created them, so decide from the live
         // router state. An expanded split has columns, so its tab gets a page beside the list.
         const live = props.navigation.getState();
@@ -392,15 +404,14 @@ function WorkspaceColumns(
           </Split.Screen>
           {screens.routes.map((route) => {
             const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
+            const inSettingsSlot = settingsDetailIn(props.detail)?.key === route.key;
+            const screenKey = inSettingsSlot ? SETTINGS_DETAIL_SCREEN : route.key;
             return descriptor ? (
               <ColumnScreen
-                key={route.key}
+                key={screenKey}
+                screenKey={screenKey}
                 descriptor={descriptor}
-                sidebarToggle={
-                  layout.usesSplitView &&
-                  props.detail[0]?.key === route.key &&
-                  isSettingsRoute(route.name)
-                }
+                sidebarToggle={inSettingsSlot}
                 attached={props.detail.some((current) => current.key === route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
@@ -469,6 +480,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
           <V5CardStackView
             {...props}
             onRootVisibilityChange={setPrimaryVisible}
+            onNativePopChange={setNativelyPoppingWorkspaceRoute}
             descriptors={descriptors}
             state={{
               ...props.state,

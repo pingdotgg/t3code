@@ -22,7 +22,6 @@ import { AudioFilePreview } from "./AudioFilePreview";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { isPdfFile } from "../../lib/filePreview";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -478,10 +477,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       navigation.navigate("NewTaskFile", params);
       return;
     }
-    const navigationAction = resolveFileSelectionNavigationAction({
-      hasPersistentFileInspector: hasFileInspector,
-    });
-    if (navigationAction === "replace") {
+    if (hasFileInspector) {
       navigation.dispatch(StackActions.replace("ThreadFile", params));
       return;
     }

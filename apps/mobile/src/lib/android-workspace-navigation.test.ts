@@ -11,7 +11,6 @@ import {
   parentThreadIsBelow,
   resetAndroidWorkspace,
   returnToAndroidWorkspaceList,
-  type AndroidWorkspaceDestination,
 } from "./android-workspace-navigation";
 import type { RootStackResetAction } from "./root-stack-reset";
 
@@ -69,15 +68,8 @@ function apply(
   return router.getRehydratedState(result, options);
 }
 
-function select(
-  state: ReturnType<typeof router.getInitialState>,
-  destination?: AndroidWorkspaceDestination,
-  reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
-) {
-  return apply(
-    state,
-    CommonActions.reset(androidWorkspaceNavigationState(state, destination, reviewers)),
-  );
+function withThread() {
+  return apply(router.getInitialState(options), StackActions.push(thread.name, thread.params));
 }
 
 function legacyHistory() {
@@ -92,69 +84,8 @@ function names(state: ReturnType<typeof router.getInitialState>) {
 }
 
 describe("Android workspace navigation", () => {
-  it("replaces cross-tab history with one detail and returns directly to its list", () => {
-    const previous = legacyHistory();
-    const state = select(previous, pullRequest);
-    expect(names(state)).toEqual(["Home", "PullRequest"]);
-    expect(state.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(state.routes[1]?.key).toBe(previous.routes[2]?.key);
-    expect(names(apply(state, StackActions.pop()))).toEqual(["Home"]);
-  });
-
-  it("replaces peer thread selections without leaving the previous thread underneath", () => {
-    const first = select(router.getInitialState(options), thread);
-    const second = select(first, {
-      name: "Thread",
-      params: { ...thread.params, threadId: "thread-b" },
-    });
-    expect(names(second)).toEqual(["Home", "Thread"]);
-    expect(second.routes[1]?.params).toEqual({ ...thread.params, threadId: "thread-b" });
-    expect(second.routes[1]?.key).not.toBe(first.routes[1]?.key);
-    expect(names(apply(second, StackActions.pop()))).toEqual(["Home"]);
-  });
-
-  it("creates Home beneath cold-linked details and gives direct list escape", () => {
-    const initial = router.getInitialState(options);
-    const cold = apply(initial, CommonActions.reset({ index: 0, routes: [pullRequest] }));
-    expect(names(select(cold, pullRequest))).toEqual(["Home", "PullRequest"]);
-    expect(names(select(cold))).toEqual(["Home"]);
-  });
-
-  it("keeps a request-review flow above the chosen PR instead of an old chat", () => {
-    const state = select(legacyHistory(), pullRequest, pullRequest.params);
-    expect(names(state)).toEqual(["Home", "PullRequest", "PullRequestReviewers"]);
-    const back = apply(state, StackActions.pop());
-    expect(names(back)).toEqual(["Home", "PullRequest"]);
-    expect(back.routes[back.index]?.params).toEqual(pullRequest.params);
-  });
-
-  it.each(["ThreadFiles", "ThreadTerminal", "GitOverview"])(
-    "returns to chat when its sidebar row is selected from %s",
-    (route) => {
-      const detail = select(router.getInitialState(options), thread);
-      const nested = apply(detail, StackActions.push(route, thread.params));
-      const selected = select(nested, thread);
-      expect(names(selected)).toEqual(["Home", "Thread"]);
-      expect(selected.routes[1]?.key).toBe(detail.routes[1]?.key);
-      expect(names(apply(selected, StackActions.pop()))).toEqual(["Home"]);
-    },
-  );
-
-  it.each([{ environmentId: "environment-b" }, { repository: "owner/other" }])(
-    "does not reuse another PR's key when its scope differs: %o",
-    (change) => {
-      const previous = select(router.getInitialState(options), pullRequest);
-      const state = select(previous, {
-        name: "PullRequest",
-        params: { ...pullRequest.params, ...change },
-      });
-      expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
-      expect(state.routes[1]?.params).toEqual({ ...pullRequest.params, ...change });
-    },
-  );
-
   it("returns to a distinct previous thread, otherwise to the workspace list", () => {
-    const parent = select(router.getInitialState(options), thread);
+    const parent = withThread();
     let state = apply(
       parent,
       StackActions.push("Thread", { ...thread.params, threadId: "child-a" }),
@@ -206,7 +137,7 @@ describe("Android workspace navigation", () => {
   });
 
   it("opens a linked thread above the current one so Back returns to it", () => {
-    const parent = select(router.getInitialState(options), thread);
+    const parent = withThread();
     const child = { ...thread.params, threadId: "child-a" };
     const open = (
       state: ReturnType<typeof router.getInitialState>,
@@ -230,7 +161,7 @@ describe("Android workspace navigation", () => {
   });
 
   it("recognizes a parent only when its environment and thread are immediately below", () => {
-    const parent = select(router.getInitialState(options), thread);
+    const parent = withThread();
     const child = apply(
       parent,
       StackActions.push("Thread", { ...thread.params, threadId: "child-a" }),
@@ -259,35 +190,29 @@ describe("Android workspace navigation", () => {
       getParent: () => undefined,
       getState: () => root,
     };
-    resetAndroidWorkspace(
-      {
-        dispatch: (action) => actions.push(action),
-        getParent: () => rootNavigation,
-        getState: () => nested,
-      },
-      thread,
-    );
+    resetAndroidWorkspace({
+      dispatch: (action) => actions.push(action),
+      getParent: () => rootNavigation,
+      getState: () => nested,
+    });
     const [action] = actions;
     expect(action?.target).toBe(root.key);
-    expect(names(apply(root, action!))).toEqual(["Home", "Thread"]);
+    expect(names(apply(root, action!))).toEqual(["Home"]);
   });
 
   it("resets from the navigation container before any navigation action", () => {
     const root = router.getInitialState(options);
     const actions: RootStackResetAction[] = [];
     // The container only learns the root state after the first action.
-    resetAndroidWorkspace(
-      {
-        dispatch: (action) => actions.push(action),
-        getParent: () => undefined,
-        getState: () => undefined,
-        getRootState: () => root,
-      },
-      thread,
-    );
+    resetAndroidWorkspace({
+      dispatch: (action) => actions.push(action),
+      getParent: () => undefined,
+      getState: () => undefined,
+      getRootState: () => root,
+    });
     const [action] = actions;
     expect(action?.target).toBe(root.key);
-    expect(names(apply(root, action!))).toEqual(["Home", "Thread"]);
+    expect(names(apply(root, action!))).toEqual(["Home"]);
   });
 });
 

@@ -149,6 +149,10 @@ import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
+import {
+  selectWorkspaceDetail,
+  workspaceDetailRouter,
+} from "./features/workspace/workspace-detail-selection";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -525,7 +529,12 @@ function RootStackLayout(props: {
     if (!transition.shareIdToPresent) {
       return;
     }
-    navigation.navigate("Thread", { draft: { incomingShareId: transition.shareIdToPresent } });
+    navigation.dispatch(
+      selectWorkspaceDetail({
+        name: "Thread",
+        params: { draft: { incomingShareId: transition.shareIdToPresent } },
+      }),
+    );
   }, [navigation, pendingShare, props.state]);
 
   return (
@@ -599,6 +608,7 @@ function NotFoundScreen() {
 
 const RootStackConfig = createWorkspaceStackNavigator({
   initialRouteName: "Home",
+  UNSTABLE_router: workspaceDetailRouter,
   // React Navigation calls layouts inline; compiled components would share the navigator's memo cache.
   layout: (props) => <RootStackLayout {...props} />,
   screenOptions: {

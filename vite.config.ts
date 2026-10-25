@@ -436,6 +436,11 @@ export default defineConfig({
         rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },
       },
       {
+        files: ["apps/mobile/src/**"],
+        excludeFiles: ["**/*.test.{ts,tsx}"],
+        rules: { "t3code/no-ambiguous-detail-navigation": "error" },
+      },
+      {
         // Raw ResizeObserver state commits miss the paint; observeResize flushes derived layout together.
         files: ["apps/web/src/**"],
         excludeFiles: [
