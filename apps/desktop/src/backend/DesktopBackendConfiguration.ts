@@ -110,6 +110,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OTEL_TRACES_EXPORTER",
   "OTEL_METRICS_EXPORTER",
   "OTEL_LOGS_EXPORTER",
+  "OTEL_RESOURCE_ATTRIBUTES",
 ] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";

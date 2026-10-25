@@ -5,12 +5,17 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import {
+  orchestrationCommandDuration,
+  orchestrationCommandsTotal,
+} from "../observability/Metrics.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -200,6 +205,33 @@ it.layer(layerTest)("ProjectService", (it) => {
         changes.map((change) => change.event_type),
         ["project.created", "project.meta-updated", "project.meta-updated", "project.deleted"],
       );
+    }),
+  );
+
+  it.effect("records the outcome and duration of a committed project command", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const successes = Metric.value(
+        Metric.withAttributes(orchestrationCommandsTotal, {
+          commandType: "project.create",
+          outcome: "success",
+        }),
+      );
+      const durations = Metric.value(
+        Metric.withAttributes(orchestrationCommandDuration, { commandType: "project.create" }),
+      );
+      const successesBefore = (yield* successes).count;
+      const durationsBefore = (yield* durations).count;
+
+      yield* service.create({
+        commandId: CommandId.make("command:metrics:create"),
+        projectId: ProjectId.make("project:metrics"),
+        title: "Metrics",
+        workspaceRoot: "/work/metrics",
+      });
+
+      assert.strictEqual((yield* successes).count - successesBefore, 1);
+      assert.strictEqual((yield* durations).count - durationsBefore, 1);
     }),
   );
 
