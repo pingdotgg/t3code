@@ -75,7 +75,7 @@ export function ProviderAuthenticationSection({
       (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
   const accountDescription = active
     ? auth?.phase === "starting"
-      ? "Starting sign-in…"
+      ? (auth.message ?? "Starting sign-in…")
       : auth?.phase === "verifying"
         ? "Checking your account…"
         : interaction?.type === "terminal"
