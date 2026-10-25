@@ -6,6 +6,6 @@ function SettingsAppearanceRoute() {
   return <AppearanceSettingsPanel />;
 }
 
-export const Route = createFileRoute("/settings/appearance")({
+export const Route = createFileRoute("/_chat/settings/appearance")({
   component: SettingsAppearanceRoute,
 });

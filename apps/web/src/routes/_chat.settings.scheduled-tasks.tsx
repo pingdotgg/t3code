@@ -8,7 +8,7 @@ function SettingsScheduledTasksRoute() {
   return <ScheduledTasksSettings {...target} />;
 }
 
-export const Route = createFileRoute("/settings/scheduled-tasks")({
+export const Route = createFileRoute("/_chat/settings/scheduled-tasks")({
   validateSearch: validateScheduledTasksSearch,
   component: SettingsScheduledTasksRoute,
 });

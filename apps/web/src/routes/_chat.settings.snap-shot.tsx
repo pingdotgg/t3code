@@ -6,6 +6,6 @@ function SettingsSnapShotRoute() {
   return <SnapShotSettings />;
 }
 
-export const Route = createFileRoute("/settings/snap-shot")({
+export const Route = createFileRoute("/_chat/settings/snap-shot")({
   component: SettingsSnapShotRoute,
 });

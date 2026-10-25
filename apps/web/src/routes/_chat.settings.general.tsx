@@ -6,6 +6,6 @@ function SettingsGeneralRoute() {
   return <GeneralSettingsPanel />;
 }
 
-export const Route = createFileRoute("/settings/general")({
+export const Route = createFileRoute("/_chat/settings/general")({
   component: SettingsGeneralRoute,
 });

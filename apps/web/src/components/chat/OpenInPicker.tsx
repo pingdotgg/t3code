@@ -6,7 +6,8 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useRef } from "react";
+import { memo, use, useEffect, useRef } from "react";
+import { BackgroundThreadContext } from "./backgroundThread";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
@@ -279,8 +280,9 @@ export const OpenInPicker = memo(function OpenInPicker({
     "editor.openFavorite",
   );
 
+  const backgroundThread = use(BackgroundThreadContext);
   useEffect(() => {
-    if (!enableShortcut || !canOpenEditor) return;
+    if (!enableShortcut || !canOpenEditor || backgroundThread) return;
     const handler = (e: globalThis.KeyboardEvent) => {
       if (e.defaultPrevented || !isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
@@ -300,6 +302,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [
+    backgroundThread,
     canOpenEditor,
     enableShortcut,
     environmentId,
