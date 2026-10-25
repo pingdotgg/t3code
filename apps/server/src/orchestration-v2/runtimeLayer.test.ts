@@ -3612,7 +3612,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
 
       const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
-      yield* reactor.sweep;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+      yield* sweep;
       assert.deepEqual(yield* summaries(filtered), []);
       assert.deepEqual(yield* summaries(unfiltered), ["#14: checks passed, merge conflict"]);
       assert.include(yield* watchOf, { passed: true, conflicting: true });
@@ -3628,13 +3630,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         reviewState: "CHANGES_REQUESTED",
       });
       yield* TestClock.adjust("10 minutes");
-      yield* reactor.sweep;
+      yield* sweep;
       assert.deepEqual(yield* summaries(filtered), ["#14: new comments"]);
       assert.deepEqual((yield* watchOf)?.events, ["checks_failed", "comment", "review"]);
+
+      comments.push({
+        ...comments[0]!,
+        id: "reviewer-comment",
+        kind: "issue-comment",
+        body: "The test looks good.",
+        createdAt: "2026-10-02T12:06:00.000Z",
+        reviewState: null,
+      });
+      yield* TestClock.adjust("10 minutes");
+      yield* sweep;
+      assert.deepEqual(yield* summaries(filtered), ["#14: new comments", "#14: new comments"]);
 
       yield* watch(filtered, "widen");
       assert.isUndefined((yield* watchOf)?.events);
       assert.include(yield* watchOf, { passed: true, conflicting: true });
+      yield* worker.drain();
     }),
   );
 

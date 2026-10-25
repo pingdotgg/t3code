@@ -96,7 +96,7 @@ export type ThreadPullRequestWatchEvents = typeof ThreadPullRequestWatchEvents.T
 
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
-  /** The only changes that wake the thread; absent means all. Ending the watch always wakes. */
+  /** The only changes that wake the thread; absent means all. Terminal handling is unchanged. */
   events: Schema.optional(ThreadPullRequestWatchEvents),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
