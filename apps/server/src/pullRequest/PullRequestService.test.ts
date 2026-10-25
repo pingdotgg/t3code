@@ -3981,78 +3981,204 @@ it.effect("pauses uncached activity on a host after one activity read is rate li
   }),
 );
 
-it.effect("expands only files the change request changes, across every slice of its diff", () =>
-  Effect.gen(function* () {
-    const read: Array<string> = [];
-    const service = yield* makeService({
-      projects: [
-        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
-      ],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          getDiff: (input) =>
-            Effect.succeed(
-              input.cursor === undefined
-                ? {
-                    patch: [
-                      "diff --git a/src/old.ts b/src/new.ts",
-                      "rename from src/old.ts",
-                      "rename to src/new.ts",
-                      "--- a/src/old.ts",
-                      "+++ b/src/new.ts",
-                      "",
-                    ].join("\n"),
-                    truncated: false,
-                    nextCursor: "2",
-                  }
-                : {
-                    patch: [
-                      "diff --git a/gone.md b/gone.md",
-                      "deleted file mode 100644",
-                      "--- a/gone.md",
-                      "+++ /dev/null",
-                      "",
-                    ].join("\n"),
-                    truncated: false,
-                    nextCursor: null,
-                  },
-            ),
-          getDiffFileContents: (input) =>
-            Effect.sync(() => {
-              read.push(`${input.oldPath}->${input.newPath}`);
-              return { oldContents: "old", newContents: "new" };
-            }),
-        }),
-      ],
-    });
-    const ref = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
+it.effect(
+  "reuses loaded oversized diff slices to expand only files the change request changes",
+  () =>
+    Effect.gen(function* () {
+      const read: Array<string> = [];
+      const diffReads: Array<string | undefined> = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "t3code",
+            workspaceRoot: "/a",
+            repository: "pingdotgg/t3code",
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getDiff: (input) =>
+              Effect.sync(() => {
+                diffReads.push(input.cursor);
+                return input.cursor === undefined
+                  ? {
+                      patch: [
+                        "diff --git a/src/old.ts b/src/new.ts",
+                        "rename from src/old.ts",
+                        "rename to src/new.ts",
+                        "--- a/src/old.ts",
+                        "+++ b/src/new.ts",
+                        `+${"x".repeat(300_000)}`,
+                        "",
+                      ].join("\n"),
+                      truncated: false,
+                      nextCursor: "2",
+                    }
+                  : {
+                      patch: [
+                        "diff --git a/gone.md b/gone.md",
+                        "deleted file mode 100644",
+                        "--- a/gone.md",
+                        "+++ /dev/null",
+                        `-${"x".repeat(300_000)}`,
+                        "",
+                      ].join("\n"),
+                      truncated: false,
+                      nextCursor: null,
+                    };
+              }),
+            getDiffFileContents: (input) =>
+              Effect.sync(() => {
+                read.push(`${input.oldPath}->${input.newPath}`);
+                return { oldContents: "old", newContents: "new" };
+              }),
+          }),
+        ],
+      });
+      const ref = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
 
-    yield* service.diffFileContents({
-      ...ref,
-      changeType: "rename-changed",
-      oldPath: "src/old.ts",
-      newPath: "src/new.ts",
-    });
-    yield* service.diffFileContents({
-      ...ref,
-      changeType: "deleted",
-      oldPath: "gone.md",
-      newPath: "gone.md",
-    });
-    const outside = yield* service
-      .diffFileContents({ ...ref, changeType: "deleted", oldPath: ".env", newPath: ".env" })
-      .pipe(Effect.flip);
-    const halfRename = yield* service
-      .diffFileContents({
+      yield* service.diff(ref);
+      yield* service.diff({ ...ref, cursor: "2" });
+
+      yield* service.diffFileContents({
         ...ref,
-        changeType: "change",
-        oldPath: "src/secret.ts",
+        changeType: "rename-changed",
+        oldPath: "src/old.ts",
         newPath: "src/new.ts",
-      })
-      .pipe(Effect.flip);
+      });
+      yield* service.diffFileContents({
+        ...ref,
+        changeType: "deleted",
+        oldPath: "gone.md",
+        newPath: "gone.md",
+      });
+      const outside = yield* service
+        .diffFileContents({ ...ref, changeType: "deleted", oldPath: ".env", newPath: ".env" })
+        .pipe(Effect.flip);
+      const halfRename = yield* service
+        .diffFileContents({
+          ...ref,
+          changeType: "change",
+          oldPath: "src/secret.ts",
+          newPath: "src/new.ts",
+        })
+        .pipe(Effect.flip);
 
-    assert.strictEqual(outside._tag, "PullRequestOperationError");
-    assert.strictEqual(halfRename._tag, "PullRequestOperationError");
-    assert.deepStrictEqual(read, ["src/old.ts->src/new.ts", "gone.md->gone.md"]);
-  }),
+      assert.strictEqual(outside._tag, "PullRequestOperationError");
+      assert.strictEqual(halfRename._tag, "PullRequestOperationError");
+      assert.deepStrictEqual(read, ["src/old.ts->src/new.ts", "gone.md->gone.md"]);
+      assert.deepStrictEqual(diffReads, [undefined, "2"]);
+    }),
+);
+
+// Refresh and expiry are covered by the in-flight test below; repository and number share the ref key.
+it.effect.each(["commit", "credential"] as const)(
+  "does not reuse loaded diff membership after changing %s",
+  (boundary) =>
+    Effect.gen(function* () {
+      let credential = "broad";
+      let diffReads = 0;
+      let contentReads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            withVerifiedCredential: (_, use) =>
+              Effect.suspend(() =>
+                use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
+              ),
+            getDiff: () =>
+              Effect.sync(() => ({
+                patch:
+                  ++diffReads === 1
+                    ? `diff --git a/private.ts b/private.ts\n--- a/private.ts\n+++ b/private.ts\n+${"x".repeat(300_000)}\n`
+                    : "",
+                truncated: false,
+                nextCursor: null,
+              })),
+            getDiffFileContents: () =>
+              Effect.sync(() => {
+                contentReads += 1;
+                return { oldContents: "old", newContents: "new" };
+              }),
+          }),
+        ],
+      });
+      const ref = {
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        host: "github.com",
+        expectedAccountId: "101",
+      };
+      // Load at a commit and expand without one so the commit must be part of the membership key.
+      const loaded = boundary === "commit" ? { ...ref, commit: "a".repeat(40) } : ref;
+      yield* service.withRoutingCredential(loaded, service.diff(loaded));
+      if (boundary === "credential") credential = "restricted";
+      const input = {
+        ...ref,
+        changeType: "change" as const,
+        oldPath: "private.ts",
+        newPath: "private.ts",
+      };
+      const error = yield* service
+        .withRoutingCredential(input, service.diffFileContents(input))
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.strictEqual(error.reason, "not-found");
+      assert.strictEqual(diffReads, 2);
+      assert.strictEqual(contentReads, 0);
+    }),
+);
+
+it.effect.each(["expiry", "refresh"] as const)(
+  "keeps a loaded diff's original membership scope through an in-flight %s",
+  (boundary) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let diffReads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getDiff: () =>
+              Effect.gen(function* () {
+                if (++diffReads !== 1) return { patch: "", truncated: false, nextCursor: null };
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+                return {
+                  patch: `diff --git a/private.ts b/private.ts\n--- a/private.ts\n+++ b/private.ts\n+${"x".repeat(300_000)}\n`,
+                  truncated: false,
+                  nextCursor: null,
+                };
+              }),
+            getDiffFileContents: () => Effect.die("an expired file must not be read"),
+          }),
+        ],
+      });
+      const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const loading = yield* Effect.forkChild(service.diff(ref));
+      yield* Deferred.await(started);
+      if (boundary === "expiry") yield* TestClock.adjust("61 seconds");
+      else yield* service.invalidate({ reference: ref });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(loading);
+      const error = yield* service
+        .diffFileContents({
+          ...ref,
+          changeType: "change",
+          oldPath: "private.ts",
+          newPath: "private.ts",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.strictEqual(error.reason, "not-found");
+      assert.strictEqual(diffReads, 2);
+    }),
 );

@@ -114,6 +114,8 @@ export function createNativeReviewDiffSourceLoader<FileId>(
       const promise = tail
         .then(async () => {
           if ([...subscribers].every((subscriber) => subscriber?.aborted)) {
+            // A cancelled request must stop being shareable before its promise settles.
+            pending.delete(fileId);
             traceDiffHighlight("source-dropped", { loader, file });
             return null;
           }
@@ -169,7 +171,9 @@ export function createNativeReviewDiffSourceLoader<FileId>(
             throw error;
           }
         })
-        .finally(() => pending.delete(fileId));
+        .finally(() => {
+          if (pending.get(fileId) === request) pending.delete(fileId);
+        });
       tail = promise.then(
         () => {},
         () => {},

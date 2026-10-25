@@ -192,13 +192,14 @@ function setup(integrated = false) {
     rowIdByCommentLineId: new Map(),
   };
   const ids: string[] = [];
+  let collapsedFileIds: ReadonlyArray<string> = ids;
   function PullRequestDiff({ targetFileId }: { targetFileId?: string }) {
     const bridge = useNativeReviewDiffBridge({
       threadKey: null,
       sectionId: "pull-request:test:1:all",
       diff: "test diff",
       data,
-      collapsedFileIds: ids,
+      collapsedFileIds,
       viewedFileIds: ids,
       selectedRowIds: ids,
       canHighlight: true,
@@ -246,6 +247,10 @@ function setup(integrated = false) {
     container,
     async mountPullRequest(targetFileId?: string) {
       await act(async () => root.render(<PullRequestDiff targetFileId={targetFileId} />));
+    },
+    async collapseFiles(fileIds: ReadonlyArray<string>) {
+      collapsedFileIds = fileIds;
+      await act(async () => root.render(<PullRequestDiff />));
     },
     async updateComment() {
       data = {
@@ -402,4 +407,36 @@ it("recognizes registration races for the installed native view name", async () 
       ),
     ),
   ).toBe(true);
+});
+
+it("cancels stale collapse work and highlights expansion without resetting accepted tokens", async () => {
+  using screen = setup(true);
+  await screen.mountPullRequest();
+  await screen.jump(0);
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0");
+
+  const response = Promise.withResolvers<void>();
+  const highlight = mocks.highlight.getMockImplementation()!;
+  mocks.highlight.mockImplementation(async (input: HighlightNativeReviewDiffVisibleRowsInput) => {
+    if (input.firstRowIndex === 400) {
+      await response.promise;
+      if (input.collapsedFileIds?.has("last-file")) {
+        return { tokensByRowId: {}, rowCount: 0, retryableRowIds: [], durationMs: 0 };
+      }
+    }
+    return highlight(input);
+  });
+  await screen.jump(400);
+  await screen.collapseFiles(["last-file"]);
+  await act(async () => response.resolve());
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0");
+
+  await screen.collapseFiles([]);
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0,r400");
+  await screen.jump(0);
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0,r400");
 });

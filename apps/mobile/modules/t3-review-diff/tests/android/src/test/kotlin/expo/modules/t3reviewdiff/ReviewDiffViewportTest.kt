@@ -117,6 +117,55 @@ class ReviewDiffViewportTest {
     }
   }
 
+  @Test
+  fun collapsedFilesKeepViewportIndicesInTheFullPayload() {
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+    val appContext = AppContext()
+    val view = T3ReviewDiffView(activity, appContext)
+    val decoder = ManualDecoder()
+    view.javaClass.getDeclaredField("payloadDecodeExecutor").apply { isAccessible = true }
+      .set(view, decoder)
+    activity.setContentView(view)
+    val canvas = view.getChildAt(0)
+    val measure = View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY)
+    canvas.measure(measure, measure)
+    canvas.layout(0, 0, 320, 320)
+    try {
+      view.setRowsJson(rows("expanded-file", 100001, 100226))
+      decoder.completeNext()
+      assertEquals(0, ranges(appContext).last()["firstRowIndex"])
+      assertTrue((ranges(appContext).last()["lastRowIndex"] as Int) < 100001)
+      appContext.events.clear()
+
+      view.setCollapsedFileIdsJson("[\"first-file\"]")
+      val collapsedRange = ranges(appContext).single()
+      assertEquals("the collapsed file header stays visible", 0, collapsedRange["firstRowIndex"])
+      assertTrue(
+        "the following expanded file must be addressed in the full payload",
+        (collapsedRange["lastRowIndex"] as Int) > 100001
+      )
+      assertEquals(100226, collapsedRange["totalRows"])
+      appContext.events.clear()
+
+      view.setInitialFileId("expanded-file")
+      assertEquals(100001, ranges(appContext).last()["firstRowIndex"])
+      assertEquals(
+        "expanded-file",
+        appContext.events.last { it.first == "onVisibleFileChange" }.second["fileId"]
+      )
+      appContext.events.clear()
+
+      view.setCollapsedFileIdsJson("[]")
+      view.setInitialFileId("first-file")
+      assertEquals(0, ranges(appContext).last()["firstRowIndex"])
+      assertTrue((ranges(appContext).last()["lastRowIndex"] as Int) < 100001)
+    } finally {
+      view.cleanup()
+      activity.finish()
+      appContext.events.clear()
+    }
+  }
+
   private fun rowTop(canvas: View, index: Int): Int = canvas.javaClass
     .getDeclaredMethod("rowTop", Int::class.javaPrimitiveType).apply { isAccessible = true }
     .invoke(canvas, index) as Int
@@ -125,13 +174,17 @@ class ReviewDiffViewportTest {
     .filter { (name, payload) -> name == "onDebug" && payload["message"] == "visible-range" }
     .map { it.second }
 
-  private fun rows(selectedFileId: String): String = JSONArray().apply {
-    for (index in 0 until 1000) {
+  private fun rows(
+    selectedFileId: String,
+    selectedStart: Int = 900,
+    count: Int = 1000
+  ): String = JSONArray().apply {
+    for (index in 0 until count) {
       put(
         JSONObject().apply {
           put("id", "$selectedFileId:$index")
-          put("kind", if (index == 0 || index == 900) "file" else "line")
-          put("fileId", if (index < 900) "first-file" else selectedFileId)
+          put("kind", if (index == 0 || index == selectedStart) "file" else "line")
+          put("fileId", if (index < selectedStart) "first-file" else selectedFileId)
           put("content", "const value = $index")
         }
       )

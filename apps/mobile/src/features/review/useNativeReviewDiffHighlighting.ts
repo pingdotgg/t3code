@@ -25,10 +25,11 @@ export function useNativeReviewDiffHighlighting(input: {
   readonly files: ReadonlyArray<NativeReviewDiffFile>;
   readonly rows: ReadonlyArray<NativeReviewDiffRow>;
   readonly scheme: HighlightScheme;
+  readonly collapsedFileIds: ReadonlySet<string>;
   readonly resetKey: string;
   readonly enabled: boolean;
 }) {
-  const { enabled, files, resetKey, rows, scheme } = input;
+  const { collapsedFileIds, enabled, files, resetKey, rows, scheme } = input;
   const highlightedRowIdsRef = useRef<Set<string>>(new Set());
   const viewportScope = `${enabled}:${resetKey}:${rows.length}`;
   const [viewport, setViewport] = useState<{
@@ -120,6 +121,7 @@ export function useNativeReviewDiffHighlighting(input: {
             files,
             rows,
             scheme,
+            collapsedFileIds,
             firstRowIndex: requestRange.firstRowIndex,
             lastRowIndex: requestRange.lastRowIndex,
             overscanRows,
@@ -140,6 +142,7 @@ export function useNativeReviewDiffHighlighting(input: {
             error: squashAtomCommandFailure(settled),
             resetKey,
             scheme,
+            collapsedFileIds,
             firstRowIndex: requestRange.firstRowIndex,
             lastRowIndex: requestRange.lastRowIndex,
           });
@@ -171,7 +174,7 @@ export function useNativeReviewDiffHighlighting(input: {
       traceDiffHighlight("viewport-abort", { generation, reset });
       abortController.abort();
     };
-  }, [enabled, files, resetKey, rows, scheme, viewport, viewportScope]);
+  }, [collapsedFileIds, enabled, files, resetKey, rows, scheme, viewport, viewportScope]);
 
   const acknowledgeTokenPatch = useCallback((payload: Readonly<Record<string, unknown>>) => {
     const pending = pendingPatchesRef.current;

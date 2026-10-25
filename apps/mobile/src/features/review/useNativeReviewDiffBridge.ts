@@ -43,6 +43,7 @@ export function useNativeReviewDiffBridge(input: {
     () => createNativeReviewDiffTheme(scheme, themeId, appTheme),
     [appTheme, scheme, themeId],
   );
+  const collapsedFileIdsSet = useMemo(() => new Set(collapsedFileIds), [collapsedFileIds]);
   const rowsJson = useMemo(() => JSON.stringify(data.rows), [data.rows]);
   const collapsedFileIdsJson = useMemo(() => JSON.stringify(collapsedFileIds), [collapsedFileIds]);
   const viewedFileIdsJson = useMemo(() => JSON.stringify(viewedFileIds), [viewedFileIds]);
@@ -69,6 +70,7 @@ export function useNativeReviewDiffBridge(input: {
     useNativeReviewDiffHighlighting({
       files: data.files,
       rows: data.rows,
+      collapsedFileIds: collapsedFileIdsSet,
       scheme,
       resetKey: tokensResetKey,
       enabled: canHighlight,
