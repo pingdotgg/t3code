@@ -860,6 +860,10 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
+    getChangeRequestPreview: (input) =>
+      readPull("getChangeRequestPreview", input).pipe(
+        Effect.map((pull) => Json.toChangeRequest(pull, input)),
+      ),
     getChangeRequestSummary: Effect.fn("GitCafePullRequestProvider.getChangeRequestSummary")(
       function* (input) {
         const pull = yield* readPull("getChangeRequestSummary", input);
