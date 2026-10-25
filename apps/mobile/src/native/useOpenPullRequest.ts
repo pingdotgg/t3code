@@ -6,6 +6,8 @@ import { resetAndroidWorkspace } from "../lib/android-workspace-navigation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
+import { appAtomRegistry } from "../state/atom-registry";
+import { environmentServerConfigsAtom } from "../state/server";
 
 type PullRequestContext = { readonly environmentId: string; readonly projectId: string };
 
@@ -16,7 +18,14 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
   const replace = options?.replace;
   return useCallback(
     async (url: string, context: PullRequestContext | null) => {
-      const params = nativePullRequestDestination(url, context, projects);
+      // Read at press time so a capability push does not hand every link a new handler.
+      const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
+      const params = nativePullRequestDestination(
+        url,
+        context,
+        projects,
+        (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
+      );
       if (!params) return tryOpenExternalUrl(url, "pull-request");
       if (Platform.OS === "android")
         resetAndroidWorkspace(navigation, { name: "PullRequest", params });
