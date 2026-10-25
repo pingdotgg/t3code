@@ -15,6 +15,32 @@ import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
+interface NavigatorUserAgentData {
+  readonly platform: string;
+  readonly mobile: boolean;
+  readonly brands: ReadonlyArray<{ readonly brand: string; readonly version: string }>;
+}
+
+/**
+ * The `browser.*` and `user_agent.original` attributes the OpenTelemetry browser
+ * resource detector reports. `userAgentData` exists only in Chromium, which
+ * includes the desktop app.
+ */
+const browserResourceAttributes = (): Record<string, unknown> => {
+  if (typeof navigator === "undefined") return {};
+  const userAgentData = (navigator as Navigator & { userAgentData?: NavigatorUserAgentData })
+    .userAgentData;
+  return {
+    "user_agent.original": navigator.userAgent,
+    "browser.language": navigator.language,
+    ...(userAgentData && {
+      "browser.platform": userAgentData.platform,
+      "browser.mobile": userAgentData.mobile,
+      "browser.brands": userAgentData.brands.map(({ brand, version }) => `${brand} ${version}`),
+    }),
+  };
+};
+
 // PR previews can't mark themselves in APP_VERSION without breaking the version-skew check against the server.
 const RELEASE_CHANNEL =
   import.meta.env.DEV || import.meta.env.VITE_RELEASE_CHANNEL === "dev"
@@ -31,6 +57,7 @@ const CLIENT_TRACING_RESOURCE = {
     "service.runtime": "t3-web",
     "t3code.client.surface": isElectron ? "desktop" : "web",
     "service.version": APP_VERSION,
+    ...browserResourceAttributes(),
   },
 } as const;
 

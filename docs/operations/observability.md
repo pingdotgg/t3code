@@ -642,7 +642,11 @@ reports `dev` from a development bundle.
 Attributes specific to T3 Code use the `t3code.` prefix. The UI runs as `t3code-web` in both a
 browser and the desktop window, since it is the same code, and `t3code.client.surface` is `desktop`
 or `web`. The server's `t3code.server.managed_by` is `desktop` when the desktop app launched it and
-`standalone` otherwise.
+`standalone` otherwise. The desktop main process reports `t3code.desktop.mode` as `development` or
+`packaged` (formerly `service.mode`; dashboards filtering on that key must switch). Node processes
+also report the semantic `process.runtime.name`, `process.runtime.version`, and
+`process.runtime.description`, and UI traces report `browser.language`, `user_agent.original`, and,
+in Chromium, `browser.platform`, `browser.mobile`, and `browser.brands`.
 
 Every resource also carries a `service.instance.id`: random per process for the server and desktop,
 per page load for the UI, and the Expo session on mobile. A `service.instance.id` in
