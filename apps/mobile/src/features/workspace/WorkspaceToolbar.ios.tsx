@@ -121,32 +121,19 @@ export function WorkspaceToolbar(props: {
       separateBackground
     />
   ) : null;
-  const searchButton = foldedSearch ? (
-    <Toolbar.Button
-      identifier="workspace-search"
-      accessibilityLabel={
-        searchVisible
-          ? "Close search"
-          : selectedTab === "pullRequests"
-            ? "Search pull requests"
-            : "Search threads"
-      }
-      icon={searchVisible ? "xmark" : "magnifyingglass"}
-      onPress={searchVisible ? () => searchRef.current?.cancelSearch() : focusSearch}
-      separateBackground
-    />
-  ) : null;
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={[selectedTab, tab.searchMode]}
+        optionsVersion={[selectedTab, tab.searchMode, tab.searchFocusRequest]}
         listeners={{ transitionEnd: restoreSearch }}
         options={{
+          // Each search request focuses the field once it exists, after it mounts if need be.
+          unstable_headerSearchFocusRequest:
+            tab.searchMode === "active" ? tab.searchFocusRequest : undefined,
           headerSearchBarOptions:
             (NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting") && searchVisible
               ? {
                   ref: searchRef,
-                  autoFocus: tab.searchMode === "active",
                   autoCapitalize: "none",
                   hideNavigationBar: false,
                   hideWhenScrolling: false,
@@ -162,7 +149,6 @@ export function WorkspaceToolbar(props: {
                     sidebarTabs !== "picker",
                   placeholder:
                     selectedTab === "pullRequests" ? "Search pull requests" : "Search threads",
-                  cancelButtonHidden: foldedSearch,
                   onFocus: searchFocused,
                   onBlur: () => workspace.dispatch({ type: "expand", tab: selectedTab }),
                   onSearchButtonPress: () => searchRef.current?.blur(),
@@ -179,8 +165,6 @@ export function WorkspaceToolbar(props: {
       />
       {/* UIKit lays trailing items out from the edge inward. */}
       <Toolbar placement="right">
-        {searchButton}
-        {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
         {composeButton}
         {selectedTab !== "threads" ||
         isDuoDevice(deviceType) ||

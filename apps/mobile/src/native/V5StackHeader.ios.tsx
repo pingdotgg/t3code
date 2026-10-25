@@ -3,7 +3,7 @@ import type {
   NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { isValidElement, useEffect, useRef } from "react";
+import { isValidElement, useEffect, useRef, type RefObject } from "react";
 import { StyleSheet } from "react-native";
 import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
@@ -29,6 +29,7 @@ type ToolbarItem =
 type Options = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor" | "navigator";
   readonly unstable_headerMinimizationBehavior?: StackHeaderMinimizationBehaviorIOS;
+  readonly unstable_headerSearchFocusRequest?: number;
   readonly headerSubtitle?: string;
   readonly unstable_headerSubtitle?: string;
   readonly headerSubtitleStyle?: { color?: string; fontSize?: number; fontFamily?: string };
@@ -243,12 +244,18 @@ export function V5StackHeader(props: {
       ? options.headerTitle({ children: title ?? "", tintColor: options.headerTintColor })
       : undefined;
   const searchOptions = options.headerSearchBarOptions;
-  const autofocusRef = searchOptions?.ref ?? searchRef;
-  useEffect(() => {
-    if (!searchOptions?.autoFocus) return;
-    const frame = requestAnimationFrame(() => autofocusRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [searchOptions?.autoFocus, autofocusRef]);
+  const searchBarRef = searchOptions?.ref ?? searchRef;
+  const focusRequest = options.unstable_headerSearchFocusRequest;
+  const focusedRequest = useRef<number | undefined>(undefined);
+  // The field can attach a render after the request, since it mounts through these options, and
+  // Screens re-attaches its commands on every render; so focus once per request, on attach.
+  const attachSearchBar = (instance: SearchBarCommands | null) => {
+    searchBarRef.current = instance;
+    if (instance && focusRequest !== undefined && focusedRequest.current !== focusRequest) {
+      focusedRequest.current = focusRequest;
+      instance.focus();
+    }
+  };
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
   const headerStyle = StyleSheet.flatten(options.headerStyle);
   const appearance = {
@@ -288,7 +295,8 @@ export function V5StackHeader(props: {
           mailSearch || searchOptions ? (
             <SearchBar
               {...searchOptions}
-              ref={searchOptions?.ref ?? searchRef}
+              // React accepts callback refs here; Screens only types the object form.
+              ref={attachSearchBar as unknown as RefObject<SearchBarCommands | null>}
               hideNavigationBar={false}
               hideWhenScrolling={false}
               allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}

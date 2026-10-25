@@ -24,6 +24,8 @@ export interface WorkspaceTabState {
   readonly searchMode: WorkspaceSearchMode;
   readonly scrollOffset: number;
   readonly searchEntryOffset: number;
+  /** Counts requests to focus the search field; the header focuses once per request. */
+  readonly searchFocusRequest: number;
 }
 
 export interface WorkspaceTabsState {
@@ -33,7 +35,13 @@ export interface WorkspaceTabsState {
 }
 
 function emptyTab(): WorkspaceTabState {
-  return { query: "", searchMode: "resting", scrollOffset: 0, searchEntryOffset: 0 };
+  return {
+    query: "",
+    searchMode: "resting",
+    scrollOffset: 0,
+    searchEntryOffset: 0,
+    searchFocusRequest: 0,
+  };
 }
 
 export function initialWorkspaceTabsState(): WorkspaceTabsState {
@@ -79,6 +87,7 @@ export function workspaceTabsReducer(
         searchMode: "active",
         searchEntryOffset:
           current.searchMode === "resting" ? current.scrollOffset : current.searchEntryOffset,
+        searchFocusRequest: current.searchFocusRequest + 1,
       };
       break;
     case "query":
