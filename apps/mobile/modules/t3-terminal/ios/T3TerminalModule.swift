@@ -8,9 +8,14 @@ public class T3TerminalModule: Module {
     // logs so a stale native binary is distinguishable from a broken key pipeline.
     Constants([
       "hardwareKeyRevision": 3,
+      "outputRevision": 1,
     ])
 
     View(T3TerminalView.self) {
+      AsyncFunction("writeOutput") { (view: T3TerminalView, data: String, reset: Bool) in
+        view.writeOutput(data, reset: reset)
+      }
+
       Prop("terminalKey") { (view: T3TerminalView, terminalKey: String) in
         view.terminalKey = terminalKey
       }

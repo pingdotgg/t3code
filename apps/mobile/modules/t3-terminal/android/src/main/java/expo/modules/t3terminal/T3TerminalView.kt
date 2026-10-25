@@ -55,6 +55,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
   private var terminalHandle = 0L
   private var fedBuffer = ""
+  private var streamedOutput: TerminalOutputBuffer? = null
   private var cols = 0
   private var rows = 0
   private var clearingInput = false
@@ -361,6 +362,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       paletteColors,
     )
     fedBuffer = ""
+    streamedOutput?.let { output -> feedOutput(output.data) }
   }
 
   private fun recreateTerminal() {
@@ -380,7 +382,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun feedPendingBuffer() {
-    if (terminalHandle == 0L || initialBuffer == fedBuffer) return
+    if (streamedOutput != null || terminalHandle == 0L || initialBuffer == fedBuffer) return
     if (!initialBuffer.startsWith(fedBuffer)) {
       recreateTerminal()
       if (terminalHandle == 0L) return
@@ -397,6 +399,29 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
     fedBuffer = initialBuffer
     renderSnapshot()
+  }
+
+  fun writeOutput(data: String, reset: Boolean) {
+    if (isCleanedUp) return
+    val output = streamedOutput ?: TerminalOutputBuffer()
+    val bytes = data.toByteArray(Charsets.UTF_8)
+    output.write(bytes, reset)
+    streamedOutput = output
+    if (reset) {
+      recreateTerminal()
+    } else if (terminalHandle != 0L) {
+      feedOutput(bytes)
+      renderSnapshot()
+    }
+  }
+
+  private fun feedOutput(data: ByteArray) {
+    if (terminalHandle == 0L || data.isEmpty()) return
+    emitResponse(GhosttyBridge.nativeFeed(terminalHandle, data))
+    if (terminalCanvas.hasActiveSelection()) {
+      GhosttyBridge.nativeClearSelection(terminalHandle)
+      terminalCanvas.resetSelectionState()
+    }
   }
 
   private fun renderSnapshot() {

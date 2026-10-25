@@ -196,6 +196,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
   private var lastAppliedBuffer = ""
+  private var streamedOutput: TerminalOutputBuffer?
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
@@ -526,7 +527,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     ghostty_surface_set_color_scheme(createdSurface, appearance.ghosttyColorScheme)
     setupWriteCallback()
     resizeSurface()
-    feedBuffer(initialBuffer)
+    if let streamedOutput {
+      feedData(streamedOutput.data)
+    } else {
+      feedBuffer(initialBuffer)
+    }
   }
 
   private func resetSurface() {
@@ -557,6 +562,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   private func applyRemoteBuffer(_ buffer: String) {
+    guard streamedOutput == nil else { return }
     guard surface != nil else {
       createSurfaceIfPossible()
       return
@@ -577,6 +583,20 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
     resetSurface()
     createSurfaceIfPossible()
+  }
+
+  func writeOutput(_ data: String, reset: Bool) {
+    let output = streamedOutput ?? TerminalOutputBuffer()
+    let bytes = Data(data.utf8)
+    output.write(bytes, reset: reset)
+    streamedOutput = output
+    if reset {
+      refreshSurface()
+    } else if surface == nil {
+      createSurfaceIfPossible()
+    } else {
+      feedData(bytes)
+    }
   }
 
   private func feedBuffer(_ buffer: String) {
