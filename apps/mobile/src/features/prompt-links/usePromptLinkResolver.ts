@@ -2,7 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
-  findPromptLinkProject,
+  findPromptLinkProjects,
   findPromptLinkPullRequestThread,
   resolvePromptLinkModelSelection,
 } from "@t3tools/client-runtime/prompt-links";
@@ -11,7 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   parseNewThreadLink,
   type LinkedPrompt,
@@ -63,6 +63,9 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
   const loadPullRequest = useAtomQueryRunner(composerPullRequests.detail, {
     reportFailure: false,
   });
+  const loadLinkedThreads = useAtomQueryRunner(composerPullRequests.linkedThreadsUncached, {
+    reportFailure: false,
+  });
   const search = promptLinkSearchFromParams(params);
   // Wait for cold-launch shells or existing repositories may be offered for cloning.
   const waitingForShells =
@@ -87,6 +90,61 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     );
     if (resolved) updateComposerDraftSettings(draftKey, { modelSelection: resolved.selection });
     return resolved?.exact !== true;
+  };
+
+  const openThread = (
+    thread: { readonly environmentId: EnvironmentId; readonly id: ThreadId },
+    prompt: LinkedDraftRequest["prompt"],
+  ) => {
+    (navigation.getParent() ?? navigation).dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(thread.environmentId),
+        threadId: String(thread.id),
+      }),
+    );
+    if (prompt) {
+      void applyLinkedPromptToThreadDraft(
+        scopedThreadKey(thread.environmentId, thread.id),
+        prompt,
+        promptLinkNotice({ hiddenCharacters: prompt.hiddenCharacters }),
+      );
+    }
+  };
+
+  // A pull request's thread can be an older settled thread no shell holds, so ask every
+  // connected environment with the repository. A lookup on another one would wait forever.
+  const findServerPullRequestThread = async (
+    projects: ReadonlyArray<EnvironmentProject>,
+    pullRequest: PromptLinkPullRequest,
+  ) => {
+    const connected = new Set(
+      connectedEnvironments
+        .filter((environment) => environment.connectionState === "connected")
+        .map((environment) => environment.environmentId),
+    );
+    const lookups = projects
+      .filter((project) => connected.has(project.environmentId))
+      .map(async (project) => {
+        const linked = await loadLinkedThreads({
+          environmentId: project.environmentId,
+          input: {
+            projectId: project.id,
+            repository: promptLinkRepositoryName(pullRequest),
+            number: pullRequest.number,
+          },
+        });
+        const thread =
+          linked._tag === "Success"
+            ? linked.value.threads.find((candidate) => candidate.archivedAt === null)
+            : undefined;
+        return thread && { environmentId: project.environmentId, id: thread.id };
+      });
+    // The most recent project wins without waiting for the lookups after it.
+    for (const lookup of lookups) {
+      const thread = await lookup;
+      if (thread) return thread;
+    }
+    return undefined;
   };
 
   const openProjectDraft = async (project: EnvironmentProject, request: LinkedDraftRequest) => {
@@ -234,19 +292,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     if (link.kind === "pull-request") {
       const thread = findPromptLinkPullRequestThread(threads, link.pullRequest);
       if (thread) {
-        (navigation.getParent() ?? navigation).dispatch(
-          StackActions.replace("Thread", {
-            environmentId: String(thread.environmentId),
-            threadId: String(thread.id),
-          }),
-        );
-        if (link.prompt) {
-          void applyLinkedPromptToThreadDraft(
-            scopedThreadKey(thread.environmentId, thread.id),
-            link.prompt,
-            promptLinkNotice({ hiddenCharacters: link.prompt.hiddenCharacters }),
-          );
-        }
+        openThread(thread, link.prompt);
         return;
       }
     }
@@ -263,14 +309,20 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     }
     const activityOf = (project: EnvironmentProject) =>
       lastActivity.get(`${project.environmentId}:${project.id}`) ?? "";
-    const project = findPromptLinkProject(
+    const projects = findPromptLinkProjects(
       flow.projectScopes
         .flatMap((scope) => scope.projects)
         .sort((left, right) => activityOf(right).localeCompare(activityOf(left))),
       repository,
     );
+    const project = projects[0];
     if (project) {
-      void openProjectDraft(project, request);
+      const { pullRequest } = request;
+      void (async () => {
+        const thread = pullRequest && (await findServerPullRequestThread(projects, pullRequest));
+        if (thread) openThread(thread, request.prompt);
+        else await openProjectDraft(project, request);
+      })();
       return;
     }
     Dialog.alert(`You don't have ${promptLinkRepositoryName(repository)}`, undefined, [

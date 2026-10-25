@@ -1,11 +1,20 @@
 import {
+  EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
+  type PullRequestLinkedThreadsResult,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { findPromptLinkProject, resolvePromptLinkModelSelection } from "./promptLinks.ts";
+import {
+  findPromptLinkProjects,
+  pickPromptLinkPullRequestThread,
+  resolvePromptLinkModelSelection,
+} from "./promptLinks.ts";
 
 const identity = (canonicalKey: string, origin?: string): RepositoryIdentity => ({
   canonicalKey,
@@ -13,8 +22,8 @@ const identity = (canonicalKey: string, origin?: string): RepositoryIdentity => 
   ...(origin ? { origin: { canonicalKey: origin } } : {}),
 });
 
-describe("findPromptLinkProject", () => {
-  it("takes the first exact match and never a fork of the repository", () => {
+describe("findPromptLinkProjects", () => {
+  it("keeps exact matches in order and never a fork of the repository", () => {
     const projects = [
       {
         id: "fork",
@@ -24,11 +33,50 @@ describe("findPromptLinkProject", () => {
       { id: "recent", repositoryIdentity: identity("github.com/PingDotGG/T3Code") },
       { id: "older", repositoryIdentity: identity("github.com/pingdotgg/t3code") },
     ];
-    expect(findPromptLinkProject(projects, { owner: "pingdotgg", name: "t3code" })?.id).toBe(
-      "recent",
+    const ids = (owner: string, name: string) =>
+      findPromptLinkProjects(projects, { owner, name }).map((project) => project.id);
+    expect(ids("pingdotgg", "t3code")).toEqual(["recent", "older"]);
+    expect(ids("me", "t3code")).toEqual(["fork"]);
+    expect(ids("gitlab", "x")).toEqual([]);
+  });
+});
+
+describe("pickPromptLinkPullRequestThread", () => {
+  it("takes the first open thread in order once every earlier lookup has answered", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const server = EnvironmentId.make("server");
+    const linked = (
+      id: string,
+      archivedAt: string | null = null,
+    ): PullRequestLinkedThreadsResult => ({
+      threads: [{ id: ThreadId.make(id), projectId: ProjectId.make("p"), title: id, archivedAt }],
+    });
+    const none: PullRequestLinkedThreadsResult = { threads: [] };
+    const pick = (
+      ...results: ReadonlyArray<AsyncResult.AsyncResult<PullRequestLinkedThreadsResult, unknown>>
+    ) =>
+      pickPromptLinkPullRequestThread(
+        results.map((result, index) => ({ environmentId: index === 0 ? laptop : server, result })),
+      );
+    // A value shown while it refetches is not an answer yet.
+    expect(pick(AsyncResult.success(none, { waiting: true }))).toBeUndefined();
+    expect(pick(AsyncResult.success(none), AsyncResult.initial(true))).toBeUndefined();
+    expect(pick(AsyncResult.initial(true), AsyncResult.success(linked("b")))).toBeUndefined();
+    const laptopThread = { environmentId: laptop, id: ThreadId.make("a") };
+    expect(pick(AsyncResult.success(linked("a")), AsyncResult.initial(true))).toEqual(laptopThread);
+    expect(pick(AsyncResult.success(linked("a")), AsyncResult.success(linked("b")))).toEqual(
+      laptopThread,
     );
-    expect(findPromptLinkProject(projects, { owner: "me", name: "t3code" })?.id).toBe("fork");
-    expect(findPromptLinkProject(projects, { owner: "gitlab", name: "x" })).toBeUndefined();
+    expect(pick(AsyncResult.success(none), AsyncResult.success(linked("old")))).toEqual({
+      environmentId: server,
+      id: ThreadId.make("old"),
+    });
+    expect(
+      pick(
+        AsyncResult.success(linked("archived", "2026-01-01T00:00:00.000Z")),
+        AsyncResult.fail(1),
+      ),
+    ).toBeNull();
   });
 });
 

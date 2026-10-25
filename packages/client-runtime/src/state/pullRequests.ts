@@ -302,6 +302,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshIntervalMs: 10_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
+    // For callers that open a thread from the answer: a persisted one reads as final before
+    // the connection is known, and a kept one can predate the thread.
+    linkedThreadsUncached: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:linked-threads-uncached",
+      tag: WS_METHODS.pullRequestsLinkedThreads,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
       persistence: persistQuery(PullRequestListResult),

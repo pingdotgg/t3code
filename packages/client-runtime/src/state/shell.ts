@@ -361,16 +361,20 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         yield* Ref.set(activeSubscriptionSession, session);
-        const { supportsCompletionMarker, omitIdleSubagents } = yield* session.initialConfig.pipe(
-          Effect.map((config) => ({
-            supportsCompletionMarker: config.shellResumeCompletionMarker === true,
-            omitIdleSubagents: config.shellThreadFamilies === true,
-          })),
-          Effect.orElseSucceed(() => ({
-            supportsCompletionMarker: false,
-            omitIdleSubagents: false,
-          })),
-        );
+        const { supportsCompletionMarker, omitIdleSubagents, omitOlderSettled } =
+          yield* session.initialConfig.pipe(
+            Effect.map((config) => ({
+              supportsCompletionMarker: config.shellResumeCompletionMarker === true,
+              omitIdleSubagents: config.shellThreadFamilies === true,
+              omitOlderSettled:
+                config.shellOlderSettled === true && config.shellThreadFamilies === true,
+            })),
+            Effect.orElseSucceed(() => ({
+              supportsCompletionMarker: false,
+              omitIdleSubagents: false,
+              omitOlderSettled: false,
+            })),
+          );
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
@@ -396,7 +400,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             ),
           );
           // HTTP and the socket must agree, or omitted children would return through the socket.
-          const httpSnapshot = yield* snapshotLoader.load(prepared, { omitIdleSubagents });
+          const httpSnapshot = yield* snapshotLoader.load(prepared, {
+            omitIdleSubagents,
+            omitOlderSettled,
+          });
           if (Option.isSome(httpSnapshot)) {
             yield* cancelActiveFill;
             const previous = yield* SubscriptionRef.get(state);
@@ -418,7 +425,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           }
         }
 
-        const omission = omitIdleSubagents ? { omitIdleSubagents: true as const } : {};
+        const omission = {
+          ...(omitIdleSubagents ? { omitIdleSubagents: true as const } : {}),
+          ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
+        };
         if (!canResume || Option.isNone(current.snapshot)) {
           return {
             ...omission,

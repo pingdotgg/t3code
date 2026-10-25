@@ -241,7 +241,21 @@ export function CommandPalette(props: {
         .map((environment) => environment.environmentId),
     [environments],
   );
-  const search = useThreadSearch(searchEnvironmentIds, query.startsWith(">") ? "" : query);
+  // The palette matches environment names when there are several; older rows must match the same.
+  const environmentLabels =
+    environments.length > 1
+      ? Object.fromEntries(
+          searchEnvironmentIds.flatMap((environmentId) => {
+            const label = savedConnectionsById[environmentId]?.environmentLabel;
+            return label === undefined ? [] : [[environmentId, label]];
+          }),
+        )
+      : undefined;
+  const search = useThreadSearch(
+    searchEnvironmentIds,
+    query.startsWith(">") ? "" : query,
+    environmentLabels === undefined ? {} : { environmentLabels },
+  );
   const contentMatchByKey = useMemo(
     () =>
       new Map(

@@ -124,6 +124,7 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
+import { useOlderSettledCount } from "../../state/olderSettledShelf";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -511,13 +512,15 @@ export function NewTaskFlowProvider(
     t3ProjectFile,
   );
   const canChooseWorkspace = !isScratchDraft;
+  const selectedProjectOlderSettledCount = useOlderSettledCount(selectedProject);
   const selectedProjectHasThreads =
     selectedProject !== null &&
-    threads.some(
-      (thread) =>
-        thread.environmentId === selectedProject.environmentId &&
-        thread.projectId === selectedProject.id,
-    );
+    (selectedProjectOlderSettledCount > 0 ||
+      threads.some(
+        (thread) =>
+          thread.environmentId === selectedProject.environmentId &&
+          thread.projectId === selectedProject.id,
+      ));
   const defaultWorkspaceMode: WorkspaceMode = canChooseWorkspace
     ? resolveNewThreadEnvMode({
         projectSettings,

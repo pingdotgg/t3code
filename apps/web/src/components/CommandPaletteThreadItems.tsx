@@ -68,10 +68,25 @@ function useProviderEntryByEnvironmentAndInstanceId() {
 
 function useConnectedThreadSearch(query: string) {
   const { environments } = useEnvironments();
+  const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const environmentIds: ReadonlyArray<EnvironmentId> = environments
     .filter((environment) => environment.connection.phase === "connected")
     .map((environment) => environment.environmentId);
-  return useThreadSearch(environmentIds, query);
+  // The palette matches environment names when there are several; older rows must match the same.
+  const environmentLabels =
+    environments.length > 1
+      ? Object.fromEntries(
+          environmentIds.flatMap((environmentId) => {
+            const label = projectEnvironmentLocationById.get(environmentId)?.label;
+            return label === undefined || label === null ? [] : [[environmentId, label]];
+          }),
+        )
+      : undefined;
+  return useThreadSearch(
+    environmentIds,
+    query,
+    environmentLabels === undefined ? {} : { environmentLabels },
+  );
 }
 
 /**

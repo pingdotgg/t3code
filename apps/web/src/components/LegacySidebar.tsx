@@ -128,6 +128,7 @@ import { useDesktopUpdateState } from "../state/desktopUpdate";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -1487,7 +1488,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
 
     const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
-    const memberThreadCount = memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0;
+    const memberThreadCount =
+      (memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0) +
+      readUnloadedThreadCount(
+        [{ environmentId: member.environmentId, id: member.id }],
+        sidebarThreads,
+      );
     if (memberThreadCount > 0) {
       const warningToastId = toastManager.add(
         stackedThreadToast({
@@ -1510,11 +1516,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                     thread.environmentId === memberProjectRef.environmentId &&
                     thread.projectId === memberProjectRef.projectId,
                 );
+                const threadCount =
+                  latestProjectThreads.length +
+                  readUnloadedThreadCount(
+                    [{ environmentId: member.environmentId, id: member.id }],
+                    latestProjectThreads,
+                  );
                 const confirmed = await api.dialogs.confirm(
-                  latestProjectThreads.length > 0
+                  threadCount > 0
                     ? [
-                        `Remove project "${member.title}" and delete its ${latestProjectThreads.length} thread${
-                          latestProjectThreads.length === 1 ? "" : "s"
+                        `Remove project "${member.title}" and delete its ${threadCount} thread${
+                          threadCount === 1 ? "" : "s"
                         }?`,
                         `Path: ${member.workspaceRoot}`,
                         ...(member.environmentLabel

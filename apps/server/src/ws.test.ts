@@ -14,6 +14,7 @@ import {
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -292,33 +293,45 @@ it.live.each(["thread", "shell"] as const)(
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
-it.effect("shell snapshots leave idle subagent children out only for clients that ask", () =>
+it.effect("shell snapshots omit idle children and older settled threads only on request", () =>
   Effect.gen(function* () {
-    const shell = (id: string, parent: string | null, activityRunStatus: "running" | null) =>
+    const shell = (
+      id: string,
+      parent: string | null,
+      activityRunStatus: "running" | null,
+      settledDaysAgo: number | null = null,
+    ) =>
       ({
         id: ThreadId.make(id),
+        projectId: "project",
         archivedAt: null,
         status: activityRunStatus ?? "completed",
         activityRunStatus,
         pendingRuntimeRequest: null,
         pendingBackgroundTasks: [],
+        settledOverride: settledDaysAgo === null ? null : "settled",
+        settledAt:
+          settledDaysAgo === null ? null : DateTime.makeUnsafe(-settledDaysAgo * 86_400_000),
         lineage: {
           parentThreadId: parent === null ? null : ThreadId.make(parent),
           relationshipToParent: parent === null ? null : "subagent",
-          rootThreadId: ThreadId.make("parent"),
+          rootThreadId: ThreadId.make(parent ?? id),
         },
       }) as unknown as OrchestrationV2ThreadShell;
     const threads = [
       shell("parent", null, null),
       shell("idle", "parent", null),
       shell("live", "parent", "running"),
+      ...Array.from({ length: 25 }, (_, index) => shell(`recent-${index}`, null, null, 1)),
+      shell("old", null, null, 30),
     ];
-    const firstSnapshotThreadIds = (input: { readonly omitIdleSubagents?: boolean }) =>
+    const firstSnapshot = (input: {
+      readonly omitIdleSubagents?: boolean;
+      readonly omitOlderSettled?: boolean;
+    }) =>
       subscribeOrchestrationV2Shell(input).pipe(
         Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)),
-        Effect.map(([item]) =>
-          item?.kind === "snapshot" ? item.snapshot.threads.map((thread) => thread.id) : [],
-        ),
+        Effect.map(([item]) => (item?.kind === "snapshot" ? item.snapshot : null)),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           readShellSnapshot: () =>
             Effect.succeed(
@@ -349,10 +362,25 @@ it.effect("shell snapshots leave idle subagent children out only for clients tha
         ),
       );
 
-    assert.deepEqual(yield* firstSnapshotThreadIds({}), ["parent", "idle", "live"]);
-    assert.deepEqual(yield* firstSnapshotThreadIds({ omitIdleSubagents: true }), [
-      "parent",
-      "live",
+    const recent = threads.slice(3, 28).map((thread) => thread.id);
+    const full = yield* firstSnapshot({});
+    assert.deepEqual(
+      full?.threads.map((thread) => thread.id),
+      threads.map((thread) => thread.id),
+    );
+    assert.isUndefined(full?.olderSettled);
+    const withoutChildren = yield* firstSnapshot({ omitIdleSubagents: true });
+    assert.deepEqual(
+      withoutChildren?.threads.map((thread) => thread.id),
+      ["parent", "live", ...recent, "old"],
+    );
+    const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
+    assert.deepEqual(
+      withoutOld?.threads.map((thread) => thread.id),
+      ["parent", "live", ...recent],
+    );
+    assert.deepEqual(withoutOld?.olderSettled?.counts, [
+      { projectId: ProjectId.make("project"), count: 1 },
     ]);
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
