@@ -1,3 +1,6 @@
+import { AudioPreview } from "../files/AudioPreview";
+import { onTestFinished } from "vite-plus/test";
+import { stubGlobal } from "../../../test/render";
 import { EnvironmentId, MessageId, RunId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
@@ -29,6 +32,18 @@ vi.mock(import("~/state/query"), async (original) => ({
     refresh: () => {},
   })) as never,
 }));
+
+const audioAsset = vi.hoisted(() => ({ url: "" }));
+vi.mock(import("~/assets/assetUrls"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
+      audioAsset.url
+        ? { _tag: "Success", url: audioAsset.url }
+        : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+  };
+});
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const CREATED_AT = "2026-03-17T19:12:28.000Z";
@@ -367,6 +382,148 @@ describe("MessagesTimeline agent messages", () => {
     expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
       body.getBoundingClientRect().bottom,
     );
+  });
+});
+
+describe("MessagesTimeline attachments", () => {
+  it.each(["loadedmetadata", "loadeddata", "canplay"])(
+    "plays audio with unknown duration after %s and updates the total later",
+    async (readyEvent) => {
+      const onOpen = vi.fn();
+      const preview = (failed = false) => (
+        <AudioPreview
+          compact
+          src="data:audio/webm;base64,"
+          name="recording.webm"
+          failed={failed}
+          onOpen={onOpen}
+        />
+      );
+      await using screen = await renderElement(preview());
+      const audio = screen.container.querySelector("audio")!;
+      const duration = vi.spyOn(audio, "duration", "get").mockReturnValue(Infinity);
+      const play = vi.spyOn(audio, "play").mockResolvedValue();
+      expect(screen.button("Loading recording.webm")).toHaveProperty("disabled", true);
+      await act(() => audio.dispatchEvent(new Event(readyEvent)));
+      expect(screen.button("Play recording.webm")).toHaveProperty("disabled", false);
+      expect(screen.text()).toContain("0:00");
+      expect(screen.text()).not.toContain("/");
+      await click(screen.button("Play recording.webm"));
+      expect(play).toHaveBeenCalledOnce();
+      await act(() => {
+        vi.spyOn(audio, "currentTime", "get").mockReturnValue(3);
+        audio.dispatchEvent(new Event("play"));
+        audio.dispatchEvent(new Event("timeupdate"));
+      });
+      expect(screen.button("Pause recording.webm")).toHaveProperty("disabled", false);
+      expect(screen.text()).toContain("0:03");
+      const progress = screen.container.querySelector<HTMLElement>("span[aria-hidden]")!;
+      expect(progress.style.width).toBe("0%");
+      await act(() => {
+        duration.mockReturnValue(10);
+        audio.dispatchEvent(new Event("durationchange"));
+      });
+      expect(screen.text()).toContain("0:03 / 0:10");
+      expect(progress.style.width).toBe("30%");
+      await act(() => {
+        duration.mockReturnValue(NaN);
+        audio.dispatchEvent(new Event("durationchange"));
+      });
+      expect(screen.text()).not.toContain("/");
+      expect(progress.style.width).toBe("0%");
+      expect(screen.button("Pause recording.webm")).toHaveProperty("disabled", false);
+      await screen.rerender(preview(true));
+      expect(screen.text()).toContain("Unavailable");
+      await click(screen.button("Audio unavailable. Open recording.webm"));
+      expect(onOpen).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["pause", "error"])("unpins audio after %s", async (event) => {
+    const NativeObserver = IntersectionObserver;
+    using _observer = stubGlobal(
+      "IntersectionObserver",
+      class extends NativeObserver {
+        constructor(
+          private readonly notify: IntersectionObserverCallback,
+          options?: IntersectionObserverInit,
+        ) {
+          super(notify, options);
+        }
+        override observe(target: Element) {
+          this.notify([{ target, isIntersecting: true } as IntersectionObserverEntry], this);
+        }
+      },
+    );
+    const src =
+      "data:audio/wav;base64,UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA";
+    audioAsset.url = src;
+    onTestFinished(() => {
+      audioAsset.url = "";
+    });
+    const props = baseProps();
+    await using screen = await renderTimeline(
+      [
+        message(
+          "Two recordings.",
+          {
+            attachments: ["one", "two"].map((name) => ({
+              type: "file",
+              id: `attachment-${name}`,
+              name: `${name}.wav`,
+              mimeType: "audio/wav",
+              sizeBytes: 45,
+              previewUrl: src,
+            })),
+          },
+          "audio",
+        ),
+        ...Array.from({ length: 40 }, (_, index) =>
+          message("Conversation history. ".repeat(40), { role: "user" }, `history-${index}`),
+        ),
+      ],
+      props,
+    );
+    screen.container.style.height = "600px";
+    screen.container.scrollIntoView({ block: "start" });
+    await vi.waitFor(
+      async () => {
+        await act(() => {
+          void props.listRef.current?.scrollToIndex({ index: 0, animated: false });
+        });
+        expect(screen.container.querySelectorAll("audio")).toHaveLength(2);
+      },
+      { timeout: 5000 },
+    );
+    const [one, two] = [...screen.container.querySelectorAll("audio")];
+    await act(async () => {
+      vi.spyOn(one!, "paused", "get").mockReturnValue(false);
+      vi.spyOn(two!, "paused", "get").mockReturnValue(false);
+      one!.dispatchEvent(new Event("play"));
+      two!.dispatchEvent(new Event("play"));
+    });
+    await vi.waitFor(async () => {
+      await act(() => {
+        void props.listRef.current!.scrollToEnd({ animated: false });
+      });
+      const scroll = props.listRef.current!.getScrollableNode()!;
+      expect(scroll.scrollTop).toBeGreaterThan(5000);
+    });
+    expect(one!.isConnected).toBe(true);
+    expect(two!.isConnected).toBe(true);
+    await act(async () => {
+      vi.spyOn(one!, "paused", "get").mockReturnValue(true);
+      one!.dispatchEvent(new Event("pause"));
+    });
+    expect(two!.isConnected).toBe(true);
+    await act(async () => {
+      if (event === "pause") vi.spyOn(two!, "paused", "get").mockReturnValue(true);
+      two!.dispatchEvent(new Event(event));
+    });
+    await act(() => {
+      void props.listRef.current!.scrollToIndex({ index: 20, animated: false });
+    });
+    await vi.waitFor(() => expect(one!.isConnected).toBe(false));
   });
 });
 

@@ -128,10 +128,11 @@ const AUDIO_MIME_TYPE_BY_EXTENSION = new Map([
   [".m4a", "audio/mp4"],
   [".opus", "audio/ogg"],
   [".aiff", "audio/aiff"],
+  [".webm-audio", "audio/webm"],
 ]);
 
 export function audioMimeTypeFromExtension(extension: string): string | null {
-  if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
+  if (!/^\.[a-z0-9-]+$/i.test(extension)) return null;
   return AUDIO_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ?? null;
 }
 
@@ -145,7 +146,7 @@ export function mediaMimeTypeFromExtension(extension: string): string | null {
 }
 
 export function hostPreviewMimeTypeFromExtension(extension: string): string | null {
-  if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
+  if (!/^\.[a-z0-9-]+$/i.test(extension)) return null;
   return (
     mediaMimeTypeFromExtension(extension) ??
     audioMimeTypeFromExtension(extension) ??
@@ -158,7 +159,7 @@ export function hostPreviewMimeTypeFromExtension(extension: string): string | nu
 export function mediaMimeType(path: string): string | null {
   const trimmed = path.trim();
   const source = trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
-  const dataMimeType = /^data:((?:image|video)\/[\w.+-]+)[;,]/i.exec(source)?.[1];
+  const dataMimeType = /^data:((?:image|video|audio)\/[\w.+-]+)[;,]/i.exec(source)?.[1];
   if (dataMimeType) return dataMimeType.toLowerCase();
 
   let sourcePath = source.split(/[?#]/, 1)[0] ?? "";
@@ -174,13 +175,20 @@ export function mediaMimeType(path: string): string | null {
   } catch {}
   const basename = sourcePath.split(/[\\/]/).at(-1) ?? "";
   const extensionIndex = basename.lastIndexOf(".");
-  return extensionIndex < 0 ? null : mediaMimeTypeFromExtension(basename.slice(extensionIndex));
+  return extensionIndex < 0
+    ? null
+    : (mediaMimeTypeFromExtension(basename.slice(extensionIndex)) ??
+        audioMimeTypeFromExtension(basename.slice(extensionIndex)));
 }
 
-export function mediaKindFromPath(path: string): "image" | "video" | null {
+export function mediaKindFromPath(path: string): "image" | "video" | "audio" | null {
   const mimeType = mediaMimeType(path);
   if (mimeType === null) return null;
-  return mimeType.startsWith("video/") ? "video" : "image";
+  return mimeType.startsWith("audio/")
+    ? "audio"
+    : mimeType.startsWith("video/")
+      ? "video"
+      : "image";
 }
 
 function hasPreviewExtension(path: string, extensions: ReadonlyArray<string>): boolean {
