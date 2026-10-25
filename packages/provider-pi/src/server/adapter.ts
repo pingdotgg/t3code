@@ -3003,33 +3003,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);
             }
-            const resolvedAt = yield* DateTime.now;
-            pending.runtimeRequest = {
-              ...pending.runtimeRequest,
-              status: "resolved",
-              resolvedAt,
-            };
-            yield* emit({
-              type: "runtime_request.updated",
-              driver: PI_PROVIDER,
-              threadId: pending.node.threadId,
-              runtimeRequest: pending.runtimeRequest,
-            });
-            yield* emit({
-              type: "node.updated",
-              driver: PI_PROVIDER,
-              node: { ...pending.node, status: "completed", completedAt: resolvedAt },
-            });
-            yield* emit({
-              type: "turn_item.updated",
-              driver: PI_PROVIDER,
-              turnItem: {
-                ...pending.turnItem,
-                status: "completed",
-                completedAt: resolvedAt,
-                updatedAt: resolvedAt,
-              },
-            });
+            // T3 already persisted the answer and card; cached updates would overwrite them.
           },
           (effect, requestInput) =>
             effect.pipe(

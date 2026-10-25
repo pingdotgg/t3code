@@ -413,6 +413,8 @@ interface PendingOpenCodeRequest {
   readonly createdAt: DateTime.Utc;
   readonly permission?: PermissionRequest;
   readonly question?: QuestionRequest;
+  // Retained across delivery failures so late acknowledgements preserve T3's answer.
+  response?: Pick<OrchestrationV2RuntimeRequest, "decision" | "answers">;
 }
 
 export interface OpenCodeAdapterV2Options {
@@ -1913,6 +1915,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           yield* updateProviderSession("waiting", null);
         });
 
+        const updateRequestWaitingStatus = () =>
+          updateProviderSession(
+            Array.from(pendingRequests.values()).some(
+              (pending) => pending.turn.isRoot && pending.response === undefined,
+            )
+              ? "waiting"
+              : "running",
+            null,
+          );
+
         const resolveRuntimeRequest = Effect.fnUntraced(function* (
           nativeRequestId: string,
           status: "resolved" | "cancelled",
@@ -1924,17 +1936,24 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (current !== undefined) {
             const resolved: OrchestrationV2RuntimeRequest = {
               ...current,
-              status,
+              ...pending.response,
+              status: pending.response === undefined ? status : "resolved",
               resolvedAt: now,
             };
             pending.state.runtimeRequests.set(String(pending.requestId), resolved);
-            yield* emitProviderEvent({
-              type: "runtime_request.updated",
-              driver: OPENCODE_PROVIDER,
-              threadId: pending.turn.threadId,
-              runtimeRequest: resolved,
-            });
+            if (pending.response === undefined) {
+              yield* emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: OPENCODE_PROVIDER,
+                threadId: pending.turn.threadId,
+                runtimeRequest: resolved,
+              });
+            }
           }
+          pendingRequests.delete(String(pending.requestId));
+          pendingRequestsByNativeId.delete(nativeRequestId);
+          // T3 persisted its response, card and node before delivery; native settlement is only cleanup.
+          if (pending.response !== undefined) return yield* updateRequestWaitingStatus();
           yield* emitProviderEvent({
             type: "node.updated",
             driver: OPENCODE_PROVIDER,
@@ -1966,12 +1985,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               now,
             ),
           });
-          pendingRequests.delete(String(pending.requestId));
-          pendingRequestsByNativeId.delete(nativeRequestId);
-          const hasOtherPending = Array.from(pendingRequests.values()).some(
-            (candidate) => candidate.turn.isRoot,
-          );
-          if (!hasOtherPending) yield* updateProviderSession("running", null);
+          yield* updateRequestWaitingStatus();
         });
 
         const resolveSessionOwner = Effect.fnUntraced(function* (sessionId: string) {
@@ -3530,6 +3544,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   pending.question,
                   requestInput.answers,
                 );
+                pending.response = { answers: requestInput.answers };
+                yield* updateRequestWaitingStatus();
                 yield* sdkCall(
                   "question.reply",
                   { requestID: pending.nativeRequestId, answers },
@@ -3550,6 +3566,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               const reply = OpenCodeRuntime.toOpenCodePermissionReply(requestInput.decision);
+              pending.response = { decision: requestInput.decision };
+              yield* updateRequestWaitingStatus();
               yield* sdkCall(
                 "permission.reply",
                 { requestID: pending.nativeRequestId, reply },
