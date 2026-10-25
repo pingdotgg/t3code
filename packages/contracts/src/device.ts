@@ -565,21 +565,17 @@ export type DeviceToolListResult = typeof DeviceToolListResult.Type;
 export const DeviceToolOpenInput = Schema.Struct({
   deviceId: Schema.optional(
     DeviceId.annotate({
-      description:
-        "Simulator udid or emulator serial from device_list. Omit to use the booted device for the platform, or the most recently used one.",
+      description: "Device id from `device_list`. Default: the booted or last used device.",
     }),
   ),
   platform: Schema.optional(
     DevicePlatform.annotate({
-      description: "Required when deviceId is omitted and both platforms are available.",
+      description: "Needed with no `deviceId` when both platforms exist.",
     }),
   ),
   hostId: Schema.optional(
-    DeviceHostId.annotate({ description: "Device host from device_list. Defaults to local." }),
+    DeviceHostId.annotate({ description: "Host from `device_list`. Default local." }),
   ),
-}).annotate({
-  description:
-    "Boots the device if needed, starts its live stream, and opens the Device panel so the user can watch. Returns how to drive it with the agent-device CLI.",
 });
 export type DeviceToolOpenInput = typeof DeviceToolOpenInput.Type;
 
@@ -596,8 +592,7 @@ export type DeviceToolOpenResult = typeof DeviceToolOpenResult.Type;
 export const DeviceToolTargetInput = Schema.Struct({
   deviceId: Schema.optional(
     DeviceId.annotate({
-      description:
-        "Device from device_list. Omit to use the device most recently opened in this thread.",
+      description: "Device. Default: the last one opened here.",
     }),
   ),
   hostId: Schema.optional(DeviceHostId),
@@ -618,13 +613,13 @@ export type DeviceToolScreenshotResult = typeof DeviceToolScreenshotResult.Type;
 export const DeviceToolCloseInput = Schema.Struct({
   deviceId: Schema.optional(
     DeviceId.annotate({
-      description: "Device to close. Omit to close every device in this thread.",
+      description: "Device to close. None: close all here.",
     }),
   ),
   hostId: Schema.optional(DeviceHostId),
   shutdown: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Also power the simulator or emulator off. Defaults to false.",
+      description: "Also turn it off. Default false.",
     }),
   ),
 });

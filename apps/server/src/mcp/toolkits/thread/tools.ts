@@ -30,7 +30,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -79,8 +79,7 @@ const queueEntry = Schema.Struct({
 });
 const QueueListTool = Tool.make("t3_queue_list", {
   ...commandTool,
-  description:
-    "List queued messages in delivery order. Results are a live offset page; use t3_thread_read for full thread history.",
+  description: "List queued messages in send order. For full history, use `t3_thread_read`.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     cursor: Schema.optional(NonNegativeInt),
@@ -95,7 +94,7 @@ const QueueListTool = Tool.make("t3_queue_list", {
   .annotate(Tool.Destructive, false);
 const QueueReadTool = Tool.make("t3_queue_read", {
   ...commandTool,
-  description: "Read up to 16,000 characters of a queued message. Omit threadId for this thread.",
+  description: "Read up to 16,000 chars of one queued message. Omit `threadId` for this thread.",
   parameters: Schema.Struct(queueTarget),
   success: queueEntry,
 })
@@ -104,7 +103,7 @@ const QueueReadTool = Tool.make("t3_queue_read", {
 const QueueEditTool = Tool.make("t3_queue_edit", {
   ...commandTool,
   description:
-    "Replace a queued message's text, preserving its attachments. The service rejects runs that are no longer queued.",
+    "Replace one queued message's text. Attachments stay. Fails if the run is no longer queued.",
   parameters: Schema.Struct({
     ...queueTarget,
     text: Schema.String.check(Schema.isMaxLength(100000)),
@@ -112,18 +111,17 @@ const QueueEditTool = Tool.make("t3_queue_edit", {
 }).annotate(Tool.Destructive, true);
 const QueueCancelTool = Tool.make("t3_queue_cancel", {
   ...commandTool,
-  description: "Cancel a queued run using the existing queue command.",
+  description: "Cancel one queued run.",
   parameters: Schema.Struct(queueTarget),
 }).annotate(Tool.Destructive, true);
 const QueueReorderTool = Tool.make("t3_queue_reorder", {
   ...commandTool,
-  description: "Move a queued run before another queued run, or to the end with beforeRunId=null.",
+  description: "Move one queued run before another, or to the end with `beforeRunId=null`.",
   parameters: Schema.Struct({ ...queueTarget, beforeRunId: Schema.NullOr(RunId) }),
 }).annotate(Tool.Destructive, true);
 const QueuePromoteTool = Tool.make("t3_queue_promote_to_steer", {
   ...commandTool,
-  description:
-    "Deliver a queued message as steering to the specified active run. Existing provider and run-state rules apply.",
+  description: "Send one queued message now as steering to the given active run.",
   parameters: Schema.Struct({ ...queueTarget, targetRunId: RunId }),
 }).annotate(Tool.Destructive, true);
 
@@ -151,7 +149,7 @@ const pendingRequest = Schema.Struct({
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...commandTool,
   description:
-    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included.",
+    "List pending user questions in a thread. Omit `threadId` for this thread. Approvals are not listed.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
 })
@@ -159,8 +157,7 @@ const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   .annotate(Tool.Destructive, false);
 const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   ...commandTool,
-  description:
-    "Read a pending user question. Answer with t3_pending_request_respond; existing live or message response handling is used.",
+  description: "Read one pending user question. Answer it with `t3_pending_request_respond`.",
   parameters: Schema.Struct(requestTarget),
   success: pendingRequest,
 })
@@ -168,8 +165,7 @@ const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   .annotate(Tool.Destructive, false);
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
   ...commandTool,
-  description:
-    "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
+  description: "Answer one pending user question. This cannot approve a permission request.",
   parameters: Schema.Struct({ ...requestTarget, answers: ProviderUserInputAnswers }),
 })
   .annotate(Tool.Destructive, true)
@@ -177,8 +173,7 @@ const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
 
 const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
   ...commandTool,
-  description:
-    "Read a thread's provider/model selection and modes. Omit threadId for this thread. orchestrator_capabilities lists available providers and models.",
+  description: "Read a thread's provider, model, and modes. Omit `threadId` for this thread.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -192,7 +187,7 @@ const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
 const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   ...commandTool,
   description:
-    "Set a thread's provider, model and options with the existing selection command. Omit threadId for this thread. This does not change permission modes. Use orchestrator_capabilities to choose a selection.",
+    "Set a thread's provider, model, and options. Omit `threadId` for this thread. Permission modes stay. Values from `orchestrator_capabilities`.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     modelSelection: ModelSelection,
@@ -203,7 +198,7 @@ const transferResult = Schema.Struct({ sequence: NonNegativeInt, targetThreadId:
 const ThreadForkTool = Tool.make("t3_thread_fork", {
   ...commandTool,
   description:
-    "Fork a thread from a stable run or checkpoint using the existing fork command. Omit threadId to fork this thread. The fork inherits the source configuration. Acceptance does not mean a provider turn has completed.",
+    "Fork a thread from a stable run or checkpoint. Omit `threadId` for this thread. Keeps source setup. No turn has run yet.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
@@ -214,7 +209,7 @@ const ThreadForkTool = Tool.make("t3_thread_fork", {
 const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
   ...commandTool,
   description:
-    "Merge context from a thread back to a related thread in the same project. Omit sourceThreadId to merge from this thread. Existing lineage and transfer rules apply.",
+    "Merge context from one thread into a related thread in the same project. Omit `sourceThreadId` for this thread.",
   parameters: Schema.Struct({
     sourceThreadId: Schema.optional(ThreadId),
     targetThreadId: ThreadId,
@@ -224,7 +219,7 @@ const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
 }).annotate(Tool.Destructive, true);
 const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
   ...commandTool,
-  description: "Read context transfer status for a thread. Omit threadId for this thread.",
+  description: "Read context transfer status for a thread. Omit `threadId` for this thread.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({
     transfers: Schema.Array(
@@ -243,7 +238,7 @@ const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    'Search active threads the way the command palette does: title, branch, pull request, and project matches first (source "title", ranked by match quality and recent use, with one-typo tolerance), then threads whose messages contain every query word of three or more characters (source "user" or "assistant", with a snippet; up to a fifth of the limit is kept for these). Subagent threads are skipped. Limited to one project (projectId, else the calling thread\'s project); a caller outside a T3 thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.',
+    "Search active threads by title, branch, PR, project, then message text. Skips subagent threads. `projectId`: one project, else yours, else all outside a thread. Not exhaustive.",
   parameters: Schema.Struct({
     ...OrchestrationSearchThreadsInput.fields,
     projectId: Schema.optional(ProjectId),
@@ -269,7 +264,7 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
-    "Run a scheduled task now through the existing scheduler. Requires a full-access/default caller. Returns the thread this run dispatched to, or null if dispatch failed. Each call is a new manual run; completion means dispatch/bookkeeping completed, not that the provider turn finished.",
+    "Run one scheduled task now. Needs a full-access or default caller. Returns its thread, or null if not started. Success means started, not finished.",
   parameters: Schema.Struct({ taskId: ScheduledTaskId }),
   success: Schema.Struct({
     taskId: ScheduledTaskId,

@@ -420,15 +420,13 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
   },
 );
 
-it("routes same-child follow-ups to t3_thread_send and independent reviews to delegate_task", () => {
+it("keeps cross-tool routing out of the delegate_task description", () => {
   const description = OrchestratorToolkit.tools.delegate_task.description ?? "";
-  expect(description).toContain(
-    "For independent T3 delegated review rounds, call delegate_task again",
-  );
-  expect(description).toContain(
-    "For a follow-up that needs the same child's conversation, use t3_thread_send on its childThreadId.",
-  );
-  expect(description).not.toContain("not the target for starting another");
+  expect(description).toContain("Start one child agent with only `task`");
+  // Review rounds, follow-ups, and polling are routed in the system text.
+  expect(description).not.toContain("t3_thread_send");
+  expect(description).not.toContain("Do not poll");
+  expect(description).not.toContain("Prefer native");
 });
 
 it.effect(
@@ -447,7 +445,8 @@ it.effect(
       const linkTool = server.tools.find(({ tool }) => tool.name === "link_pull_request");
       expect(linkTool?.tool.annotations?.idempotentHint).toBe(true);
       expect(linkTool?.tool.annotations?.openWorldHint).toBe(false);
-      expect(linkTool?.tool.description).toContain("Register every pull request you open");
+      expect(linkTool?.tool.description).toContain("Link a PR to this thread");
+      expect(linkTool?.tool.description).toContain("settles the thread on merge");
 
       const denied = yield* server
         .callTool({ name: "list_thread_pull_requests", arguments: {} })

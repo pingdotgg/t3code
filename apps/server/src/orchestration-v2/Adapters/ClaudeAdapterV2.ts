@@ -1308,7 +1308,7 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 
 ### Background work you wait on
 
-Before you end your turn to wait for a background command or Monitor you started, such as tests, a build, or a CI wait, call \`t3_background_wait\` with its task ID. The thread then stays in the user's Working list until that task ends, instead of returning to them early. Do not mark a dev server, a watcher, or anything else you leave running.
+To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
 `;
 
 export function makeClaudeQueryOptions(input: {
