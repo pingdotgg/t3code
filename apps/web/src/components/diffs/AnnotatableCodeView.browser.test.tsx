@@ -40,7 +40,7 @@ vi.mock("./StyledDiffCodeView", () => ({
           ) : null}
           {item.annotations?.map((annotation) => (
             <div key={`${annotation.side}:${annotation.lineNumber}`}>
-              {props.renderAnnotation?.(annotation, item)}
+              {props.renderAnnotation?.(annotation, item.fileDiff, item)}
             </div>
           ))}
         </section>
