@@ -125,6 +125,38 @@ describe("environment grouping", () => {
     expect(resolveSidebarProjectScopeKey({ groups, key, canClearMissingScope: true })).toBe(key);
   });
 
+  it("suspends a project scope when its last visible environment member disappears", () => {
+    const local = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("remote-project"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const input = {
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    };
+    const groups = buildSidebarProjectSnapshots({ ...input, projects: [local, remote] });
+    const key = groups[0]!.projectKey;
+    const scope = { key, excludedEnvironmentIds: new Set([remoteEnvironmentId]) };
+    expect(resolveSidebarProjectScopeKey({ ...scope, groups })).toBe(key);
+
+    const remainingGroups = buildSidebarProjectSnapshots({ ...input, projects: [remote] });
+    expect(remainingGroups[0]!.projectKey).toBe(key);
+    expect(resolveSidebarProjectScopeKey({ ...scope, groups: remainingGroups })).toBeNull();
+    expect(
+      resolveSidebarProjectScopeKey({ groups: remainingGroups, key, canClearMissingScope: true }),
+    ).toBe(key);
+    expect(
+      resolveSidebarProjectScopeKey({
+        ...scope,
+        groups: remainingGroups,
+        excludedEnvironmentIds: new Set(),
+      }),
+    ).toBe(key);
+  });
+
   it("dedupes stale project rows with the same environment and workspace path", () => {
     const duplicate = makeProject({
       id: ProjectId.make("project-duplicate"),

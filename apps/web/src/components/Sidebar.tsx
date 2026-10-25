@@ -1128,6 +1128,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keys: persistedProjectScopeKeys,
     settings: projectGroupingSettings,
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+    excludedEnvironmentIds,
   }).filter((key) => !archivedProjectKeys.has(key));
   const chosenProjectGroups = scopeGroups.filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),

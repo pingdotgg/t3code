@@ -94,6 +94,7 @@ export function resolveSidebarProjectScopeKey(input: {
   readonly key: string | null;
   readonly settings?: ProjectGroupingSettings;
   readonly canClearMissingScope?: boolean;
+  readonly excludedEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): string | null {
   if (input.key === null) return null;
   const group =
@@ -104,6 +105,14 @@ export function resolveSidebarProjectScopeKey(input: {
         resolveScratchProjectScopeKey(input.key, candidate.memberProjects, input.settings) ===
           candidate.projectKey,
     );
+  const excludedIds = input.excludedEnvironmentIds;
+  if (
+    group &&
+    excludedIds &&
+    group.memberProjectRefs.every((ref) => excludedIds.has(ref.environmentId))
+  ) {
+    return null;
+  }
   return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
 }
 
@@ -112,6 +121,7 @@ export function resolveSidebarProjectScopeKeys(input: {
   readonly keys: ReadonlyArray<string>;
   readonly settings?: ProjectGroupingSettings;
   readonly canClearMissingScope?: boolean;
+  readonly excludedEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): string[] {
   return [
     ...new Set(input.keys.flatMap((key) => resolveSidebarProjectScopeKey({ ...input, key }) ?? [])),
