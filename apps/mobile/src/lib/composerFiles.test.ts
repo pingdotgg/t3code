@@ -90,6 +90,7 @@ vi.mock("./uuid", () => ({ uuidv4: () => "attachment-id" }));
 
 import {
   persistComposerAttachmentFile,
+  isComposerImageAttachment,
   pickComposerFiles,
   pickComposerImages,
   pickComposerMedia,
@@ -108,6 +109,7 @@ describe("composer file attachments", () => {
     mocks.open.mockReset();
     mocks.size.mockReset();
     mocks.readBase64.mockReset();
+    mocks.manipulate.mockReset();
     mocks.size.mockImplementation((uri: string) => (uri.startsWith("content:") ? null : 42));
   });
 
@@ -439,6 +441,169 @@ describe("composer file attachments", () => {
         error: "Could not download video from iCloud.",
       });
       expect(isForegroundHandoffActive()).toBe(false);
+    });
+  });
+
+  describe("images chosen through the file picker", () => {
+    it.each([
+      { name: "photo.bin", mimeType: "image/jpeg", expected: "image/jpeg" },
+      { name: "photo.png", mimeType: "image/png", expected: "image/png" },
+      { name: "photo.gif", mimeType: "image/gif", expected: "image/gif" },
+      { name: "photo.webp", mimeType: "image/webp", expected: "image/webp" },
+      { name: "photo.JPG", mimeType: undefined, expected: "image/jpeg" },
+      { name: "photo.PNG", mimeType: "application/octet-stream", expected: "image/png" },
+      { name: "photo.gif", mimeType: "binary/octet-stream", expected: "image/gif" },
+      { name: "photo.webp", mimeType: "application/unknown", expected: "image/webp" },
+      { name: "photo.jpg", mimeType: "IMAGE/PNG; charset=binary", expected: "image/png" },
+    ])("prepares $name ($mimeType) as $expected", async ({ name, mimeType, expected }) => {
+      mocks.pickFile.mockResolvedValue({
+        canceled: false,
+        assets: [{ uri: `file:///picker/${name}`, name, mimeType, size: 3 }],
+      });
+      mocks.size.mockReturnValue(3);
+      mocks.readBase64.mockResolvedValue("YWJj");
+
+      const result = await pickComposerFiles({ existingCount: 0 });
+
+      expect(result).toEqual({
+        files: [
+          {
+            id: "attachment-id",
+            type: "image",
+            name,
+            mimeType: expected,
+            sizeBytes: 3,
+            dataUrl: `data:${expected};base64,YWJj`,
+            previewUri: `data:${expected};base64,YWJj`,
+          },
+        ],
+        error: null,
+      });
+      expect(mocks.manipulate).not.toHaveBeenCalled();
+      expect(mocks.delete).toHaveBeenCalledWith(
+        `file:///documents/t3-composer-attachments/attachment-id-${name}`,
+      );
+    });
+
+    it.each([
+      { name: "diagram.svg", mimeType: "image/svg+xml" },
+      { name: "photo.heic", mimeType: "image/heic" },
+      { name: "photo.tiff", mimeType: "image/tiff" },
+      { name: "photo.png", mimeType: "application/pdf" },
+      { name: "unknown.bin", mimeType: "application/octet-stream" },
+    ])("keeps $name ($mimeType) as a file", async ({ name, mimeType }) => {
+      mocks.pickFile.mockResolvedValue({
+        canceled: false,
+        assets: [{ uri: `file:///picker/${name}`, name, mimeType, size: 42 }],
+      });
+
+      const result = await pickComposerFiles({ existingCount: 0 });
+
+      expect(result.error).toBeNull();
+      expect(result.files).toEqual([expect.objectContaining({ type: "file", name, mimeType })]);
+      expect(mocks.readBase64).not.toHaveBeenCalled();
+      expect(mocks.manipulate).not.toHaveBeenCalled();
+      expect(mocks.delete).not.toHaveBeenCalled();
+    });
+
+    it.each([PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1])(
+      "classifies a measured %s byte PNG independently of picker metadata and file limit",
+      async (size) => {
+        mocks.pickFile.mockResolvedValue({
+          canceled: false,
+          assets: [
+            { uri: "file:///picker/photo.png", name: "photo.png", mimeType: "image/png", size: 1 },
+          ],
+        });
+        mocks.size.mockReturnValue(size);
+        mocks.readBase64.mockResolvedValue("YWJj");
+
+        const result = await pickComposerFiles({
+          existingCount: 0,
+          maxBytes: size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES ? size : 1024,
+        });
+
+        expect(result.error).toBeNull();
+        expect(result.files[0]?.type).toBe(
+          size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES ? "file" : "image",
+        );
+        expect(isComposerImageAttachment(result.files[0]!)).toBe(
+          size <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+        );
+        expect(mocks.readBase64).toHaveBeenCalledTimes(
+          size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES ? 0 : 1,
+        );
+      },
+    );
+
+    it.each([false, true])("fits a large PNG with oversized output: %s", async (oversized) => {
+      const header = Buffer.alloc(24);
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
+      header.write("IHDR", 12);
+      header.writeUInt32BE(4000, 16);
+      header.writeUInt32BE(3000, 20);
+      const original = header.toString("base64");
+      mocks.readBase64.mockResolvedValue(original);
+      const resize = vi.fn();
+      const renderAsync = vi.fn(async () => ({
+        width: 4000,
+        height: 3000,
+        release: vi.fn(),
+        saveAsync: vi.fn(async () => ({
+          uri: "file:///cache/fitted.png",
+          base64: oversized
+            ? Buffer.alloc(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1).toString("base64")
+            : "YWJj",
+        })),
+      }));
+      mocks.manipulate.mockImplementation(() => {
+        const context = {
+          resize: (size: unknown) => {
+            resize(size);
+            return context;
+          },
+          renderAsync,
+        };
+        return context;
+      });
+      mocks.pickFile.mockResolvedValue({
+        canceled: false,
+        assets: [{ uri: "file:///picker/photo.png", name: "photo.png", mimeType: "image/png" }],
+      });
+
+      const result = await pickComposerFiles({ existingCount: 0 });
+
+      expect(resize).toHaveBeenCalledWith({ width: 2000, height: 1500 });
+      expect(result).toEqual({
+        files: [
+          expect.objectContaining({
+            type: "image",
+            mimeType: "image/png",
+            sizeBytes: oversized ? header.length : 3,
+            dataUrl: `data:image/png;base64,${oversized ? original : "YWJj"}`,
+            previewUri: oversized
+              ? `data:image/png;base64,${original}`
+              : "file:///cache/fitted.png",
+          }),
+        ],
+        error: null,
+      });
+    });
+
+    it("releases the owned copy when reading an image fails", async () => {
+      mocks.pickFile.mockResolvedValue({
+        canceled: false,
+        assets: [{ uri: "file:///picker/photo.png", name: "photo.png", mimeType: "image/png" }],
+      });
+      mocks.readBase64.mockRejectedValue(new Error("unreadable image"));
+
+      expect(await pickComposerFiles({ existingCount: 0 })).toEqual({
+        files: [],
+        error: "unreadable image",
+      });
+      expect(mocks.delete).toHaveBeenCalledWith(
+        "file:///documents/t3-composer-attachments/attachment-id-photo.png",
+      );
     });
   });
 

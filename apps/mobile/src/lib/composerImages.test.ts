@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+} from "@t3tools/contracts";
 
 const files = new Map<string, { base64: string; deleted: boolean; text?: string }>();
 
@@ -262,5 +265,21 @@ describe("composerStripAttachments", () => {
       "img-1",
       "vid-1",
     ]);
+  });
+
+  it("keeps oversized document-picked images visible while sending them as files", async () => {
+    const { composerStripAttachments, isComposerImageAttachment } =
+      await import("./composerImages");
+    const oversizedImage = {
+      ...video,
+      id: "large-image",
+      name: "large.png",
+      mimeType: "image/png",
+      fileUri: "file:///large.png",
+      sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
+    };
+
+    expect(composerStripAttachments([oversizedImage])).toEqual([oversizedImage]);
+    expect(isComposerImageAttachment(oversizedImage)).toBe(false);
   });
 });
