@@ -64,6 +64,8 @@ describe("TimelineMinimap hover previews", () => {
     await using minimap = await renderFocusedMinimap();
 
     await expect.element(page.getByText("First answer")).not.toBeInTheDocument();
+    const jump = page.getByRole("button", { name: /Jump to message/ });
+    await vi.waitFor(() => expect(jump.element().getBoundingClientRect().width).toBe(24));
     await userEvent.keyboard("{ArrowDown}{Enter}");
     await vi.waitFor(() => expect(minimap.onSelect).toHaveBeenCalledWith(items[1]));
   });
