@@ -187,6 +187,11 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
+// Set only on results for still-running tasks whose completion will wake the parent.
+export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =
+  "Completion wakes this thread. End your turn unless you need this result now.";
+const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   childThreadId: ThreadId,
@@ -224,6 +229,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
   }),
+  next: Schema.optional(OrchestratorMcpRunningTaskNext),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
@@ -500,6 +506,7 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   runId: Schema.NullOr(RunId),
   status: OrchestratorMcpThreadStatus,
   timedOut: Schema.Boolean,
+  next: Schema.optional(OrchestratorMcpRunningTaskNext),
 });
 export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
 
