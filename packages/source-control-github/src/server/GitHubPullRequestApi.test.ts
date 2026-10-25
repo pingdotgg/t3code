@@ -694,6 +694,76 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
+  it.effect.each(["mixed", "merges", "unavailable"] as const)(
+    "reads stats only for displayed non-merge commits (%s)",
+    (kind) =>
+      Effect.gen(function* () {
+        const oids = kind === "merges" ? ["merge"] : ["regular", "merge"];
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      author: null,
+                      comments: { nodes: [], pageInfo: lastPage },
+                      reviews: { nodes: [], pageInfo: lastPage },
+                      commits: {
+                        nodes: oids.map((oid) => ({
+                          commit: {
+                            id: "node-" + oid,
+                            oid,
+                            messageHeadline: oid,
+                            committedDate: "2026-07-05T00:00:00Z",
+                            parents: { totalCount: oid === "merge" ? 2 : 1 },
+                            authors: { nodes: [] },
+                          },
+                        })),
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+        if (kind === "unavailable") {
+          mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}", false, false, {}, 503)));
+        } else if (kind !== "merges") {
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                encodeJson({
+                  data: {
+                    nodes: [{ __typename: "Commit", oid: "regular", additions: 18, deletions: 7 }],
+                  },
+                }),
+              ),
+            ),
+          );
+        }
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const activity = yield* cli.getPullRequestActivity(pullRequestInput);
+        expect(activity.commits.map((commit) => commit.oid)).toEqual(oids);
+        expect(activity.commits.find((commit) => commit.oid === "merge")).not.toHaveProperty(
+          "additions",
+        );
+        expect(activity.commits.find((commit) => commit.oid === "merge")).not.toHaveProperty(
+          "deletions",
+        );
+        if (kind === "mixed") {
+          expect(activity.commits[0]).toMatchObject({ additions: 18, deletions: 7 });
+        } else if (kind === "unavailable") {
+          expect(activity.commits[0]).not.toHaveProperty("additions");
+        }
+        expect(variablesOf("PullRequestCommitStats")).toEqual(
+          kind === "merges" ? [] : [{ ids: ["node-regular"] }],
+        );
+        expect(mockedExecute).toHaveBeenCalledTimes(kind === "merges" ? 1 : 2);
+      }),
+  );
+
   it.effect("loads the complete hover card with one GraphQL request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

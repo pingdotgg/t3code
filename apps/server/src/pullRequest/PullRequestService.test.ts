@@ -2663,6 +2663,9 @@ it.effect("isolates routed caches for two credentials belonging to the same acco
         host: "github.com",
         expectedAccountId: "101",
       };
+      if (operation === "checks") {
+        yield* service.withRoutingCredential(reference, service.detail(reference));
+      }
       yield* service.withRoutingCredential(reference, readOperation(reference));
       credential = "restricted";
       for (const allowStale of [false, true]) {
@@ -2836,6 +2839,48 @@ it.effect("deduplicates routed PR reports without dropping draft changes", () =>
       [1, 1, 1, 1],
     );
   }),
+);
+
+it.effect(
+  "reuses fresh detail checks without extending their refresh interval on detail cache hits",
+  () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+            getChangeRequestChecks: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return { state: "closed" as const, checks: [] };
+              }),
+          }),
+        ],
+      });
+      yield* TestClock.setTime(1_000);
+      const detail = yield* service.detail(reference);
+      expect(yield* service.checks(reference)).toEqual({
+        state: detail.state,
+        checks: detail.checks,
+        observedAt: detail.observedAt,
+      });
+      expect(reads).toBe(0);
+      yield* TestClock.adjust("16 seconds");
+      yield* service.detail(reference);
+      expect(yield* service.checks(reference)).toMatchObject({
+        state: "closed",
+        observedAt: 17_000,
+      });
+      expect(reads).toBe(1);
+      yield* service.detail(reference);
+      expect((yield* service.checks(reference))?.state).toBe("closed");
+      expect(reads).toBe(1);
+    }),
 );
 
 it.effect("preserves check observation time on cache hits and advances it on refresh", () =>
@@ -4260,7 +4305,7 @@ it.effect.each(["commit", "credential"] as const)(
     }),
 );
 
-it.effect.each(["expiry", "refresh"] as const)(
+it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "refresh"] as const)(
   "keeps a loaded diff's original membership scope through an in-flight %s",
   (boundary) =>
     Effect.gen(function* () {
@@ -4284,17 +4329,40 @@ it.effect.each(["expiry", "refresh"] as const)(
                   nextCursor: null,
                 };
               }),
-            getDiffFileContents: () => Effect.die("an expired file must not be read"),
+            getDiffFileContents: () => Effect.succeed({ oldContents: "old", newContents: "new" }),
           }),
         ],
       });
-      const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const ref = {
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        ...(boundary.includes("commit") ? { commit: "a".repeat(40) } : {}),
+      };
       const loading = yield* Effect.forkChild(service.diff(ref));
       yield* Deferred.await(started);
       if (boundary === "expiry") yield* TestClock.adjust("61 seconds");
+      else if (boundary === "commit expiry") yield* TestClock.adjust("11 minutes");
+      else if (boundary.includes("cache hit")) yield* TestClock.adjust("30 seconds");
       else yield* service.invalidate({ reference: ref });
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(loading);
+      if (boundary.includes("cache hit")) {
+        yield* service.diff(ref);
+        yield* service.diff(ref);
+        yield* TestClock.adjust(boundary.includes("commit") ? "9 minutes" : "29 seconds");
+        assert.deepStrictEqual(
+          yield* service.diffFileContents({
+            ...ref,
+            changeType: "change",
+            oldPath: "private.ts",
+            newPath: "private.ts",
+          }),
+          { oldContents: "old", newContents: "new" },
+        );
+        assert.strictEqual(diffReads, 1);
+        yield* TestClock.adjust(boundary.includes("commit") ? "1 minute" : "2 seconds");
+      }
       const error = yield* service
         .diffFileContents({
           ...ref,

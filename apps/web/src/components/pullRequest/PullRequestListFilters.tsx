@@ -97,10 +97,12 @@ export function PullRequestSearchInput({
   value,
   busy,
   onChange,
+  onSubmit,
 }: {
   value: string;
   busy?: boolean;
   onChange: (value: string) => void;
+  onSubmit: (value: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
@@ -116,6 +118,14 @@ export function PullRequestSearchInput({
         onChange={(event) => {
           setDraft(event.currentTarget.value);
           onChange(event.currentTarget.value);
+          if ((event.nativeEvent as InputEvent).inputType === "insertFromPaste") {
+            onSubmit(event.currentTarget.value);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            onSubmit(event.currentTarget.value);
+          }
         }}
         placeholder="Search pull requests, or label:bug"
         aria-label="Search pull requests"

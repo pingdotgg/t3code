@@ -8,6 +8,7 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
+  PullRequestDiffResult,
   PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -74,6 +75,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { DiffPanelLoadingState } from "../DiffPanelShell";
+import { useDiffWorkerPool } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
@@ -132,6 +134,7 @@ const COMMIT_PAGE_SIZE = 10;
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
 interface DiffSlice {
+  readonly source: PullRequestDiffResult;
   readonly cursor: string | null;
   readonly patch: string;
   readonly truncated: boolean;
@@ -148,13 +151,15 @@ const REPLACE_FILE_COUNTS_CSS = `
 
 const NO_SLICES: ReadonlyArray<DiffSlice> = [];
 
-const sliceParses = new WeakMap<DiffSlice, Map<string, RenderablePatch | null>>();
+// Query results outlive the panel's slices, so their parses survive closing and reopening
+// without retaining anything beyond the query cache's lifetime.
+const sliceParses = new WeakMap<PullRequestDiffResult, Map<string, RenderablePatch | null>>();
 
 function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolean) {
-  let parses = sliceParses.get(slice);
+  let parses = sliceParses.get(slice.source);
   if (parses === undefined) {
     parses = new Map();
-    sliceParses.set(slice, parses);
+    sliceParses.set(slice.source, parses);
   }
   if (parses.has(cacheKey)) return parses.get(cacheKey) ?? null;
   const parsed = getRenderablePatch(slice.patch, cacheKey, {
@@ -272,6 +277,8 @@ function PullRequestCodeTab({
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
 }) {
   const resolvedTheme = useRenderedAppearance();
+  // Initialize the shared tokenizer and workers while the diff request is still pending.
+  useDiffWorkerPool(resolveDiffThemeName(resolvedTheme));
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
@@ -353,6 +360,7 @@ function PullRequestCodeTab({
     setSliceState((previous) => {
       const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
       const next = {
+        source: data,
         cursor,
         patch: data.patch,
         truncated: data.truncated,

@@ -131,10 +131,10 @@ export const NodesBot = Schema.Struct({
 export interface NodesBot extends Schema.Struct.Type<typeof NodesBot.fields> {}
 
 /** An object with an ID. */
-export const NodesNodeOther = Schema.Struct({
+export const ActorAvatarsNodesNodeOther = Schema.Struct({
   __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["User", "Bot"])
 })
-export interface NodesNodeOther extends Schema.Struct.Type<typeof NodesNodeOther.fields> {}
+export interface ActorAvatarsNodesNodeOther extends Schema.Struct.Type<typeof ActorAvatarsNodesNodeOther.fields> {}
 
 /** `query ActorAvatars` */
 export const ActorAvatars = GraphQL.query("ActorAvatars", {
@@ -155,7 +155,7 @@ export const ActorAvatars = GraphQL.query("ActorAvatars", {
     nodes: Schema.Array(Schema.NullOr(Schema.Union([
       ActorAvatarsNodesUser,
       NodesBot,
-      NodesNodeOther
+      ActorAvatarsNodesNodeOther
     ])))
   })
 })
@@ -646,6 +646,13 @@ export declare namespace PullRequestPreview {
   export type Result = typeof PullRequestPreview.result.Type
 }
 
+/** The connection type for Commit. */
+export const CommitConnection = Schema.Struct({
+  /** Identifies the total count of items in the connection. */
+  totalCount: Shared.Int
+})
+export interface CommitConnection extends Schema.Struct.Type<typeof CommitConnection.fields> {}
+
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const UserUser = Schema.Struct({
   /** The username used to login. */
@@ -673,12 +680,16 @@ export interface GitActorConnection extends Schema.Struct.Type<typeof GitActorCo
 
 /** Represents a Git commit. */
 export const PullRequestActivityRepositoryPullRequestCommitsNodesCommitCommit = Schema.Struct({
+  /** The Node ID of the Commit object */
+  id: Shared.ID,
   /** The Git object ID */
   oid: Shared.GitObjectID,
   /** The Git commit message headline */
   messageHeadline: Schema.String,
   /** The datetime when this commit was committed. */
   committedDate: Shared.DateTime,
+  /** The parents of a commit. */
+  parents: CommitConnection,
   /**
    * The list of authors for this commit based on the git author and the Co-authored-by
    * message trailer. The git author will always be first.
@@ -798,7 +809,7 @@ export const PullRequestActivity = GraphQL.query("PullRequestActivity", {
       { name: "reviewsAfter", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){author@include(if:$", "head", "){__typename login avatarUrl...on User{name}}commits(last:100)@include(if:$", "head", "){nodes{commit{oid messageHeadline committedDate authors(first:10){nodes{name email user{login}}}}}}comments(first:100 after:$", "commentsAfter", ")@include(if:$", "withComments", "){pageInfo{hasNextPage endCursor}nodes{id body createdAt lastEditedAt url author{__typename login avatarUrl...on User{name}}}}reviews(first:100 after:$", "reviewsAfter", ")@include(if:$", "withReviews", "){pageInfo{hasNextPage endCursor}nodes{id body state submittedAt lastEditedAt url author{__typename login avatarUrl...on User{name}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){author@include(if:$", "head", "){__typename login avatarUrl...on User{name}}commits(last:100)@include(if:$", "head", "){nodes{commit{id oid messageHeadline committedDate parents(first:1){totalCount}authors(first:10){nodes{name email user{login}}}}}}comments(first:100 after:$", "commentsAfter", ")@include(if:$", "withComments", "){pageInfo{hasNextPage endCursor}nodes{id body createdAt lastEditedAt url author{__typename login avatarUrl...on User{name}}}}reviews(first:100 after:$", "reviewsAfter", ")@include(if:$", "withReviews", "){pageInfo{hasNextPage endCursor}nodes{id body state submittedAt lastEditedAt url author{__typename login avatarUrl...on User{name}}}}}}"] }
     ],
     fragments: []
   },
@@ -820,6 +831,51 @@ export const PullRequestActivity = GraphQL.query("PullRequestActivity", {
 export declare namespace PullRequestActivity {
   export type Variables = typeof PullRequestActivity.variables.Type
   export type Result = typeof PullRequestActivity.result.Type
+}
+
+/** Represents a Git commit. */
+export const NodesCommit = Schema.Struct({
+  __typename: Schema.Literal("Commit"),
+  /** The Git object ID */
+  oid: Shared.GitObjectID,
+  /** The number of additions in this commit. */
+  additions: Shared.Int,
+  /** The number of deletions in this commit. */
+  deletions: Shared.Int
+})
+export interface NodesCommit extends Schema.Struct.Type<typeof NodesCommit.fields> {}
+
+/** An object with an ID. */
+export const PullRequestCommitStatsNodesNodeOther = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["Commit"])
+})
+export interface PullRequestCommitStatsNodesNodeOther extends Schema.Struct.Type<typeof PullRequestCommitStatsNodesNodeOther.fields> {}
+
+/** `query PullRequestCommitStats` */
+export const PullRequestCommitStats = GraphQL.query("PullRequestCommitStats", {
+  document: {
+    variables: [
+      { name: "ids", body: "[ID!]!" }
+    ],
+    selections: [
+      { name: "nodes", body: ["(ids:$", "ids", "){__typename...on Commit{oid additions deletions}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    ids: Schema.Array(Shared.ID)
+  },
+  result: Schema.Struct({
+    /** Lookup nodes by a list of IDs. */
+    nodes: Schema.Array(Schema.NullOr(Schema.Union([
+      NodesCommit,
+      PullRequestCommitStatsNodesNodeOther
+    ])))
+  })
+})
+export declare namespace PullRequestCommitStats {
+  export type Variables = typeof PullRequestCommitStats.variables.Type
+  export type Result = typeof PullRequestCommitStats.result.Type
 }
 
 /** A repository pull request. */
@@ -1666,4 +1722,4 @@ export declare namespace PullRequestSourceBranch {
 }
 
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, RepositoryLabels, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestCommitStats, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, RepositoryLabels, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)

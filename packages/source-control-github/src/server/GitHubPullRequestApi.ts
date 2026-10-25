@@ -72,6 +72,7 @@ import {
   toRepositoryAuthors,
   toRepositoryLabels,
   toPullRequestActivityPage,
+  toPullRequestCommitStats,
   toPullRequestCheckContextsPage,
   toPullRequestCore,
   toPullRequestFilesViewedPage,
@@ -1989,6 +1990,7 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         let author: PullRequestActor | null = null;
         let commits: ReadonlyArray<PullRequestCommit> = [];
+        let nonMergeCommitIds: ReadonlyArray<string> = [];
         const remarks: PullRequestComment[] = [];
         let commentsAfter: string | null = null;
         let reviewsAfter: string | null = null;
@@ -2015,6 +2017,7 @@ export const make = Effect.gen(function* () {
           if (page === 0) {
             author = read.author ?? null;
             commits = read.commits ?? [];
+            nonMergeCommitIds = read.nonMergeCommitIds;
           }
           remarks.push(...read.remarks);
           commentsAfter = read.nextCommentsCursor;
@@ -2022,12 +2025,21 @@ export const make = Effect.gen(function* () {
           withComments = withComments && commentsAfter !== null;
           withReviews = withReviews && reviewsAfter !== null;
         }
+        const emptyStats = toPullRequestCommitStats({ nodes: [] });
+        const commitStats =
+          nonMergeCommitIds.length === 0
+            ? emptyStats
+            : yield* client.PullRequestCommitStats({ ids: nonMergeCommitIds }).pipe(
+                graphql(target),
+                Effect.map(toPullRequestCommitStats),
+                Effect.orElseSucceed(() => emptyStats),
+              );
         return {
           author,
           comments: remarks.toSorted((left, right) =>
             left.createdAt.localeCompare(right.createdAt),
           ),
-          commits,
+          commits: commits.map((commit) => ({ ...commit, ...commitStats.get(commit.oid) })),
         } satisfies GitHubPullRequestActivity;
       },
     ),
@@ -2131,10 +2143,6 @@ export const make = Effect.gen(function* () {
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
         const botLogins = new Set<string>();
-        const commitStats = new Map<
-          string,
-          { readonly additions: number; readonly deletions: number }
-        >();
         let reviewers: ReadonlyArray<PullRequestActor> = [];
         let reactions: GitHubReviewThreadPage["reactions"] = [];
         const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
@@ -2161,7 +2169,6 @@ export const make = Effect.gen(function* () {
             for (const [id, message] of read.dismissalsByReviewId)
               dismissalsByReviewId.set(id, message);
             dismissalCursor = read.nextDismissalCursor;
-            for (const [oid, stat] of read.commitStats) commitStats.set(oid, stat);
           }
           cursor = read.nextCursor;
           page += 1;
@@ -2214,7 +2221,6 @@ export const make = Effect.gen(function* () {
           reviewers,
           avatarsByLogin,
           botLogins,
-          commitStats,
           commits,
           viewer,
         };

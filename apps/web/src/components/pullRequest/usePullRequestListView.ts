@@ -8,11 +8,10 @@ import {
   type PullRequestListResult,
   type PullRequestListState,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
-import { useDebouncedValue } from "~/state/queries";
 import {
   applyPullRequestOverrides,
   findProjectForRepository,
@@ -185,7 +184,11 @@ export function usePullRequestScope(search: PullRequestsSearch) {
 }
 
 export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuery: string) {
-  const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
+  const [sentQuery, setSentQuery] = useState(typedQuery);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSentQuery(typedQuery), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [typedQuery]);
   const typedParsed = parsePullRequestQuery(typedQuery);
   const sentParsed = parsePullRequestQuery(sentQuery);
 
@@ -203,6 +206,7 @@ export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuer
   const hasLocalFilters = Object.keys(localFilters).length > 0;
   return {
     sentQuery,
+    submitQuery: (query: string) => setSentQuery(query.trim()),
     querySettled: typedQuery === sentQuery,
     typedParsed,
     sentParsed,
