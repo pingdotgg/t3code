@@ -24,6 +24,27 @@ export function BetaSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <SettingsRow
+          {...searchableSetting("new-design")}
+          description="Try the quieter design: gray sidebar icons, dimmer read threads, and simpler composer controls."
+          resetAction={
+            settings.redesignEnabled !== DEFAULT_UNIFIED_SETTINGS.redesignEnabled ? (
+              <SettingResetButton
+                label="new design"
+                onClick={() =>
+                  updateSettings({ redesignEnabled: DEFAULT_UNIFIED_SETTINGS.redesignEnabled })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.redesignEnabled}
+              onCheckedChange={(checked) => updateSettings({ redesignEnabled: Boolean(checked) })}
+              aria-label="New design"
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("working-shelf")}
           description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
           resetAction={

@@ -11,12 +11,7 @@ import { type ComponentProps, memo } from "react";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  ComposerControl,
-  ComposerControlIcon,
-  ComposerControlSeparator,
-  ComposerSelectControl,
-} from "./ComposerControl";
+import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
@@ -53,47 +48,42 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
       : "Default mode. Click to enter plan mode";
 
   const interactionModeToggle = props.showInteractionModeToggle ? (
-    <>
-      <ComposerControlSeparator size={size} />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ComposerControl
-              size={size}
-              className="shrink-0 whitespace-nowrap"
-              aria-pressed={props.interactionMode === "plan"}
-              type="button"
-              onClick={props.onToggleInteractionMode}
-              aria-label={interactionModeTooltip}
-            />
-          }
-        >
-          {props.interactionMode === "plan" ? (
-            <ComposerControlIcon
-              icon={PencilRulerIcon}
-              size={size}
-              className="text-current opacity-100"
-            />
-          ) : (
-            <ComposerControlIcon
-              icon={BotIcon}
-              size={size}
-              opticalSize={size === "xs" ? "default" : "large"}
-            />
-          )}
-          <span data-composer-control-label className="sr-only sm:not-sr-only">
-            {props.interactionMode === "plan" ? "Plan" : "Build"}
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
-      </Tooltip>
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ComposerControl
+            size={size}
+            className="shrink-0 whitespace-nowrap"
+            aria-pressed={props.interactionMode === "plan"}
+            type="button"
+            onClick={props.onToggleInteractionMode}
+            aria-label={interactionModeTooltip}
+          />
+        }
+      >
+        {props.interactionMode === "plan" ? (
+          <ComposerControlIcon
+            icon={PencilRulerIcon}
+            size={size}
+            className="text-current opacity-100"
+          />
+        ) : (
+          <ComposerControlIcon
+            icon={BotIcon}
+            size={size}
+            opticalSize={size === "xs" ? "default" : "large"}
+          />
+        )}
+        <span data-composer-control-label className="sr-only sm:not-sr-only">
+          {props.interactionMode === "plan" ? "Plan" : "Build"}
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
+    </Tooltip>
   ) : null;
 
   return (
     <>
-      <ComposerControlSeparator size={size} />
-
       <Tooltip>
         <Select
           open={open}

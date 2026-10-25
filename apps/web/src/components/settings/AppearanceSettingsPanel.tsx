@@ -351,6 +351,35 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+        {/* Only the new design grays project icons, so the option only exists there. */}
+        {settings.redesignEnabled ? (
+          <SettingsRow
+            {...searchableSetting("sidebar-project-icon-colors")}
+            description="Show project icons in the sidebar in full color instead of gray."
+            resetAction={
+              settings.sidebarProjectIconColors !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconColors ? (
+                <SettingResetButton
+                  label="colored project icons"
+                  onClick={() =>
+                    updateSettings({
+                      sidebarProjectIconColors: DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconColors,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.sidebarProjectIconColors}
+                onCheckedChange={(checked) =>
+                  updateSettings({ sidebarProjectIconColors: Boolean(checked) })
+                }
+                aria-label="Colored project icons"
+              />
+            }
+          />
+        ) : null}
         <SettingsRow
           {...searchableSetting("math-rendering")}
           description="Typeset LaTeX math, such as $x^2$ or \[x^2\], in messages and Markdown previews. The composer keeps TeX source editable."

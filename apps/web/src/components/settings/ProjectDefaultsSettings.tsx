@@ -148,14 +148,12 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       description={
         isProjectScope
           ? "Model for new threads in this project."
-          : "Default model for new threads. Projects can override it."
-      }
-      status={
-        unavailable || mixedModel || modelSource === "project"
-          ? undefined
-          : settings.defaultModelSelection === null
-            ? "Automatic"
-            : undefined
+          : !unavailable &&
+              !mixedModel &&
+              modelSource !== "project" &&
+              settings.defaultModelSelection === null
+            ? "Default model for new threads, selected automatically. Projects can override it."
+            : "Default model for new threads. Projects can override it."
       }
       resetAction={
         settings.defaultModelSelection !== null ? (

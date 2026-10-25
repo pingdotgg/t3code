@@ -294,6 +294,10 @@ function ContrastAppearanceSync() {
   }, [diffColorScheme]);
 
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
+  const redesignEnabled = useClientSettings((settings) => settings.redesignEnabled);
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-redesign", redesignEnabled);
+  }, [redesignEnabled]);
   useEffect(() => {
     document.documentElement.dataset.chatWidth = chatWidth;
   }, [chatWidth]);

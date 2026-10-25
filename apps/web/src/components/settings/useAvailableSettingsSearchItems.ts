@@ -3,6 +3,7 @@ import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
+import { useClientSettings } from "~/hooks/useSettings";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
@@ -53,6 +54,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     isElectron && canManageLocalBackend ? desktopWslStateAtom : null,
   );
   const cloudPublicConfig = hasCloudPublicConfig() === true;
+  const redesignEnabled = useClientSettings((settings) => settings.redesignEnabled);
   const wslSettingsRowVisible =
     isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
 
@@ -66,5 +68,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     isWslSettingsRowVisible: wslSettingsRowVisible,
     hasThreadAutoSettlement,
     managedTunnelActive,
+    redesignEnabled,
   });
 }

@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
+import { SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -43,6 +43,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
+  ChevronDownIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   LoaderCircleIcon,
@@ -71,7 +72,11 @@ import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { cn } from "~/lib/utils";
 import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
@@ -132,17 +137,25 @@ function ThreadLineageGroup(props: {
   return (
     <div>
       {props.label ? (
-        <CollapsibleSectionHeader
-          variant="panel"
-          expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-          accessory={
-            failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
-          }
-        >
-          {props.label}
-          {!expanded && ` (${props.rows.length})`}
-        </CollapsibleSectionHeader>
+        <ThreadDetailsControl aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+          <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{props.label}</span>
+          <span aria-hidden className="min-w-2 flex-1" />
+          {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
+          {expanded ? null : (
+            <span className="text-xs font-normal tabular-nums text-muted-foreground">
+              {props.rows.length}
+            </span>
+          )}
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+              "transition-transform",
+              !expanded && "rotate-180 redesign:-rotate-90",
+            )}
+          />
+        </ThreadDetailsControl>
       ) : null}
       {expanded ? (
         <ThreadLineageRowList
@@ -397,6 +410,8 @@ export function ThreadRelationshipsPanel(props: {
     <ThreadDetailsSection
       headingId="thread-details-lineage-heading"
       title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
+      // A lone "Previous agents" row names itself; the heading returns for status or actions.
+      showHeading={runningCount > 0 || canDetach || related.length > 0 || active.length > 0}
       data-thread-relationships-panel
       actions={
         canDetach ? (

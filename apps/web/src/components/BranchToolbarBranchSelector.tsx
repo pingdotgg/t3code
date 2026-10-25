@@ -721,7 +721,7 @@ export function BranchToolbarBranchSelector({
           >
             <GitBranchIcon
               className={cn(
-                "size-3 shrink-0 opacity-70",
+                "size-3 shrink-0",
                 displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
               )}
             />
@@ -732,9 +732,7 @@ export function BranchToolbarBranchSelector({
                 className="w-full"
               />
             </ComposerContextLabel>
-            {displayMode !== "panel" ? (
-              <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-            ) : null}
+            {displayMode !== "panel" ? <ChevronDownIcon className="size-3 shrink-0" /> : null}
           </ComboboxTrigger>
         </span>
         {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (

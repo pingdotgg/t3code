@@ -53,7 +53,7 @@ export function MarkdownDetails({
         </CollapsibleTrigger>
         <CollapsiblePanel ref={revealRef} hiddenUntilFound={searching}>
           <div
-            className="pb-3 ps-6 text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]"
+            className="pb-3 ps-6 text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]"
             data-markdown-details-content=""
           >
             {content}

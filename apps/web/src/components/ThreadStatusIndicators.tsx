@@ -291,7 +291,7 @@ function PullRequestBadge({
           className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
-          <span>{presentation.text}</span>
+          <span className="redesign:text-secondary-label">{presentation.text}</span>
         </span>
       </TooltipTrigger>
       <TooltipPopup
@@ -800,7 +800,7 @@ export function ThreadWorktreeIndicator({
           />
         }
       >
-        <FolderGit2Icon className="size-3 text-muted-foreground/40" />
+        <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />
       </TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
