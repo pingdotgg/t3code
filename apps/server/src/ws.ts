@@ -129,6 +129,7 @@ import {
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
+  activeShellRowsForSubscriber,
   loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
@@ -979,6 +980,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   function* (input: {
     readonly afterSequence?: number;
     readonly requestCompletionMarker?: boolean;
+    readonly omitIdleSubagents?: boolean;
   }) {
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
@@ -1015,14 +1017,15 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           latestSequence: applicationEvents.latestApplicationSequence,
         }),
       );
-      subagentThreadIds = new Set(
-        base.threads
-          .filter((thread) => thread.lineage.relationshipToParent === "subagent")
-          .map((thread) => thread.id),
-      );
+      const rows = activeShellRowsForSubscriber(base.threads, input.omitIdleSubagents === true);
+      subagentThreadIds = rows.subagentThreadIds;
       const enriched = yield* enrichProjectShells(base.projects);
       return {
-        snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
+        snapshot: {
+          ...base,
+          threads: rows.threads,
+          projects: enriched.projects,
+        } as OrchestrationV2ShellSnapshot,
         resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
       };
     });
@@ -1772,6 +1775,7 @@ export const layerWsRpc = (
           },
           settings,
           shellResumeCompletionMarker: true,
+          shellThreadFamilies: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
           threadFind: true,
@@ -1816,6 +1820,26 @@ export const layerWsRpc = (
               cause,
             }),
         ),
+      );
+
+      // Rows the shell can omit, read with the same snapshot sequence the shell uses.
+      const readOmittableShellRows = Effect.fn("ws.orchestrationV2.readOmittableShellRows")(
+        function* (
+          options: { readonly subagentFamilyOf: ThreadId } | { readonly worktreePath: string },
+          message: string,
+        ) {
+          const { threads, snapshotSequence } = yield* loadShellSnapshotParts({
+            sql,
+            readThreads: threadManagement.readShellSnapshot({ location: "active", ...options }),
+            listProjects: Effect.succeed([]),
+            latestSequence: applicationEvents.latestApplicationSequence,
+          }).pipe(
+            Effect.mapError(
+              (cause) => new OrchestrationV2GetShellSnapshotError({ message, cause }),
+            ),
+          );
+          return { snapshotSequence, threads: threads.threads };
+        },
       );
 
       const subscribeOrchestrationV2ArchivedShell = Effect.fn(
@@ -1966,6 +1990,16 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           getOrchestrationV2ArchivedShellSnapshot,
+        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
+          readOmittableShellRows(
+            { subagentFamilyOf: input.threadId },
+            "Failed to load the thread family",
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: (input) =>
+          readOmittableShellRows(
+            { worktreePath: input.worktreePath },
+            "Failed to load the worktree's threads",
+          ).pipe(Effect.map(({ threads }) => ({ threadIds: threads.map((thread) => thread.id) }))),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(

@@ -1124,6 +1124,19 @@ describe("thread outbox", () => {
     ).toBe("send");
   });
 
+  it("removes a missing-thread message only after a settled family read when idle children can be omitted", () => {
+    const missing = {
+      isCreation: false,
+      threadExists: false,
+      shellStatus: "live",
+      environmentConnected: true,
+      threadBusy: false,
+    } as const;
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "pending" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "failed" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "settled" })).toBe("remove");
+  });
+
   it("sends existing-thread messages whenever connected so queued messages can steer", () => {
     expect(
       resolveThreadOutboxDeliveryAction({

@@ -667,6 +667,10 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
+  omitIdleSubagents: Schema.optionalKey(Schema.String),
+});
+
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   compactTurnItems: Schema.optionalKey(Schema.String),
 });
@@ -688,6 +692,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,
+      query: EnvironmentOrchestrationShellSnapshotQuery,
       success: OrchestrationV2ShellSnapshot,
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

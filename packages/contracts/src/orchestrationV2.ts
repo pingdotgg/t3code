@@ -1962,6 +1962,33 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
+const LIVE_SHELL_STATUSES: ReadonlySet<OrchestrationV2ShellThreadStatus> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/**
+ * A subagent child that can still need the user or hold its parent. Shells that omit idle children
+ * keep these, so every reader of live child rows (pending requests, working parents, background
+ * work) still finds them.
+ */
+export function isLiveSubagentShell(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "activityRunStatus" | "status" | "pendingRuntimeRequest" | "pendingBackgroundTasks"
+  >,
+): boolean {
+  return (
+    (thread.activityRunStatus ?? null) !== null ||
+    LIVE_SHELL_STATUSES.has(thread.status) ||
+    thread.pendingRuntimeRequest !== null ||
+    (thread.pendingBackgroundTasks?.length ?? 0) > 0
+  );
+}
+
 export const OrchestrationV2ThreadShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
   snapshotSequence: NonNegativeInt,
@@ -3190,6 +3217,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   searchThread: "orchestration.searchThread",
   searchThreadStream: "orchestration.searchThreadStream",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  getThreadFamily: "orchestration.getThreadFamily",
+  getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
@@ -3307,8 +3336,41 @@ export type OrchestrationV2GetThreadProjectionInput =
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Snapshots leave out idle subagent children; read them with `getThreadFamily`. Send only to
+   * servers that advertise `shellThreadFamilies`.
+   */
+  omitIdleSubagents: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
+
+export const OrchestrationV2GetThreadFamilyInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThreadFamilyInput.Type;
+
+/**
+ * The active subagent threads that share the requested thread's `lineage.rootThreadId`: its whole
+ * subagent tree, in any run state. An unknown thread has an empty family; a deleted one still
+ * names its root.
+ */
+export const OrchestrationV2ThreadFamily = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  threads: Schema.Array(OrchestrationV2ThreadShell),
+});
+export type OrchestrationV2ThreadFamily = typeof OrchestrationV2ThreadFamily.Type;
+
+export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+});
+export type OrchestrationV2GetWorktreeThreadIdsInput =
+  typeof OrchestrationV2GetWorktreeThreadIdsInput.Type;
+
+/** Active threads on a worktree path, including subagent children a shell may leave out. */
+export const OrchestrationV2WorktreeThreadIds = Schema.Struct({
+  threadIds: Schema.Array(ThreadId),
+});
+export type OrchestrationV2WorktreeThreadIds = typeof OrchestrationV2WorktreeThreadIds.Type;
 
 export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -3678,6 +3740,14 @@ export const OrchestrationV2RpcSchemas = {
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationV2ArchivedShellSnapshot,
+  },
+  getThreadFamily: {
+    input: OrchestrationV2GetThreadFamilyInput,
+    output: OrchestrationV2ThreadFamily,
+  },
+  getWorktreeThreadIds: {
+    input: OrchestrationV2GetWorktreeThreadIdsInput,
+    output: OrchestrationV2WorktreeThreadIds,
   },
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,

@@ -33,17 +33,22 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
   >;
   readonly timeoutMs?: number;
+  readonly omitIdleSubagents?: boolean;
 }) {
+  const endpoint = {
+    query: input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {},
+  };
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
     group: "orchestration",
     method: "GET",
-    url: (urls) => urls.shellSnapshot(),
+    url: (urls) => urls.shellSnapshot(endpoint),
     timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
     request: ({ client, headers }) =>
       client
         .shellSnapshot({
           headers: withOrchestrationProtocolHeader(headers),
+          ...endpoint,
           responseMode: "response-only",
         })
         .pipe(Effect.flatMap(decodeShellSnapshotResponse)),
@@ -80,6 +85,7 @@ export class ShellSnapshotLoader extends Context.Service<
   {
     readonly load: (
       prepared: PreparedConnection,
+      options?: { readonly omitIdleSubagents?: boolean },
     ) => Effect.Effect<Option.Option<DeferredShellSnapshot>>;
   }
 >()("@t3tools/client-runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
@@ -95,8 +101,13 @@ export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClien
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
     return ShellSnapshotLoader.of({
-      load: (prepared: PreparedConnection) =>
-        fetchEnvironmentShellSnapshot({ prepared, signer, remoteAuthorization }).pipe(
+      load: (prepared, options) =>
+        fetchEnvironmentShellSnapshot({
+          prepared,
+          signer,
+          remoteAuthorization,
+          ...(options?.omitIdleSubagents === true ? { omitIdleSubagents: true } : {}),
+        }).pipe(
           Effect.map(Option.some<DeferredShellSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchCause((cause) =>

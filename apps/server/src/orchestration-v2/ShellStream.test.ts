@@ -17,9 +17,11 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  activeShellRowsForSubscriber,
   bufferShellLiveStream,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
+  omitIdleSubagentShells,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemsFromInitialSnapshot,
   shouldPublishShellApplicationEvent,
@@ -138,6 +140,69 @@ it.effect("coalesces a slow shell subscriber by identity and location in sequenc
 function shellFixture(overrides: Partial<OrchestrationV2ThreadShell>): OrchestrationV2ThreadShell {
   return { id: "thread-a", archivedAt: null, ...overrides } as OrchestrationV2ThreadShell;
 }
+
+describe("omitIdleSubagentShells", () => {
+  const row = (
+    id: string,
+    parent: string | null,
+    overrides: Partial<OrchestrationV2ThreadShell> = {},
+  ) =>
+    shellFixture({
+      id: ThreadId.make(id),
+      lineage: {
+        parentThreadId: parent === null ? null : ThreadId.make(parent),
+        relationshipToParent: parent === null ? null : "subagent",
+        rootThreadId: ThreadId.make("root"),
+      },
+      status: "completed",
+      activityRunStatus: null,
+      pendingRuntimeRequest: null,
+      pendingBackgroundTasks: [],
+      ...overrides,
+    });
+
+  it("drops idle leaf children but keeps live ones and the middle of nested chains", () => {
+    const threads = [
+      row("root", null),
+      row("idle", "root"),
+      row("running", "root", { activityRunStatus: "running" }),
+      row("queued", "root", { status: "queued" }),
+      row("asking", "root", {
+        pendingRuntimeRequest: {
+          id: "request" as never,
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(0),
+        },
+      }),
+      row("background", "root", {
+        pendingBackgroundTasks: [{ kind: "subagent" } as never],
+      }),
+      // Idle, but a woken grandchild walks through it to reach the root's badge.
+      row("middle", "root"),
+      row("grandchild", "middle"),
+    ];
+    expect(omitIdleSubagentShells(threads).map((thread) => thread.id)).toEqual([
+      "root",
+      "running",
+      "queued",
+      "asking",
+      "background",
+      "middle",
+    ]);
+  });
+
+  it("still filters the transcript events of omitted children for a subscriber that opts in", () => {
+    const threads = [row("root", null), row("idle", "root")];
+    const omitted = activeShellRowsForSubscriber(threads, true);
+    expect(omitted.threads.map((thread) => thread.id)).toEqual(["root"]);
+    expect(
+      shouldPublishShellApplicationEvent(
+        { event: { threadId: "idle", type: "turn-item.updated" } } as ApplicationStoredEvent,
+        omitted.subagentThreadIds,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("shellStreamItemsFromInitialSnapshot", () => {
   it("keeps thread rows out of the metadata-only enrichment frame", () => {

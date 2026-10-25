@@ -6,6 +6,7 @@ import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
   ProjectionRecords,
+  ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import {
   type ChatAttachment,
@@ -383,9 +384,9 @@ export interface ThreadManagementServiceShape {
     readonly location?: "active" | "archive";
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSubagentThreadIds"];
-  readonly readShellSnapshot: (options?: {
-    readonly location?: "active" | "archive";
-  }) => Effect.Effect<
+  readonly readShellSnapshot: (
+    options?: Pick<ShellSnapshotOptions, "location" | "subagentFamilyOf" | "worktreePath">,
+  ) => Effect.Effect<
     Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>,
     Orchestrator.OrchestratorV2Error
   >;

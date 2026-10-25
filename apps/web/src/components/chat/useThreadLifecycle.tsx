@@ -418,8 +418,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     const threadRef = scopeThreadRef(environmentId, threadId);
     const isEnvironmentLive = () =>
       appAtomRegistry.get(environmentShell.stateValueAtom(environmentId)).status === "live";
+    // The shell can leave idle subagent children out, so absence is not deletion there: the
+    // route decides from the thread's own detail.
+    const shellOmitsChildren = serverConfig?.shellThreadFamilies === true;
     // A just-launched child can reach this timeline before its shell syncs.
-    if (isEnvironmentLive() && readThreadShell(threadRef) === null) {
+    if (!shellOmitsChildren && isEnvironmentLive() && readThreadShell(threadRef) === null) {
       const location = router.latestLocation;
       await waitForThreadShell(threadRef, RELATED_THREAD_SHELL_WAIT_MS);
       if (
@@ -431,7 +434,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       }
     }
     const shell = readThreadShell(threadRef);
-    if (shell === null ? isEnvironmentLive() : shell.deletedAt != null) {
+    if (shell === null ? !shellOmitsChildren && isEnvironmentLive() : shell.deletedAt != null) {
       toastManager.add({ type: "info", title: "This thread is no longer available" });
       return;
     }

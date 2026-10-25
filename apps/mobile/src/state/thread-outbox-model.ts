@@ -4,6 +4,7 @@ import {
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import {
   CommandId,
   EnvironmentId,
@@ -176,6 +177,11 @@ export function resolveThreadOutboxDeliveryAction(input: {
   readonly shellStatus: EnvironmentShellStatus;
   readonly environmentConnected: boolean;
   readonly threadBusy: boolean;
+  /**
+   * Set when the shell can leave idle subagent children out: absence alone is not deletion there,
+   * only a settled family read without the row is.
+   */
+  readonly familyRead?: ThreadFamilyRead;
 }): ThreadOutboxDeliveryAction {
   if (input.isCreation) {
     if (input.threadExists) {
@@ -187,7 +193,10 @@ export function resolveThreadOutboxDeliveryAction(input: {
     return input.environmentConnected && input.shellStatus === "live" ? "send" : "wait";
   }
   if (!input.threadExists) {
-    return input.shellStatus === "live" ? "remove" : "wait";
+    return input.shellStatus === "live" &&
+      (input.familyRead === undefined || input.familyRead === "settled")
+      ? "remove"
+      : "wait";
   }
   return input.environmentConnected ? "send" : "wait";
 }

@@ -9,6 +9,7 @@ import type {
   OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
 import {
+  isLiveSubagentShell,
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
 } from "@t3tools/contracts";
@@ -61,6 +62,49 @@ export function buildActiveShellSnapshot(input: {
     projects: input.projects,
     threads: input.threads.threads,
     archivedThreads: [],
+  };
+}
+
+/**
+ * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
+ * family instead. A child stays while it is live or the parent of another child, so the request
+ * and working walks over shell rows never meet a gap in a nested chain.
+ */
+export function omitIdleSubagentShells(
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+): ReadonlyArray<OrchestrationV2ThreadShell> {
+  const parentIds = new Set<string>();
+  for (const thread of threads) {
+    if (thread.lineage.relationshipToParent === "subagent" && thread.lineage.parentThreadId) {
+      parentIds.add(thread.lineage.parentThreadId);
+    }
+  }
+  return threads.filter(
+    (thread) =>
+      thread.lineage.relationshipToParent !== "subagent" ||
+      isLiveSubagentShell(thread) ||
+      parentIds.has(thread.id),
+  );
+}
+
+/**
+ * The active rows a shell subscriber gets, and the subagent ids whose transcript events its stream
+ * drops. The ids come from every row, so an omitted child that wakes keeps that filter.
+ */
+export function activeShellRowsForSubscriber(
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  omitIdleSubagents: boolean,
+): {
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly subagentThreadIds: Set<string>;
+} {
+  return {
+    threads: omitIdleSubagents ? omitIdleSubagentShells(threads) : threads,
+    subagentThreadIds: new Set(
+      threads
+        .filter((thread) => thread.lineage.relationshipToParent === "subagent")
+        .map((thread) => thread.id),
+    ),
   };
 }
 

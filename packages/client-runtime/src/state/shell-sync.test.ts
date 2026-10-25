@@ -27,7 +27,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { makeEnvironmentShellState } from "./shell.ts";
+import { type EnvironmentShellState, makeEnvironmentShellState } from "./shell.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import { v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
@@ -475,6 +475,98 @@ describe("environment shell synchronization", () => {
       const state = yield* SubscriptionRef.get(shellState);
       expect(Option.getOrThrow(state.snapshot).snapshotSequence).toBe(4);
       expect(Option.getOrThrow(state.snapshot).projects[0]?.title).toBe("Server reset");
+    }),
+  );
+
+  it.effect("opts in to idle-child omission and counts authoritative snapshots and removals", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const subscribeInput = yield* Deferred.make<unknown>();
+      const loadOptions = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const client = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: unknown) =>
+          Stream.unwrap(
+            Deferred.succeed(subscribeInput, input).pipe(Effect.as(Stream.fromQueue(events))),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const familySession: RpcSession.RpcSession = {
+        ...session(client),
+        initialConfig: Effect.succeed({
+          shellResumeCompletionMarker: true,
+          shellThreadFamilies: true,
+        } as never),
+      };
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(familySession)),
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.none()),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
+        load: (_prepared, options) =>
+          Ref.update(loadOptions, (all) => [...all, options]).pipe(
+            Effect.as(Option.some(LIVE_SHELL_SNAPSHOT)),
+          ),
+      });
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+      );
+      const stateWhere = (predicate: (state: EnvironmentShellState) => boolean) =>
+        SubscriptionRef.changes(shellState).pipe(Stream.filter(predicate), Stream.runHead);
+
+      // Both transports must omit, or omitted children would come back through the socket.
+      expect(yield* Deferred.await(subscribeInput)).toMatchObject({
+        afterSequence: 1,
+        omitIdleSubagents: true,
+      });
+      expect(yield* Ref.get(loadOptions)).toEqual([{ omitIdleSubagents: true }]);
+      const loaded = Option.getOrThrow(yield* stateWhere((state) => state.generation > 0));
+      expect(loaded.removedAt.size).toBe(0);
+
+      const gone = ThreadId.make("thread-gone");
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: { ...LIVE_SHELL_SNAPSHOT, threads: [] },
+        resolvedRepositoryIdentityRoots: [],
+      });
+      yield* Queue.offer(events, {
+        kind: "thread.removed",
+        sequence: 2,
+        location: "active",
+        threadId: gone,
+      });
+      const removed = Option.getOrThrow(yield* stateWhere((state) => state.removedAt.size > 0));
+      // An enrichment refresh is not authoritative.
+      expect(removed.generation).toBe(loaded.generation);
+      expect(removed.removedAt.get(gone)).toBe(2);
+
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 5 },
+      });
+      const reset = Option.getOrThrow(
+        yield* stateWhere((state) => state.generation > loaded.generation),
+      );
+      expect(reset.removedAt.size).toBe(0);
     }),
   );
 

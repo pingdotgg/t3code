@@ -1107,6 +1107,92 @@ const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(functio
   return { projectId, activeThreadId, forkThreadId, otherThreadId };
 });
 
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)("%s shells read a subagent family and a worktree's threads", ([, layer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const projectId = ProjectId.make("project:family");
+    const worktreePath = "/repo/.t3/worktrees/family";
+    const id = (name: string) => ThreadId.make(`thread:family:${name}`);
+    const payloadOf = (input: {
+      readonly name: string;
+      readonly parent?: string;
+      readonly root?: string;
+      readonly worktreePath?: string;
+      readonly archived?: boolean;
+    }) =>
+      ({
+        createdBy: "user",
+        creationSource: input.parent === undefined ? "web" : "mcp",
+        id: id(input.name),
+        projectId,
+        title: input.name,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: input.worktreePath ?? null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: input.parent === undefined ? null : id(input.parent),
+          relationshipToParent: input.parent === undefined ? null : "subagent",
+          rootThreadId: id(input.root ?? input.name),
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: input.archived === true ? now : null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      }) as const;
+    const createThread = (input: Parameters<typeof payloadOf>[0]) =>
+      store.apply({
+        id: EventId.make(`event:family:${input.name}`),
+        type: "thread.created",
+        threadId: id(input.name),
+        occurredAt: now,
+        payload: payloadOf(input),
+      });
+    yield* createThread({ name: "root", worktreePath });
+    yield* createThread({ name: "child", parent: "root", root: "root", worktreePath });
+    yield* createThread({ name: "grandchild", parent: "child", root: "root" });
+    yield* createThread({ name: "archived-child", parent: "root", root: "root", archived: true });
+    yield* createThread({ name: "other", worktreePath: "/repo" });
+    yield* createThread({ name: "other-child", parent: "other", root: "other", worktreePath });
+
+    const family = (threadId: ThreadId) =>
+      store
+        .getShellSnapshot({ location: "active", subagentFamilyOf: threadId })
+        .pipe(Effect.map((snapshot) => snapshot.threads.map((thread) => thread.id)));
+    // Any member, or the root itself, names the same active subagent tree.
+    assert.sameMembers([...(yield* family(id("root")))], [id("child"), id("grandchild")]);
+    assert.sameMembers([...(yield* family(id("grandchild")))], [id("child"), id("grandchild")]);
+    assert.deepEqual([...(yield* family(id("missing")))], []);
+
+    // Includes another root's idle child on the same path, which a shell may leave out.
+    const onWorktree = yield* store.getShellSnapshot({ location: "active", worktreePath });
+    assert.sameMembers(
+      onWorktree.threads.map((thread) => thread.id),
+      [id("root"), id("child"), id("other-child")],
+    );
+    // A fork keeps its deleted source's root, so the deleted root still names the live tree.
+    yield* store.apply({
+      id: EventId.make("event:family:root-deleted"),
+      type: "thread.deleted",
+      threadId: id("root"),
+      occurredAt: now,
+      payload: { ...payloadOf({ name: "root", worktreePath }), deletedAt: now },
+    });
+    assert.sameMembers([...(yield* family(id("root")))], [id("child"), id("grandchild")]);
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("lists only active subagent IDs without loading shell data", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

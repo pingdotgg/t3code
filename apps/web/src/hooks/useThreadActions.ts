@@ -28,6 +28,7 @@ import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -290,6 +291,10 @@ export function useThreadActions() {
   const loadSessionState = useAtomQueryRunner(environmentSession.sessionStateAtom, {
     reportFailure: false,
   });
+  const loadWorktreeThreadIds = useAtomQueryRunner(orchestrationEnvironment.worktreeThreadIds, {
+    reportFailure: false,
+    refresh: true,
+  });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -435,16 +440,32 @@ export function useThreadActions() {
       deletedIds && deletedIds.size > 0
         ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
         : threads;
-    const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-      survivingThreads,
-      threadRef.threadId,
-    );
-    const displayWorktreePath = orphanedWorktreePath
-      ? formatWorktreePathForDisplay(orphanedWorktreePath)
-      : null;
     const environmentConfig = appAtomRegistry
       .get(environmentServerConfigsAtom)
       .get(threadRef.environmentId);
+    let orphanedWorktreePath = getOrphanedWorktreePathForThread(
+      survivingThreads,
+      threadRef.threadId,
+    );
+    // A shell that leaves idle subagent children out cannot prove nobody else uses the worktree,
+    // so the server's list decides. A failed read keeps the worktree.
+    if (orphanedWorktreePath !== null && environmentConfig?.shellThreadFamilies === true) {
+      const occupants = await loadWorktreeThreadIds({
+        environmentId: threadRef.environmentId,
+        input: { worktreePath: orphanedWorktreePath },
+      });
+      if (
+        occupants._tag !== "Success" ||
+        occupants.value.threadIds.some(
+          (threadId) => threadId !== threadRef.threadId && deletedIds?.has(threadId) !== true,
+        )
+      ) {
+        orphanedWorktreePath = null;
+      }
+    }
+    const displayWorktreePath = orphanedWorktreePath
+      ? formatWorktreePathForDisplay(orphanedWorktreePath)
+      : null;
     const localApi = readLocalApi();
     let canDeleteWorktree = false;
     if (

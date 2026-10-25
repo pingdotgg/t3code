@@ -406,6 +406,12 @@ export interface ShellSnapshotOptions {
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
+  /**
+   * Only the subagent threads sharing this thread's `lineage.rootThreadId`. The thread may be
+   * deleted: forks keep a deleted source's root, and their subagent trees still need it.
+   */
+  readonly subagentFamilyOf?: ThreadId;
+  readonly worktreePath?: string;
 }
 
 export interface ProjectionStoreV2Shape {
@@ -5697,7 +5703,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const selectShellThreadRows = (
       threadId?: ThreadId,
-      { location, projectId, unsettledOnly = false }: ShellSnapshotOptions = {},
+      {
+        location,
+        projectId,
+        unsettledOnly = false,
+        subagentFamilyOf,
+        worktreePath,
+      }: ShellSnapshotOptions = {},
     ) =>
       sql<ShellThreadRow>`
             SELECT
@@ -5898,6 +5910,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               unsettledOnly
                 ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
                 : sql``
+            }${
+              subagentFamilyOf === undefined
+                ? sql``
+                : sql` AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent' AND json_extract(t.payload_json, '$.lineage.rootThreadId') = (
+                    SELECT json_extract(member.payload_json, '$.lineage.rootThreadId')
+                    FROM orchestration_v2_projection_threads member
+                    WHERE member.thread_id = ${subagentFamilyOf}
+                  )`
+            }${
+              worktreePath === undefined
+                ? sql``
+                : sql` AND json_extract(t.payload_json, '$.worktreePath') = ${worktreePath}`
             }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
@@ -6709,6 +6733,22 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               options?.unsettledOnly &&
               (projection.thread.settledAt !== null ||
                 projection.thread.settledOverride === "settled")
+            ) {
+              return false;
+            }
+            if (options?.subagentFamilyOf !== undefined) {
+              const member = existing.get(options.subagentFamilyOf)?.thread;
+              if (
+                member === undefined ||
+                projection.thread.lineage.relationshipToParent !== "subagent" ||
+                projection.thread.lineage.rootThreadId !== member.lineage.rootThreadId
+              ) {
+                return false;
+              }
+            }
+            if (
+              options?.worktreePath !== undefined &&
+              projection.thread.worktreePath !== options.worktreePath
             ) {
               return false;
             }

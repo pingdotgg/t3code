@@ -59,6 +59,15 @@ connection nor overwrite newer live data during a reconnect. Loading and
 resuming snapshots belongs to the shared state services, so every view agrees
 on which data is current.
 
+Servers that advertise `shellThreadFamilies` leave idle subagent children out of
+shell snapshots when the client asks. A child stays while it has a live or
+queued run, a pending request or background work, or a subagent child of its
+own, so badge and working walks never meet a gap. Other child rows come from the
+[thread family](../../packages/client-runtime/src/state/threadFamilies.ts) that
+a thread view or a queued message mounts. A missing shell row therefore does not
+prove a thread is gone: code that deletes data or a worktree on absence must
+check the family or the server first.
+
 [Thread detail](../../packages/client-runtime/src/state/threads.ts) separates
 subscription lifetime from cache lifetime. Mounted consumers share one live
 stream, which stops when the last consumer unmounts; hidden mounted routes still
