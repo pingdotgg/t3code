@@ -6,7 +6,10 @@ private final class WorkspaceTabBar: UITabBar {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    let row = tabButtons(in: self).reduce(CGRect.null) { $0.union(convert($1.bounds, from: $1)) }
+    // iOS 26.6 doesn't copy item identifiers onto its tab buttons; the bar holds no other controls.
+    let identified = tabButtons(in: self) { $0.accessibilityIdentifier?.hasPrefix("workspace-tab-") == true }
+    let buttons = identified.isEmpty ? tabButtons(in: self) { _ in true } : identified
+    let row = buttons.reduce(CGRect.null) { $0.union(convert($1.bounds, from: $1)) }
     if !row.isNull { onContentLayout?(row) }
   }
 
@@ -15,12 +18,10 @@ private final class WorkspaceTabBar: UITabBar {
     invalidateIntrinsicContentSize()
   }
 
-  private func tabButtons(in view: UIView) -> [UIView] {
+  private func tabButtons(in view: UIView, matching match: (UIView) -> Bool) -> [UIView] {
     view.subviews.filter { !$0.isHidden }.flatMap { subview in
-      if subview is UIControl, subview.accessibilityIdentifier?.hasPrefix("workspace-tab-") == true {
-        return [subview]
-      }
-      return tabButtons(in: subview)
+      if subview is UIControl, match(subview) { return [subview] }
+      return tabButtons(in: subview, matching: match)
     }
   }
 }
