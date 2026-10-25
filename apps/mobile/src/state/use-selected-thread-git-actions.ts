@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useEffectEvent, useMemo } from "react";
+import { useAtomMount } from "@effect/atom-react";
+import { useCallback, useMemo } from "react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
+  createVcsStatusRevalidationAtomFamily,
   type GitActionRequestInput,
   type VcsActionOperation,
   type VcsRef,
@@ -26,11 +28,30 @@ import { vcsActionManager, vcsEnvironment } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
-import { setPendingConnectionError } from "./use-remote-environment-registry";
+import {
+  environmentConnectedAtom,
+  setPendingConnectionError,
+} from "./use-remote-environment-registry";
 import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+
+function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
+  const error = Cause.squash(cause);
+  return error instanceof Error ? error.message : "Failed to refresh git status.";
+}
+
+// Selecting a thread or reconnecting its environment refreshes the checkout's
+// status once, shared by every sheet that shows it.
+const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
+  refreshStatus: vcsEnvironment.refreshStatus,
+  connected: environmentConnectedAtom,
+  onRefreshed: (result) =>
+    setPendingConnectionError(
+      AsyncResult.isFailure(result) ? refreshFailureMessage(result.cause) : null,
+    ),
+});
 
 export function useSelectedThreadGitActions() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -41,8 +62,7 @@ export function useSelectedThreadGitActions() {
   const createRef = useAtomCommand(vcsEnvironment.createRef, { reportFailure: false });
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
-  const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
-    useThreadSelection();
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
   const canWriteSourceControl = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthSourceControlWriteScope,
@@ -130,9 +150,7 @@ export function useSelectedThreadGitActions() {
             execute,
           );
       if (AsyncResult.isFailure(result)) {
-        const error = Cause.squash(result.cause);
-        const message = error instanceof Error ? error.message : "Failed to refresh git status.";
-        setPendingConnectionError(message);
+        setPendingConnectionError(refreshFailureMessage(result.cause));
         return null;
       }
       setPendingConnectionError(null);
@@ -141,32 +159,13 @@ export function useSelectedThreadGitActions() {
     [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
   );
 
-  // Key refreshes on primitives; streaming frequently replaces the selected thread object.
-  const selectedEnvironmentId = selectedThread?.environmentId ?? null;
-  const selectedThreadId = selectedThread?.id ?? null;
-  const hasSelectedThreadProject = selectedThreadProject !== null;
-  const isEnvironmentConnected = selectedEnvironmentRuntime?.connectionState === "connected";
-  const refreshOnSelection = useEffectEvent(() => {
-    void refreshSelectedThreadGitStatus({ quiet: true });
-  });
-  useEffect(() => {
-    if (
-      selectedEnvironmentId === null ||
-      selectedThreadId === null ||
-      !hasSelectedThreadProject ||
-      selectedThreadCwd === null ||
-      !isEnvironmentConnected
-    ) {
-      return;
-    }
-    refreshOnSelection();
-  }, [
-    selectedEnvironmentId,
-    selectedThreadId,
-    hasSelectedThreadProject,
-    selectedThreadCwd,
-    isEnvironmentConnected,
-  ]);
+  useAtomMount(
+    selectedThreadStatusRevalidation(
+      selectedThread && selectedThreadProject && selectedThreadCwd
+        ? { environmentId: selectedThread.environmentId, cwd: selectedThreadCwd }
+        : null,
+    ),
+  );
 
   const runSelectedThreadGitMutation = useCallback(
     async <T, E>(
