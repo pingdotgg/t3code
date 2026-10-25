@@ -92,8 +92,11 @@ export function useReviewFilePatches({
       const added = indices.filter((index) => !previous.includes(index));
       return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
     });
-  const loadNextFiles = () =>
+  // The first unsettled file already requested means a batch is in flight; wait for it.
+  const loadNextFiles = () => {
+    if (queries.some(({ index }) => index === settledFileCount)) return;
     requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
+  };
   const requestFile = (index: number) => requestFiles([index]);
   const renderableFiles = source
     ? files.map((file, index): FileDiffMetadata => {
