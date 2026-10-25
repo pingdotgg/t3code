@@ -5,6 +5,7 @@ import type {
 } from "@react-navigation/native-stack";
 import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
+import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
@@ -153,6 +154,7 @@ export function V5StackHeader(props: {
   const theme = useMobileNavigationTheme();
   const nativeMetrics = useNativeLayoutMetrics();
   const deviceType = useDeviceType();
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const searchRef = useRef<SearchBarCommands>(null);
   const itemProps = { tintColor: options.headerTintColor, canGoBack: props.canGoBack };
   const leading = convertItems(options.unstable_headerLeftItems?.(itemProps) ?? [], "leading");
@@ -230,6 +232,28 @@ export function V5StackHeader(props: {
     if (trailing.length)
       trailing.push({ type: "spacer", id: "compose-group", sizing: "fixed", width: 8 });
     trailing.push(compose);
+  }
+  // The vertical bar has no keyboard accessory row, so it carries its own dismiss. A regular-width
+  // primary column draws a horizontal bar beside the detail column's vertical one. The first
+  // trailing item sits at the bar's far end; the flexible space keeps it next to the keyboard.
+  if (
+    keyboardVisible &&
+    nativeMetrics &&
+    nativeMetrics.verticalBarEdge !== "none" &&
+    (props.column !== "primary" || nativeMetrics.horizontalSizeClass === "compact")
+  ) {
+    trailing.unshift(
+      {
+        type: "item",
+        id: "dismiss-keyboard",
+        title: "Dismiss keyboard",
+        icon: { type: "sfSymbol", name: "keyboard.chevron.compact.down" },
+        onPress: () => void KeyboardController.dismiss(),
+        // The folded bar is short; keep this out of the overflow menu.
+        visibilityPriority: "high",
+      },
+      { type: "spacer", id: "dismiss-keyboard-space", sizing: "flexible" },
+    );
   }
   const left = options.headerLeft?.(itemProps);
   const right = options.headerRight?.(itemProps);
