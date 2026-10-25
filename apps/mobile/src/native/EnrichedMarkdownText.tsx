@@ -5,6 +5,7 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  markdownForNativeRendering,
   markdownWithFileEmbeds,
   markdownWithHtml,
   markdownWithInlineFileLinks,
@@ -157,13 +158,17 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
   const { markdown, fileHrefs } = useMemo(() => {
+    if (!fileEmbedLabel) {
+      return {
+        markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        fileHrefs: new Set<string>(),
+      };
+    }
     const content = markdownWithInlineFileLinks(
       markdownWithHtml(props.markdown),
       ENRICHED_INLINE_FILE_LINK_REGEX,
     );
-    const files = fileEmbedLabel
-      ? markdownWithFileEmbeds(content, fileEmbedLabel)
-      : { markdown: content, fileHrefs: new Set<string>() };
+    const files = markdownWithFileEmbeds(content, fileEmbedLabel);
     return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
   }, [props.markdown, fileEmbedLabel]);
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
