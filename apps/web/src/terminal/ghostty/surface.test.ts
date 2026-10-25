@@ -11,6 +11,7 @@ import {
   resolveTerminalMouseData,
   terminalLinkAtPositionWithRange,
   terminalContentOriginY,
+  terminalSelectionAutoscrollRows,
   terminalWheelDeltaRows,
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
@@ -744,6 +745,21 @@ describe("terminalWheelDeltaRows", () => {
     }
     expect(scrolled).toBe(1);
     expect(remainder).toBeCloseTo(4 / 16);
+  });
+});
+
+// regression: #19492 drag selection scrolled one row per tick however far past the edge
+describe("terminalSelectionAutoscrollRows", () => {
+  it("scrolls more rows per tick the farther the pointer is past an edge", () => {
+    const top = 100;
+    const bottom = 500;
+    expect(terminalSelectionAutoscrollRows(300, top, bottom)).toBe(0);
+    expect(terminalSelectionAutoscrollRows(99, top, bottom)).toBe(-1);
+    expect(terminalSelectionAutoscrollRows(75, top, bottom)).toBe(-8);
+    expect(terminalSelectionAutoscrollRows(501, top, bottom)).toBe(1);
+    expect(terminalSelectionAutoscrollRows(525, top, bottom)).toBe(8);
+    expect(terminalSelectionAutoscrollRows(550, top, bottom)).toBe(15);
+    expect(terminalSelectionAutoscrollRows(2_000, top, bottom)).toBe(15);
   });
 });
 

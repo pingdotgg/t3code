@@ -423,6 +423,21 @@ export function terminalWheelDeltaRows(
   return { rows, remainder: total - rows };
 }
 
+// Ramp from 1 to 15 rows per autoscroll tick over the first 50px past the edge, as xterm.js does.
+const SELECTION_AUTOSCROLL_RAMP_PX = 50;
+const SELECTION_AUTOSCROLL_MAX_ROWS = 15;
+
+export function terminalSelectionAutoscrollRows(
+  clientY: number,
+  top: number,
+  bottom: number,
+): number {
+  const distance = clientY < top ? clientY - top : clientY > bottom ? clientY - bottom : 0;
+  if (distance === 0) return 0;
+  const ramp = Math.max(-1, Math.min(1, distance / SELECTION_AUTOSCROLL_RAMP_PX));
+  return Math.sign(ramp) + Math.round(ramp * (SELECTION_AUTOSCROLL_MAX_ROWS - 1));
+}
+
 function terminalWheelArrowData(rows: number, applicationCursorKeys: boolean): string {
   if (rows === 0) return "";
   const sequence =
@@ -1434,7 +1449,7 @@ export class GhosttyTerminalSurface {
     const bounds = this.canvas.getBoundingClientRect();
     const top = Math.max(bounds.top, 0) + CONTENT_PADDING;
     const bottom = Math.min(bounds.bottom, window.innerHeight) - CONTENT_PADDING;
-    this.setSelectionAutoscroll(event.clientY < top ? -1 : event.clientY > bottom ? 1 : 0);
+    this.setSelectionAutoscroll(terminalSelectionAutoscrollRows(event.clientY, top, bottom));
     const cell = this.cellAt(event.clientX, event.clientY);
     if (cell.x === this.selectionEnd?.x && cell.y === this.selectionEnd.y) return;
     this.extendSelectionTo(event.clientX, event.clientY);
