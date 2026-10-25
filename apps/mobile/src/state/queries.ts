@@ -30,7 +30,7 @@ import * as Cause from "effect/Cause";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
@@ -370,11 +370,11 @@ export function usePaginatedBranches(target: VcsRefTarget) {
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
-  const normalizedTarget = {
-    environmentId: target.environmentId,
-    cwd: target.cwd,
-    query: normalizeComposerPathSearchQuery(target.query),
-  };
+  const query = normalizeComposerPathSearchQuery(target.query);
+  const normalizedTarget = useMemo(
+    () => ({ environmentId: target.environmentId, cwd: target.cwd, query }),
+    [target.environmentId, target.cwd, query],
+  );
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
   const fileAccessSession = useEnvironmentQuery(
     debouncedTarget.environmentId === null
