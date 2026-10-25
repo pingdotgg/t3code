@@ -146,6 +146,15 @@ describe("GitHub media URLs", () => {
       fileName: "a.mp4",
     });
     expect(media("https://raw.githubusercontent.com/o/r/main/100%.png")?.fileName).toBe("100%.png");
+    expect(
+      media("https://github.com/owner/repo/releases/download/v1%2Btest/shot%20%231%25.png?x=1#a"),
+    ).toEqual({
+      fetchUrl: "https://github.com/owner/repo/releases/download/v1%2Btest/shot%20%231%25.png",
+      fileName: "shot #1%.png",
+    });
+    expect(
+      media("https://www.github.com/owner/repo/releases/download/release%2Fv1/shot.png")?.fetchUrl,
+    ).toBe("https://github.com/owner/repo/releases/download/release%2Fv1/shot.png");
   });
 
   it("marks only uploads and files at a full commit SHA as immutable", () => {
@@ -173,6 +182,8 @@ describe("GitHub media URLs", () => {
       "https://github.com/owner/repo/pull/1",
       "https://github.com/owner/repo/blob/main/",
       "https://objects.githubusercontent.com/github-production-user-asset/shot.png",
+      "https://user:password@github.com/owner/repo/releases/download/v1/shot.png",
+      "https://github.com/owner/repo/releases/download/v1/shot%2Fprivate.png",
     ]) {
       expect(media(url), url).toBeNull();
     }
