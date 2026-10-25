@@ -420,7 +420,18 @@ jobs:
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: >-
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
+          --verify-hits 1 --report "${{ runner.temp }}/test-cache-${{ matrix.shard }}.json" apps/server
+
+      - name: Upload test cache measurements
+        if: always() && steps.changes.outputs.test_server != 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-cache-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-cache-${{ matrix.shard }}.json
+          if-no-files-found: error
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
       # produces these files. Gating the upload on their presence keeps a
