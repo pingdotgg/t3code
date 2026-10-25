@@ -34,8 +34,6 @@ export type AppNativeStackNavigationOptions = Omit<
   readonly unstable_headerToolbarItems?: unknown;
   readonly unstable_navigationItemStyle?: unknown;
   readonly unstable_headerMinimizationBehavior?: unknown;
-  /** Focuses the header search field once for each new value, as soon as the field exists. */
-  readonly unstable_headerSearchFocusRequest?: number;
 };
 
 function useNativeStackNavigation(): NativeStackNavigationProp<ParamListBase> | null {

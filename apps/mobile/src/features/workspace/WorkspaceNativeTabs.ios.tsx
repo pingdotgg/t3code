@@ -5,12 +5,7 @@ import {
 } from "./navigation-tabs";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
-import {
-  Tabs,
-  type TabSelectedEvent,
-  type TabSelectionPreventedEvent,
-  type TabSelectionRejectedEvent,
-} from "react-native-screens";
+import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import {
@@ -31,7 +26,6 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
-const SEARCH_SLOT = "search";
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
@@ -99,17 +93,6 @@ export function WorkspaceNativeTabs(props: {
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
-  // The folded Duo opens list search from a search tab UIKit sets apart below the others.
-  const searchTab = deviceType === "duo-folded";
-  // Searching is list state: the list's toolbar mounts its field and focuses it.
-  const openSearch = () => {
-    const tab =
-      !workspace.settingsOpen && workspaceUsesColumns(selectedTab) ? selectedTab : "threads";
-    // Back on the tab's list first: folded, a chat open on top would hide the field.
-    selectTab(tab);
-    workspace.dispatch({ type: "scroll", tab, offset: workspace.getScrollOffset(tab) });
-    workspace.dispatch({ type: "search", tab });
-  };
   const request = useMemo(
     () => ({
       selectedScreenKey:
@@ -133,19 +116,9 @@ export function WorkspaceNativeTabs(props: {
         }: NativeSyntheticEvent<TabSelectionRejectedEvent>) =>
           setProvenance(nativeEvent.provenance)
         }
-        onTabSelectionPrevented={({
-          nativeEvent,
-        }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
-          if (nativeEvent.preventedScreenKey === SEARCH_SLOT) openSearch();
-        }}
         onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
           setProvenance(nativeEvent.provenance);
           if (nativeEvent.actionOrigin === "programmatic-js") return;
-          // UIKit reports reselecting a tab here even when its selection is prevented.
-          if (nativeEvent.selectedScreenKey === SEARCH_SLOT) {
-            openSearch();
-            return;
-          }
           const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
           if (tab) selectTab(tab);
         }}
@@ -183,24 +156,6 @@ export function WorkspaceNativeTabs(props: {
             </Tabs.Screen>
           );
         })}
-        {searchTab ? (
-          // It never becomes the selected tab; pressing it opens the current list's search.
-          <Tabs.Screen
-            key={SEARCH_SLOT}
-            screenKey={SEARCH_SLOT}
-            title=""
-            tabBarItemAccessibilityLabel="Search"
-            preventNativeSelection
-            ios={{
-              role: "search",
-              systemItem: "search",
-              // iOS 27 only sets the search tab apart while it activates search.
-              automaticallyActivatesSearch: true,
-            }}
-          >
-            <View />
-          </Tabs.Screen>
-        ) : null}
       </Tabs.Host>
       {(deviceType === "pad" ||
         compactTabs ||
