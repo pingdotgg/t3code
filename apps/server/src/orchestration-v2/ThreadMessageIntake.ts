@@ -53,9 +53,39 @@ const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")
   );
 });
 
-export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
-  command: OrchestrationV2Command,
+/**
+ * A guest message goes out with the files the guest attached, never ones a client names. They
+ * are already the thread's attachments. A message no longer waiting gets none; the orchestrator
+ * then refuses or replays the send.
+ */
+const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments")(function* (
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
 ) {
+  if (command.guestMessageId === undefined) return command;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  // Only the thread record is needed; the window keeps the read small.
+  const { projection } = yield* threads
+    .getThreadSnapshotWindow(command.threadId, { rowLimit: 1 })
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new AttachmentClaims.AttachmentClaimError({
+            message: "Failed to read the guest message.",
+            cause,
+          }),
+      ),
+    );
+  const message = projection.thread.guestShare?.messages.find(
+    (candidate) => candidate.id === command.guestMessageId && candidate.status === "pending",
+  );
+  return { ...command, attachments: message?.attachments ?? [] };
+});
+
+export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
+  incoming: OrchestrationV2Command,
+) {
+  const command =
+    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;

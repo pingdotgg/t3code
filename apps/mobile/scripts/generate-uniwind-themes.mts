@@ -86,6 +86,11 @@ const ADAPTIVE_COLORS: Readonly<Record<string, readonly [light: string, dark: st
   ],
   "--color-adaptive-emerald-600-400": [color("emerald", 600), color("emerald", 400)],
   "--color-adaptive-emerald-700-300": [color("emerald", 700), color("emerald", 300)],
+  "--color-adaptive-fuchsia-500-a50-300-a40": [
+    color("fuchsia", 500, 0.5),
+    color("fuchsia", 300, 0.4),
+  ],
+  "--color-adaptive-fuchsia-600-300": [color("fuchsia", 600), color("fuchsia", 300)],
   "--color-adaptive-indigo-500-a12-a16": [color("indigo", 500, 0.12), color("indigo", 500, 0.16)],
   "--color-adaptive-indigo-600-300": [color("indigo", 600), color("indigo", 300)],
   "--color-adaptive-indigo-700-300": [color("indigo", 700), color("indigo", 300)],

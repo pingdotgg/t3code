@@ -13,6 +13,8 @@ import {
   ContextHandoffId,
   ContextTransferId,
   EventId,
+  GuestMessageId,
+  GuestShareId,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -37,6 +39,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import { ThreadGuestShare } from "./guestShare.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -434,6 +437,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1704,6 +1708,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
+      "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThread,
   }),
@@ -1918,6 +1923,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   lastErrorCode: Schema.optional(Schema.NullOr(Schema.String)),
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
+  /** Guest messages waiting for the owner to send or dismiss. Absent from older servers. */
+  pendingGuestMessageCount: Schema.optional(NonNegativeInt),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
   /**
@@ -2551,6 +2558,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
+      "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -2713,6 +2721,17 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.archive"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.guest-share.close"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.guest-message.dismiss"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    guestMessageId: GuestMessageId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unarchive"),
@@ -2908,6 +2927,8 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
     notification: Schema.optional(OrchestrationV2Notification),
+    /** Sends this pending guest message; the server uses the guest's text, not `text`. */
+    guestMessageId: Schema.optional(GuestMessageId),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -3139,6 +3160,31 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  // Guest share commands the server issues after checking T3 Connect and the guest token.
+  Schema.Struct({
+    type: Schema.Literal("thread.guest-share.open"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    shareId: GuestShareId,
+    host: TrimmedNonEmptyString,
+    expiresAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.guest-share.redeem"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    shareId: GuestShareId,
+    guestName: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.guest-message.submit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    shareId: GuestShareId,
+    guestMessageId: GuestMessageId,
+    text: Schema.String,
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,

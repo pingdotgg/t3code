@@ -126,12 +126,15 @@ import {
   useQuietThreadShells,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
+import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -2388,6 +2391,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
+              canShareWithGuest: appAtomRegistry.get(
+                canShareWithGuestAtom(threadRef.environmentId),
+              ),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2483,6 +2489,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           }
           case "rename":
             startThreadRename(threadRef, thread.title);
+            return;
+          case "share-guest":
+            openGuestShareDialog(threadRef);
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;

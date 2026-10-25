@@ -3,11 +3,14 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   ForwardCompatibleArray,
+  GuestMessageId,
+  GuestShareId,
   NonNegativeInt,
   PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { GUEST_MESSAGE_MAX_LENGTH, GUEST_NAME_MAX_LENGTH } from "./guestShare.ts";
 
 /**
  * Bytes never live here: image and file records bind to a `ChatAttachment` by id.
@@ -258,9 +261,23 @@ export type ComposerContextRecord = typeof ComposerContextRecord.Type;
 export const COMPOSER_CONTEXT_MAX_RECORDS = 200;
 const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
 
+/**
+ * Marks a user message as a guest's, sent by the owner. The message `text` keeps the attributed
+ * form the agent reads; clients show `text` here with `name` beside it. Only the server sets it.
+ */
+export const GuestMessageAttribution = Schema.Struct({
+  guestMessageId: GuestMessageId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(GUEST_NAME_MAX_LENGTH)),
+  text: Schema.String.check(Schema.isMaxLength(GUEST_MESSAGE_MAX_LENGTH)),
+  /** The link the guest used. Only that link's guest may load the message's files. */
+  shareId: Schema.optional(GuestShareId),
+});
+export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
+
 /** Structured context riding on a user message. Undecodable records are dropped, not fatal. */
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
+  guest: Schema.optional(GuestMessageAttribution),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),

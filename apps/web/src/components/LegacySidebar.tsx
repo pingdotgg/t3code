@@ -207,7 +207,10 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
+import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -2165,6 +2168,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
+          ...(appAtomRegistry.get(canShareWithGuestAtom(thread.environmentId))
+            ? [{ id: "share-guest", label: "Share with guest" }]
+            : []),
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2216,6 +2222,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
+      if (clicked === "share-guest") {
+        openGuestShareDialog(threadRef);
+        return;
+      }
       if (clicked === "mark-unread") {
         markThreadUnread(threadRef);
         return;

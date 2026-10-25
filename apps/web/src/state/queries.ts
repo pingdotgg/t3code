@@ -15,6 +15,7 @@ import { messageSearchTokens } from "@t3tools/shared/paletteSearch";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
+  OrchestrationV2GetTurnItemResult,
   ProjectContentMatch,
   ProjectEntry,
   ProjectEntryKind,
@@ -402,6 +403,13 @@ export function useCheckpointDiff(
   return fullThreadTarget === null ? turn : fullThread;
 }
 
+/** Reads one item's detail from somewhere other than the environment, as the guest page does. */
+export type TurnItemDetailSource = (input: {
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+  readonly revision: string;
+}) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2GetTurnItemResult, unknown>>;
+
 export function useTurnItemDetail(
   target: {
     readonly environmentId: EnvironmentId;
@@ -409,13 +417,17 @@ export function useTurnItemDetail(
     readonly itemId: TurnItemId;
     readonly revision: string;
   } | null,
+  source?: TurnItemDetailSource,
 ) {
-  return useEnvironmentQuery(
+  const input =
     target === null
       ? null
-      : orchestrationEnvironment.turnItem({
-          environmentId: target.environmentId,
-          input: { threadId: target.threadId, itemId: target.itemId, revision: target.revision },
-        }),
+      : { threadId: target.threadId, itemId: target.itemId, revision: target.revision };
+  return useEnvironmentQuery<OrchestrationV2GetTurnItemResult, unknown>(
+    target === null || input === null
+      ? null
+      : source
+        ? source(input)
+        : orchestrationEnvironment.turnItem({ environmentId: target.environmentId, input }),
   );
 }

@@ -74,6 +74,22 @@ describe("threadQueueControlPresentation", () => {
     expect(editing.canMoveUp).toBe(true);
     expect(editing.canDismiss).toBe(true);
   });
+
+  it("lets the owner cancel a guest's queued message but not rewrite it", () => {
+    const guest = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canSendNow: false,
+      canReorder: true,
+      index: 0,
+      isGuestMessage: true,
+      queuedCount: 1,
+      text: "Why?",
+    });
+
+    expect(guest.canEdit).toBe(false);
+    expect(guest.canDismiss).toBe(true);
+  });
 });
 
 describe("queue drag insertion", () => {

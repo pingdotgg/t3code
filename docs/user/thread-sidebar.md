@@ -118,7 +118,7 @@ open.
 
 ### Fold working threads (beta)
 
-Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
+Turn on **Settings → Beta → Working section** on web and desktop, or **Settings →
 Thread behavior → Working section** on iOS and Android, to move threads that are working or
 waiting on work they will resume from into a collapsed **Working** section below the active list.
 That includes subagents, watched pull requests, and background commands or monitors the agent
