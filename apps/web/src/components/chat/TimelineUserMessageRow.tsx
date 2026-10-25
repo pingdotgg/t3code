@@ -508,7 +508,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                           src={image.previewUrl}
                           alt={image.name}
                           decoding="async"
-                          loading="lazy"
                           className="block size-full object-cover"
                         />
                       </button>

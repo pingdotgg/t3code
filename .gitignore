@@ -36,6 +36,7 @@ apps/mobile/.generated/
 apps/mobile/.android-cache/
 /.generated/
 artifacts/app-store/screenshots/
+artifacts/mobile-e2e/
 .github/pr-assets/
 native/**/target/
 node_modules/

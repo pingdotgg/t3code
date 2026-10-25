@@ -207,7 +207,6 @@ export function ChatMarkdownImage(props: {
           alt={props.alt}
           data-markdown-copy={props.copyMarkdown}
           decoding="async"
-          loading="lazy"
           draggable={false}
           className={cn(
             CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
@@ -264,7 +263,6 @@ export function ChatMarkdownImage(props: {
             src={src}
             alt={props.alt}
             decoding="async"
-            loading="lazy"
             draggable={false}
             className="invisible absolute inset-0 size-full"
             {...imageEvents(src)}

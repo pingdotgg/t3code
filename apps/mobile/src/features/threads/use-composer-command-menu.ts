@@ -59,8 +59,6 @@ import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
-// A cwd that never scans, such as a deleted worktree, would otherwise retry forever.
-const WORKSPACE_SNAPSHOT_MAX_ATTEMPTS = 3;
 
 function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
@@ -254,7 +252,6 @@ export function useComposerCommandMenu({
   );
   // Record client request time to enforce TTL even when the client clock runs ahead of the server.
   const workspaceRefreshKeyRef = useRef<{ key: string; requestedAt: number } | null>(null);
-  const failedRefreshesRef = useRef<{ key: string; count: number } | null>(null);
   const [workspaceRefreshRetry, setWorkspaceRefreshRetry] = useState<{
     key: string;
     notBefore: number;
@@ -310,11 +307,6 @@ export function useComposerCommandMenu({
     workspaceRefreshKeyRef.current = request;
     const retryLater = () => {
       if (workspaceRefreshKeyRef.current !== request) return;
-      const failed = failedRefreshesRef.current;
-      const count = failed?.key === key ? failed.count + 1 : 1;
-      failedRefreshesRef.current = { key, count };
-      // Keeping the request marker lets the TTL hold off the next scan.
-      if (count >= WORKSPACE_SNAPSHOT_MAX_ATTEMPTS) return;
       workspaceRefreshKeyRef.current = null;
       setWorkspaceRefreshRetry({
         key,
@@ -334,7 +326,6 @@ export function useComposerCommandMenu({
           projectCwd,
         );
       if (!refreshed) retryLater();
-      else failedRefreshesRef.current = null;
     }, retryLater);
   }, [
     draftMessage,
