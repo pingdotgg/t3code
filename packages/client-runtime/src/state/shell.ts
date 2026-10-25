@@ -125,6 +125,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       if (Option.isNone(latest) || latest.value === lastPersisted) return;
       if (latest.value.threads.some((thread) => pendingLinkRows.has(thread))) return;
       const snapshot = latest.value;
+      if (
+        lastPersisted !== undefined &&
+        snapshot.snapshotSequence >= lastPersisted.snapshotSequence &&
+        snapshot.schemaVersion === lastPersisted.schemaVersion &&
+        snapshot.projects === lastPersisted.projects &&
+        snapshot.threads === lastPersisted.threads &&
+        snapshot.archivedThreads === lastPersisted.archivedThreads
+      ) {
+        // Keep the live cursor without rewriting the rows. Remember it here too so a
+        // later authoritative reset to a lower sequence still reaches the cache.
+        lastPersisted = snapshot;
+        return;
+      }
       const saved = yield* cache.saveShell(environmentId, snapshot).pipe(
         Effect.as(true),
         Effect.catch((error) =>
