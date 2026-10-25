@@ -133,8 +133,19 @@ if (-not $version) {
     "preview" { '^v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
     default { Fail "T3CODE_CHANNEL must be stable, nightly, or preview" }
   }
-  $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "t3-install" }
-  $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
+  if ($channel -eq "stable") {
+    # release.yml marks only plain stable releases latest. This is a github.com
+    # page, so it is not cut off by a page of newer nightlies or the API quota.
+    $release = Invoke-RestMethod -Uri "https://github.com/$repo/releases/latest" -Headers @{ "User-Agent" = "t3-install"; "Accept" = "application/json" }
+    $tag = ($release | Where-Object { $_.tag_name -match $tagPattern }).tag_name
+  } else {
+    $tag = $null
+    for ($page = 1; -not $tag -and $page -le 10; $page++) {
+      $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" -Headers @{ "User-Agent" = "t3-install" }
+      $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
+      if (-not $releases) { break }
+    }
+  }
   if (-not $tag) { Fail "could not find a $channel release; set T3CODE_VERSION" }
   $version = $tag.Substring(1)
 }
