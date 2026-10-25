@@ -134,6 +134,40 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
+  it.effect.each([undefined, false, true])(
+    "selects native collaboration modes without prompt overrides with hasT3Mcp=%s",
+    (hasT3Mcp) =>
+      Effect.gen(function* () {
+        for (const interactionMode of ["plan", "default"] as const) {
+          for (const reasoningEffort of [undefined, "high"] as const) {
+            const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+              nativeThreadId: "native-mode-switch",
+              codexInput: [{ type: "text", text: "test" }],
+              runtimePolicy: { runtimeMode: "full-access", interactionMode, cwd: null },
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.4",
+                ...(reasoningEffort === undefined
+                  ? {}
+                  : { options: [{ id: "reasoningEffort", value: reasoningEffort }] }),
+              },
+              ...(hasT3Mcp === undefined ? {} : { hasT3Mcp }),
+            });
+
+            assert.deepEqual(params.collaborationMode, {
+              mode: interactionMode,
+              settings: {
+                model: "gpt-5.4",
+                ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
+              },
+            });
+            assert.equal(params.effort, reasoningEffort);
+            assert.equal(params.additionalContext !== undefined, hasT3Mcp === true);
+          }
+        }
+      }),
+  );
+
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
       const build = (
@@ -620,6 +654,7 @@ function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
         },
       },
     },
@@ -1514,6 +1549,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 model: "gpt-5.4",
                 ...turnPolicies[turnModes[index]!],
                 summary: "detailed",
+                collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
               },
             },
           },

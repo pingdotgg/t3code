@@ -98,10 +98,7 @@ import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachme
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import {
-  buildCodexAdditionalContext,
-  buildCodexDeveloperInstructions,
-} from "../../provider/CodexDeveloperInstructions.ts";
+import { buildCodexAdditionalContext } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   describeMcpElicitation,
   toMcpElicitationResponse,
@@ -756,10 +753,6 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.omitServiceTier === true
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
-    const developerInstructions =
-      input.hasT3Mcp !== true
-        ? undefined
-        : buildCodexDeveloperInstructions(input.runtimePolicy.interactionMode);
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
       (input.appContext ?? []).map((entry) => [
@@ -781,21 +774,6 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       t3Context === undefined && Object.keys(appContext).length === 0
         ? undefined
         : { ...t3Context, ...appContext };
-    const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
-      input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
-        ? undefined
-        : {
-            mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "default",
-            settings: {
-              model: input.modelSelection.model,
-              // Codex falls back to the model's default effort when this is left out.
-              ...(effort === undefined ? {} : { reasoning_effort: effort }),
-              ...(developerInstructions === undefined
-                ? {}
-                : { developer_instructions: developerInstructions }),
-            },
-          };
-
     return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -810,7 +788,14 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
-      ...(collaborationMode === undefined ? {} : { collaborationMode }),
+      // Codex supplies its own mode instructions; send both modes to clear Plan on exit.
+      collaborationMode: {
+        mode: input.runtimePolicy.interactionMode,
+        settings: {
+          model: input.modelSelection.model,
+          ...(effort === undefined ? {} : { reasoning_effort: effort }),
+        },
+      },
     });
   },
 );
