@@ -32,6 +32,8 @@ import {
 import { PullRequestFilesSheet } from "./features/pull-requests/PullRequestFiles";
 import { PullRequestReviewSheet } from "./features/pull-requests/PullRequestReviewSheet";
 import { PullRequestReviewersScreen } from "./features/pull-requests/PullRequestReviewersScreen";
+import { PullRequestLabelsScreen } from "./features/pull-requests/PullRequestLabelsScreen";
+import { PullRequestEditScreen } from "./features/pull-requests/PullRequestEditScreen";
 import { PullRequestFilterSearchScreen } from "./features/pull-requests/PullRequestFilterSearchScreen";
 import {
   RenderErrorBoundary,
@@ -669,6 +671,20 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerBackVisible: false,
       },
     }),
+    PullRequestLabels: createNativeStackScreen({
+      screen: PullRequestLabelsScreen,
+      // Presented like PullRequestFilterSearch, whose search sheet it shares.
+      options:
+        Platform.OS === "android"
+          ? { presentation: "card", headerShown: false }
+          : {
+              ...DETAIL_HEADER_OPTIONS,
+              ...HORIZONTAL_FORM_SHEET_OPTIONS,
+              sheetAllowedDetents: formSheetDetents(0.75),
+              sheetGrabberVisible: true,
+              headerBackVisible: false,
+            },
+    }),
     PullRequestFilterSearch: createNativeStackScreen({
       screen: PullRequestFilterSearchScreen,
       // Android pushes it like the branch picker; a formSheet there leaves the list's header
@@ -700,6 +716,15 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     PullRequestReview: createNativeStackScreen({
       screen: PullRequestReviewSheet,
+      options: {
+        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.75),
+        sheetGrabberVisible: true,
+      },
+    }),
+    PullRequestEdit: createNativeStackScreen({
+      screen: PullRequestEditScreen,
       options: {
         ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
         ...HORIZONTAL_FORM_SHEET_OPTIONS,

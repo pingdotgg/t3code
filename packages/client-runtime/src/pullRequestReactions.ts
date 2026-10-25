@@ -72,6 +72,15 @@ export function pullRequestReactionTooltip(reaction: PullRequestReaction): strin
   return `${joinNames(parts)} reacted with ${pullRequestReactionName(reaction.content)} emoji`;
 }
 
+/** Changes whenever the host reports different reactions, so pending overlays can reset. */
+export function pullRequestReactionsSignature(
+  reactions: ReadonlyArray<PullRequestReaction>,
+): string {
+  return reactions
+    .map((reaction) => `${reaction.content}:${reaction.count}:${reaction.viewerHasReacted ? 1 : 0}`)
+    .join(" ");
+}
+
 export function applyPendingPullRequestReactions(
   reactions: ReadonlyArray<PullRequestReaction>,
   pending: ReadonlyMap<PullRequestReactionContent, boolean>,

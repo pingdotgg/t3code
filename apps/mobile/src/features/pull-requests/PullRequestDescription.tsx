@@ -5,7 +5,7 @@ import {
   PullRequestMediaContext,
 } from "./PullRequestMedia";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
-import { useContext, useMemo, useState } from "react";
+import { useContext, useMemo, useState, type ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
@@ -25,6 +25,7 @@ export function PullRequestDescription(props: {
   readonly onCollapse: () => void;
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
+  readonly footer?: ReactNode;
 }) {
   const { expanded, onExpandedChange } = props;
   const [bodyHeight, setBodyHeight] = useState(0);
@@ -138,6 +139,7 @@ export function PullRequestDescription(props: {
         ) : (
           <Text className="text-sm text-foreground-muted">No description provided.</Text>
         )}
+        {props.footer}
       </View>
       {content.attachments.length ? (
         <View className="gap-3">

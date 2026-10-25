@@ -72,7 +72,7 @@ import {
 import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
-} from "./pullRequestEditing.logic";
+} from "@t3tools/client-runtime/pull-request-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";

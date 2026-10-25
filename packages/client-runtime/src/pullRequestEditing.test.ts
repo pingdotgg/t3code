@@ -11,7 +11,7 @@ import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
   canResolvePullRequestThread,
-} from "./pullRequestEditing.logic";
+} from "./pullRequestEditing.ts";
 
 type Subject = Pick<PullRequestDetail, "author" | "capabilities" | "viewer" | "viewerPermissions">;
 

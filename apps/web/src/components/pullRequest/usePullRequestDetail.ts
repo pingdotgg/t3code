@@ -1,3 +1,4 @@
+import { resolvePullRequestDetailChecks } from "@t3tools/client-runtime/pull-request-checks";
 import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
@@ -20,7 +21,6 @@ import {
 import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
-  resolvePullRequestDetailChecks,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { pullRequestChecksState } from "./pullRequestPresentation";

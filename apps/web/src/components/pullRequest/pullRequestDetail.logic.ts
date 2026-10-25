@@ -1430,22 +1430,3 @@ export function resolveDisplayedPullRequestDetail(input: {
     ? input.cached
     : null;
 }
-
-export function resolvePullRequestDetailChecks(
-  detail: PullRequestDetail | null,
-  checks: PullRequestChecks | null,
-  checksAreNewer: boolean,
-): PullRequestDetail | null {
-  if (detail === null || checks === null) return detail;
-  const newer =
-    detail.observedAt !== undefined && checks.observedAt !== undefined
-      ? checks.observedAt >= detail.observedAt
-      : checksAreNewer;
-  return newer
-    ? {
-        ...detail,
-        state: detail.state === "merged" ? "merged" : checks.state,
-        checks: checks.checks,
-      }
-    : detail;
-}

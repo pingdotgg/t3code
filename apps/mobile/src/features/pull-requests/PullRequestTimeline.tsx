@@ -4,7 +4,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
 import type { PullRequestActivity, PullRequestComment } from "@t3tools/contracts";
 import { StackActions, type NavigationProp } from "@react-navigation/native";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -12,6 +12,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 import type { PullRequestParams } from "./usePullRequestDiff";
 
@@ -57,7 +58,20 @@ function TimelineEvent(props: {
   );
 }
 
-function TimelineComment({ comment }: { comment: PullRequestComment }) {
+type CommentActions = {
+  readonly permissions: ComponentProps<typeof PullRequestCommentFooter>["permissions"];
+  readonly onChanged: () => void;
+};
+
+function TimelineComment({
+  comment,
+  params,
+  actions,
+}: {
+  comment: PullRequestComment;
+  params: PullRequestParams;
+  actions: CommentActions;
+}) {
   const [expanded, setExpanded] = useState(false);
   const { themeVariables: colors } = useAppearancePreferences();
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
@@ -169,6 +183,12 @@ function TimelineComment({ comment }: { comment: PullRequestComment }) {
           ) : null}
         </View>
       ) : null}
+      <PullRequestCommentFooter
+        params={params}
+        comment={comment}
+        permissions={actions.permissions}
+        onChanged={actions.onChanged}
+      />
     </TimelineEvent>
   );
 }
@@ -177,6 +197,7 @@ export function pullRequestTimelineRows(
   activity: PullRequestActivity,
   params: PullRequestParams,
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
+  actions: CommentActions,
 ) {
   const discussionIds = new Set(
     activity.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
@@ -187,7 +208,7 @@ export function pullRequestTimelineRows(
       .map((comment) => ({
         key: `comment:${comment.id}`,
         date: comment.createdAt,
-        content: <TimelineComment comment={comment} />,
+        content: <TimelineComment comment={comment} params={params} actions={actions} />,
       })),
     ...activity.reviewThreads.map((thread) => ({
       key: `discussion:${thread.id}`,

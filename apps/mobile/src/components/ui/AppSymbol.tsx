@@ -44,6 +44,8 @@ import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
 import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
+import IconMoodPlus from "@tabler/icons-react-native/IconMoodPlus";
+import IconTag from "@tabler/icons-react-native/IconTag";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
@@ -184,6 +186,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "calendar.badge.clock": IconCalendarClock,
   clock: IconClock,
   timer: IconClock,
+  "face.smiling": IconMoodPlus,
+  tag: IconTag,
   ticket: IconTicket,
   cloud: IconCloud,
   cube: IconBox,

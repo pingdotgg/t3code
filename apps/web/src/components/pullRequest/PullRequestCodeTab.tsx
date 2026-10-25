@@ -45,7 +45,10 @@ import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
-import { canEditPullRequestComment, canResolvePullRequestThread } from "./pullRequestEditing.logic";
+import {
+  canEditPullRequestComment,
+  canResolvePullRequestThread,
+} from "@t3tools/client-runtime/pull-request-editing";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
