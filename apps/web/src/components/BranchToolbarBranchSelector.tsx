@@ -126,6 +126,9 @@ export function BranchToolbarBranchSelector({
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, {
     reportFailure: false,
   });
+  const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
+    reportFailure: false,
+  });
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
     reportFailure: false,
   });
@@ -503,6 +506,9 @@ export function BranchToolbarBranchSelector({
 
   const handleOpenChange = (open: boolean) => {
     setIsBranchMenuOpen(open);
+    if (open && !isBranchMenuOpen && branchCwd !== null) {
+      void refreshStatus({ environmentId, input: { cwd: branchCwd, localOnly: true } });
+    }
     if (!open) {
       setBranchQuery("");
     }
