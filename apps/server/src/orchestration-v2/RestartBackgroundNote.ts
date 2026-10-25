@@ -51,7 +51,7 @@ export function cancelledTurnItemWork(
     }
     case "command_execution":
       return {
-        kind: "shell",
+        kind: item.monitor === true ? "monitor" : "shell",
         label: compactLabel(item.input) ?? compactLabel(item.title) ?? "background command",
         id: item.id,
       };

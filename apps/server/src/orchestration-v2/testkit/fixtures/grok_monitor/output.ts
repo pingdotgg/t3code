@@ -1,7 +1,9 @@
 import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
+import { cancelledTurnItemWork } from "../../../RestartBackgroundNote.ts";
 import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
@@ -53,6 +55,20 @@ export function assertGrokMonitorOutput(
     assert.isBelow(tickUpdate, firstCompleted, `the monitor completed before ${tick}`);
     assert.equal(monitorUpdates[tickUpdate]?.status, "running", `${tick} must show running`);
   }
+
+  // A persistent monitor keeps running after its run ends. Background work and
+  // the restart note must then name it a monitor, as they do for Claude's Monitor.
+  const runningMonitor = monitorUpdates.find((update) => update.status === "running");
+  assert.isDefined(runningMonitor);
+  assert.deepEqual(
+    derivePendingBackgroundWork({
+      latestRun: rootRun,
+      providerThreads: [],
+      turnItems: [runningMonitor],
+    }).map((task) => task.kind),
+    ["monitor"],
+  );
+  assert.equal(cancelledTurnItemWork(runningMonitor)?.kind, "monitor");
 
   const monitorCompletedAt = result.domainEvents.findIndex(
     (event) =>
