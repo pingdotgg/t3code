@@ -1,5 +1,10 @@
 name: Setup CI dependencies
 description: Install Vite+ and the workspace dependencies from cache.
+inputs:
+  task-cache-read-token:
+    description: Read-only credential for the private maintainer task cache
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -65,3 +70,20 @@ runs:
     - name: Install dependencies
       shell: bash
       run: vp install
+
+    - name: Enable shared task cache
+      if: >-
+        github.repository == 'pingdotgg/t3code' &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+        hashFiles('.task-cache.json') != '' &&
+        inputs.task-cache-read-token != ''
+      shell: bash
+      env:
+        T3_TASK_CACHE_READ_TOKEN: ${{ inputs.task-cache-read-token }}
+      run: |
+        node infra/task-cache/scripts/install-ci.ts
+        if [[ ( "$GITHUB_EVENT_NAME" == pull_request && "$GITHUB_BASE_REF" == main ) || ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
+          echo 'VP_REMOTE_CACHE=read-write' >> "$GITHUB_ENV"
+        else
+          echo 'VP_REMOTE_CACHE=read' >> "$GITHUB_ENV"
+        fi
