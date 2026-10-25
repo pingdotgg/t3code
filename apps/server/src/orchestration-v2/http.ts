@@ -228,6 +228,7 @@ export const layer = HttpApiBuilder.group(
               bounded,
               compactTurnItems: args.query.compactTurnItems === "1",
               dedupeBodies: args.query.dedupeBodies === "1",
+              compactIds: args.query.compactIds === "1",
             }),
           };
         }),
@@ -252,6 +253,9 @@ export const layer = HttpApiBuilder.group(
               args.query.view === "conversation",
             )
             .pipe(
+              Effect.map((page) =>
+                args.query.compactIds === "1" ? { ...page, idTable: true as const } : page,
+              ),
               traceLocalHandlerWork,
               Effect.catch(
                 Effect.fnUntraced(function* (cause) {

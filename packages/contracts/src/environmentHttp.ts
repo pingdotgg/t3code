@@ -674,12 +674,14 @@ const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
+  compactIds: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
   view: Schema.optional(Schema.Literals(["conversation", "activity"])),
+  compactIds: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryErrors = [

@@ -41,6 +41,7 @@ export function boundedSnapshotResponseFields(input: {
   readonly bounded: BoundedProjectionResult;
   readonly compactTurnItems: boolean;
   readonly dedupeBodies: boolean;
+  readonly compactIds: boolean;
 }) {
   const { bounded } = input;
   // Dedupe keeps shared items one object, which the compaction's identity check needs.
@@ -54,6 +55,7 @@ export function boundedSnapshotResponseFields(input: {
     hasMoreHistory: bounded.hasMoreHistory,
     latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
     ...(compactProjection === null ? {} : { turnItemsOmitLocalVisible: true as const }),
+    ...(input.compactIds ? { idTable: true as const } : {}),
   };
 }
 
@@ -62,6 +64,7 @@ export function buildBoundedThreadStreamSnapshot(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly compactTurnItems?: boolean;
   readonly dedupeBodies?: boolean;
+  readonly compactIds?: boolean;
 }): ThreadSnapshotStreamItem {
   const bounded = buildBoundedThreadProjection({
     snapshotSequence: input.snapshotSequence,
@@ -74,6 +77,7 @@ export function buildBoundedThreadStreamSnapshot(input: {
       bounded,
       compactTurnItems: input.compactTurnItems === true,
       dedupeBodies: input.dedupeBodies === true,
+      compactIds: input.compactIds === true,
     }),
   };
 }
