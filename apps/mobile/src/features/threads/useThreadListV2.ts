@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -54,10 +54,15 @@ export function useThreadListV2(input: {
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
-  // Observed once per change to the threads: that is when a thread can stop working.
-  const inboxReturnAt = useMemo(
+  // A thread can stop working when the threads change, or when its exit grace expires.
+  const inboxVersion = useSyncExternalStore(
+    threadListInboxReturns.subscribe,
+    threadListInboxReturns.getSnapshot,
+  );
+  const inbox = useMemo(
     () => threadListInboxReturns.observe(workingShelfEnabled ? threads : null),
-    [threads, workingShelfEnabled],
+    // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
+    [threads, workingShelfEnabled, inboxVersion],
   );
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
@@ -97,7 +102,8 @@ export function useThreadListV2(input: {
     now: input.now,
     workingShelfEnabled,
     workingShelfExpanded: input.workingShelfExpanded,
-    inboxReturnAt,
+    inboxReturnAt: inbox.returnedAt,
+    isWorking: inbox.isWorking,
     snoozedShelfExpanded: input.snoozedShelfExpanded,
     settledShelfExpanded: input.settledShelfExpanded,
     selectedThreadKey: input.selectedThreadKey,

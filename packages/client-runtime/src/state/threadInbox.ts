@@ -1,5 +1,7 @@
+// @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
+import { effectiveSnoozed } from "./threadSettled.ts";
 
 type WorkingThreadInput = Pick<
   EnvironmentThreadShell,
@@ -86,46 +88,154 @@ function sortNewestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environm
   );
 }
 
+type TrackedInboxThread = WorkingThreadInput &
+  InboxThreadInput &
+  Partial<
+    Pick<
+      EnvironmentThreadShell,
+      | "archivedAt"
+      | "deletedAt"
+      | "pinnedAt"
+      | "settledOverride"
+      | "settledAt"
+      | "snoozedAt"
+      | "snoozedUntil"
+      | "activeOrderKey"
+      | "pendingGuestMessageCount"
+    >
+  >;
+
+type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
+
 /**
- * Keep one at module scope so the inbox order survives routes that unmount the
- * list. Call `observe` with every thread shell whenever the shells change, or
- * with null to reset while the beta is off. It returns the return times as of
- * that observation, which stay fixed so a list built from them can be cached.
+ * How long a thread that stopped working keeps reading as working. An orchestrator
+ * run can end moments before its continuation starts, so clients wait this long
+ * before treating the thread as done.
+ */
+export const WORKING_EXIT_GRACE_MS = 2_000;
+
+/**
+ * Keep one at module scope so placement survives routes that unmount the list. Call
+ * `observe` when the shells or the snapshot version change, or with null while the beta
+ * is off. Its result stays fixed, so a list built from it can be cached.
  */
 export function createInboxReturnTracker() {
-  const keyOf = (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) =>
-    `${thread.environmentId}:${thread.id}`;
-  let lastWorkingKeys: ReadonlySet<string> | null = null;
+  const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
+  const states = new Map<
+    string,
+    { working: boolean; deadline: number | null; placement: string }
+  >();
   const returns = new Map<string, number>();
+  const listeners = new Set<() => void>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let version = 0;
+  const now = () => {
+    // @effect-diagnostics-next-line globalDate:off - The grace deadline is wall-clock time shared by web and native clients.
+    return Date.now();
+  };
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    let next = Infinity;
+    for (const state of states.values()) {
+      if (state.deadline !== null) next = Math.min(next, state.deadline);
+    }
+    if (next === Infinity) return;
+    timer = setTimeout(
+      () => {
+        const at = now();
+        for (const [key, state] of states) {
+          if (state.deadline !== null && state.deadline <= at) {
+            state.working = false;
+            state.deadline = null;
+            returns.set(key, at);
+          }
+        }
+        schedule();
+        version++;
+        for (const listener of listeners) listener();
+      },
+      Math.max(0, next - now()),
+    );
+  };
   return {
-    observe(
-      threads: ReadonlyArray<WorkingThreadInput & InboxThreadInput> | null,
-    ): (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) => number | undefined {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getSnapshot: () => version,
+    observe(threads: readonly TrackedInboxThread[] | null): {
+      readonly isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
+      readonly returnedAt: (thread: ThreadKeyInput) => number | undefined;
+    } {
       if (threads === null) {
-        lastWorkingKeys = null;
+        clearTimeout(timer);
+        timer = undefined;
+        states.clear();
         returns.clear();
-        return () => undefined;
+        return { isWorking: isThreadWorking, returnedAt: () => undefined };
       }
-      const working = new Set<string>();
       const present = new Set<string>();
+      const at = now();
+      // @effect-diagnostics-next-line globalDate:off - Snooze checks compare wall-clock ISO times.
+      const observedAt = new Date(at).toISOString();
       for (const thread of threads) {
         const key = keyOf(thread);
         present.add(key);
-        if (isThreadWorking(thread)) working.add(key);
+        const placement = JSON.stringify([
+          thread.archivedAt,
+          thread.deletedAt,
+          thread.pinnedAt,
+          thread.settledOverride,
+          thread.settledAt,
+          thread.snoozedAt,
+          thread.snoozedUntil,
+          thread.activeOrderKey,
+        ]);
+        const previous = states.get(key);
+        const actionable =
+          thread.hasPendingApprovals ||
+          thread.hasPendingUserInput ||
+          thread.pendingSubagentRequest != null ||
+          (thread.pendingGuestMessageCount ?? 0) > 0 ||
+          (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
+          thread.runtime?.lastError != null ||
+          thread.latestRun?.status === "failed";
+        const moved = previous !== undefined && previous.placement !== placement;
+        const excluded =
+          thread.archivedAt != null ||
+          thread.deletedAt != null ||
+          thread.pinnedAt != null ||
+          thread.settledOverride === "settled" ||
+          effectiveSnoozed(thread, { now: observedAt });
+        const actual = isThreadWorking(thread);
+        // Only shelf placement is held: execution state and attention requests stay authoritative.
+        const deadline =
+          !actual && previous?.working && !actionable && !moved && !excluded
+            ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
+            : null;
+        const working = actual || (deadline !== null && deadline > at);
+        if (previous?.working && !working) returns.set(key, at);
+        states.set(key, { working, deadline: working ? deadline : null, placement });
       }
-      for (const key of returns.keys()) {
-        if (!present.has(key)) returns.delete(key);
+      for (const key of states.keys()) {
+        if (!present.has(key)) {
+          states.delete(key);
+          returns.delete(key);
+        }
       }
-      // @effect-diagnostics-next-line globalDate:off
-      const at = Date.now();
-      for (const key of lastWorkingKeys ?? []) {
-        if (present.has(key) && !working.has(key)) returns.set(key, at);
-      }
-      lastWorkingKeys = working;
-      const observed = new Map(returns);
-      return (thread) => observed.get(keyOf(thread));
+      schedule();
+      const observedWorking = new Map([...states].map(([key, state]) => [key, state.working]));
+      const observedReturns = new Map(returns);
+      return {
+        isWorking: (thread) => observedWorking.get(keyOf(thread)) ?? isThreadWorking(thread),
+        returnedAt: (thread) => observedReturns.get(keyOf(thread)),
+      };
     },
-    returnedAt: (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) =>
-      returns.get(keyOf(thread)),
+    isWorking: (thread: WorkingThreadInput & ThreadKeyInput) =>
+      states.get(keyOf(thread))?.working ?? isThreadWorking(thread),
+    returnedAt: (thread: ThreadKeyInput) => returns.get(keyOf(thread)),
   };
 }

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   type PullRequestSummary,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -481,7 +482,8 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
   );
 
-  const closeCommandThreads = new Set<ThreadId>();
+  // Threads that ran a close command this run, with the commands already read for.
+  const closeCommands = new Map<ThreadId, Set<string>>();
   const refreshOpenLinks = (threadId: ThreadId) =>
     projections.getThreadsWithPullRequests(threadId).pipe(
       Effect.flatMap((threads) =>
@@ -525,20 +527,22 @@ export const make = Effect.gen(function* () {
               { discard: true },
             );
           // An agent can merge or close its pull request from a shell with its host's CLI, which
-          // sends no merge notification. When a run that ran such a command ends, read the
-          // thread's open links fresh, so settlement does not wait for the next sweep and the
-          // cached summary. Other runs add no host reads.
-          case "turn-item.updated":
-            if (
-              event.payload.type === "command_execution" &&
-              isChangeRequestCloseCommand(event.payload.input)
-            ) {
-              closeCommandThreads.add(event.threadId);
+          // sends no merge notification. Read the thread's open links fresh once that command
+          // ends, while the agent usually still replies, so settlement can land before the run
+          // ends. Read again when the run ends, since `merge --auto` returns before it merges.
+          case "turn-item.updated": {
+            const item = event.payload;
+            if (item.type !== "command_execution" || !isChangeRequestCloseCommand(item.input)) {
+              return Effect.void;
             }
-            return Effect.void;
+            const ended = closeCommands.get(event.threadId) ?? new Set<string>();
+            closeCommands.set(event.threadId, ended);
+            if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return Effect.void;
+            ended.add(item.id);
+            return refreshOpenLinks(event.threadId);
+          }
           case "run.updated":
-            return isTerminalRunStatus(event.payload.status) &&
-              closeCommandThreads.delete(event.threadId)
+            return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)
               ? refreshOpenLinks(event.threadId)
               : Effect.void;
           default:
