@@ -274,7 +274,7 @@ function EnvironmentNotifications({
     for (const [prior, state] of changed) {
       pendingCompletions.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true || state.raw.latestRunSilent === true,
+        quiet: state.raw.latestRunStopRequested === true,
       });
     }
   }, [environmentId, threads]);
