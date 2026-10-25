@@ -439,7 +439,10 @@ export default defineConfig({
       },
       {
         files: ["apps/mobile/src/**"],
-        rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
+        rules: {
+          "t3code/no-mobile-uniwind-theme-escape-hatches": "error",
+          "t3code/require-registered-list-scroll": "error",
+        },
       },
       {
         files: ["apps/mobile/src/**"],

@@ -1,3 +1,4 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { SearchField } from "../../components/ui/SearchField";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -127,6 +128,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
       ) : null}
 
       <LegendList
+        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
         className="flex-1"
         contentContainerStyle={{
           paddingBottom: usesNativeMailSearchToolbar

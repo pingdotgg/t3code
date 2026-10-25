@@ -1,3 +1,4 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
@@ -440,6 +441,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
       </Toolbar>
       <ScreenContent>
         <AnimatedLegendList
+          renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
           className="flex-1"
           data={parsed.kind === "files" ? groupByDirectory(parsed.files, collapsed) : []}
           keyExtractor={(item) => item.key}

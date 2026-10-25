@@ -15,6 +15,7 @@ import noMobileUniwindThemeEscapeHatches from "./rules/no-mobile-uniwind-theme-e
 import noAmbiguousDetailNavigation from "./rules/no-ambiguous-detail-navigation.ts";
 import noMobilePullRequestGlyphLiterals from "./rules/no-mobile-pull-request-glyph-literals.ts";
 import noNativeTitleTooltip from "./rules/no-native-title-tooltip.ts";
+import requireRegisteredListScroll from "./rules/require-registered-list-scroll.ts";
 import noOutsetStateIndicators from "./rules/no-outset-state-indicators.ts";
 import noPollingLoopInTests from "./rules/no-polling-loop-in-tests.ts";
 import noRawMcpRegistration from "./rules/no-raw-mcp-registration.ts";
@@ -51,6 +52,7 @@ export default definePlugin({
     "no-ambiguous-detail-navigation": noAmbiguousDetailNavigation,
     "no-mobile-pull-request-glyph-literals": noMobilePullRequestGlyphLiterals,
     "no-native-title-tooltip": noNativeTitleTooltip,
+    "require-registered-list-scroll": requireRegisteredListScroll,
     "no-outset-state-indicators": noOutsetStateIndicators,
     "no-polling-loop-in-tests": noPollingLoopInTests,
     "no-raw-mcp-registration": noRawMcpRegistration,

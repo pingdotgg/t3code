@@ -3108,6 +3108,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
       <View className="flex-1" onLayout={handleViewportLayout}>
         <View className="flex-1">
+          {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
             ref={listRef}
             // LegendList cannot see adjustedContentInset; remount so initial positioning waits for UIKit attachment.

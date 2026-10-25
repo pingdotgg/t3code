@@ -50,6 +50,7 @@ export function ThreadPullRequestsSheet(
 
   const content = (
     <View className="flex-1 android:bg-sheet-solid ios:bg-screen">
+      {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; sheets sit outside workspace columns and keep their own header handling. */}
       <LegendList
         data={lines}
         keyExtractor={linkedPullRequestKey}
