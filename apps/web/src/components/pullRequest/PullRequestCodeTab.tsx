@@ -278,7 +278,7 @@ function PullRequestCodeTab({
 }) {
   const resolvedTheme = useRenderedAppearance();
   // Initialize the shared tokenizer and workers while the diff request is still pending.
-  useDiffWorkerPool(resolveDiffThemeName(resolvedTheme));
+  useDiffWorkerPool();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,

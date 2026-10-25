@@ -1,7 +1,7 @@
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -485,6 +485,20 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/** For code outside React (worker pools) that follows the rendered appearance. */
+export function subscribeRenderedAppearance(listener: () => void): () => void {
+  const unsubscribeTheme = subscribe(listener);
+  const unsubscribePreview = subscribeToThemePreview(listener);
+  return () => {
+    unsubscribeTheme();
+    unsubscribePreview();
+  };
+}
+
+export function getRenderedAppearance(): ThemeAppearance {
+  return getThemePreviewAppearance() ?? getSnapshot().resolvedTheme;
+}
+
 export function useRenderedAppearance() {
   const { resolvedTheme } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const previewAppearance = useSyncExternalStore(
@@ -632,10 +646,6 @@ export function useTheme() {
         : currentMode;
     return setAppearanceMode(nextMode);
   };
-
-  useEffect(() => {
-    applyTheme(snapshot.theme);
-  }, [snapshot]);
 
   return {
     theme,
