@@ -1,0 +1,29 @@
+#!/bin/sh
+# rec start NAME | rec stop
+# Records the whole desktop on $DISPLAY to $VIDEO_DIR/footage/NAME.mp4 (default ~/video), at
+# 30 fps with a keyframe every second, which fframes seeks and syncs exactly.
+set -eu
+video_dir=${VIDEO_DIR:-$HOME/video}
+pidfile=${TMPDIR:-/tmp}/demo-video-rec.pid
+case ${1:-} in
+start)
+  name=${2:?usage: rec start NAME}
+  size=$(desktop --json display | sed -E 's/.*"width":([0-9]+),"height":([0-9]+).*/\1x\2/')
+  mkdir -p "$video_dir/footage"
+  setsid ffmpeg -nostdin -loglevel error -y -f x11grab -draw_mouse 1 -framerate 30 \
+    -video_size "$size" -i "${DISPLAY:-:1}" \
+    -c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p -g 30 -bf 0 -movflags +faststart \
+    "$video_dir/footage/$name.mp4" >"${TMPDIR:-/tmp}/demo-video-rec-$name.log" 2>&1 &
+  echo $! >"$pidfile"
+  ;;
+stop)
+  pid=$(cat "$pidfile")
+  kill -INT "$pid"
+  while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+  rm -f "$pidfile"
+  ;;
+*)
+  echo "usage: rec start NAME | rec stop" >&2
+  exit 2
+  ;;
+esac

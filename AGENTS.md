@@ -214,3 +214,19 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
 - Before a security audit or triaging a vulnerability report, read [SECURITY.md](SECURITY.md) for the trust model and what is intended.
+
+## Fork
+
+The fork publishes its desktop apps and server archives with the Fork release workflow, and
+`node scripts/fork/install-desktop.ts` installs one; see
+[Releasing and installing the fork's desktop app](docs/operations/fork-desktop-build.md).
+
+Never reference an upstream issue, pull request or commit in a form GitHub links in anything
+published on the fork: issues, pull requests, comments, reviews and commit messages.
+`pingdotgg/t3code#N`, `pingdotgg/t3code@<sha>` and `github.com/pingdotgg/t3code` URLs each leave
+a permanent backlink on upstream's timeline, which editing or deleting the text does not remove.
+Write `upstream#N` instead: GitHub does not link it, so it is safe in commit messages too, and a
+code span around it in Markdown adds a margin. A bare `#N`, or `upstream #N` with a space, links
+the fork's own issue or pull request N. The rule covers only what reaches GitHub. In conversation
+with the developer, and in local files that are never pushed, link upstream issues and pull
+requests normally, with full URLs, so the developer can click through.

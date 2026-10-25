@@ -1,0 +1,15 @@
+[Unit]
+Description=Include nested Agents' SSH aliases from the Agent user's SSH configuration
+
+[Service]
+# `agentctl-<name>` aliases for nested Agents, which T3 Code's SSH environments connect through.
+# The Include goes into ~/.ssh/config once, at boot rather than in the image, so a home overlay
+# or a recreated home still gets it.
+Type=oneshot
+User=agent
+Group=agent
+Environment=HOME=/home/agent
+ExecStart=/usr/local/bin/agentctl ssh-config install
+
+[Install]
+WantedBy=multi-user.target

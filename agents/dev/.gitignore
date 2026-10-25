@@ -1,0 +1,7 @@
+# Environment files stay out of Git; agentctl no longer needs one.
+.env
+
+# Checkout-local Agent variants are private by default.
+agent.*.yaml
+!agent.nested.yaml
+!agent.nested-build.yaml

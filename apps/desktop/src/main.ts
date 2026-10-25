@@ -63,6 +63,7 @@ import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
+import { remoteServerOverrides, withRemoteServerOverrides } from "./ssh/remoteServerOverrides.ts";
 import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopLegacyLocalStorage from "./app/DesktopLegacyLocalStorage.ts";
 import * as DesktopTelemetryPublisher from "./telemetry/DesktopTelemetryPublisher.ts";
@@ -113,8 +114,13 @@ const layerDesktopSshEnvironment = Layer.unwrap(
     const env = yield* HostProcess.Environment;
     return DesktopSshEnvironment.layer({
       // Per connect: the login shell's environment is installed after this layer is built.
-      resolveCliRunner: Effect.sync(() =>
-        DesktopSshEnvironment.resolveDesktopSshCliRunner(environment, env),
+      resolveCliRunner: remoteServerOverrides.pipe(
+        Effect.map((overrides) =>
+          withRemoteServerOverrides(
+            DesktopSshEnvironment.resolveDesktopSshCliRunner(environment, env),
+            overrides,
+          ),
+        ),
       ),
       resolveLauncherId: yield* Effect.cached(
         DesktopSshEnvironment.readOrCreateLauncherId(

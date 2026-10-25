@@ -1,0 +1,52 @@
+apiVersion: agents.platform/v1alpha1
+kind: Agent
+metadata:
+  name: t3code-dev
+spec:
+  sandbox:
+    image:
+      type: reference
+      reference: ghcr.io/martinothamar/t3code/t3code-dev:latest
+    platform:
+      os: linux
+    resources:
+      cpu: "8"
+      memory: "16Gi"
+      rootFilesystem:
+        capacity: "64Gi"
+        mode: direct
+      # Nested Agents, for developing the agentctl integration. A host that cannot provide them
+      # leaves the Agent without them, as its NestedSandboxes condition says.
+      nestedSandboxes: preferred
+    initSystem: image
+  home:
+    source: home
+  instructions:
+    - source: instructions.md
+    - source: improving.md
+  skills:
+    - source: skills/demo-video
+  harnesses:
+    - type: claudeCode
+      auth: mediated
+      login: any
+      default: true
+      defaults:
+        model: opus
+    - type: codex
+      auth: mediated
+      login: any
+      optional: true
+  # A GitHub token for GitHub's hosts, and the account as Git's identity, from
+  # `agentctl github login default` on the host.
+  accounts:
+    - type: github
+      login: default
+  access:
+    - type: ssh
+    - type: vnc
+  network:
+    mode: mediated
+    allow: all
+    deny:
+      - metadata.google.internal

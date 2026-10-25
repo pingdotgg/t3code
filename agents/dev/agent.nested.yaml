@@ -1,0 +1,19 @@
+apiVersion: agents.platform/v1alpha1
+kind: AgentVariant
+extends: agent.yaml
+
+# The same Agent on the image CI publishes, reduced to fit inside the default one, so a Session can
+# try changes to its manifest, instructions and skills. agent.nested-build.yaml builds the image.
+metadata:
+  name: t3code-dev-nested
+
+spec:
+  sandbox:
+    resources:
+      cpu: "4"
+      memory: "6Gi"
+      rootFilesystem:
+        capacity: "32Gi"
+        mode: direct
+      # Nested Agents of its own would need virtualization two levels down.
+      nestedSandboxes: null

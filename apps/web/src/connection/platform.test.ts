@@ -227,8 +227,14 @@ describe("desktop SSH pairing", () => {
     }),
   );
 
-  const failPairing = (serverVersion: string, message: string) => {
+  const failPairing = (serverVersion: string, message: string, remoteServerVersion?: string) => {
     const bridge = makeBridge([]);
+    if (remoteServerVersion !== undefined) {
+      vi.spyOn(bridge, "ensureSshEnvironment").mockResolvedValue({
+        ...SSH_BOOTSTRAP,
+        remoteServerVersion,
+      });
+    }
     const fetchDescriptor = bridge.fetchSshEnvironmentDescriptor;
     vi.spyOn(bridge, "fetchSshEnvironmentDescriptor").mockImplementation(async (url) => ({
       ...(await fetchDescriptor(url)),
@@ -247,6 +253,20 @@ describe("desktop SSH pairing", () => {
       expect(error).toBeInstanceOf(ConnectionBlockedError);
       expect(error.detail).toContain("0.0.46-nightly.20261004.2652");
       expect(error.detail).toContain(APP_VERSION);
+    }),
+  );
+
+  it.effect("names the server release the desktop runs on the host, not its own version", () =>
+    Effect.gen(function* () {
+      const preview = "0.1.3-preview.20261024.25";
+
+      const error = yield* failPairing(APP_VERSION, PAIRING_500, preview);
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error.detail).toContain(`so it runs ${preview}`);
+
+      expect(yield* failPairing(preview, PAIRING_500, preview)).toBeInstanceOf(
+        ConnectionTransientError,
+      );
     }),
   );
 

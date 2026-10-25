@@ -1,0 +1,15 @@
+apiVersion: agents.platform/v1alpha1
+kind: AgentVariant
+extends: agent.nested.yaml
+
+metadata:
+  name: t3code-dev-nested
+
+# The nested Agent, built from this checkout's Dockerfile, to try changes to the image before CI
+# publishes them.
+spec:
+  sandbox:
+    image:
+      type: build
+      context: .
+      dockerfile: Dockerfile

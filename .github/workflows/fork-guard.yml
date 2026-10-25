@@ -1,0 +1,49 @@
+# Upstream's workflows arrive with every sync but need runners and secrets this fork does not
+# have. This disables every workflow outside the allowlist and cancels runs they started.
+name: Fork guard
+
+on:
+  # A sync branch runs any new upstream workflow before main ever has it, and its review PR,
+  # which conflicts with main, runs none of the PR triggers.
+  push:
+    branches:
+      - main
+      - "sync/**"
+  pull_request:
+    paths:
+      - .github/workflows/**
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  guard:
+    name: Disable upstream workflows
+    # Pull requests from other repositories get a read-only token.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Disable workflows outside the allowlist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ALLOWED: .github/workflows/fork-ci.yml .github/workflows/fork-guard.yml .github/workflows/fork-release.yml .github/workflows/fork-dev-image.yml
+        run: |
+          gh api --paginate "repos/$REPO/actions/workflows" \
+            --jq '.workflows[] | select(.path | startswith(".github/workflows/")) | "\(.id) \(.state) \(.path)"' |
+          while read -r id state path; do
+            case " $ALLOWED " in *" $path "*) continue ;; esac
+            if [ "$state" = active ]; then
+              echo "Disabling $path"
+              gh api --method PUT "repos/$REPO/actions/workflows/$id/disable"
+            fi
+            for status in queued in_progress waiting requested pending; do
+              gh api --paginate "repos/$REPO/actions/workflows/$id/runs?status=$status" --jq '.workflow_runs[].id' |
+              while read -r run; do
+                echo "Cancelling run $run of $path"
+                gh api --method POST "repos/$REPO/actions/runs/$run/cancel" || true
+              done
+            done
+          done

@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""glide X Y [click|move] [SECONDS]
+
+Moves the pointer smoothly to X Y, in the pixels of a `desktop screenshot`, and clicks if asked.
+`desktop click` teleports the pointer, which looks jumpy in a recording.
+"""
+import json
+import math
+import subprocess
+import sys
+import time
+
+display = json.loads(subprocess.check_output(["desktop", "--json", "display"], text=True))
+sx = display["width"] / display["sentWidth"]
+sy = display["height"] / display["sentHeight"]
+x, y = float(sys.argv[1]) * sx, float(sys.argv[2]) * sy
+click = len(sys.argv) > 3 and sys.argv[3] == "click"
+seconds = float(sys.argv[4]) if len(sys.argv) > 4 else 0.6
+
+location = subprocess.check_output(["xdotool", "getmouselocation", "--shell"], text=True)
+current = dict(line.split("=") for line in location.split())
+x0, y0 = float(current["X"]), float(current["Y"])
+steps = max(10, int(seconds * 60))
+for i in range(1, steps + 1):
+    e = 0.5 - math.cos(math.pi * i / steps) / 2
+    subprocess.run(["xdotool", "mousemove", str(round(x0 + (x - x0) * e)), str(round(y0 + (y - y0) * e))])
+    time.sleep(seconds / steps)
+if click:
+    time.sleep(0.15)
+    subprocess.run(["xdotool", "click", "1"])

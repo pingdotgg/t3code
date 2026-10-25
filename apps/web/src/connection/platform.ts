@@ -258,6 +258,8 @@ export const provisionDesktopSshEnvironment = Effect.fn(
       ),
     });
   }
+  // A build can choose another server release for SSH hosts than its own version.
+  const expectedVersion = bootstrap.remoteServerVersion ?? APP_VERSION;
   const access = yield* Effect.tryPromise({
     try: () => bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, pairingToken),
     catch: (cause) => {
@@ -266,7 +268,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
       // the desktop's runner just minted, and answers 500 on every retry.
       if (
         error._tag === "ConnectionBlockedError" ||
-        descriptor.serverVersion === APP_VERSION ||
+        descriptor.serverVersion === expectedVersion ||
         !error.detail.includes("[ssh_http:500]")
       ) {
         return error;
@@ -279,7 +281,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
             {
               label: descriptor.label,
               serverVersion: descriptor.serverVersion,
-              appVersion: APP_VERSION,
+              appVersion: expectedVersion,
             },
           ),
         ),

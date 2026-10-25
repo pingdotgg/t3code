@@ -1,0 +1,6 @@
+# The prebuilt FFmpeg archive that ffmpeg-sys-fframes downloads for linux-x86_64 links
+# libx264 ABI 163, but the image's Ubuntu ships a newer one (26.04: libx264-165) ->
+# "undefined symbol: x264_encoder_open_163".
+# Build FFmpeg from source against the system x264 instead (one-time, a few minutes).
+[env]
+FFMPEG_FORCE_BUILD = "1"

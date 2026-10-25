@@ -1,0 +1,139 @@
+# Pull requests and manual runs on other branches only build; main also publishes to GHCR.
+name: Fork dev image
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - agents/dev/**
+      - .github/workflows/fork-dev-image.yml
+  push:
+    branches:
+      - main
+    paths:
+      - agents/dev/**
+      - .github/workflows/fork-dev-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: fork-dev-image-${{ github.event.pull_request.number || github.ref }}
+  # A cancelled publish could leave the two tags pointing at different commits.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/t3code-dev
+
+jobs:
+  # Each architecture builds on a native runner: under emulation the build is slow, and the base's
+  # containers feature fails, since nft cannot open a netlink socket there. On main, each pushes
+  # its image by digest, and the publish job joins them into the tagged multi-platform image.
+  build:
+    name: Build dev image (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Immediate credential removal traverses .repos' gitlinks without .gitmodules.
+          # Use checkout's default post-job cleanup, as Fork CI does.
+          sparse-checkout: agents/dev
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build image
+        env:
+          ARCH: ${{ matrix.arch }}
+          PUBLISH: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          set -euo pipefail
+
+          metadata="${RUNNER_TEMP}/metadata.json"
+          cache="${IMAGE}:buildcache-${ARCH}"
+          set --
+          if [ "$PUBLISH" = true ]; then
+            set -- \
+              --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+              --cache-to "type=registry,ref=${cache},mode=max,image-manifest=true"
+          fi
+
+          docker buildx build \
+            --provenance=false \
+            --sbom=false \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --cache-from "type=registry,ref=${cache}" \
+            --platform "linux/${ARCH}" \
+            --metadata-file "${metadata}" \
+            "$@" \
+            agents/dev
+
+          if [ "$PUBLISH" = true ]; then
+            mkdir -p "${RUNNER_TEMP}/digests"
+            digest="$(jq -r '."containerimage.digest"' "${metadata}")"
+            case "${digest}" in
+              sha256:*) printf '%s\n' "${digest}" > "${RUNNER_TEMP}/digests/${ARCH}" ;;
+              *) echo "::error::no image digest in ${metadata}"; exit 1 ;;
+            esac
+          fi
+
+      - name: Upload image digest
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    name: Publish dev image
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download image digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Tag multi-platform image
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools create \
+            --tag "${IMAGE}:sha-${GITHUB_SHA::10}" \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}@$(cat "${RUNNER_TEMP}/digests/amd64")" \
+            "${IMAGE}@$(cat "${RUNNER_TEMP}/digests/arm64")"
+          docker buildx imagetools inspect "${IMAGE}:sha-${GITHUB_SHA::10}"

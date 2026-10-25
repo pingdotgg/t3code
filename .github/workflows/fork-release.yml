@@ -1,0 +1,329 @@
+# Publishes the fork's desktop apps and the T3 server archives its SSH hosts and Sandboxes install,
+# under one version, as a release of this repository. Run it by hand from the Actions tab.
+#
+# The version is upstream's preview form, `<core>-preview.<date>.<run>`. A desktop build with such a
+# version gets no update feed (isDesktopPreviewVersion in scripts/build-desktop-artifact.ts), so
+# the apps never replace themselves, and the app installs the server archive of that same version
+# from this repository's releases (apps/desktop/src/ssh/remoteServerOverrides.ts).
+#
+# Packaging is upstream's release-desktop.yml, called once per target as release.yml does: it
+# needs only the `js-bundle` artifact built here, and skips signing without the secrets.
+#
+# A run on `main` builds and becomes the latest release. A run on any other branch, such as a
+# `sync/<date>` branch, only builds and leaves its apps and server archives as artifacts, for
+# testing before main moves. `from_run` publishes such a run from `main` without building again,
+# once main points at the commit it built.
+name: Fork release
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_run:
+        description: Publish this run's build instead of building; it must have built main's commit
+        required: false
+        default: ""
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+permissions:
+  # The Windows build reads this run's artifact list to wait for the Linux archive it embeds.
+  actions: read
+  contents: read
+
+jobs:
+  preflight:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.meta.outputs.version || steps.source.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag || steps.source.outputs.tag }}
+    steps:
+      - name: Checkout
+        if: inputs.from_run == ''
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        if: inputs.from_run == ''
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/scripts...
+
+      - id: meta
+        name: Resolve release version
+        if: inputs.from_run == ''
+        run: |
+          node scripts/resolve-nightly-release.ts \
+            --channel preview \
+            --date "$(date -u +%Y%m%d)" \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" \
+            --github-output
+
+      # A later run publishes this build with from_run, under the version it was built with.
+      - name: Record release version
+        if: inputs.from_run == ''
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: printf 'version=%s\ntag=%s\nsha=%s\n' "$VERSION" "$TAG" "$GITHUB_SHA" > release-meta.txt
+
+      - name: Upload release version
+        if: inputs.from_run == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-meta
+          path: release-meta.txt
+          if-no-files-found: error
+
+      # Only a finished, successful run of this workflow that built the very commit main points
+      # at may be published, so a release never holds code other than what was tested.
+      - name: Check the run to publish
+        if: inputs.from_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM_RUN: ${{ inputs.from_run }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" != main ]]; then
+            echo "from_run publishes only from main, not $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FROM_RUN" \
+            --jq '[.path, .status, .conclusion, .head_sha, .head_branch] | @tsv')"
+          IFS=$'\t' read -r path status conclusion head_sha head_branch <<<"$run"
+          if [[ "$path" != .github/workflows/fork-release.yml ]]; then
+            echo "Run $FROM_RUN is $path, not a Fork release run." >&2
+            exit 1
+          fi
+          if [[ "$status" != completed || "$conclusion" != success ]]; then
+            echo "Run $FROM_RUN is $status ($conclusion); only a successful run can be published." >&2
+            exit 1
+          fi
+          if [[ "$head_sha" != "$GITHUB_SHA" ]]; then
+            echo "Run $FROM_RUN built $head_sha on $head_branch, but main is $GITHUB_SHA." >&2
+            exit 1
+          fi
+
+      - name: Download release version
+        if: inputs.from_run != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: release-meta
+          run-id: ${{ inputs.from_run }}
+          github-token: ${{ github.token }}
+
+      - id: source
+        name: Read release version
+        if: inputs.from_run != ''
+        run: grep -E '^(version|tag)=' release-meta.txt >> "$GITHUB_OUTPUT"
+
+  # The server bundle, web client and Electron main, built once for every target. Without T3
+  # Connect's public config, which only upstream's deployment has, the server runs and only T3
+  # Connect is unavailable.
+  build_bundle:
+    name: Build JS bundle
+    needs: [preflight]
+    if: inputs.from_run == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      # The bundle leaves out the Linux browser secret helper, which each Linux job of
+      # release-desktop.yml compiles for its own arch.
+      - name: Build JS bundle
+        run: vp run build:desktop:bundle
+
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  # Server archives come for the hosts the SSH installer supports (packages/ssh/src/tunnel.ts):
+  # Linux x64 and arm64, and macOS arm64, each from the job of its own platform. Node cannot build
+  # a single executable for an Intel Mac, so that job builds only the app. Windows is no SSH host;
+  # its WSL backend embeds the Linux archive of its own arch, which release-desktop.yml waits for
+  # by the name of the job that builds it, `Build Linux <arch>`. As in release.yml, Windows builds
+  # on Linux and runs its packaged binaries on a Windows `verify_runner`.
+  desktop:
+    name: Desktop
+    needs: [preflight, build_bundle]
+    if: inputs.from_run == ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            target: AppImage
+            arch: x64
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+            cli_archive: true
+            launch_check: true
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            platform: linux
+            target: AppImage
+            arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            resource_key: linux-arm64
+            cli_archive: true
+          - label: macOS arm64
+            runner: macos-15
+            platform: mac
+            target: dmg
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
+            cli_archive: true
+            launch_check: true
+          - label: macOS x64
+            runner: macos-15
+            platform: mac
+            target: dmg
+            arch: x64
+            rust_target: x86_64-apple-darwin
+            resource_key: darwin-x64
+            cli_archive: false
+          - label: Windows x64
+            runner: ubuntu-24.04
+            verify_runner: windows-2025
+            platform: win
+            target: nsis
+            arch: x64
+            rust_target: x86_64-pc-windows-msvc
+            resource_key: win32-x64
+            cli_archive: false
+          - label: Windows arm64
+            runner: ubuntu-24.04
+            verify_runner: windows-11-arm
+            platform: win
+            target: nsis
+            arch: arm64
+            rust_target: aarch64-pc-windows-msvc
+            resource_key: win32-arm64
+            cli_archive: false
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: ${{ matrix.label }}
+      runner: ${{ matrix.runner }}
+      verify_runner: ${{ matrix.verify_runner || '' }}
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      rust_target: ${{ matrix.rust_target }}
+      resource_key: ${{ matrix.resource_key }}
+      cli_archive: ${{ matrix.cli_archive }}
+      launch_check: ${{ matrix.launch_check || false }}
+
+  # Publishing with from_run skips the build jobs, which a plain `needs` would treat as a reason
+  # to skip this one too.
+  release:
+    name: Publish release
+    needs: [preflight, desktop]
+    if: ${{ github.ref_name == 'main' && !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # Reads the build's artifacts through the API, which from_run needs for another run's.
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github
+
+      - name: Download desktop apps
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+          run-id: ${{ inputs.from_run || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download server archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+          run-id: ${{ inputs.from_run || github.run_id }}
+          github-token: ${{ github.token }}
+
+      # The SSH installer and scripts/fork/install-desktop.ts both verify downloads against this.
+      - name: Write checksums
+        working-directory: release-assets
+        run: |
+          set -euo pipefail
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          BUILD_RUN: ${{ inputs.from_run || github.run_id }}
+        run: |
+          set -euo pipefail
+          # Only for the notes, so a failed fetch leaves the base unknown rather than the release.
+          git fetch --quiet --filter=tree:0 https://github.com/pingdotgg/t3code.git \
+            'refs/tags/v*:refs/tags/v*' || true
+          nightly="$(git describe --tags --abbrev=0 --match 'v*-nightly.*' "$GITHUB_SHA" 2>/dev/null || true)"
+          stable="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' "$GITHUB_SHA" 2>/dev/null || true)"
+          if [[ -n "$stable" ]] && { [[ -z "$nightly" ]] || git merge-base --is-ancestor "$nightly" "$stable"; }; then
+            upstream="$stable"
+          else
+            upstream="${nightly:-unknown}"
+          fi
+          {
+            echo "Built from \`$GITHUB_SHA\` in run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN, based on upstream \`$upstream\`."
+            echo
+            echo 'Install the desktop app with `node scripts/fork/install-desktop.ts`; see docs/operations/fork-desktop-build.md.'
+          } > notes.md
+          gh release create "$TAG" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "T3 Code fork $VERSION" \
+            --notes-file notes.md \
+            --latest

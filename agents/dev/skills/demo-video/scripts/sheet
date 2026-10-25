@@ -1,0 +1,22 @@
+#!/bin/sh
+# sheet TAKE [FROM TO]
+# A contact sheet of $VIDEO_DIR/footage/TAKE.mp4 (default ~/video) with each frame's source
+# second burned in, the number cut.sh takes: the whole take one frame every 4 seconds, or
+# FROM..TO seconds one frame per second. Writes $VIDEO_DIR/sheets/TAKE[-FROM-TO].jpg.
+set -eu
+video_dir=${VIDEO_DIR:-$HOME/video}
+take=${1:?usage: sheet TAKE [FROM TO]}
+font=/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Bold.ttf
+mkdir -p "$video_dir/sheets"
+if [ $# -ge 3 ]; then
+  from=$2
+  out="$video_dir/sheets/$take-$2-$3.jpg"
+  set -- -ss "$2" -to "$3" -i "$video_dir/footage/$take.mp4"
+  filter="fps=1,scale=320:-1,drawtext=fontfile=$font:text='%{eif\:t+$from\:d}s':x=4:y=4:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.8,tile=8x5"
+else
+  out="$video_dir/sheets/$take.jpg"
+  set -- -i "$video_dir/footage/$take.mp4"
+  filter="fps=1/4,scale=400:-1,drawtext=fontfile=$font:text='%{eif\:t\:d}s':x=6:y=6:fontsize=22:fontcolor=white:box=1:boxcolor=black@0.7,tile=5x10"
+fi
+ffmpeg -v error -y "$@" -vf "$filter" -frames:v 1 "$out"
+echo "$out"

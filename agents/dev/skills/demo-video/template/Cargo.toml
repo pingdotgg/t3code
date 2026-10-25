@@ -1,0 +1,33 @@
+[package]
+name = "demo-video"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fframes = { version = "=1.2.0", features = ["compile-time-svgtree", "cli"] }
+fframes_skia_renderer = { version = "=1.2.0", features = ["vulkan"] }
+fframes_native_player = { version = "=1.2.0", default-features = false, features = [
+  "vulkan",
+  "audio",
+] }
+
+[target.'cfg(not(windows))'.dependencies]
+fframes = { version = "=1.2.0", features = ["h264", "libav-agree-gpl"] }
+
+[lib]
+name = "demo_video"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "demo-video"
+path = "src/main.rs"
+
+[workspace]
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

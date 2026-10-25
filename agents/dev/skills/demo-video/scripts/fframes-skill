@@ -1,0 +1,24 @@
+#!/bin/sh
+# fframes-skill [DEST]
+# Downloads fframes' own agent skill, skills/fframes-video, at the release the template pins
+# (the `fframes = { version = "=X" }` line in template/Cargo.toml), into DEST, default
+# $VIDEO_DIR/fframes-video (~/video). Read its SKILL.md for fframes' CLI and API.
+set -eu
+here=$(dirname "$0")
+version=$(sed -n 's/^fframes = { version = "=\([^"]*\)".*/\1/p' "$here/../template/Cargo.toml" | head -n 1)
+[ -n "$version" ] || { echo "no pinned fframes version in template/Cargo.toml" >&2; exit 1; }
+dest=${1:-${VIDEO_DIR:-$HOME/video}/fframes-video}
+repo=dmtrKovalenko/fframes
+tag=v$version
+curl -fsSL "https://api.github.com/repos/$repo/git/trees/$tag?recursive=1" |
+  python3 -c 'import json, sys
+for e in json.load(sys.stdin)["tree"]:
+    if e["type"] == "blob" and e["path"].startswith("skills/fframes-video/"):
+        print(e["path"])' |
+  while read -r path; do
+    file="$dest/${path#skills/fframes-video/}"
+    mkdir -p "$(dirname "$file")"
+    curl -fsSL "https://raw.githubusercontent.com/$repo/$tag/$path" -o "$file"
+  done
+[ -f "$dest/SKILL.md" ] || { echo "fframes $tag has no skills/fframes-video" >&2; exit 1; }
+echo "fframes-video skill for fframes $version in $dest"
