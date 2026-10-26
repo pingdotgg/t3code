@@ -827,7 +827,7 @@ export function ThemeLibrary({
 
   return (
     <div className="space-y-3">
-      <h3 className="px-3 text-sm font-normal text-foreground/70 sm:px-4 redesign:text-base redesign:font-semibold redesign:text-foreground">
+      <h3 className="flex min-h-7 items-center px-3 text-sm font-normal text-foreground/70 sm:px-4 redesign:text-base redesign:font-semibold redesign:text-foreground">
         {searchableSetting("color-scheme").title}
       </h3>
       {renderModeTiles()}

@@ -26,6 +26,7 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
+import { AdvancedSettings } from "./AdvancedSettings";
 import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -261,8 +262,29 @@ function FontSettingsGroup() {
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
-      <FontSmoothingRow />
     </>
+  );
+}
+
+function SeparateFontsRow({
+  checked,
+  onCheckedChange,
+}: {
+  readonly checked: boolean;
+  readonly onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <SettingsRow
+      {...searchableSetting("separate-fonts")}
+      description="Set the prompt, code, and terminal fonts separately instead of one monospace font."
+      control={
+        <Switch
+          checked={checked}
+          onCheckedChange={(next) => onCheckedChange(Boolean(next))}
+          aria-label="Separate fonts"
+        />
+      }
+    />
   );
 }
 
@@ -312,22 +334,15 @@ export function TypographySection() {
   const showAdvanced =
     advanced || (searchTargetId !== null && isAdvancedTypographyTarget(searchTargetId));
   return (
-    <SettingsSection
-      id="typography"
-      title="Typography"
-      headerAction={
-        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-muted-foreground">
-          Advanced
-          <Switch
-            checked={showAdvanced}
-            onCheckedChange={(checked) => setAdvanced(Boolean(checked))}
-            aria-label="Show advanced typography settings"
-          />
-        </label>
-      }
-    >
+    <SettingsSection id="typography" title="Typography">
       {showAdvanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <AdvancedSettings
+        targetIds={[searchableSetting("separate-fonts").id, searchableSetting("font-smoothing").id]}
+      >
+        <SeparateFontsRow checked={showAdvanced} onCheckedChange={setAdvanced} />
+        <FontSmoothingRow />
+      </AdvancedSettings>
     </SettingsSection>
   );
 }

@@ -99,6 +99,7 @@ describe("mixed source control instructions", () => {
       customInstructions,
     }));
 
+    await userEvent.click(page.getByRole("button", { name: "Advanced" }));
     await userEvent.click(resetButton("change request templates"));
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);

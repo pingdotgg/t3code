@@ -23,6 +23,7 @@ import {
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
+  movedSettingsPath,
 } from "../components/settings/settingsSearch";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
@@ -174,6 +175,8 @@ export const Route = createFileRoute("/_chat/settings")({
     if (location.pathname === "/settings") {
       throw redirect({ to: "/settings/general", replace: true });
     }
+    const moved = movedSettingsPath(location.pathname, location.hash);
+    if (moved) throw redirect({ to: moved, search: true, hash: true, replace: true });
   },
   component: SettingsRouteLayout,
 });
