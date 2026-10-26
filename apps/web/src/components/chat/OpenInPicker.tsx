@@ -410,10 +410,6 @@ export const OpenInPicker = memo(function OpenInPicker({
             className={cn(
               isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
               getOpenInIconClass(primaryOption.kind),
-              // A hairline keeps pale app icons from dissolving into the card.
-              isPanel &&
-                primaryOption.kind === "brand" &&
-                "redesign:rounded-sm redesign:ring-1 redesign:ring-black/10 redesign:dark:ring-white/15",
             )}
           />
         ) : isPanel ? (
