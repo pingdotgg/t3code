@@ -1,3 +1,5 @@
+import * as NodeV8 from "node:v8";
+import * as NodeVM from "node:vm";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PullRequestOperationError } from "@t3tools/contracts";
@@ -7,6 +9,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+
+NodeV8.setFlagsFromString("--expose-gc");
+const collectGarbage = NodeVM.runInNewContext("gc") as () => void;
 
 const cacheLayer = (directory: string) =>
   PullRequestReadCache.make.pipe(Effect.provide(KeyValueStore.layerFileSystem(directory)));
@@ -144,6 +149,32 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
       assert.strictEqual(yield* read, "1");
       assert.strictEqual(yield* read, "2");
       assert.strictEqual(yield* read, "2");
+    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+  );
+
+  it.effect("does not keep a caller's data alive after its reads and invalidations", () =>
+    Effect.gen(function* () {
+      const cache = yield* PullRequestReadCache.make;
+      const sweeps: Array<WeakRef<object>> = [];
+      // Like a sync sweep: an Effect.fn made per run that closes over that run's data.
+      const sweep = Effect.fn("sweep")(function* (index: number) {
+        const groups = new Map<string, number>(
+          Array.from({ length: 1_000 }, (_, id) => [`group-${id}`, id]),
+        );
+        sweeps.push(new WeakRef(groups));
+        const read = Effect.fn("read")(function* (pr: string) {
+          const size = groups.size;
+          yield* cache.invalidate(pr);
+          const answer = yield* cache.get(`${pr}-${index}`, Effect.succeed("answer"), [pr]);
+          return size + answer.length;
+        });
+        yield* Effect.forEach(["pr-1", "pr-2"], read, { discard: true });
+      });
+      for (let index = 0; index < 5; index++) yield* sweep(index);
+      // WeakRef targets stay alive until the current job ends, so yield before collecting.
+      yield* Effect.yieldNow;
+      collectGarbage();
+      assert.strictEqual(sweeps.filter((sweepData) => sweepData.deref() !== undefined).length, 0);
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
