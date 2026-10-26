@@ -78,6 +78,7 @@ function Main({ className, ...props }: ComponentProps<"div">) {
 }
 
 // Position hints keep class merging from dropping mask color stops.
+// Dark goes transparent only where the Shell backdrop paints the strip; scoping it keeps dark: from beating the fills below.
 function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
@@ -85,7 +86,8 @@ function ContextStrip({ className, ...props }: ComponentProps<"div">) {
       className={cn(
         "group/composer-context relative isolate mx-auto -mt-4 flex w-[calc(100%-2*var(--chat-composer-drawer-inset))] items-center gap-2 overflow-x-clip overflow-y-visible px-2 pt-5 pb-1",
         "before:absolute before:inset-0 before:-z-1 before:rounded-b-2xl before:border before:border-(--chat-composer-outline) before:mask-b-from-transparent before:mask-b-from-(position:--spacing-composer-seam) before:mask-b-to-black before:mask-b-to-(position:--spacing-composer-seam)",
-        "before:bg-(--chat-composer-glass-surface) dark:before:bg-transparent dark:before:bg-composer-seam-below dark:before:bg-origin-border",
+        "before:bg-(--chat-composer-glass-surface) dark:before:bg-composer-seam-below dark:before:bg-origin-border",
+        "dark:supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:group-not-has-data-[composer-banner-surface=attached]/composer-surface:before:bg-transparent",
         "group-has-data-[composer-banner-surface=attached]/composer-surface:before:bg-(--chat-composer-glass-surface)/(--glass-opacity) group-has-data-[composer-banner-surface=attached]/composer-surface:before:backdrop-blur-(--glass-blur) group-has-data-[composer-banner-surface=attached]/composer-surface:before:backdrop-saturate-(--glass-saturation)",
         "not-supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:before:bg-(--chat-composer-glass-surface)/(--glass-opacity) not-supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:before:backdrop-blur-(--glass-blur) not-supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:before:backdrop-saturate-(--glass-saturation)",
         className,
