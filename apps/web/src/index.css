@@ -1283,6 +1283,52 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* New design: modified files get a muted blue so added and deleted files lead. Built from the
+   info token, which themes do not override, so it stays blue in every theme. */
+html[data-redesign] {
+  --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 50%, var(--muted-foreground));
+}
+
+html.dark[data-redesign] {
+  /* On black a gray mix stays as bright as the blue, so dim with transparency instead. */
+  --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 65%, transparent);
+  --diff-added-icon: var(--success-foreground);
+}
+
+/* Blue-orange already spends blue on additions. */
+html[data-redesign][data-diff-color-scheme="blue-orange"] {
+  --diff-modified-icon: var(--muted-foreground);
+  --diff-added-icon: initial;
+}
+
+html.dark[data-redesign][data-diff-color-scheme="blue-orange"] {
+  --diff-modified-icon: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+}
+
+/* New design: sections in the provider detail pane sit flat in its card instead of nesting
+   cards inside it. Headings and row dividers still separate them. */
+[data-redesign] [data-provider-detail] [data-slot="settings-group"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* New design: a diff header's copy button shows on file hover or focus. */
+@media (hover: hover) {
+  [data-redesign] diffs-container:not(:hover) [data-diff-copy-path]:not(:focus-within) {
+    opacity: 0;
+  }
+}
+
+/* New design: the default dark canvas is true black, matching the sidebar. Raised surfaces
+   keep the tone they had over neutral-950 so cards, popovers, and the composer still lift. */
+html.dark[data-redesign]:not([data-theme-id]) {
+  --background: #000;
+  --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
+  --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
+  --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
+}
+
 /* Theme files are expressed in app color roles and mapped to the existing
    semantic surface tokens here. Keep this block after the sidebar-version
    compatibility overrides so both navigation implementations receive the
@@ -2181,6 +2227,15 @@ code {
   overflow-wrap: normal;
   word-break: normal;
   font-size: 0.75rem;
+}
+
+/* New design: tables sit one step under 15px prose instead of three. */
+[data-redesign] .chat-markdown table {
+  font-size: 0.875rem;
+}
+
+[data-redesign] .chat-markdown :is(td, th) {
+  text-wrap: pretty;
 }
 
 /* Top-aligned so wrapped rows share a first line, and the outer columns sit

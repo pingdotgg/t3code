@@ -3,13 +3,14 @@ import { WorkerPoolManager } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { subscribeClientSettings } from "../hooks/useSettings";
 import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/useTheme";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 
 export class DiffWorkerError extends Schema.TaggedError<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
-  themeName: Schema.Literals(["pierre-light", "pierre-dark"]),
+  themeName: Schema.Literals(["pierre-light", "pierre-dark", "t3-light"]),
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -72,7 +73,12 @@ function createDiffWorkerPool(poolSize: number) {
   );
   return {
     pool,
-    unsubscribeTheme: subscribeRenderedAppearance(() => applyDiffWorkerTheme(pool)),
+    unsubscribeTheme: (() => {
+      const apply = () => applyDiffWorkerTheme(pool);
+      // The New design picks the light syntax palette, so a settings change can switch it too.
+      const unsubscribes = [subscribeRenderedAppearance(apply), subscribeClientSettings(apply)];
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+    })(),
     consumers: 0,
     idleTimer: undefined,
   };

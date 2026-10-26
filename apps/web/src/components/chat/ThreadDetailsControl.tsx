@@ -53,10 +53,22 @@ export function ThreadDetailsControl({
           "relative inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap border outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg]:shrink-0",
           parts[part],
           multiline && "h-auto min-h-8 py-0.75 disabled:opacity-100 sm:h-auto",
-          tone === "muted" && "text-muted-foreground/70 hover:text-foreground/80",
-          tone === "primary" && "text-primary hover:text-primary",
+          tone === "muted" &&
+            "text-muted-foreground/70 hover:text-foreground/80 redesign:text-muted-foreground",
+          tone === "primary" &&
+            // The row surface forces a faint hover fill with !important; the solid pill keeps its own.
+            "text-primary hover:text-primary redesign:bg-primary redesign:text-primary-foreground redesign:hover:text-primary-foreground redesign:hover:!bg-primary/85 redesign:data-pressed:!bg-primary/85 redesign:dark:hover:!bg-primary/85 redesign:dark:data-pressed:!bg-primary/85",
           tone === "destructive" &&
             "text-destructive hover:text-destructive data-pressed:text-destructive",
+          // PR row actions share one 20px pill with a 1px inset focus ring that stays clear of the
+          // label. The solid pill draws it in the canvas color so it shows against the fill.
+          part === "meta" &&
+            (tone === "primary" || tone === "destructive") &&
+            "redesign:h-5 redesign:focus-visible:ring-offset-0 redesign:focus-visible:ring-1",
+          part === "meta" && tone === "primary" && "redesign:focus-visible:ring-background",
+          part === "meta" &&
+            tone === "destructive" &&
+            "redesign:bg-destructive/10 redesign:hover:!bg-destructive/16 redesign:data-pressed:!bg-destructive/16 redesign:dark:hover:!bg-destructive/16 redesign:dark:data-pressed:!bg-destructive/16",
           className,
         ),
       },

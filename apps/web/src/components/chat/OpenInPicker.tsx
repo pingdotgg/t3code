@@ -410,9 +410,6 @@ export const OpenInPicker = memo(function OpenInPicker({
             className={cn(
               isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
               getOpenInIconClass(primaryOption.kind),
-              // Full-color app icons outshout the panel's line icons until the row is in use.
-              isPanel &&
-                "redesign:grayscale redesign:dark:opacity-70 redesign:group-hover/details-split:grayscale-0 redesign:dark:group-hover/details-split:opacity-100 redesign:group-has-[[data-popup-open]]/details-split:grayscale-0 redesign:dark:group-has-[[data-popup-open]]/details-split:opacity-100",
               // A hairline keeps pale app icons from dissolving into the card.
               isPanel &&
                 primaryOption.kind === "brand" &&

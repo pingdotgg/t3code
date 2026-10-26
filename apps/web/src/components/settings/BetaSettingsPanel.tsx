@@ -25,7 +25,7 @@ export function BetaSettingsPanel() {
       <SettingsSection id="beta" title="Beta">
         <SettingsRow
           {...searchableSetting("new-design")}
-          description="Try the quieter design: gray sidebar icons, dimmer read threads, and simpler composer controls."
+          description="Try the new design: a true black dark mode, dimmer read threads, and simpler composer controls."
           resetAction={
             settings.redesignEnabled !== DEFAULT_UNIFIED_SETTINGS.redesignEnabled ? (
               <SettingResetButton

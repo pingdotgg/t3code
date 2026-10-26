@@ -35,11 +35,12 @@ export function CollapsibleSectionHeader({
       <span className="shrink-0">{children}</span>
       <span
         aria-hidden
-        // A collapsed header with a trailing count drops its rule so it doesn't read as a leader.
+        // A header with a trailing count drops its rule so it doesn't read as a leader. The New
+        // design drops it in both states so a shelf header looks the same open or closed.
         className={cn(
           "h-px min-w-2 flex-1",
           tones[tone].line,
-          !expanded && accessory && "invisible",
+          accessory && (expanded ? "redesign:invisible" : "invisible"),
         )}
       />
       {accessory}
