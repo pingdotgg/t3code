@@ -35,7 +35,6 @@ it.each([true, false])(
     const scheduler = createReviewDiffHighlightScheduler(sourceRequest);
     const scrollToFile = vi.fn(async () => {});
     const loadMore = vi.fn();
-    const jumpStarted = { current: true };
     const onDebug: NonNullable<NativeReviewDiffViewProps["onDebug"]> = ({ nativeEvent }) => {
       if (nativeEvent.message === "visible-range")
         scheduler.update({
@@ -50,7 +49,8 @@ it.each([true, false])(
         focusIndex: -1,
         isIos,
         nativeView: { current: { scrollToFile, scrollToTop: vi.fn(async () => {}) } },
-        jumpStarted,
+        jumpStarted: () => true,
+        setJumpStarted: () => {},
         onDebug,
         loadMore,
       });
