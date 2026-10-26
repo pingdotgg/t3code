@@ -112,7 +112,7 @@ it.effect.each(["initial", "waiting"])(
                 archivedThreads: [],
               }),
           }),
-          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ openScoped: open }),
           Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: resolveRuntimePolicy }),
         ),
       ),
@@ -198,6 +198,7 @@ it.effect.each([
     const openEntered = Deferred.makeUnsafe<void>();
     const calls: string[] = [];
     let cleanupEntered = false;
+    let sessionHeld = false;
     const providerThread = { id: providerThreadId, providerSessionId, providerInstanceId };
     const projection = {
       thread: {
@@ -277,12 +278,21 @@ it.effect.each([
               }),
           }),
           Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-            open: (input) =>
+            openScoped: (input) =>
               Effect.gen(function* () {
                 assert.equal(input.runtimePolicy.cwd, worktreePath);
                 if (!(yield* fileSystem.exists(worktreePath).pipe(Effect.orDie))) {
                   return yield* new ProviderWorkspaceMissingError({ threadId, cwd: worktreePath });
                 }
+                yield* Effect.acquireRelease(
+                  Effect.sync(() => {
+                    sessionHeld = true;
+                  }),
+                  () =>
+                    Effect.sync(() => {
+                      sessionHeld = false;
+                    }),
+                );
                 calls.push("session");
                 yield* Deferred.succeed(openEntered, undefined);
                 if (order === "rollback-first") yield* Deferred.await(release);
@@ -332,6 +342,7 @@ it.effect.each([
         return;
       }
       yield* Fiber.join(rollback);
+      assert.isFalse(sessionHeld);
       if (laterCleanup !== undefined) yield* Fiber.join(laterCleanup);
       const rollbackCalls = restoreFiles
         ? ["session", "files", "projection"]
@@ -593,7 +604,7 @@ const seedRollbackHistory = Effect.gen(function* () {
             ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-          open: () =>
+          openScoped: () =>
             Effect.succeed({
               rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                 Effect.gen(function* () {

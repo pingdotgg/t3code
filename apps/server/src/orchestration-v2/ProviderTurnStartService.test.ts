@@ -933,7 +933,7 @@ function makeLocalCommandHarness(input: {
                 ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-          openForTurn: open,
+          openScoped: open,
           get: () =>
             Effect.succeed(
               input.previousTurn?.liveSession === false

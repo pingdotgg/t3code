@@ -168,7 +168,7 @@ export interface ProviderSessionManagerV2Shape {
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
     ProviderSessionManagerV2Error
   >;
-  readonly openForTurn: (
+  readonly openScoped: (
     input: Parameters<ProviderSessionManagerV2Shape["open"]>[0],
   ) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -2011,7 +2011,7 @@ export const layerWithOptions = (
             ) {
               stoppedByProvider = true;
             }
-            return observeActivity(
+            const publish = observeActivity(
               entry.runtime.providerSessionId,
               event.type === "turn.terminal"
                 ? markIdle(
@@ -2083,6 +2083,9 @@ export const layerWithOptions = (
                 }),
               ),
             );
+            return event.type === "turn.terminal"
+              ? sessionOpen.withLock(entry.runtime.providerSessionId, publish)
+              : publish;
           }),
           Effect.exit,
           Effect.flatMap((exit) =>
@@ -2404,7 +2407,7 @@ export const layerWithOptions = (
       return ProviderSessionManagerV2.of({
         shutdown,
         open: (input) => open(input),
-        openForTurn: (input) => Effect.scope.pipe(Effect.flatMap((scope) => open(input, scope))),
+        openScoped: (input) => Effect.scope.pipe(Effect.flatMap((scope) => open(input, scope))),
         isLive: (providerSessionId) =>
           Ref.get(sessions).pipe(
             Effect.map((current) => current.has(sessionKey(providerSessionId))),

@@ -1296,13 +1296,13 @@ it.effect(
         });
         const input = { threadId: threadA, providerSessionId, modelSelection, runtimePolicy };
         const pending = yield* Effect.gen(function* () {
-          const runtime = yield* manager.openForTurn(input);
+          const runtime = yield* manager.openScoped(input);
           yield* Deferred.succeed(acquired, runtime);
           return yield* Effect.never;
         }).pipe(Effect.scoped, Effect.forkChild);
         const original = yield* Deferred.await(acquired);
         const failed = yield* Effect.gen(function* () {
-          assert.strictEqual(yield* manager.openForTurn({ ...input, threadId: threadB }), original);
+          assert.strictEqual(yield* manager.openScoped({ ...input, threadId: threadB }), original);
           yield* instances.rebuild("/home/reconfigured");
           return yield* Effect.fail("native setup failed");
         }).pipe(Effect.scoped, Effect.exit);
@@ -1390,7 +1390,7 @@ it.effect(
         Layer.provide(Layer.mock(GitWorkflow.GitWorkflowService)({})),
         Layer.provide(
           Layer.mock(ProjectService.ProjectService)({
-            getById: () => Effect.succeed(Option.none()),
+            getById: () => Effect.succeedNone,
           }),
         ),
         Layer.provide(

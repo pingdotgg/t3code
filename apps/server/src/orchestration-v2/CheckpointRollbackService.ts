@@ -241,7 +241,7 @@ export const layer: Layer.Layer<
         modelSelection,
       });
       const existingSession = context.providerSession;
-      const session = yield* sessions.open({
+      const session = yield* sessions.openScoped({
         threadId: input.threadId,
         providerSessionId: providerThread.providerSessionId,
         modelSelection,
@@ -364,6 +364,7 @@ export const layer: Layer.Layer<
         },
         (effect, input) =>
           effect.pipe(
+            Effect.scoped,
             Effect.mapError((cause) =>
               isCheckpointRollbackExecutionError(cause)
                 ? cause
