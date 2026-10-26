@@ -1,6 +1,6 @@
 import { SheetCloseButton } from "../../../components/ui/SheetHeader";
-import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useNavigation } from "@react-navigation/native";
+import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
@@ -10,6 +10,7 @@ import { AppActivityIndicator } from "../../../components/ui/AppActivityIndicato
 import { AppText as Text } from "../../../components/ui/AppText";
 import { LoadingStrip } from "../../../components/ui/LoadingStrip";
 import { SymbolView } from "../../../components/ui/AppSymbol";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
 
 export function SettingsLegalDocumentCloseHeaderButton() {
@@ -39,6 +40,10 @@ export function SettingsLegalDocumentExternalHeaderButton({
   );
 }
 
+function externalHeaderButton(externalUrl: string) {
+  return () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />;
+}
+
 interface SettingsLegalDocumentRouteScreenProps {
   readonly documentName: string;
   readonly documentUrl: string;
@@ -48,28 +53,26 @@ export function SettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
-  const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [externalUrl, setExternalUrl] = useState(documentUrl);
-  const renderExternalHeaderButton = useCallback(
-    () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />,
-    [externalUrl],
+  const headerOptions = (
+    <NativeStackScreenOptions
+      options={{
+        headerRight: externalHeaderButton(externalUrl),
+      }}
+      optionsVersion={externalUrl}
+    />
   );
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: renderExternalHeaderButton,
-    });
-  }, [navigation, renderExternalHeaderButton]);
-
-  const openExternalUrl = useCallback((url: string) => {
+  const openExternalUrl = (url: string) => {
     void Linking.openURL(url).catch(() => undefined);
-  }, []);
+  };
   if (loadError) {
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">
+        {headerOptions}
         <SymbolView
           name="exclamationmark.triangle"
           size={32}
@@ -109,6 +112,7 @@ export function SettingsLegalDocumentRouteScreen({
 
   return (
     <View className="relative flex-1 bg-sheet">
+      {headerOptions}
       {loadProgress > 0 && loadProgress < 1 ? <LoadingStrip progress={loadProgress} /> : null}
       <WebView
         key={reloadKey}

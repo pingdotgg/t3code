@@ -3,7 +3,10 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import * as Application from "expo-application";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
-import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -27,6 +30,31 @@ type CrashLogState =
   | { readonly status: "unavailable" }
   | { readonly status: "ready"; readonly records: ReadonlyArray<StartupCrashRecord> };
 
+// Not kept alive: each visit to the screen re-reads the log.
+const crashLogAtom = Atom.make(
+  Effect.tryPromise(() => Updates.readLogEntriesAsync(LOG_WINDOW_MS)).pipe(
+    Effect.map((entries): CrashLogState => ({
+      status: "ready",
+      records: parseStartupCrashRecords(entries),
+    })),
+    Effect.catch((error) =>
+      Effect.sync((): CrashLogState => {
+        console.warn("[diagnostics] could not read the expo-updates log", error);
+        return { status: "unavailable" };
+      }),
+    ),
+  ),
+).pipe(Atom.withLabel("mobile:diagnostics-crash-log"));
+
+const UNAVAILABLE_CRASH_LOG_ATOM = Atom.make(
+  AsyncResult.success<CrashLogState>({ status: "unavailable" }),
+);
+
+function useCrashLogState(): CrashLogState {
+  const result = useAtomValue(Updates.isEnabled ? crashLogAtom : UNAVAILABLE_CRASH_LOG_ATOM);
+  return AsyncResult.isSuccess(result) ? result.value : { status: "loading" };
+}
+
 function appIdentity() {
   return {
     version: Constants.expoConfig?.version ?? "0.0.0",
@@ -38,27 +66,8 @@ function appIdentity() {
 
 export function SettingsDiagnosticsRouteScreen() {
   const insets = useSafeAreaInsets();
-  const [state, setState] = useState<CrashLogState>(() =>
-    Updates.isEnabled ? { status: "loading" } : { status: "unavailable" },
-  );
+  const state = useCrashLogState();
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!Updates.isEnabled) return;
-    let cancelled = false;
-    Updates.readLogEntriesAsync(LOG_WINDOW_MS)
-      .then((entries) => {
-        if (cancelled) return;
-        setState({ status: "ready", records: parseStartupCrashRecords(entries) });
-      })
-      .catch((error: unknown) => {
-        console.warn("[diagnostics] could not read the expo-updates log", error);
-        if (!cancelled) setState({ status: "unavailable" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const records = state.status === "ready" ? state.records : [];
   const copyReport = async () => {

@@ -5,7 +5,7 @@ import {
   UserProfileView,
 } from "@clerk/expo/native-components";
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
@@ -20,15 +20,8 @@ const USER_PROFILE_CUSTOM_PAGES = [
   },
 ] satisfies UserProfileCustomPage[];
 
+// Without cloud config the app has no entry point here and appLinking drops the deep link.
 export function SettingsAuthRouteScreen() {
-  const navigation = useNavigation();
-
-  useLayoutEffect(() => {
-    if (!hasCloudPublicConfig()) {
-      navigation.goBack();
-    }
-  }, [navigation]);
-
   return hasCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
 }
 
@@ -41,6 +34,8 @@ function ConfiguredSettingsAuthRouteScreen() {
   const [hasBeenSignedIn, setHasBeenSignedIn] = useState(isSignedIn === true);
   if (isSignedIn && !hasBeenSignedIn) setHasBeenSignedIn(true);
 
+  // Clerk reports sign-out only through its auth store (the native profile view
+  // and the T3 Connect page can both sign out), so this follows that store.
   useEffect(() => {
     if (hasBeenSignedIn && isLoaded && isSignedIn === false) {
       navigation.goBack();

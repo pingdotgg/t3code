@@ -3,15 +3,12 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useCallback, type Dispatch, type SetStateAction } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
-import {
-  createDraft,
-  scheduledTaskDefaultModel,
-  hasScheduledTaskDraftChanges,
-} from "./scheduledTaskDraft";
+import { createDraft, scheduledTaskDefaultModel } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 
 import {
+  scheduledTaskEditorHasChanges,
   scheduledTaskEditorSessionAtom,
   startScheduledTaskEditor,
   updateScheduledTaskEditor,
@@ -64,12 +61,7 @@ export function useScheduledTaskEditor() {
   const voiceOwnerKey = `scheduled-task:${session?.id ?? 0}`;
   const editor = session ? session.current : defaultEditor;
   const initial = session ? session.initial : defaultEditor;
-  const hasChanges = Boolean(
-    initial &&
-    editor &&
-    (initial.environmentId !== editor.environmentId ||
-      hasScheduledTaskDraftChanges(initial.draft, editor.draft)),
-  );
+  const hasChanges = scheduledTaskEditorHasChanges(initial, editor);
   const setEditor = useCallback<Dispatch<SetStateAction<ScheduledTaskEditor | null>>>(
     (update) => {
       updateScheduledTaskEditor(update, defaultEditor);
