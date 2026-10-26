@@ -157,7 +157,8 @@ const consoleMessageFromEvent = (method: string, params: unknown): ConsoleMessag
 const SETTLE_EXPRESSION =
   "document.fonts.ready.then(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
 // A resize can select another responsive image, which a fresh load would wait for.
-const RESIZE_SETTLE_EXPRESSION = `new Promise((resolve) => requestAnimationFrame(resolve)).then(() => Promise.all([...document.images].filter((image) => !image.complete && image.loading !== "lazy").map((image) => new Promise((resolve) => { image.addEventListener("load", resolve, { once: true }); image.addEventListener("error", resolve, { once: true }); })))).then(() => ${SETTLE_EXPRESSION})`;
+// Poll `complete`: a dropped pending request fires neither load nor error.
+const RESIZE_SETTLE_EXPRESSION = `new Promise((resolve) => requestAnimationFrame(function wait() { if ([...document.images].every((image) => image.complete || image.loading === "lazy")) resolve(); else requestAnimationFrame(wait); })).then(() => ${SETTLE_EXPRESSION})`;
 // scrollHeight is at least viewport height; use the root box for shorter pages.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
