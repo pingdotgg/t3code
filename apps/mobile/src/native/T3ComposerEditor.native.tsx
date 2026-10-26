@@ -110,6 +110,12 @@ interface NativeComposerEditorProps extends ViewProps {
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
+// Fabric does not mount a `display: none` subtree, so a command sent while the composer slot is
+// hidden (an open question) rejects with "Unable to find the view". There is nothing to act on.
+function settleViewCommand(command: Promise<void> | undefined): void {
+  command?.catch(() => undefined);
+}
+
 function basename(path: string): string {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separator >= 0 ? path.slice(separator + 1) : path;
@@ -156,10 +162,10 @@ export function ComposerEditor({
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => void nativeRef.current?.focus(),
-      blur: () => void nativeRef.current?.blur(),
+      focus: () => settleViewCommand(nativeRef.current?.focus()),
+      blur: () => settleViewCommand(nativeRef.current?.blur()),
       setSelection: (nextSelection) =>
-        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
+        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
     }),
     [],
   );
