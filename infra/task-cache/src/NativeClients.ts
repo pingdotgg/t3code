@@ -120,6 +120,8 @@ const make = Effect.gen(function* () {
             "Content-Type": "application/octet-stream",
             "Content-Length": String(object.size),
             "Cache-Control": "no-store",
+            // agent-device install-from-source picks the archive type from this name.
+            "Content-Disposition": `attachment; filename="${key.split("/").at(-1)}.tgz"`,
             "X-T3-Digest": object.customMetadata?.digest ?? "",
             "X-T3-Build-Ms": object.customMetadata?.buildMs ?? "0",
           },
