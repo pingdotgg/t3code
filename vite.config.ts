@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "unicorn/prefer-set-has": "off",
       "unicorn/prefer-array-find": "off",
       "unicorn/no-new-array": "off",
       "unicorn/no-array-reverse": "off",
