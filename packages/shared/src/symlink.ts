@@ -25,7 +25,7 @@ export const resolveSymlinkTarget = Effect.fn("symlink.resolveSymlinkTarget")(fu
   let current = path.resolve(filePath);
   for (let hop = 0; hop < MAX_SYMLINK_HOPS; hop++) {
     const link = yield* fs.readLink(current).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchIf(isNotASymlink, () => Effect.succeedNone),
     );
     if (Option.isNone(link)) {

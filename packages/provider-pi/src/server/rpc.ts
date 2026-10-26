@@ -322,7 +322,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
           const polled = yield* Deferred.poll(exitDeferred);
           const maybeExitCode = Option.isSome(polled)
             ? yield* polled.value.pipe(
-                Effect.map(Option.some),
+                Effect.asSome,
                 Effect.orElseSucceed(() => Option.none<number>()),
               )
             : yield* Deferred.await(exitDeferred).pipe(

@@ -165,7 +165,7 @@ const layerBase: Layer.Layer<
               onSome: (receipt) =>
                 receipt.aggregateKind !== "thread"
                   ? Effect.succeed(Option.none())
-                  : fromApplicationReceipt(receipt).pipe(Effect.map(Option.some)),
+                  : fromApplicationReceipt(receipt).pipe(Effect.asSome),
             }),
           ),
           Effect.mapError(
@@ -189,7 +189,7 @@ const layerBase: Layer.Layer<
                   resultSequence: receipt.value.resultSequence,
                   status: receipt.value.status,
                   error: receipt.value.error,
-                }).pipe(Effect.map(Option.some)),
+                }).pipe(Effect.asSome),
           ),
           Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
         ),
