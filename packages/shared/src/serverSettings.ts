@@ -432,35 +432,41 @@ export function applyServerSettingsPatch(
   const initialFavorites =
     patch.favorites ?? current.favorites ?? migrateModelPreferences?.favorites ?? null;
   const favorites =
-    setModelFavorites?.reduce((current, change) => {
-      const exists = current.some(
-        (favorite) => favorite.provider === change.provider && favorite.model === change.model,
-      );
-      return change.favorite
-        ? exists
-          ? current
-          : [...current, { provider: change.provider, model: change.model }]
-        : current.filter(
-            (favorite) => favorite.provider !== change.provider || favorite.model !== change.model,
-          );
-    }, initialFavorites ?? []) ?? initialFavorites;
+    setModelFavorites?.reduce(
+      (current, change) => {
+        const exists = current.some(
+          (favorite) => favorite.provider === change.provider && favorite.model === change.model,
+        );
+        if (change.favorite) {
+          if (!exists) current.push({ provider: change.provider, model: change.model });
+          return current;
+        }
+        return current.filter(
+          (favorite) => favorite.provider !== change.provider || favorite.model !== change.model,
+        );
+      },
+      [...(initialFavorites ?? [])],
+    ) ?? initialFavorites;
   const initialModelPreferences =
     providerModelPreferences ??
     current.providerModelPreferences ??
     migrateModelPreferences?.providerModelPreferences ??
     null;
   let nextModelPreferences = initialModelPreferences;
-  for (const change of setModelsHidden ?? []) {
-    const preferences = nextModelPreferences?.[change.provider] ?? {
-      hiddenModels: [],
-      modelOrder: [],
-    };
-    const hiddenModels = preferences.hiddenModels.filter((model) => model !== change.model);
-    if (change.hidden) hiddenModels.push(change.model);
-    nextModelPreferences = {
-      ...nextModelPreferences,
-      [change.provider]: { ...preferences, hiddenModels },
-    };
+  if (setModelsHidden?.length) {
+    const updated = { ...initialModelPreferences };
+    for (const change of setModelsHidden) {
+      const preferences = (Object.hasOwn(updated, change.provider)
+        ? updated[change.provider]
+        : undefined) ?? {
+        hiddenModels: [],
+        modelOrder: [],
+      };
+      const hiddenModels = preferences.hiddenModels.filter((model) => model !== change.model);
+      if (change.hidden) hiddenModels.push(change.model);
+      updated[change.provider] = { ...preferences, hiddenModels };
+    }
+    nextModelPreferences = updated;
   }
   if (setProviderModelOrder) {
     const preferences = nextModelPreferences?.[setProviderModelOrder.provider] ?? {
