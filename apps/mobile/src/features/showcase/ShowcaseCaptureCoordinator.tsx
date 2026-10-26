@@ -126,7 +126,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     }
 
     let cancelled = false;
-    let lastOutcome: string | null = null;
     void retryShowcaseOperation(async () => applyNativeShowcaseOrientation(orientation), {
       isCancelled: () => cancelled,
     }).then((applied) => {

@@ -11,13 +11,6 @@ import * as Layer from "effect/Layer";
 import { makeCursorCredentialStore } from "./credentialStore.ts";
 
 const layerHost = Layer.provideMerge(TestProviderHost.layer(), NodeServices.layer);
-
-const legacyCredentials = {
-  version: 1 as const,
-  backendUrl: "https://api.cursor.com",
-  apiKey: "test-only-legacy-key",
-  createdAtMs: 100,
-};
 const legacyFileText = `{
   "version": 1,
   "backendUrl": "https://api.cursor.com",

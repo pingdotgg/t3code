@@ -85,7 +85,7 @@ const itemParam = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
 );
 
 /** Server-sent events with a heartbeat, never cached or buffered on the way. */
-const eventStreamResponse = <A, I>(
+const eventStreamResponse = <A>(
   events: Stream.Stream<A>,
   encode: (event: A) => Effect.Effect<string, Schema.SchemaError>,
 ) => {

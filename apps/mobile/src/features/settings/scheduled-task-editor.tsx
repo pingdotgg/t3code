@@ -7,7 +7,6 @@ import {
   createDraft,
   scheduledTaskDefaultModel,
   hasScheduledTaskDraftChanges,
-  type ScheduledTaskDraft,
 } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";

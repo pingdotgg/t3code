@@ -6,7 +6,6 @@ import {
   type AndroidWorkspaceNavigationTab,
 } from "../features/workspace/android-workspace-tabs";
 import {
-  androidWorkspaceNavigationState,
   linkedThreadStep,
   parentThreadIsBelow,
   resetAndroidWorkspace,

@@ -23,15 +23,13 @@ import {
 import { use, useCallback, useRef, useState, type ComponentProps } from "react";
 import { WorkspaceSlotOptionsContext, slotScreenOptions } from "./v5-workspace-context";
 import { StyleSheet, View } from "react-native";
-import { FormSheet, Stack } from "react-native-screens";
+import { Stack } from "react-native-screens";
 import { NativeScrollEdgeEffectsContext } from "./NativeScrollViewMarker";
 import { V5StackHeader } from "./V5StackHeader.ios";
 import type { AppNativeStackNavigationOptions } from "./StackHeader";
 import { NativeColumnContent } from "./NativeColumnContent.ios";
 import {
   nativeStackPopAction,
-  nativeWorkspacePopAction,
-  nativeWorkspacePopCount,
   partitionStackPresentations,
   reconcileStackScreens,
 } from "./workspace-stack-projection";

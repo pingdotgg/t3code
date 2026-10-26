@@ -1,6 +1,5 @@
 import {
   AuthFilesystemReadScope,
-  type AuthSessionState,
   type FilesystemBrowseEntry,
   WS_METHODS,
   sessionGrantsScope,

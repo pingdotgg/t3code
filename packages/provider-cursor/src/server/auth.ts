@@ -246,7 +246,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
         }).pipe(Effect.uninterruptible),
       );
     },
-    (effect, flow, stopSessions) =>
+    (effect, flow, _stopSessions) =>
       effect.pipe(
         Effect.scoped,
         Effect.timeoutOrElse({

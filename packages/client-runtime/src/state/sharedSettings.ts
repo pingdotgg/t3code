@@ -1,5 +1,4 @@
 import type {
-  EnvironmentId,
   ExecutionEnvironmentCapabilities,
   ServerSettings,
   ServerSettingsPatch,

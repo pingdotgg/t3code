@@ -1384,20 +1384,6 @@ export function assertUserMessagesInclude(
   }
 }
 
-function assertUserMessagesExclude(
-  projection: OrchestrationV2ThreadProjection,
-  rejectedTexts: ReadonlyArray<string>,
-) {
-  for (const rejectedText of rejectedTexts) {
-    assert.isFalse(
-      projection.turnItems.some(
-        (item) => item.type === "user_message" && item.text.includes(rejectedText),
-      ),
-      `expected user input to exclude ${JSON.stringify(rejectedText)}`,
-    );
-  }
-}
-
 export function assertVisibleUserMessagesInclude(
   projection: OrchestrationV2ThreadProjection,
   expectedTexts: ReadonlyArray<string>,

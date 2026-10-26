@@ -300,7 +300,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       );
       yield* options.onAuthenticated(started, runtime);
     },
-    (effect, flow, stopSessions) =>
+    (effect, flow, _stopSessions) =>
       effect.pipe(
         Effect.scoped,
         Effect.timeoutOrElse({
