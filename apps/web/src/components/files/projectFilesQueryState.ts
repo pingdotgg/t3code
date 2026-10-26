@@ -16,6 +16,7 @@ import { useFilesystemReadAccess } from "~/state/filesystem";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { revisionedQuery } from "~/state/revisionedQuery";
 
 const EMPTY_PROJECT_FILE_PATH = "";
 const EMPTY_PROJECT_ENTRIES_QUERY_ATOM = Atom.make(
@@ -190,17 +191,19 @@ function errorMessage(cause: unknown): string | null {
 
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
 
+/** `revision` is the workspace mutation id; a new one refetches the listing. */
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
   directoryPath?: string,
+  revision?: string | null,
 ): ProjectQueryState<ProjectListEntriesResult> {
   const fileAccess = useFilesystemReadAccess(environmentId);
   const { canReadFiles } = fileAccess;
   const atom = canReadFiles
     ? getProjectEntriesQueryAtom(environmentId, cwd, directoryPath)
     : EMPTY_PROJECT_ENTRIES_QUERY_ATOM;
-  const result = useAtomValue(atom);
+  const result = useAtomValue(revisionedQuery(atom, canReadFiles ? revision : undefined));
   const refreshAtom = useAtomRefresh(atom);
   const refresh = () => refreshAtom();
   return {
