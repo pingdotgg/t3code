@@ -31,6 +31,8 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
+import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
+import { useDeadlinePassed } from "../hooks/useDeadline";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -87,6 +89,61 @@ export function useSidebarRowSubscriptionLease(isActive: boolean): {
       });
     },
   };
+}
+
+const fileDragClears = new Set<(active: false) => void>();
+function clearFileDrags() {
+  const clears = [...fileDragClears];
+  fileDragClears.clear();
+  for (const clear of clears) clear(false);
+}
+
+/**
+ * A file drag that ends outside every drop target (Escape, or a drop elsewhere)
+ * sends no dragleave to the row it last entered, so the window's dragend clears it.
+ */
+export function setFileDragActive(setActive: (active: boolean) => void, active: boolean) {
+  setActive(active);
+  if (typeof window === "undefined") return;
+  if (!active) {
+    if (fileDragClears.delete(setActive) && fileDragClears.size === 0) {
+      window.removeEventListener("dragend", clearFileDrags);
+    }
+    return;
+  }
+  if (fileDragClears.size === 0) window.addEventListener("dragend", clearFileDrags, { once: true });
+  fileDragClears.add(setActive);
+}
+
+/**
+ * A clock that advances exactly when a snooze wake time passes, so a woken
+ * thread leaves the shelf on time without a per-second clock.
+ */
+export function useSnoozeWakeClock(
+  threads: ReadonlyArray<{ readonly snoozedUntil?: string | null | undefined }>,
+): number {
+  const [clockMs, setClockMs] = React.useState(() => Date.now());
+  const wakeTimes: number[] = [];
+  let nextWakeAt: number | null = null;
+  for (const thread of threads) {
+    const wakeAt = thread.snoozedUntil == null ? Number.NaN : Date.parse(thread.snoozedUntil);
+    if (!(wakeAt > clockMs)) continue;
+    wakeTimes.push(wakeAt);
+    if (nextWakeAt === null || wakeAt < nextWakeAt) nextWakeAt = wakeAt;
+  }
+  const woke = useDeadlinePassed(nextWakeAt);
+  // Advancing to the latest wake that has passed skips every wake that elapsed
+  // meanwhile, e.g. across a laptop sleep. Stepping one wake at a time would
+  // re-render once per elapsed wake and hit React's limit.
+  if (woke && nextWakeAt !== null) {
+    let nextClockMs = nextWakeAt;
+    for (const wakeAt of wakeTimes) {
+      if (wakeAt > nextClockMs && deadlineStore(wakeAt).getSnapshot()) nextClockMs = wakeAt;
+    }
+    setClockMs(nextClockMs);
+    return nextClockMs;
+  }
+  return clockMs;
 }
 
 export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
@@ -607,89 +664,16 @@ type ThreadStatusInput = Pick<
   blockedOnThreadWait?: boolean | undefined;
 };
 
-export interface ThreadJumpHintVisibilityController {
-  sync: (shouldShow: boolean) => void;
-  dispose: () => void;
-}
-
-function createThreadJumpHintVisibilityController(input: {
-  delayMs: number;
-  onVisibilityChange: (visible: boolean) => void;
-  setTimeoutFn?: typeof globalThis.setTimeout;
-  clearTimeoutFn?: typeof globalThis.clearTimeout;
-}): ThreadJumpHintVisibilityController {
-  const setTimeoutFn = input.setTimeoutFn ?? globalThis.setTimeout;
-  const clearTimeoutFn = input.clearTimeoutFn ?? globalThis.clearTimeout;
-  let isVisible = false;
-  let timeoutId: NodeJS.Timeout | null = null;
-
-  const clearPendingShow = () => {
-    if (timeoutId === null) {
-      return;
-    }
-    clearTimeoutFn(timeoutId);
-    timeoutId = null;
-  };
-
-  return {
-    sync: (shouldShow) => {
-      if (!shouldShow) {
-        clearPendingShow();
-        if (isVisible) {
-          isVisible = false;
-          input.onVisibilityChange(false);
-        }
-        return;
-      }
-
-      if (isVisible || timeoutId !== null) {
-        return;
-      }
-
-      timeoutId = setTimeoutFn(() => {
-        timeoutId = null;
-        isVisible = true;
-        input.onVisibilityChange(true);
-      }, input.delayMs);
-    },
-    dispose: () => {
-      clearPendingShow();
-    },
-  };
-}
-
-export function useThreadJumpHintVisibility(): {
-  showThreadJumpHints: boolean;
-  updateThreadJumpHintsVisibility: (shouldShow: boolean) => void;
-} {
-  const [showThreadJumpHints, setShowThreadJumpHints] = React.useState(false);
-  const controllerRef = React.useRef<ThreadJumpHintVisibilityController | null>(null);
-
-  React.useEffect(() => {
-    const controller = createThreadJumpHintVisibilityController({
-      delayMs: THREAD_JUMP_HINT_SHOW_DELAY_MS,
-      onVisibilityChange: (visible) => {
-        setShowThreadJumpHints(visible);
-      },
-      setTimeoutFn: window.setTimeout.bind(window),
-      clearTimeoutFn: window.clearTimeout.bind(window),
-    });
-    controllerRef.current = controller;
-
-    return () => {
-      controller.dispose();
-      controllerRef.current = null;
-    };
-  }, []);
-
-  const updateThreadJumpHintsVisibility = (shouldShow: boolean) => {
-    controllerRef.current?.sync(shouldShow);
-  };
-
-  return {
-    showThreadJumpHints,
-    updateThreadJumpHintsVisibility,
-  };
+/**
+ * Thread jump hints appear once the jump modifier has been held for a moment,
+ * so a quick shortcut never flashes them, and hide as soon as it is released.
+ */
+export function useThreadJumpHintsVisible(shouldShow: boolean): boolean {
+  const [showAt, setShowAt] = React.useState<number | null>(null);
+  let nextShowAt = shouldShow ? showAt : null;
+  if (shouldShow && showAt === null) nextShowAt = deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS);
+  if (nextShowAt !== showAt) setShowAt(nextShowAt);
+  return useDeadlinePassed(nextShowAt);
 }
 
 export function resolveThreadLastVisitedAt(

@@ -2,6 +2,7 @@ import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { toastManager } from "../components/ui/toast";
+import { announce, cancelAnnouncement } from "../lib/announce";
 import {
   releaseThreadUndoShortcut,
   showThreadUndoNotice,
@@ -9,6 +10,8 @@ import {
   useThreadUndoNotice,
 } from "./showThreadUndoNotice";
 import * as ThreadUndo from "./threadUndo";
+
+vi.mock("../lib/announce", () => ({ announce: vi.fn(), cancelAnnouncement: vi.fn() }));
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -64,5 +67,25 @@ describe("thread undo notice", () => {
     showThreadUndoNotice({ ...options, claim: ThreadUndo.begin("pin", "env/expiring") });
     vi.advanceTimersByTime(5_000);
     expect(threadUndoClaimsShortcut()).toBe(false);
+  });
+
+  it("announces each new summary once, and cancels it when the notice clears", async () => {
+    const { options } = setup();
+    vi.mocked(announce).mockClear();
+    vi.mocked(cancelAnnouncement).mockClear();
+    showThreadUndoNotice(options);
+    expect(announce).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/^Unpinned 1 thread, /),
+      "thread-undo-notice",
+    );
+    ThreadUndo.invalidate("pin", "env/other");
+    expect(announce).toHaveBeenCalledOnce();
+    showThreadUndoNotice({ ...options, claim: ThreadUndo.begin("pin", "env/second") });
+    expect(announce).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^Unpinned 2 threads, /),
+      "thread-undo-notice",
+    );
+    await notice().undo();
+    expect(cancelAnnouncement).toHaveBeenCalledWith("thread-undo-notice");
   });
 });
