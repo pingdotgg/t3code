@@ -4,6 +4,8 @@ import {
   ModelSelection,
   type OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2GoalCommand,
+  type OrchestrationV2ProviderGoalStatus,
   type OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   ProviderInstanceId,
@@ -126,6 +128,26 @@ export function isNativeMaintenanceCommand(message: {
     message.attachments.length === 0 &&
     ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
   );
+}
+
+/**
+ * A goal command sent into active work stops that work when it starts or
+ * replaces goal work, or ends a goal that is driving the run.
+ */
+export function goalCommandStopsActiveRun(
+  command: OrchestrationV2GoalCommand,
+  goalStatus: OrchestrationV2ProviderGoalStatus | null,
+): boolean {
+  switch (command.type) {
+    case "set":
+    case "resume":
+      return true;
+    case "clear":
+    case "pause":
+      return goalStatus === "active";
+    case "show":
+      return false;
+  }
 }
 
 export function resolveMessageDispatchIntent(

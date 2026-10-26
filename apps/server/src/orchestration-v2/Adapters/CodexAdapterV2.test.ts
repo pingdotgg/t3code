@@ -5958,6 +5958,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeThreadId,
                 nativeTurnId: "goal-turn-1",
                 prompt: objective,
+                sentPrompt: `Start working toward this goal: ${objective}`,
               }).slice(5),
               5,
             ),
@@ -6022,6 +6023,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             [providerTurnId("goal-turn-2"), RunAttemptId.make("goal-attempt"), 2],
           ],
         );
+        // The goal is set paused until its first turn starts; only the result shows.
+        assert.notInclude(providerGoals(harness.events), "paused");
         assert.equal(providerGoals(harness.events).at(-1), "complete");
       }).pipe(
         Effect.scoped,
@@ -6195,6 +6198,233 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.deepEqual(
           harness.terminalEvents().map((event) => event.status),
           ["interrupted"],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("pauses a goal Codex does not continue before its run settles", () =>
+      Effect.gen(function* () {
+        const prompt = "Keep going";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-continuation-expired",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "goal-turn", prompt }),
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn",
+              goal: codexGoal("active", 10),
+            }),
+            notification("turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
+            }),
+            notification("goal accounted", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: null,
+              goal: codexGoal("active", 11),
+            }),
+            ...request(
+              4,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "paused" },
+              { goal: codexGoal("paused", 11) },
+            ),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-expired-attempt"),
+            text: prompt,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.tokensUsed === 11,
+          ),
+        );
+        assert.lengthOf(harness.terminalEvents(), 0);
+        yield* TestClock.adjust("5 seconds");
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(providerGoals(harness.events), ["active", "active", "paused"]);
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("stops a turn Codex starts while the expiry pause is in flight", () =>
+      Effect.gen(function* () {
+        const prompt = "Keep going";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-continuation-during-expiry",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "goal-turn", prompt }),
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn",
+              goal: codexGoal("active", 10),
+            }),
+            notification("turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
+            }),
+            notification("goal accounted", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: null,
+              goal: codexGoal("active", 11),
+            }),
+            {
+              type: "expect_outbound",
+              label: "pause",
+              frame: {
+                id: 4,
+                method: "thread/goal/set",
+                params: { threadId: nativeThreadId, status: "paused" },
+              },
+            },
+            notification("goal paused", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: null,
+              goal: codexGoal("paused", 11),
+            }),
+            notification("late continuation", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+            }),
+            ...request(
+              5,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "paused" },
+              { goal: codexGoal("paused", 11) },
+            ),
+            ...request(
+              6,
+              "turn/interrupt",
+              { threadId: nativeThreadId, turnId: "goal-turn-2" },
+              {},
+            ),
+            {
+              type: "emit_inbound",
+              label: "paused",
+              frame: { id: 4, result: { goal: codexGoal("paused", 11) } },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-race-attempt"),
+            text: prompt,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.tokensUsed === 11,
+          ),
+        );
+        yield* TestClock.adjust("5 seconds");
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+          [
+            [
+              (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                nativeTurnId: "goal-turn",
+              }),
+              "completed",
+            ],
+          ],
+        );
+        assert.equal(providerGoals(harness.events).at(-1), "paused");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("settles the run when Codex never answers the expiry pause", () =>
+      Effect.gen(function* () {
+        const prompt = "Keep going";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-expiry-pause-unanswered",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "goal-turn", prompt }),
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn",
+              goal: codexGoal("active", 10),
+            }),
+            notification("turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
+            }),
+            notification("goal accounted", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: null,
+              goal: codexGoal("active", 11),
+            }),
+            {
+              type: "expect_outbound",
+              label: "pause",
+              frame: {
+                id: 4,
+                method: "thread/goal/set",
+                params: { threadId: nativeThreadId, status: "paused" },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-unanswered-attempt"),
+            text: prompt,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.tokensUsed === 11,
+          ),
+        );
+        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
         );
       }).pipe(
         Effect.scoped,

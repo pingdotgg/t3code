@@ -14524,6 +14524,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     );
+
+    it.effect("keeps the CLI's goal confirmation out of the conversation", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "all tests pass";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: {
+              ...harness.providerThread,
+              goal: { objective: condition, status: "active", checks: 1 },
+            },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-clear-attempt"),
+            text: "/goal clear",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          syntheticFrame("goal-clear", `Goal cleared: ${condition}`),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "goal-clear-result",
+            result: `Goal cleared: ${condition}\n`,
+            numTurns: 0,
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" && event.providerThread.goal === null,
+          ),
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.role === "assistant",
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
   });
 });
 
