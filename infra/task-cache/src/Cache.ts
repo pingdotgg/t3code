@@ -220,6 +220,8 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.timeout(writing ? "2 minutes" : "15 seconds"),
           Effect.catchTags({
+            AdmissionRejected: () =>
+              Effect.fail(new CacheError({ status: 503, reason: "concurrency_limit" })),
             TimeoutError: () => Effect.fail(new CacheError({ status: 503, reason: "deadline" })),
           }),
         );
