@@ -185,7 +185,7 @@ minimumReleaseAgeExclude:
   - "react@19.3.0"
   - "react-dom@19.3.0"
   - "react-native@0.88.0"
-  - "react-native-keyboard-controller@1.22.7"
+  - "react-native-keyboard-controller@1.22.8"
   - "react-native-worklets@0.13.0"
   - "react-native-reanimated@4.7.1"
   - "react-native-screens@4.28.0"
@@ -246,7 +246,7 @@ overrides:
   node-pty: 1.2.0-beta.15
   react-native-gesture-handler: 3.3.0
   react-native-reanimated: 4.7.1
-  react-native-keyboard-controller: 1.22.7
+  react-native-keyboard-controller: 1.22.8
   react-native-pdf-jsi: 5.0.0
   react-native-webview: 14.0.1
   "@expo/ui": 58.0.20
@@ -380,7 +380,7 @@ patchedDependencies:
   # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
   react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch
-  react-native-keyboard-controller@1.22.7: patches/react-native-keyboard-controller@1.22.7.patch
+  react-native-keyboard-controller@1.22.8: patches/react-native-keyboard-controller@1.22.8.patch
   react-native-pdf-jsi@5.0.0: patches/react-native-pdf-jsi@5.0.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
