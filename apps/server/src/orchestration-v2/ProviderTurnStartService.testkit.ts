@@ -11,6 +11,6 @@ export const layer = Layer.merge(
     createWorktree: () => Effect.succeed({} as never),
   }),
   Layer.mock(ProjectService.ProjectService)({
-    getById: () => Effect.succeed(Option.none()),
+    getById: () => Effect.succeedNone,
   }),
 );

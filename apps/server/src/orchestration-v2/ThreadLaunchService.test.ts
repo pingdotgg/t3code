@@ -186,7 +186,7 @@ function makeHarness(options: HarnessOptions = {}) {
               ? Option.some(otherProject)
               : Option.none(),
         ),
-      getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
+      getByWorkspaceRoot: () => Effect.succeedSome(project),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
@@ -217,7 +217,7 @@ function makeHarness(options: HarnessOptions = {}) {
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
-        folderForThread: () => Effect.succeed(Option.none()),
+        folderForThread: () => Effect.succeedNone,
       }),
   );
   const layerLaunch = ThreadLaunch.layer.pipe(

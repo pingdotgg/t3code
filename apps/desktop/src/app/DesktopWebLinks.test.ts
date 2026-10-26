@@ -26,7 +26,7 @@ const makeWindow = () => {
       Layer.succeed(
         ElectronWindow.ElectronWindow,
         ElectronWindow.ElectronWindow.of({
-          currentMainOrFirst: Effect.succeed(Option.some(window)),
+          currentMainOrFirst: Effect.succeedSome(window),
           reveal: (target: Electron.BrowserWindow) => Effect.sync(() => void revealed.push(target)),
         } as unknown as ElectronWindow.ElectronWindow["Service"]),
       ),

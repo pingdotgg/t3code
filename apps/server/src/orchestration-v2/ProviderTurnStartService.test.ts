@@ -145,9 +145,7 @@ function startWithMissingWorktree(
         Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(
-              Option.some({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
-            ),
+            Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords: () => {
@@ -698,7 +696,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(Option.some({ workspaceRoot: "/tmp/native-account-project" } as never)),
+            Effect.succeedSome({ workspaceRoot: "/tmp/native-account-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,

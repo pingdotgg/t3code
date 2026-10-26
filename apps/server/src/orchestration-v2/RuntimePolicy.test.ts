@@ -87,22 +87,20 @@ const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provide(
     Layer.mock(ProjectStore.ProjectStoreV2)({
       get: () =>
-        Effect.succeed(
-          Option.some({
-            projectId,
-            title: "Project",
-            workspaceRoot: "/project-root",
-            defaultModelSelection: null,
-            defaultThreadEnvMode: null,
-            autoPull: false,
-            faviconPath: null,
-            projectIcon: null,
-            scripts: [],
-            createdAt: "2026-06-21T00:00:00.000Z",
-            updatedAt: "2026-06-21T00:00:00.000Z",
-            deletedAt: null,
-          }),
-        ),
+        Effect.succeedSome({
+          projectId,
+          title: "Project",
+          workspaceRoot: "/project-root",
+          defaultModelSelection: null,
+          defaultThreadEnvMode: null,
+          autoPull: false,
+          faviconPath: null,
+          projectIcon: null,
+          scripts: [],
+          createdAt: "2026-06-21T00:00:00.000Z",
+          updatedAt: "2026-06-21T00:00:00.000Z",
+          deletedAt: null,
+        }),
     }),
   ),
 );

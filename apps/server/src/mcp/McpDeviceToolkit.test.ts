@@ -102,7 +102,7 @@ const readiness = {
   agentDevice: null,
 };
 const layerProjectsMock = Layer.mock(ProjectService.ProjectService)({
-  getById: () => Effect.succeed(Option.none()),
+  getById: () => Effect.succeedNone,
 });
 
 const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({

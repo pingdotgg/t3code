@@ -101,7 +101,7 @@ it.effect.each([
           IdAllocator.layer,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
-            get: () => Effect.succeed(Option.some({ workspaceRoot: parent } as never)),
+            get: () => Effect.succeedSome({ workspaceRoot: parent } as never),
           }),
           Layer.mock(ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),

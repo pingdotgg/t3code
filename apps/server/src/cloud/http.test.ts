@@ -78,7 +78,7 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
   Layer.provide(
-    Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeed(Option.none()) }),
+    Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeedNone }),
   ),
   Layer.provide(EnvironmentAuth.layer),
   Layer.provide([

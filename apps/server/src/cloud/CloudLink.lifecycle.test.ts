@@ -163,7 +163,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({
             check: Effect.die("unused"),
-            latest: Effect.succeed(Option.none()),
+            latest: Effect.succeedNone,
           }),
         ),
         Effect.provideService(HttpServer.HttpServer, {

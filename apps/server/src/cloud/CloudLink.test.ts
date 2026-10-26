@@ -96,7 +96,7 @@ const withService = <A, E>(
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
       Layer.mock(ConnectReachability.ConnectReachability)({
-        latest: Effect.succeed(Option.none()),
+        latest: Effect.succeedNone,
       }),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
       Layer.mock(CliTokenManager.CloudCliTokenManager)({}),

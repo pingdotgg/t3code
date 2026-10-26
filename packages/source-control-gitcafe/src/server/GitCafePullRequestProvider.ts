@@ -418,7 +418,7 @@ export const make = Effect.gen(function* () {
           PullRequestProviderError: (error) =>
             error.reason === "unauthenticated" || error.reason === "rate-limited"
               ? Effect.fail(error)
-              : Effect.succeed(Option.none()),
+              : Effect.succeedNone,
         }),
       );
       const actorId = Option.isSome(user)
@@ -773,7 +773,7 @@ export const make = Effect.gen(function* () {
               PullRequestProviderError: (error) =>
                 error.reason === "unauthenticated" || error.reason === "rate-limited"
                   ? Effect.fail(error)
-                  : Effect.succeed(Option.none()),
+                  : Effect.succeedNone,
             }),
           );
           if (Option.isSome(principal)) {

@@ -276,23 +276,26 @@ it.effect.each(storageCases)(
       const calls: string[] = [];
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
-          Effect.succeed(
-            Option.some({
-              interruptTurn: () =>
-                Effect.sync(() => {
-                  calls.push("interrupt");
-                }),
-              steerTurn: (input: { message: { text: string }; runId: RunId }) =>
-                Effect.sync(() => {
-                  assert.equal(input.runId, runId);
-                  calls.push(input.message.text);
-                }),
-              respondToRuntimeRequest: () =>
-                Effect.sync(() => {
-                  calls.push("reply");
-                }),
-            } as never),
-          ),
+          Effect.succeedSome({
+            interruptTurn: () =>
+              Effect.sync(() => {
+                calls.push("interrupt");
+              }),
+            steerTurn: (input: {
+              message: {
+                text: string;
+              };
+              runId: RunId;
+            }) =>
+              Effect.sync(() => {
+                assert.equal(input.runId, runId);
+                calls.push(input.message.text);
+              }),
+            respondToRuntimeRequest: () =>
+              Effect.sync(() => {
+                calls.push("reply");
+              }),
+          } as never),
       });
       yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;

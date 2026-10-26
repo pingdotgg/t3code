@@ -26,11 +26,9 @@ it.effect.each(["expired", "resolved"] as const)(
       (_input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput) => Effect.void,
     );
     const getSession = vi.fn(() =>
-      Effect.succeed(
-        Option.some({
-          respondToRuntimeRequest,
-        } as never),
-      ),
+      Effect.succeedSome({
+        respondToRuntimeRequest,
+      } as never),
     );
     const projection = {
       runtimeRequests: [

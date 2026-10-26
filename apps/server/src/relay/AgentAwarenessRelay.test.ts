@@ -270,18 +270,16 @@ const makeTestRelay = Effect.fnUntraced(function* (
       getShell: unused,
       listShells: unused,
       getById: () =>
-        Effect.succeed(
-          Option.some({
-            id: PROJECT_ID,
-            title: "Project",
-            workspaceRoot: "/workspace",
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt: NOW,
-            updatedAt: NOW,
-            deletedAt: null,
-          }),
-        ),
+        Effect.succeedSome({
+          id: PROJECT_ID,
+          title: "Project",
+          workspaceRoot: "/workspace",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+          deletedAt: null,
+        }),
     }),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),

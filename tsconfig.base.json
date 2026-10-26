@@ -24,6 +24,7 @@
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "effectFn": ["span", "inferred-span", "suggested-span"],
         "diagnosticSeverity": {
+          "preferSucceedSomeOrNone": "error",
           "effectSucceedWithVoid": "error",
           "provideLayerSucceedToProvideService": "error",
           "flatMapIgnoredParamToAndThen": "error",
