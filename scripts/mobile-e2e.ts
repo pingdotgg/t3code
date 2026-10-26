@@ -18,8 +18,21 @@ const AGENT_DEVICE = NodePath.join(
 );
 const BUNDLE_ID = "com.t3tools.t3code.dev";
 const METRO_PORT = 8081;
-// Persistent so the XCTest runner agent-device builds per simulator survives between runs.
-const AGENT_DEVICE_STATE = NodePath.join(NodeOS.homedir(), ".cache/t3code/mobile-e2e/agent-device");
+const AGENT_DEVICE_VERSION = (
+  JSON.parse(
+    await NodeFSP.readFile(
+      NodePath.join(REPO_ROOT, "scripts/node_modules/agent-device/package.json"),
+      "utf8",
+    ),
+  ) as { version: string }
+).version;
+// Persistent so the XCTest runner agent-device builds per simulator survives between runs;
+// per version because a daemon refuses clients of another version.
+const AGENT_DEVICE_STATE = NodePath.join(
+  NodeOS.homedir(),
+  ".cache/t3code/mobile-e2e",
+  `agent-device-${AGENT_DEVICE_VERSION}`,
+);
 
 export interface E2eDevice {
   readonly id: string;

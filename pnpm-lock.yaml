@@ -2158,8 +2158,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/tailscale
       agent-device:
-        specifier: 0.21.25
-        version: 0.21.25
+        specifier: 0.21.31
+        version: 0.21.31
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -7153,8 +7153,8 @@ packages:
     engines: {node: '>=18.18'}
     hasBin: true
 
-  agent-device@0.21.25:
-    resolution: {integrity: sha512-JFmAD5AqM03dVU6BVQW1DQ2Kz+MThmbCYBbDxpGw2lka91LcoXHdrb4IjF9NNg4DEQUu41Pg8WnB/7crM3ig2w==}
+  agent-device@0.21.31:
+    resolution: {integrity: sha512-541X/tXHqQS3Xg5PutPSek1nQFLgEJEXFdLPiZ9jTvSb+SMHr/Z4kzVCnBkGza59R+EHO1atLWx0ZAW5vK84IQ==}
     engines: {node: '>=22.12'}
     hasBin: true
     peerDependencies:
@@ -17001,7 +17001,7 @@ snapshots:
 
   agent-cli-detector@0.1.7: {}
 
-  agent-device@0.21.25: {}
+  agent-device@0.21.31: {}
 
   agent-install@0.0.5:
     dependencies:
