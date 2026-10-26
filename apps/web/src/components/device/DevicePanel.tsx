@@ -9,13 +9,18 @@ import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
+import { focusPanelTerminalAfterClose } from "~/lib/terminalFocus";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -126,9 +131,16 @@ export function DevicePanel(props: {
     useRightPanelStore.getState().close(props.threadRef);
   };
 
+  const closeSurface = () => {
+    const store = useRightPanelStore.getState();
+    const { activeSurfaceId } = selectThreadRightPanelState(store.byThreadKey, props.threadRef);
+    store.closeSurface(props.threadRef, props.surface.id);
+    focusPanelTerminalAfterClose(props.threadRef, activeSurfaceId);
+  };
+
   const closeActive = (powerOff: boolean) => {
     if (!powerOff) {
-      useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      closeSurface();
       return;
     }
     if (!activeSession) return;
@@ -143,7 +155,7 @@ export function DevicePanel(props: {
       },
     }).then((result) => {
       if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      else closeSurface();
     });
   };
 

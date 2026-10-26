@@ -90,6 +90,12 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
 import {
+  consumePendingTerminalFocus,
+  focusTerminal,
+  focusTerminalViewport,
+  registerTerminalFocusTarget,
+} from "../lib/terminalFocus";
+import {
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -420,8 +426,8 @@ interface TerminalViewportProps {
   providerInstanceId?: ProviderInstanceId;
   onSessionExited: () => void;
   onAddTerminalContext?: (selection: TerminalContextSelection) => void;
-  focusRequestId: number;
-  autoFocus: boolean;
+  /** Focuses the viewport when it mounts; otherwise focus arrives through `focusTerminal`. */
+  autoFocus?: boolean;
   visible: boolean;
   resizeEpoch: number;
   drawerHeight: number;
@@ -458,14 +464,14 @@ function TerminalSessionViewport({
   providerInstanceId,
   onSessionExited,
   onAddTerminalContext,
-  focusRequestId,
-  autoFocus,
+  autoFocus = false,
   visible,
   resizeEpoch,
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const autoFocusedRef = useRef(false);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
   const environmentId = threadRef.environmentId;
@@ -591,7 +597,9 @@ function TerminalSessionViewport({
 
   useLayoutEffect(() => {
     if (terminalRef.current) terminalRef.current.input.readOnly = !canOperateTerminal;
-  }, [canOperateTerminal]);
+    if (canOperateTerminal && visibleRef.current)
+      consumePendingTerminalFocus(threadRef, terminalId);
+  }, [canOperateTerminal, terminalId, threadRef]);
 
   // Links re-read the grant on activation; only the hovered link's styling needs a nudge.
   const linkActivationScopeRef = useRef(canOpenHostEditor);
@@ -611,7 +619,9 @@ function TerminalSessionViewport({
   useLayoutEffect(() => {
     visibleRef.current = visible;
     terminalRef.current?.setVisible(visible);
-  }, [visible]);
+    // A request made while this viewport was hidden could not focus it.
+    if (visible) consumePendingTerminalFocus(threadRef, terminalId);
+  }, [terminalId, threadRef, visible]);
 
   useEffect(() => {
     const current = terminalFontRef.current;
@@ -1093,12 +1103,6 @@ function TerminalSessionViewport({
     previousSessionRef.current = current;
   }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
-  const focusRequest = autoFocus && canOperateTerminal && visible ? focusRequestId : null;
-  useEffect(() => {
-    if (focusRequest === null) return;
-    (terminalRef.current ?? containerRef.current)?.focus();
-  }, [focusRequest]);
-
   // A hidden surface skips fitting, and showing it again fits through setVisible.
   const layoutRevision = visible ? `${drawerHeight}:${resizeEpoch}` : null;
   useEffect(() => {
@@ -1117,9 +1121,36 @@ function TerminalSessionViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [layoutRevision]);
+
+  const attachContainer = (mount: HTMLDivElement) => {
+    containerRef.current = mount;
+    const focus = () =>
+      focusTerminalViewport({
+        mount,
+        surface: terminalRef.current,
+        canOperate: readEnvironmentScope(environmentId, AuthTerminalOperateScope),
+        visible: visibleRef.current,
+      });
+    // Once per viewport: a re-attached ref (a fresh callback identity) must not
+    // pull focus back on every render of a chatty terminal. As a request, it
+    // waits for the grant or for the viewport to show when it cannot focus yet.
+    if (autoFocus && !autoFocusedRef.current) {
+      autoFocusedRef.current = true;
+      focusTerminal(threadRef, terminalId);
+    }
+    const unregister = registerTerminalFocusTarget({
+      threadRef,
+      terminalId,
+      focus,
+    });
+    return () => {
+      unregister();
+      containerRef.current = null;
+    };
+  };
   return (
     <div
-      ref={containerRef}
+      ref={attachContainer}
       tabIndex={-1}
       className="relative h-full w-full overflow-hidden bg-(--terminal-background)"
     />
@@ -1141,7 +1172,6 @@ interface ThreadTerminalDrawerProps {
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
-  focusRequestId: number;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
@@ -1214,7 +1244,6 @@ function TerminalSplitPanes({
   threadRef,
   threadId,
   onAddTerminalContext,
-  focusRequestId,
   visible,
   resizeEpoch,
   drawerHeight,
@@ -1231,7 +1260,6 @@ function TerminalSplitPanes({
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
-  focusRequestId: number;
   visible: boolean;
   resizeEpoch: number;
   drawerHeight: number;
@@ -1282,8 +1310,6 @@ function TerminalSplitPanes({
                   : {})}
                 onSessionExited={() => onCloseTerminal(terminalId)}
                 onAddTerminalContext={onAddTerminalContext}
-                focusRequestId={focusRequestId}
-                autoFocus={terminalId === activeTerminalId}
                 visible={visible}
                 resizeEpoch={resizeEpoch}
                 drawerHeight={drawerHeight}
@@ -1408,7 +1434,6 @@ export default function ThreadTerminalDrawer({
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
-  focusRequestId,
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
@@ -1881,7 +1906,6 @@ export default function ThreadTerminalDrawer({
               threadRef={threadRef}
               threadId={threadId}
               onAddTerminalContext={onAddTerminalContext}
-              focusRequestId={focusRequestId}
               visible={visible}
               resizeEpoch={resizeEpoch}
               drawerHeight={drawerHeight}
