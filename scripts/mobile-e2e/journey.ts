@@ -71,9 +71,19 @@ export async function runJourney(
   steps: StepResult[],
 ): Promise<void> {
   const phone = device.pose.form === "phone";
-  const tap = (node: SnapshotNode | undefined, label: string) => {
-    if (!node?.ref) throw new Error(`no ${label} to tap`);
-    return device.agent(["press", `@${node.ref}`]);
+  const tap = async (node: SnapshotNode | undefined, label: string) => {
+    if (!node?.ref || !node.rect) throw new Error(`no ${label} to tap`);
+    // agent-device refuses refs it considers covered, such as on the unfolded Duo's inner
+    // display; the element's centre still takes the tap.
+    await device
+      .agent(["press", `@${node.ref}`])
+      .catch(() =>
+        device.agent([
+          "press",
+          String(Math.round(node.rect!.x + node.rect!.width / 2)),
+          String(Math.round(node.rect!.y + node.rect!.height / 2)),
+        ]),
+      );
   };
 
   /** Screenshot and check the settled screen, and record it as a step. */
@@ -126,10 +136,18 @@ export async function runJourney(
       .catch(() => null);
   }
   if (!threads) throw new Error("the app did not show the fixture threads after pairing");
-  await delay(1_000);
+  // Rotated only once the app is up: a rotation during launch is lost.
+  if (device.pose.landscape) await device.agent(["orientation", "landscape-left"]);
+  await delay(device.pose.landscape ? 2_000 : 1_000);
   threads = await device.snapshot();
   const tabs = tabBarRect(threads);
+  const wide = threads.viewport.width > threads.viewport.height;
   await capture("threads", threads, [
+    check(
+      device.pose.landscape ? "in landscape" : "in portrait",
+      wide === Boolean(device.pose.landscape),
+      `${Math.round(threads.viewport.width)}×${Math.round(threads.viewport.height)}`,
+    ),
     check("thread list visible", threadRow(threads) !== undefined, "fixture threads"),
     ...(phone ? [check("tab bar visible", inside(tabs, threads), describeRect(tabs))] : []),
   ]);

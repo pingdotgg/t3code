@@ -65,7 +65,7 @@ export class AgentDeviceError extends Error {}
 
 // A shared pool's workers drop off the gateway and stall under load for seconds at a time.
 const TRANSIENT =
-  /Remote daemon is unavailable|not connected to the gateway|still finishing a previous command|Invalid daemon response|Daemon request timed out/i;
+  /Remote daemon is unavailable|not connected to the gateway|still finishing a previous command|Invalid daemon response|Daemon request timed out|no worker connected/i;
 
 export class Device {
   readonly pose: Pose;
@@ -172,7 +172,6 @@ export class Device {
       { timeoutMs: 180_000 },
     );
     await this.acceptOpenPrompt();
-    if (this.pose.landscape) await this.agent(["orientation", "landscape-left"]);
   }
 
   async openUrl(url: string) {
