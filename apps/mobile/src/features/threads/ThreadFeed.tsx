@@ -596,6 +596,7 @@ function MessageAttachmentFile(props: {
         openingRef.current?.abort();
         openingRef.current = null;
       };
+      // oxlint-disable-next-line react/memo-dependencies -- Changing the attachment or connection cancels the previous file open even while this screen stays focused.
     }, [props.environmentId, attachment.id, httpBaseUrl]),
   );
 

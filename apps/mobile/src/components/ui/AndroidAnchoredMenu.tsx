@@ -125,6 +125,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const maxHeight = Math.min(opensDown ? spaceBelow : spaceAbove, 480);
   const placeable = local !== null && rootHeight !== null;
 
+  const { onPressAction } = props;
   const onPressItem = useCallback(
     (action: MenuAction) => {
       if ((action.subactions?.length ?? 0) > 0) {
@@ -133,12 +134,12 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
       }
       close();
       if (action.id !== undefined) {
-        props.onPressAction?.({
+        onPressAction?.({
           nativeEvent: { event: action.id },
         } as Parameters<NonNullable<MenuComponentProps["onPressAction"]>>[0]);
       }
     },
-    [close, props.onPressAction],
+    [close, onPressAction],
   );
 
   return (

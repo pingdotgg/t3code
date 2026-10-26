@@ -192,7 +192,7 @@ export function ComposerEditor({
         };
       }),
     );
-  }, [props.value, props.context, skillLabels, theme, chipTextColor]);
+  }, [props.value, props.context, skillLabels, theme, chipTextColor, confirmedTokensRef]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
@@ -252,7 +252,7 @@ export function ComposerEditor({
       });
       return acknowledgedEventCount;
     },
-    [],
+    [nativeEventSnapshotsRef],
   );
   const { systemColorsActive } = useAppearancePreferences();
   const themeJson = JSON.stringify({

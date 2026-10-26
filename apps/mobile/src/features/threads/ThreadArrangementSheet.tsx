@@ -115,7 +115,7 @@ function DragHandle(props: {
         .onUpdate((event) => latest.current.onMove(event.translationY))
         .onEnd((event) => latest.current.onMove(event.translationY))
         .onFinalize((_, success) => latest.current.onEnd(!success)),
-    [props.disabled],
+    [props.disabled, latest],
   );
   return (
     <GestureDetector gesture={gesture}>

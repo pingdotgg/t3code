@@ -77,7 +77,7 @@ export function useScheduledTaskEditor() {
     [defaultEditor],
   );
   const startEditor = startScheduledTaskEditor;
-  const resetEditor = useCallback(() => startEditor(defaultEditor), [defaultEditor, startEditor]);
+  const resetEditor = useCallback(() => startEditor(defaultEditor), [defaultEditor]);
   const readEditor = useCallback(
     () => readScheduledTaskEditor(voiceOwnerKey, defaultEditor),
     [defaultEditor, voiceOwnerKey],
@@ -93,15 +93,6 @@ export function useScheduledTaskEditor() {
       resetEditor,
       draftForEnvironment,
     }),
-    [
-      editor,
-      voiceOwnerKey,
-      readEditor,
-      setEditor,
-      startEditor,
-      hasChanges,
-      resetEditor,
-      draftForEnvironment,
-    ],
+    [editor, voiceOwnerKey, readEditor, setEditor, hasChanges, resetEditor, draftForEnvironment],
   );
 }

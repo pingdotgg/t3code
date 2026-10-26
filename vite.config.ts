@@ -226,6 +226,7 @@ export default defineConfig({
       "unicorn/no-array-reverse": "off",
       "react/no-object-type-as-default-prop": "off",
       "react/jsx-no-constructed-context-values": "off",
+      "react/memo-dependencies": "error",
       "react/immutability": "error",
       "react/no-array-index-key": "error",
       "react/no-unstable-nested-components": "error",
