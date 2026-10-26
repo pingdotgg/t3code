@@ -1,5 +1,8 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import { preloadPatchFile } from "@pierre/diffs/ssr";
+import { useAtomValue } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
@@ -61,18 +64,11 @@ const DIFF_PREVIEW_PATCH = [
 ].join("\n");
 
 // FileDiff remounts can retain unhighlighted frames after a race; use static highlighted HTML in shadow DOM.
-const diffPreviewHtmlByTheme = new Map<DiffThemeName, Promise<readonly string[]>>();
-
 function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
-  let promise = diffPreviewHtmlByTheme.get(theme);
-  if (promise === undefined) {
-    promise = preloadPatchFile({
-      patch: DIFF_PREVIEW_PATCH,
-      options: { diffStyle: "unified", theme, preferredHighlighter: PREFERRED_HIGHLIGHTER },
-    }).then((results) => results.map((result) => result.prerenderedHTML));
-    diffPreviewHtmlByTheme.set(theme, promise);
-  }
-  return promise;
+  return preloadPatchFile({
+    patch: DIFF_PREVIEW_PATCH,
+    options: { diffStyle: "unified", theme, preferredHighlighter: PREFERRED_HIGHLIGHTER },
+  }).then((results) => results.map((result) => result.prerenderedHTML));
 }
 
 // Unlayered shadow-root rules override Pierre surfaces with app code tokens to match the diff panel.
@@ -91,33 +87,36 @@ const DIFF_PREVIEW_THEME_BRIDGE = `
   }
 `;
 
+// Each host is keyed by its html, so the ref callback runs once per document.
+// React detaches a cleanup-less ref callback with null when an appearance switch drops the host.
 function StaticDiffHtml({ html }: { html: string }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const host = hostRef.current;
+  const attachHtml = (host: HTMLDivElement | null) => {
     if (host === null) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     shadow.innerHTML = html;
     const bridge = document.createElement("style");
     bridge.textContent = DIFF_PREVIEW_THEME_BRIDGE;
     shadow.append(bridge);
-  }, [html]);
-  return <div ref={hostRef} />;
+  };
+  return <div ref={attachHtml} />;
 }
+
+const diffPreviewHtmlAtom = Atom.family((theme: DiffThemeName) =>
+  Atom.make(Effect.promise(() => loadDiffPreviewHtml(theme))).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`settings-diff-preview:${theme}`),
+  ),
+);
 
 export function CodeFontPreview() {
   const resolvedTheme = useRenderedAppearance();
-  const themeName = resolveDiffThemeName(resolvedTheme);
-  const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void loadDiffPreviewHtml(themeName).then((html) => {
-      if (!cancelled) setHtmlByFile(html);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [themeName]);
+  const loadedHtml = AsyncResult.getOrElse(
+    useAtomValue(diffPreviewHtmlAtom(resolveDiffThemeName(resolvedTheme))),
+    () => null,
+  );
+  // An appearance switch keeps the previous theme's preview up while the new one renders.
+  const [htmlByFile, setHtmlByFile] = useState(loadedHtml);
+  if (loadedHtml !== null && loadedHtml !== htmlByFile) setHtmlByFile(loadedHtml);
   if (htmlByFile === null) return null;
   return (
     <div className="mt-1 mb-2 space-y-2">
@@ -151,43 +150,38 @@ function previewTerminalFont(family: string, size: number): { family?: string; s
 
 export function TerminalFontPreview({ family, size }: { family: string; size: number }) {
   const mountRef = useRef<HTMLDivElement>(null);
-  const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
-  const fontRef = useRef({ family, size });
+  const [surface, setSurface] = useState<GhosttyTerminalSurface | null>(null);
+  const [initialFont] = useState(() => previewTerminalFont(family, size));
   const { theme, resolvedTheme } = useTheme();
 
   useEffect(() => {
-    const current = fontRef.current;
-    if (current.family === family && current.size === size) return;
-    fontRef.current = { family, size };
-    void surfaceRef.current?.setFont(previewTerminalFont(family, size));
-  }, [family, size]);
+    void surface?.setFont(previewTerminalFont(family, size));
+  }, [surface, family, size]);
 
   // Palette changes may preserve light/dark mode; re-read terminal tokens for every theme change.
   useEffect(() => {
     const mount = mountRef.current;
-    const surface = surfaceRef.current;
     if (!mount || !surface) return;
     surface.setTheme(terminalThemeFromApp(mount));
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The tokens come from the DOM's computed styles, which a theme change rewrites.
-  }, [theme, resolvedTheme]);
+  }, [surface, theme, resolvedTheme]);
 
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return;
+  const mountSurface = (mount: HTMLDivElement) => {
+    mountRef.current = mount;
     let cancelled = false;
+    let created: GhosttyTerminalSurface | null = null;
     let lineLength = 0;
 
     const echo = (data: string) => {
-      const surface = surfaceRef.current;
-      if (!surface) return;
+      if (!created) return;
       if (data === "\r") {
-        surface.write(`\r\n${TERMINAL_PROMPT}`);
+        created.write(`\r\n${TERMINAL_PROMPT}`);
         lineLength = 0;
         return;
       }
       if (data === "\x7f" || data === "\b") {
         if (lineLength > 0) {
-          surface.write("\b \b");
+          created.write("\b \b");
           lineLength -= 1;
         }
         return;
@@ -197,40 +191,39 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
         .filter((character) => character >= " " && character !== "\x7f")
         .join("");
       if (printable.length === 0) return;
-      surface.write(printable);
+      created.write(printable);
       lineLength += printable.length;
     };
 
     void GhosttyTerminalSurface.create(mount, {
       theme: terminalThemeFromApp(mount),
-      font: previewTerminalFont(fontRef.current.family, fontRef.current.size),
+      font: initialFont,
       onData: echo,
       onResize: noop,
       onSelectionChange: noop,
       beforeKey: (event) => event.key !== "Tab",
       onLinkActivate: noop,
-    }).then((surface) => {
+    }).then((next) => {
       if (cancelled) {
-        surface.dispose();
+        next.dispose();
         return;
       }
-      surfaceRef.current = surface;
-      surface.setTheme(terminalThemeFromApp(mount));
-      const font = fontRef.current;
-      void surface.setFont(previewTerminalFont(font.family, font.size));
-      surface.write(TERMINAL_PREVIEW_TRANSCRIPT);
+      created = next;
+      next.write(TERMINAL_PREVIEW_TRANSCRIPT);
+      setSurface(next);
     });
 
     return () => {
       cancelled = true;
-      surfaceRef.current?.dispose();
-      surfaceRef.current = null;
+      created?.dispose();
+      mountRef.current = null;
+      setSurface(null);
     };
-  }, []);
+  };
 
   return (
     <div
-      ref={mountRef}
+      ref={mountSurface}
       className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
       aria-label="Terminal font preview"
     />

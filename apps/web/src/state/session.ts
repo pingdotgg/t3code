@@ -33,7 +33,7 @@ export function useEnvironmentScope(
   return sessionHasScope(result, scope);
 }
 
-function sessionHasScope(
+export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {

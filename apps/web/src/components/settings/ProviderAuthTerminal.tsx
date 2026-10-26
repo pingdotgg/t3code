@@ -2,6 +2,7 @@ import type { ProviderAuthResponse } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import { GhosttyTerminalSurface } from "../../terminal/ghostty/surface";
 import { ensureLocalApi } from "../../localApi";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
 
 export default function ProviderAuthTerminal({
@@ -13,30 +14,27 @@ export default function ProviderAuthTerminal({
   readonly outputOffset?: number | undefined;
   readonly onResponse: (response: Extract<ProviderAuthResponse, { type: "terminal" }>) => void;
 }) {
-  const mount = useRef<HTMLDivElement>(null);
-  const surface = useRef<GhosttyTerminalSurface | null>(null);
-  const latest = useRef({ output, offset: outputOffset ?? output.length, onResponse });
+  const [surface, setSurface] = useState<GhosttyTerminalSurface | null>(null);
   const written = useRef(0);
   const [error, setError] = useState<string | null>(null);
+  // The surface captures its callbacks once at creation.
+  const respond = useStableCallback(onResponse);
+  const offset = outputOffset ?? output.length;
   useEffect(() => {
-    latest.current = { output, offset: outputOffset ?? output.length, onResponse };
-    const terminal = surface.current;
-    if (!terminal) return;
-    const delta = latest.current.offset - written.current;
-    if (delta > 0 && delta <= output.length) terminal.write(output.slice(-delta));
-    else if (delta !== 0) terminal.resetAndWrite(output);
-    written.current = latest.current.offset;
-  }, [output, outputOffset, onResponse]);
-  useEffect(() => {
-    const element = mount.current;
-    if (!element) return;
+    if (!surface) return;
+    const delta = offset - written.current;
+    if (delta > 0 && delta <= output.length) surface.write(output.slice(-delta));
+    else if (delta !== 0) surface.resetAndWrite(output);
+    written.current = offset;
+  }, [surface, output, offset]);
+  const mountSurface = (element: HTMLDivElement) => {
     let disposed = false;
+    let created: GhosttyTerminalSurface | null = null;
     void GhosttyTerminalSurface.create(element, {
       theme: terminalThemeFromApp(element),
       font: { size: 13 },
-      onData: (data) => latest.current.onResponse({ type: "terminal", data }),
-      onResize: (cols, rows) =>
-        latest.current.onResponse({ type: "terminal", data: "", size: { cols, rows } }),
+      onData: (data) => respond({ type: "terminal", data }),
+      onResize: (cols, rows) => respond({ type: "terminal", data: "", size: { cols, rows } }),
       onSelectionChange: () => {},
       beforeKey: (event) => event.key !== "Tab",
       onLinkActivate: (url) => {
@@ -51,21 +49,21 @@ export default function ProviderAuthTerminal({
           terminal.dispose();
           return;
         }
-        surface.current = terminal;
-        terminal.write(latest.current.output);
-        written.current = latest.current.offset;
+        created = terminal;
+        written.current = 0;
+        setSurface(terminal);
       })
       .catch(() => setError("Could not load the sign-in terminal. Cancel and retry sign-in."));
     return () => {
       disposed = true;
-      surface.current?.dispose();
-      surface.current = null;
+      created?.dispose();
+      setSurface(null);
     };
-  }, []);
+  };
   return (
     <>
       <div
-        ref={mount}
+        ref={mountSurface}
         aria-label="Provider sign-in terminal"
         className="relative h-64 overflow-hidden rounded-md border border-border"
       />

@@ -7,17 +7,21 @@ import {
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
 import {
+  EnvironmentId,
   ThreadId,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
-  type EnvironmentId,
-  type TerminalAttachInput,
+  TerminalAttachInput,
   type TerminalSummary,
 } from "@t3tools/contracts";
 
-import { useEnvironmentQuery } from "./query";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { AsyncResult, Atom } from "effect/reactivity";
+
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
-import { useEnvironmentScope } from "./session";
+import { environmentSession, sessionHasScope, useEnvironmentScope } from "./session";
 
 const EMPTY_KNOWN_TERMINAL_SESSIONS = Object.freeze<ReadonlyArray<KnownTerminalSession>>([]);
 
@@ -121,47 +125,72 @@ export function selectKnownTerminalSessions(
   return sessions;
 }
 
-export function useAttachedTerminalSession(input: {
-  readonly environmentId: EnvironmentId | null;
-  readonly terminal: TerminalAttachInput | null;
-}): TerminalSessionState {
-  const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
-  const canOperate = useEnvironmentScope(input.environmentId, AuthTerminalOperateScope);
-  const attach = useEnvironmentQuery(
-    input.environmentId !== null && input.terminal !== null
-      ? canOperate
-        ? terminalEnvironment.attach({
-            environmentId: input.environmentId,
-            input: input.terminal,
-          })
-        : canRead
-          ? terminalEnvironment.observe({
-              environmentId: input.environmentId,
-              input: { threadId: input.terminal.threadId, terminalId: input.terminal.terminalId },
-            })
-          : null
-      : null,
-  );
-  const metadata = useEnvironmentQuery(
-    input.environmentId === null || !canRead
-      ? null
-      : terminalEnvironment.metadata({
-          environmentId: input.environmentId,
-          input: null,
-        }),
-  );
+const EMPTY_TERMINAL_SESSION_ATOM = Atom.make(EMPTY_TERMINAL_SESSION_STATE).pipe(
+  Atom.withLabel("web-terminal-session:empty"),
+);
 
-  if (input.environmentId === null || input.terminal === null) {
-    return EMPTY_TERMINAL_SESSION_STATE;
+const decodeAttachKey = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Tuple([EnvironmentId, TerminalAttachInput])),
+);
+
+// The family key carries the whole launch so an idle atom leaves nothing behind.
+const attachedTerminalSessionFamily = Atom.family((key: string) => {
+  const decoded = decodeAttachKey(key);
+  if (Option.isNone(decoded)) {
+    return Atom.make<TerminalSessionState>({
+      ...EMPTY_TERMINAL_SESSION_STATE,
+      error: "Invalid terminal launch input",
+      status: "error",
+    }).pipe(Atom.withLabel(`web-terminal-session:${key}`));
   }
-  const summary =
-    (metadata.data === null
-      ? null
-      : terminalMetadataIndex(metadata.data)
-          .byThreadId.get(input.terminal.threadId)
-          ?.find((terminal) => terminal.terminalId === input.terminal?.terminalId)) ?? null;
-  const state = combineTerminalSessionState(summary, attach.data ?? EMPTY_TERMINAL_BUFFER_STATE);
-  return attach.error === null ? state : { ...state, error: attach.error, status: "error" };
+  const [environmentId, terminal] = decoded.value;
+  return Atom.make((get): TerminalSessionState => {
+    const session = get(environmentSession.sessionStateAtom(environmentId));
+    const canRead = sessionHasScope(session, AuthTerminalReadScope);
+    const canOperate = sessionHasScope(session, AuthTerminalOperateScope);
+    const attach = canOperate
+      ? get(terminalEnvironment.attach({ environmentId, input: terminal }))
+      : canRead
+        ? get(
+            terminalEnvironment.observe({
+              environmentId,
+              input: { threadId: terminal.threadId, terminalId: terminal.terminalId },
+            }),
+          )
+        : null;
+    const metadata = canRead
+      ? Option.getOrNull(
+          AsyncResult.value(get(terminalEnvironment.metadata({ environmentId, input: null }))),
+        )
+      : null;
+    const summary =
+      (metadata === null
+        ? null
+        : terminalMetadataIndex(metadata)
+            .byThreadId.get(terminal.threadId)
+            ?.find((candidate) => candidate.terminalId === terminal.terminalId)) ?? null;
+    const buffer =
+      attach === null
+        ? EMPTY_TERMINAL_BUFFER_STATE
+        : Option.getOrElse(AsyncResult.value(attach), () => EMPTY_TERMINAL_BUFFER_STATE);
+    const state = combineTerminalSessionState(summary, buffer);
+    return attach?._tag === "Failure"
+      ? { ...state, error: formatEnvironmentQueryError(attach.cause), status: "error" }
+      : state;
+  }).pipe(Atom.withLabel(`web-terminal-session:${key}`));
+});
+
+/**
+ * One shown terminal's session: its attach (or read-only observe) buffer
+ * combined with the metadata summary. Surfaces subscribe to it imperatively so
+ * output chunks never re-render React.
+ */
+export function attachedTerminalSessionAtom(
+  environmentId: EnvironmentId | null,
+  terminal: TerminalAttachInput | null,
+): Atom.Atom<TerminalSessionState> {
+  if (environmentId === null || terminal === null) return EMPTY_TERMINAL_SESSION_ATOM;
+  return attachedTerminalSessionFamily(JSON.stringify([environmentId, terminal]));
 }
 
 export function useKnownTerminalSessions(input: {
