@@ -729,12 +729,16 @@ describe("EnvironmentSupervisor", () => {
           if (stop === "disconnect") {
             yield* supervisor.disconnect;
             yield* awaitState(supervisor.state, (state) => state.phase === "available");
+            yield* TestClock.adjust("20 seconds");
+            expect(yield* Ref.get(harness.prepareCount)).toBe(2);
           }
         }),
       );
 
-      yield* TestClock.adjust("20 seconds");
-      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      if (stop === "scope close") {
+        yield* TestClock.adjust("20 seconds");
+        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      }
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
