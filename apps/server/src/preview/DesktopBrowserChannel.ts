@@ -49,6 +49,8 @@ export class DesktopBrowserChannel extends Context.Service<
       key: DesktopTabKey,
       pointer: { readonly phase: "move" | "click"; readonly x: number; readonly y: number },
     ) => Effect.Effect<void>;
+    /** Never fails. A failed write means a broken channel; the next backend starts with no turns. */
+    readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
   }
 >()("t3/preview/DesktopBrowserChannel") {}
 
@@ -70,6 +72,7 @@ const make = Effect.gen(function* () {
       isAttached: () => Effect.succeed(false),
       endpoint: () => Effect.die("No desktop app is attached to this server."),
       pointer: () => Effect.void,
+      turn: () => Effect.void,
     });
   }
 
@@ -207,6 +210,7 @@ const make = Effect.gen(function* () {
     isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),
     endpoint,
     pointer: (key, pointer) => command({ type: "pointer", ...key, ...pointer }),
+    turn: (threadId, active) => command({ type: "turn", threadId, active }),
   });
 });
 
