@@ -1,16 +1,20 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
   TerminalNotRunningError,
   type TerminalEvent,
   type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { TestClock } from "effect/testing";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -38,6 +42,7 @@ const openSnapshot = (history: string): TerminalSessionSnapshot => ({
 });
 
 const makeHarness = Effect.fn(function* (options: {
+  readonly command?: string;
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
@@ -87,7 +92,7 @@ const makeHarness = Effect.fn(function* (options: {
         {
           id: "setup",
           name: "Setup",
-          command: "vp i",
+          command: options.command ?? "vp i",
           icon: "configure",
           runOnWorktreeCreate: true,
         },
@@ -101,6 +106,7 @@ const makeHarness = Effect.fn(function* (options: {
 
 const setup = Effect.fn(function* (
   options: {
+    readonly command?: string;
     readonly history?: string;
     readonly shell?: string | null;
   } = {},
@@ -135,7 +141,7 @@ describe("ProjectSetupScriptRunner", () => {
 
       yield* emit({ ...event, type: "activity", hasRunningSubprocess: false, label: "zsh" });
       yield* emit({ ...event, type: "output", data: "\r\n% \x1b[?2004h" });
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+      expect(yield* Queue.take(writes)).toContain("vp i");
     }),
   );
 
@@ -143,7 +149,7 @@ describe("ProjectSetupScriptRunner", () => {
     Effect.gen(function* () {
       const { writes } = yield* setup();
       yield* TestClock.adjust("3 seconds");
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+      expect(yield* Queue.take(writes)).toContain("vp i");
     }),
   );
 
@@ -165,7 +171,7 @@ describe("ProjectSetupScriptRunner", () => {
       yield* emit({ ...event, type: "restarted", snapshot: openSnapshot("") });
       // The restart lands inside a quiet window, so the next full window decides.
       yield* TestClock.adjust("6 seconds");
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+      expect(yield* Queue.take(writes)).toContain("vp i");
     }),
   );
 
@@ -196,5 +202,124 @@ describe("ProjectSetupScriptRunner", () => {
         expect(yield* Queue.size(writes)).toBe(0);
         expect(listeners.size).toBe(0);
       }),
+  );
+});
+
+const runObservedSetup = Effect.fnUntraced(function* (command: string, stdin = "") {
+  const { writes, outputLines, emit, completion } = yield* setup({ command });
+  yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
+  const submitted = yield* Queue.take(writes);
+  const cwd = yield* HostProcess.WorkingDirectory;
+  const env = yield* HostProcess.Environment;
+
+  // Enter becomes a newline at the terminal boundary; transport assertions below
+  // cover line-editor submissions and canonical TTY limits that bash -c bypasses.
+  const child = yield* Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        "/bin/bash",
+        ["--noprofile", "--norc", "-c", submitted.replaceAll("\r", "\n")],
+        {
+          cwd,
+          env: { PATH: env.PATH },
+          stdin: Stream.make(new TextEncoder().encode(stdin)),
+        },
+      ),
+    );
+    return yield* Effect.all(
+      {
+        stdout: handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        stderr: handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+        exitCode: handle.exitCode,
+      },
+      { concurrency: "unbounded" },
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  yield* emit({ ...event, type: "output", data: submitted + "\n" });
+  yield* emit({ ...event, type: "output", data: child.stdout + child.stderr });
+  yield* emit({ ...event, type: "closed" });
+  return {
+    submitted,
+    lines: yield* Queue.clear(outputLines),
+    exitCode: (yield* completion).exitCode,
+  };
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup completion", () => {
+  it.live("submits one line while preserving multiline shell syntax and literal text", () =>
+    Effect.gen(function* () {
+      const result = yield* runObservedSetup(
+        [
+          "printf '%s\\n' \"it's ready\" 'literal \\n $(printf wrong) `printf wrong` café'",
+          "cat <<'END'",
+          "$literal \\path 雪",
+          "END",
+          "printf '%s\\n' done # trailing comment",
+        ].join("\r\n"),
+      );
+      assert.equal(result.submitted.at(-1), "\r");
+      assert.notMatch(result.submitted.slice(0, -1), /[\r\n]/);
+      assert.deepEqual(result.lines, [
+        "it's ready",
+        "literal \\n $(printf wrong) `printf wrong` café",
+        "$literal \\path 雪",
+        "done",
+      ]);
+      assert.equal(result.exitCode, 0);
+    }),
+  );
+
+  it.live("completes long scripts without exceeding canonical terminal line limits", () =>
+    Effect.gen(function* () {
+      const expected = Array.from(
+        { length: 120 },
+        (_, index) => `line-${index}: café 雪 'quoted' \\path`,
+      );
+      const command = expected
+        .map((line) => `printf '%s\\n' "${line.replaceAll("\\", "\\\\")}"`)
+        .join("\n");
+      const utf8 = new TextEncoder();
+      assert.isAbove(utf8.encode(command).byteLength, 4_096);
+
+      const result = yield* runObservedSetup(command);
+      assert.deepEqual(result.lines, expected);
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.submitted.at(-1), "\r");
+      assert.notInclude(result.submitted, "\n");
+      // The runner can write before the shell switches the terminal out of canonical mode.
+      for (const line of result.submitted.slice(0, -1).split("\r")) {
+        assert.isBelow(utf8.encode(line).byteLength, 1_024);
+      }
+    }),
+  );
+
+  it.live("leaves stdin available to the script without consuming completion commands", () =>
+    Effect.gen(function* () {
+      const result = yield* runObservedSetup(
+        "read -r value\nprintf '%s\\n' \"$value\"",
+        "from stdin \\path\n",
+      );
+      assert.deepEqual(result.lines, ["from stdin \\path"]);
+      assert.equal(result.exitCode, 0);
+    }),
+  );
+
+  it.live("preserves a trailing backslash-newline even when losing it would still exit zero", () =>
+    Effect.gen(function* () {
+      const result = yield* runObservedSetup("printf '%s\\n' direct\\\n");
+      assert.deepEqual(result.lines, ["direct"]);
+      assert.equal(result.exitCode, 0);
+    }),
+  );
+
+  it.live.each([
+    { name: "an explicit exit", command: "exit 7", exitCode: 7 },
+    { name: "a syntax error", command: "if then", exitCode: 2 },
+  ])("reports a nonzero completion for $name", ({ command, exitCode }) =>
+    Effect.gen(function* () {
+      const result = yield* runObservedSetup(command);
+      assert.equal(result.exitCode, exitCode);
+    }),
   );
 });
