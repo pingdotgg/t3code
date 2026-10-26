@@ -29,7 +29,7 @@ export function useAttachmentDocument(input: {
   readonly environmentId: EnvironmentId | null;
   readonly attachment: FileBackedComposerAttachment | null;
 }) {
-  const kind = filePreviewKind(input);
+  const kind = filePreviewKind(input, { richDocuments: false });
   const delimiter = filePreviewDelimiter(input);
   const shareController = useRef<AbortController | null>(null);
   useEffect(() => () => shareController.current?.abort(), []);

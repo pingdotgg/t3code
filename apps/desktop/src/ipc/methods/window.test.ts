@@ -20,9 +20,13 @@ vi.mock("electron", () => ({
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
   getRelayTelemetryEnabled,
+  pickProjectFavicon,
   probeRemoteEditors,
 } from "./window.ts";
 
@@ -188,6 +192,77 @@ describe("getRelayTelemetryEnabled", () => {
           .handler()
           .pipe(Effect.provideService(HostProcess.Environment, {})),
       );
+    }),
+  );
+});
+
+describe("pickProjectFavicon", () => {
+  const pickerLayer = (
+    pickFiles: () => Effect.Effect<Array<string>>,
+    settings?: DesktopAppSettings.DesktopSettings,
+  ) =>
+    Layer.mergeAll(
+      Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
+      Layer.mock(ElectronWindow.ElectronWindow)({
+        focusedMainOrFirst: Effect.succeedNone,
+      }),
+      DesktopAppSettings.layerTest(settings),
+    );
+
+  it.effect("opens a single-image picker from the project directory", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon
+        .handler("/project")
+        .pipe(Effect.provide(pickerLayer(pickFiles)));
+
+      assert.strictEqual(result, "/pictures/icon.png");
+      assert.deepEqual(pickFiles.mock.calls, [
+        [
+          {
+            owner: Option.none(),
+            defaultPath: Option.some("/project"),
+            multiple: false,
+            filters: [
+              {
+                name: "Images",
+                extensions: [
+                  "avif",
+                  "bmp",
+                  "gif",
+                  "ico",
+                  "heic",
+                  "jpeg",
+                  "jpg",
+                  "png",
+                  "svg",
+                  "tif",
+                  "tiff",
+                  "webp",
+                  "icns",
+                ],
+              },
+            ],
+          },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("does not open a picker while the local environment is off", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon.handler("/project").pipe(
+        Effect.provide(
+          pickerLayer(pickFiles, {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          }),
+        ),
+      );
+
+      assert.strictEqual(result, null);
+      assert.strictEqual(pickFiles.mock.calls.length, 0);
     }),
   );
 });

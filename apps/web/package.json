@@ -13,6 +13,10 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@betteroffice/docx": "0.4.3",
+    "@betteroffice/fonts": "0.4.0",
+    "@betteroffice/pptx": "0.2.0",
+    "@betteroffice/xlsx": "0.3.0",
     "@clerk/clerk-js": "catalog:",
     "@clerk/electron": "catalog:",
     "@clerk/react": "catalog:",
@@ -74,6 +78,7 @@
     "remark-gfm": "catalog:",
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",
+    "saxes": "6.0.0",
     "tailwind-merge": "^3.4.0",
     "unbash": "^5.0.0",
     "unified": "catalog:",

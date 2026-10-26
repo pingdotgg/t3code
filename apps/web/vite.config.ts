@@ -97,9 +97,22 @@ const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 
 
 const browserTestProject = {
   extends: true,
-  // Pre-bundled so a late first import does not trigger a mid-run reload. The
-  // dependency scan misses autocomplete because tests reach it only through lazy imports.
-  optimizeDeps: { include: ["vite-plus/test/browser", "@base-ui/react/autocomplete"] },
+  // Pre-bundle lazy browser and worker dependencies to avoid mid-run reloads.
+  optimizeDeps: {
+    include: [
+      "vite-plus/test/browser",
+      "@base-ui/react/autocomplete",
+      "saxes",
+      "@betteroffice/docx/editor",
+      "@betteroffice/docx/layout",
+      "@betteroffice/docx/layout/render",
+      "@betteroffice/docx/yrs",
+      "@betteroffice/fonts",
+      "@betteroffice/pptx",
+      "@betteroffice/xlsx",
+      "@betteroffice/xlsx/headless",
+    ],
+  },
   test: {
     name: "browser",
     include: ["src/**/*.browser.test.{ts,tsx}"],
@@ -274,6 +287,12 @@ export default defineConfig(() => {
     },
     resolve: {
       tsconfigPaths: true,
+      alias: {
+        "@betteroffice/fonts-cjk": new URL(
+          "./src/components/files/office/fonts-cjk.ts",
+          import.meta.url,
+        ).pathname,
+      },
       dedupe: ["react", "react-dom"],
     },
     experimental: {
@@ -325,6 +344,7 @@ export default defineConfig(() => {
       manifest: true,
       sourcemap: buildSourcemap,
     },
+    worker: { format: "es" },
     test: {
       projects: [
         defineProject(unitTestProject),

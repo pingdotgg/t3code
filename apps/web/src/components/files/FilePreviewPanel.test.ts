@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
+  isMarkdownPreviewFile,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -60,6 +61,16 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+});
+
+describe("isMarkdownPreviewFile", () => {
+  it("recognizes markdown and MDX files case-insensitively", () => {
+    expect(isMarkdownPreviewFile("README.md")).toBe(true);
+    expect(isMarkdownPreviewFile("docs/guide.MDX")).toBe(true);
+    expect(isMarkdownPreviewFile("docs/guide.MARKDOWN")).toBe(true);
+    expect(isMarkdownPreviewFile("docs/guide.mdown")).toBe(true);
+    expect(isMarkdownPreviewFile("docs/guide.mkd")).toBe(true);
   });
 });
 
