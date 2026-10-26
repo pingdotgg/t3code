@@ -156,10 +156,6 @@ const consoleMessageFromEvent = (method: string, params: unknown): ConsoleMessag
 // Wait for fonts and two paint frames to capture late layout.
 const SETTLE_EXPRESSION =
   "document.fonts.ready.then(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
-// A resize can select another responsive image, which a fresh load would wait for. Search open
-// shadow roots too, and poll `complete`: a dropped pending request fires neither load nor error.
-// Settling runs resize observers, which can swap images again; a few rounds bound rotating images.
-const RESIZE_SETTLE_EXPRESSION = `(async () => { const frame = () => new Promise((resolve) => requestAnimationFrame(resolve)); const pending = (root = document) => [...root.querySelectorAll("*")].some((element) => (element instanceof HTMLImageElement && element.loading !== "lazy" && !element.complete) || (element.shadowRoot !== null && pending(element.shadowRoot))); for (let round = 0; round < 5; round += 1) { await frame(); while (pending()) await frame(); await ${SETTLE_EXPRESSION}; if (!pending()) return true; } return true; })()`;
 // scrollHeight is at least viewport height; use the root box for shorter pages.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
@@ -177,6 +173,7 @@ interface PageEvents {
   loaded: Deferred.Deferred<void, BrowserFailure> | undefined;
   readonly consoleMessages: Array<ConsoleMessage>;
   omittedConsoleMessages: number;
+  requests: number;
 }
 
 // CDP pipe uses fd 3 in, fd 4 out and NUL-delimited JSON.
@@ -298,6 +295,10 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     const sessionId = message?.sessionId;
     const page = sessionId === undefined ? undefined : pages.get(sessionId);
     if (sessionId === undefined || !page || !message?.method) return yield* Effect.void;
+    if (message.method === "Network.requestWillBeSent") {
+      page.requests += 1;
+      return yield* Effect.void;
+    }
     if (message.method === "Page.loadEventFired") {
       return yield* page.loaded ? Deferred.succeed(page.loaded, undefined) : Effect.void;
     }
@@ -440,11 +441,19 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       loaded: undefined,
       consoleMessages: [],
       omittedConsoleMessages: 0,
+      requests: 0,
     };
     pages.set(sessionId, events);
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
+    // Counts requests only; buffering no bodies keeps a 25 MiB page out of memory twice.
+    yield* send(
+      "Network.enable",
+      { maxTotalBufferSize: 0, maxResourceBufferSize: 0 },
+      Ignored,
+      sessionId,
+    );
     yield* send(
       "Emulation.setEmulatedMedia",
       { features: [{ name: "prefers-color-scheme", value: appearance }] },
@@ -495,29 +504,42 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
         return yield* new HtmlRenderBrowserError({ reason: "the page could not be opened" });
       }
       yield* Deferred.await(loaded);
-      return yield* settledHeight(SETTLE_EXPRESSION);
+      yield* send(
+        "Runtime.evaluate",
+        { expression: SETTLE_EXPRESSION, awaitPromise: true },
+        Ignored,
+        sessionId,
+      );
+      return yield* height;
     });
 
-    const settledHeight = (settle: string) =>
-      send("Runtime.evaluate", { expression: settle, awaitPromise: true }, Ignored, sessionId).pipe(
-        Effect.andThen(
-          send(
-            "Runtime.evaluate",
-            { expression: MEASURE_EXPRESSION, returnByValue: true },
-            Measured,
-            sessionId,
-          ),
-        ),
-        Effect.map((measured) => Math.max(0, Math.ceil(measured.result.value))),
-      );
+    const height = send(
+      "Runtime.evaluate",
+      { expression: MEASURE_EXPRESSION, returnByValue: true },
+      Measured,
+      sessionId,
+    ).pipe(Effect.map((measured) => Math.max(0, Math.ceil(measured.result.value))));
 
-    const resize = (width: number) =>
-      send(
+    /**
+     * Undefined when the resize made the page fetch anything, such as a
+     * responsive image or a font, which a fresh load would have waited for.
+     */
+    const resize = Effect.fnUntraced(function* (width: number) {
+      const requests = events.requests;
+      yield* send(
         "Emulation.setDeviceMetricsOverride",
         { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false },
         Ignored,
         sessionId,
-      ).pipe(Effect.andThen(settledHeight(RESIZE_SETTLE_EXPRESSION)));
+      );
+      yield* send(
+        "Runtime.evaluate",
+        { expression: SETTLE_EXPRESSION, awaitPromise: true },
+        Ignored,
+        sessionId,
+      );
+      return events.requests === requests ? yield* height : undefined;
+    });
 
     const screenshot = (height: number) =>
       send(
@@ -615,10 +637,9 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 );
 
 /**
- * Resizing a loaded page is exact for pages that lay out with CSS, and far
- * cheaper than loading it again. Pages may also lay out only at load, so each
- * resized run ends on a width that another lane loads fresh; a mismatch falls
- * back to a fresh load per width in that run.
+ * Resizing is exact for CSS layout and far cheaper than reloading. Pages may lay
+ * out only at load, so each resized run ends on a width another lane loads fresh;
+ * a mismatch, or a resize that makes the page fetch, reloads that run fresh.
  */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
@@ -639,14 +660,17 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
   const run = (widths: ReadonlyArray<number>) =>
     browser.openPage(widths[0]!, "dark").pipe(
       Effect.flatMap((page) =>
-        page.load(body, input.urlFragment).pipe(
-          Effect.flatMap((height) =>
-            Effect.forEach(widths.slice(1), (width) =>
-              page.resize(width).pipe(Effect.map((resized) => [width, resized] as const)),
-            ).pipe(Effect.map((resized) => [[widths[0]!, height] as const, ...resized])),
-          ),
-          Effect.ensuring(page.close),
-        ),
+        Effect.gen(function* () {
+          const heights: Array<readonly [number, number]> = [
+            [widths[0]!, yield* page.load(body, input.urlFragment)],
+          ];
+          for (const width of widths.slice(1)) {
+            const height = yield* page.resize(width);
+            if (height === undefined) break;
+            heights.push([width, height]);
+          }
+          return heights;
+        }).pipe(Effect.ensuring(page.close)),
       ),
     );
   const widths = input.widths.toSorted((left, right) => right - left);
@@ -661,12 +685,12 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
   const fresh = new Map(measured.map((heights) => heights[0]!));
   const heights = new Map(fresh);
   const reload: Array<number> = [];
-  for (const resized of measured.slice(0, -1)) {
+  for (const [index, resized] of measured.slice(0, -1).entries()) {
     const [endWidth, endHeight] = resized.at(-1)!;
-    if (fresh.get(endWidth) === endHeight) {
+    if (resized.length === runs[index]!.length && fresh.get(endWidth) === endHeight) {
       for (const [width, height] of resized) heights.set(width, height);
     } else {
-      reload.push(...resized.slice(1, -1).map(([width]) => width));
+      reload.push(...runs[index]!.slice(1, -1));
     }
   }
   const reloaded = yield* Effect.forEach(reload, (width) => run([width]), {
