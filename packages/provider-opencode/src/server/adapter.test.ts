@@ -100,7 +100,7 @@ function asyncEventStream() {
   };
 }
 
-const OPENCODE_TEST_SETTINGS = Schema.decodeUnknownSync(OpenCodeSettings)({});
+const OPENCODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
 function runtimePolicy(
   runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],

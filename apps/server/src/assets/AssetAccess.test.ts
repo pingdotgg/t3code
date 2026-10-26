@@ -1244,7 +1244,7 @@ describe("AssetAccess", () => {
     ]);
     return Effect.gen(function* () {
       // Every client and server release spells the resource this way on the wire.
-      const { resource } = yield* Schema.decodeUnknownEffect(AssetCreateUrlInput)({
+      const { resource } = yield* Schema.decodeEffect(AssetCreateUrlInput)({
         resource: { _tag: "github-media", cwd: "/repo", url },
       });
       const issued = yield* issueAssetUrl({ resource });

@@ -497,9 +497,9 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         }),
       );
 
-      const response = yield* Schema.decodeUnknownEffect(
-        Schema.fromJsonString(JsonRpcErrorResponse),
-      )(yield* Queue.take(output));
+      const response = yield* Schema.decodeEffect(Schema.fromJsonString(JsonRpcErrorResponse))(
+        yield* Queue.take(output),
+      );
       assert.equal(response.id, 9);
       assert.equal(response.error.code, -32603);
     }),

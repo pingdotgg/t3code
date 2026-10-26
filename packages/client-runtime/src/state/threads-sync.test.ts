@@ -371,7 +371,7 @@ describe("EnvironmentThreads", () => {
       let discarded = false;
       const h = yield* makeHarness({
         loadCached: decodeOrDiscardOrchestrationCache(
-          Schema.decodeUnknownEffect(schema)(stale).pipe(
+          Schema.decodeEffect(schema)(stale).pipe(
             Effect.map((stored) => Option.some(stored.snapshot)),
           ),
           Effect.sync(() => {
