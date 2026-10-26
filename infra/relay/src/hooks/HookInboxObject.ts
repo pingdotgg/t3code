@@ -75,7 +75,6 @@ export const layer = HookInboxObject.make(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     // Only the per-object inner Effect may access storage.
-    // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
       const layerSql = SqliteClient.layer({ storage: state.raw.storage });
       const inboxId = state.raw.id.name ?? state.raw.id.toString();

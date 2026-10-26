@@ -384,7 +384,6 @@ export function composeShellStreamWithEnrichment<A, E, R, A2, E2, R2, A3, E3, R3
       let previous: Deferred.Deferred<void> | undefined;
       // Stream.merge pulls ahead after handing off each batch. Wait for the next
       // downstream pull so shell delivery keeps that batch charged until its RPC ACK.
-      // @effect-diagnostics-next-line returnEffectInGen:off - Stream.fromPull needs the pull effect as its result.
       return Effect.gen(function* () {
         if (previous) yield* Deferred.succeed(previous, undefined);
         const next = yield* Queue.take(output);

@@ -75,7 +75,6 @@ const makeNodeSampler = Effect.gen(function* () {
   let usage = process.resourceUsage();
   let sampledAt = NodePerfHooks.performance.now();
 
-  // @effect-diagnostics-next-line returnEffectInGen:off - the read effect is the result.
   return Effect.sync(() => {
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();

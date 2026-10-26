@@ -172,7 +172,6 @@ export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* 
           }),
           Effect.forkScoped,
         );
-        // @effect-diagnostics-next-line returnEffectInGen:off - Stream.fromPull needs the pull effect as its result.
         return Effect.gen(function* () {
           // RpcServer requests the next batch after ACK; dequeueing does not end delivery.
           release(inFlight);
