@@ -1,7 +1,11 @@
 import { ProjectId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { presentThreadLinkedPullRequests, resolveThreadPrSource } from "./thread-pr-presentation";
+import {
+  presentThreadLinkedPullRequests,
+  rememberBounded,
+  resolveThreadPrSource,
+} from "./thread-pr-presentation";
 
 function linkedPr(
   number: number,
@@ -115,5 +119,19 @@ describe("resolveThreadPrSource compatibility", () => {
         { threadPullRequests: true },
       ),
     ).toMatchObject({ linkedPresentation: { number: 3, state: null }, pullRequestRef: null });
+  });
+});
+
+describe("rememberBounded", () => {
+  it("moves a re-answered entry to the newest slot and evicts the oldest past the limit", () => {
+    let snapshots: ReadonlyMap<string, number> = new Map();
+    snapshots = rememberBounded(snapshots, "a", 1, 2);
+    snapshots = rememberBounded(snapshots, "b", 2, 2);
+    snapshots = rememberBounded(snapshots, "a", 3, 2);
+    snapshots = rememberBounded(snapshots, "c", 4, 2);
+    expect([...snapshots]).toEqual([
+      ["a", 3],
+      ["c", 4],
+    ]);
   });
 });
