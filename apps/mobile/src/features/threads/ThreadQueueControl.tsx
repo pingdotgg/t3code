@@ -614,6 +614,7 @@ function QueueDragHandle(props: {
   const onStart = useEffectEvent(() => props.onStart());
   const onMove = useEffectEvent((y: number) => props.onMove(y));
   const onEnd = useEffectEvent((y: number, success: boolean) => props.onEnd(y, success));
+  // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a React component.
   const gesture = Gesture.Pan()
     .enabled(!props.disabled)
     .minDistance(0)

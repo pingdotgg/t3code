@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "react/capitalized-calls": "error",
       "typescript/no-extraneous-class": "error",
       "eslint/no-empty-pattern": "error",
       "eslint/no-new": "error",
