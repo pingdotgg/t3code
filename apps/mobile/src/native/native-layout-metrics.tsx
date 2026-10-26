@@ -40,7 +40,7 @@ export function NativeLayoutMetricsProvider(props: { readonly children: ReactNod
   const [metrics, setMetrics] = useState<NativeLayoutMetrics | null>(null);
   const publish = (next: NativeLayoutMetrics) => {
     latestMetrics = next;
-    for (const settle of [...metricsWaiters]) settle(next);
+    for (const settle of metricsWaiters) settle(next);
     setMetrics(next);
   };
   const deviceType = deriveDeviceType({ isPad: IS_PAD, metrics });
