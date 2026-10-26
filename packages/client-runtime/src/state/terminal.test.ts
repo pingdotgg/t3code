@@ -231,15 +231,15 @@ it("reopens instead of closing a shell that ended while detached", () => {
   expect(of("open")).toHaveLength(1);
 });
 
-it("keeps a replaced attachment's late release from resetting the new one", () => {
-  const { attached, flush, emit, mount, of, exits } = setup();
+it("keeps one attached driver, so a remount before release keeps its state", () => {
+  const { session, attached, flush, emit, mount, of, exits } = setup();
+  const driver = session.driver(attached);
+  expect(session.driver({ ...attached })).toBe(driver);
   const unmountFirst = mount(attached);
   emit({ status: "running", version: 1 });
-  mount({
-    kind: "attached",
-    input: { threadId, terminalId: "term-1", cwd: "/repo/worktree", cols: 80, rows: 24 },
-  });
+  // A brief disconnect unmounts and remounts the driver before its release runs.
   unmountFirst();
+  mount(attached);
   flush();
   emit({ status: "exited", version: 2 });
   expect(of("close")).toHaveLength(1);

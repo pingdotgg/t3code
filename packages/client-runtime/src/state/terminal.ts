@@ -247,7 +247,8 @@ export interface TerminalSessionOptions {
 export interface TerminalSession {
   /**
    * Mount while the session follows a terminal: attached to operate it, or
-   * observing it read-only. `null` follows nothing.
+   * observing it read-only. `null` follows nothing. A session keeps the first
+   * attach input it is given; a different input needs a new session.
    */
   readonly driver: (mode: TerminalSessionMode | null) => Atom.Atom<void>;
   /** The surface measured a new grid; the shell is resized while it runs. */
@@ -273,9 +274,6 @@ export function createTerminalSession(
   let lastStatus: TerminalBufferState["status"] | null = null;
   let loggedFirstOutput = false;
   let resizeRegistry: AtomRegistry.AtomRegistry | null = null;
-  // Driver atoms are released on a scheduled task, so an attachment replaced by
-  // another one must not reset state the newer attachment already set.
-  let currentAttachment: object | null = null;
 
   const sendResize = () => {
     if (generation === null || resizeRegistry === null || !options.canOperate()) return;
@@ -294,7 +292,7 @@ export function createTerminalSession(
   const apply = (
     event: TerminalLifecycleEvent,
     registry: AtomRegistry.AtomRegistry,
-    input: TerminalAttachInput | null,
+    input: TerminalAttachInput,
   ) => {
     const step = transitionTerminalLifecycle(lifecycle, event);
     lifecycle = step.state;
@@ -309,7 +307,7 @@ export function createTerminalSession(
     }
     if (step.command !== "reopen") return;
     const reopen = async () => {
-      if (input?.cwd === undefined || !options.canOperate()) return false;
+      if (input.cwd === undefined || !options.canOperate()) return false;
       const result = await runAtomCommand(registry, atoms.open, {
         environmentId,
         input: {
@@ -380,31 +378,25 @@ export function createTerminalSession(
     apply({ type: "status", status, version: buffer.version }, registry, input);
   };
 
+  const label = `terminal-session:${environmentId}:${threadId}:${terminalId}`;
   const idle = Atom.make<void>(undefined);
-  const modes = new Map<string, TerminalSessionMode>();
-  const drivers = Atom.family((key: string) => {
-    const mode = modes.get(key)!;
-    return Atom.make((get) => {
+  // Viewing read-only counts as observed before the first snapshot lands, so a
+  // grant that arrives early still leaves the ended shell's history alone.
+  const observing = Atom.make((get) => {
+    // `subscribe`, not `get`: a rebuild would resubscribe on every output chunk.
+    get.subscribe(
+      atoms.observe({ environmentId, input: { threadId, terminalId } }),
+      () => {
+        if (options.canOperate()) return;
+        lifecycle = transitionTerminalLifecycle(lifecycle, { type: "observed" }).state;
+      },
+      { immediate: true },
+    );
+  }).pipe(Atom.withLabel(`${label}:observing`));
+  const makeAttached = (input: TerminalAttachInput) =>
+    Atom.make((get) => {
       const registry = get.registry;
-      // `subscribe`, not `get`: a rebuild would resubscribe on every output chunk.
-      if (mode.kind === "observing") {
-        // Viewing read-only counts as observed before the first snapshot lands, so
-        // a grant that arrives early still leaves the ended shell's history alone.
-        get.subscribe(
-          atoms.observe({ environmentId, input: { threadId, terminalId } }),
-          () => {
-            if (options.canOperate()) return;
-            lifecycle = transitionTerminalLifecycle(lifecycle, { type: "observed" }).state;
-          },
-          { immediate: true },
-        );
-        return;
-      }
-      const attachment = {};
-      currentAttachment = attachment;
       get.addFinalizer(() => {
-        if (currentAttachment !== attachment) return;
-        currentAttachment = null;
         generation = null;
         lastStatus = null;
         setLive(null);
@@ -414,21 +406,19 @@ export function createTerminalSession(
         }).state;
       });
       get.subscribe(
-        atoms.attach({ environmentId, input: mode.input }),
-        (result) => onAttachment(registry, mode.input, result),
+        atoms.attach({ environmentId, input }),
+        (result) => onAttachment(registry, input, result),
         { immediate: true },
       );
-    }).pipe(
-      Atom.withLabel(`terminal-session:${environmentId}:${threadId}:${terminalId}:${mode.kind}`),
-    );
-  });
+    }).pipe(Atom.withLabel(`${label}:attached`));
+  let attached: Atom.Atom<void> | null = null;
 
   return {
     driver: (mode) => {
       if (mode === null) return idle;
-      const key = JSON.stringify(mode);
-      if (!modes.has(key)) modes.set(key, mode);
-      return drivers(key);
+      if (mode.kind === "observing") return observing;
+      attached ??= makeAttached(mode.input);
+      return attached;
     },
     reportGridSize: (size) => {
       if (size.cols === gridSize.cols && size.rows === gridSize.rows) return;
