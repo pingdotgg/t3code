@@ -4,11 +4,12 @@ import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts
 import { getClientSettings } from "../../hooks/useSettings";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import {
-  onPreviewSessionsChanged,
-  onServerTabsRevealed,
+  previewStateAtom,
+  previewThreadRefsAtom,
   type ThreadPreviewState,
 } from "../../previewStateStore";
 import { useRightPanelStore } from "../../rightPanelStore";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readEnvironmentSupportsServerBrowser } from "../../state/entities";
 
 /**
@@ -59,16 +60,58 @@ export function followPreviewSessions(threadRef: ScopedThreadRef, state: ThreadP
   if (source?.kind === "browser" && !state.sessions[source.tabId]) miniPlayer.close(threadRef);
 }
 
-let started = false;
+/**
+ * Server tabs that are new, or carry a new reveal request, since `previous`.
+ * Nothing is fresh until the first list has loaded: that list is the baseline,
+ * so a reload never reopens previews the user dismissed. A tab this client was
+ * closing comes back without a reveal if the close fails.
+ */
+function freshlyRevealedServerTabs(
+  previous: ThreadPreviewState,
+  next: ThreadPreviewState,
+): ReadonlyArray<PreviewSessionSnapshot> {
+  if (!previous.listLoaded || previous.sessions === next.sessions) return [];
+  return Object.values(next.sessions).filter((session) => {
+    if (session.runtime !== "server" || session.reveal !== true) return false;
+    if (previous.suppressedTabIds.has(session.tabId)) return false;
+    const before = previous.sessions[session.tabId];
+    const requested = session.revealRequest;
+    return requested ? before?.revealRequest?.id !== requested.id : before === undefined;
+  });
+}
+
+function followThread(threadKey: string, threadRef: ScopedThreadRef): () => void {
+  const atom = previewStateAtom(threadKey);
+  let previous = appAtomRegistry.get(atom);
+  return appAtomRegistry.subscribe(atom, (next) => {
+    const before = previous;
+    previous = next;
+    // Reveals run first so a revealed tab floats before it gains a panel tab.
+    const revealed = freshlyRevealedServerTabs(before, next);
+    if (revealed.length > 0) {
+      revealServerTabs(threadRef, revealed, {
+        autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
+      });
+    }
+    if (before.sessions !== next.sessions || before.listLoaded !== next.listLoaded) {
+      followPreviewSessions(threadRef, next);
+    }
+  });
+}
 
 /** Follows every thread's browser previews for the life of the page, not just the open thread's. */
-export function startAgentOpenedPreviews(): void {
-  if (started) return;
-  started = true;
-  onPreviewSessionsChanged(followPreviewSessions);
-  onServerTabsRevealed((threadRef, sessions) =>
-    revealServerTabs(threadRef, sessions, {
-      autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
-    }),
-  );
+export function startAgentOpenedPreviews(): () => void {
+  const followed = new Map<string, () => void>();
+  const followNewThreads = (refs: ReadonlyMap<string, ScopedThreadRef>) => {
+    for (const [threadKey, threadRef] of refs) {
+      if (!followed.has(threadKey)) followed.set(threadKey, followThread(threadKey, threadRef));
+    }
+  };
+  const stopIndex = appAtomRegistry.subscribe(previewThreadRefsAtom, followNewThreads, {
+    immediate: true,
+  });
+  return () => {
+    stopIndex();
+    for (const stop of followed.values()) stop();
+  };
 }
