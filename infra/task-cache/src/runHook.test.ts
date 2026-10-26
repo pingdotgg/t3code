@@ -162,7 +162,7 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
     expect(await run("build", secondWorktree)).toBe(0);
     await report(4);
     expect(await run("build", secondWorktree, true)).toBe(0);
-    expect(completedReports).toBe(5);
+    await report(5);
     expect(await NodeFSP.readFile(entrypoint, "utf8")).toBe(originalEntrypoint);
     expect(await run("nested", root, false, "--no-cache")).toBe(0);
     expect(await run("build", nested)).toBe(0);
