@@ -179,6 +179,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     now: new Date().toISOString(),
   }));
   if (snoozeClockState.shell !== activeThreadShell) {
+    // oxlint-disable-next-line react/purity -- Reseeds the snooze clock only in the render-phase adjustment that runs when the shell changes.
     setSnoozeClockState({ shell: activeThreadShell, now: new Date().toISOString() });
   }
   const snoozeClock = snoozeClockState.now;

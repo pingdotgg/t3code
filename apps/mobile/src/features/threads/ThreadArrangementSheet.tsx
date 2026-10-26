@@ -348,6 +348,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     };
     setPreview({ ...drag.current });
     update(0);
+    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     let last = performance.now();
     const tick = () => {
       const current = drag.current;
