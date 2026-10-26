@@ -24,6 +24,7 @@
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "effectFn": ["span", "inferred-span", "suggested-span"],
         "diagnosticSeverity": {
+          "catchUnfailableEffect": "error",
           "raceFirstWithSleepToTimeout": "error",
           "redundantMapError": "error",
           "optionMatchToFromOption": "error",
