@@ -50,7 +50,7 @@ const sweep = (cloudflare: ReturnType<typeof fakeCloudflare>) =>
     tunnelZoneName: "tunnels.example.com",
     accountId: "account-1",
     token: Redacted.make("token"),
-  }).pipe(Effect.provide(Layer.succeed(HttpClient.HttpClient, cloudflare.client)));
+  }).pipe(Effect.provideService(HttpClient.HttpClient, cloudflare.client));
 
 describe("sweepPreviewStage", () => {
   it.effect("does not need the zone once no tunnels remain", () =>

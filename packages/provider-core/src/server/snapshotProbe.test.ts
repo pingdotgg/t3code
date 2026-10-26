@@ -136,7 +136,7 @@ describe("ProviderCommandNotFoundError", () => {
         "C:\\tools\\codex.cmd",
         ChildProcess.make("codex", ["--version"]),
       ).pipe(
-        Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.flip,
       );
