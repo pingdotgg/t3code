@@ -268,18 +268,23 @@ export function ComposerContextSheet(props: {
                 <ContextField label="Comment" value={record.comment} />
                 <ContextField label="Selection" value={record.targetSummary} />
                 <ContextField label="Requested changes" value={record.styleChanges.join("\n")} />
-                {record.elements?.map((element, index) => (
-                  <View key={`${element.selector ?? element.tagName}:${index}`} className="gap-3">
-                    <ContextField
-                      label="Element"
-                      value={element.componentName ?? element.tagName}
-                    />
-                    <ContextField label="Selector" value={element.selector} code />
-                    <ContextSource source={element.source} />
-                    <ContextField label="HTML" value={element.htmlPreview} code />
-                    <ContextField label="Styles" value={element.styles} code />
-                  </View>
-                ))}
+                {record.elements?.map(
+                  (element, index) => (
+                    /* oxlint-disable react/no-array-index-key -- Captured DOM elements are a fixed snapshot without persistent element IDs. */ <View
+                      key={`${element.selector ?? element.tagName}:${index}`}
+                      className="gap-3"
+                    >
+                      <ContextField
+                        label="Element"
+                        value={element.componentName ?? element.tagName}
+                      />
+                      <ContextField label="Selector" value={element.selector} code />
+                      <ContextSource source={element.source} />
+                      <ContextField label="HTML" value={element.htmlPreview} code />
+                      <ContextField label="Styles" value={element.styles} code />
+                    </View>
+                  ) /* oxlint-enable react/no-array-index-key */,
+                )}
               </>
             ) : null}
             {record.kind === "element" ? (

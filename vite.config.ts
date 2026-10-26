@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "react/no-array-index-key": "error",
       "react/no-unstable-nested-components": "error",
       "react/static-components": "error",
       "react/capitalized-calls": "error",

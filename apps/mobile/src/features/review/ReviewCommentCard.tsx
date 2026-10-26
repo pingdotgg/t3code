@@ -219,23 +219,27 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             }}
           >
             {snippetTokens
-              ? snippetTokens.map((line, lineIndex) => (
-                  <NativeText key={lineIndex}>
-                    {lineIndex > 0 ? "\n" : ""}
-                    {line.map((token, tokenIndex) => (
-                      <NativeText
-                        key={tokenIndex}
-                        style={{
-                          color: token.color ?? props.colors.text,
-                          fontStyle: (token.fontStyle ?? 0) & 1 ? "italic" : "normal",
-                          fontWeight: (token.fontStyle ?? 0) & 2 ? "700" : "400",
-                        }}
-                      >
-                        {token.content}
-                      </NativeText>
-                    ))}
-                  </NativeText>
-                ))
+              ? snippetTokens.map(
+                  (line, lineIndex) => (
+                    /* oxlint-disable react/no-array-index-key -- Highlight tokens are stateless positions within this immutable snippet. */ <NativeText
+                      key={lineIndex}
+                    >
+                      {lineIndex > 0 ? "\n" : ""}
+                      {line.map((token, tokenIndex) => (
+                        <NativeText
+                          key={tokenIndex}
+                          style={{
+                            color: token.color ?? props.colors.text,
+                            fontStyle: (token.fontStyle ?? 0) & 1 ? "italic" : "normal",
+                            fontWeight: (token.fontStyle ?? 0) & 2 ? "700" : "400",
+                          }}
+                        >
+                          {token.content}
+                        </NativeText>
+                      ))}
+                    </NativeText>
+                  ) /* oxlint-enable react/no-array-index-key */,
+                )
               : props.comment.diff.trim()}
           </NativeText>
         </ScrollView>
