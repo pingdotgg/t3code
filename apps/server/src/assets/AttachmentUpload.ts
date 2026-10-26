@@ -230,8 +230,9 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
             }),
         }).pipe(
           Effect.as(true),
-          Effect.catch((error) =>
-            error.reason._tag === "AlreadyExists" ? Effect.succeed(false) : Effect.fail(error),
+          Effect.catchIf(
+            (error) => error.reason._tag === "AlreadyExists",
+            () => Effect.succeed(false),
           ),
         );
       }),

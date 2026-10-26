@@ -382,6 +382,7 @@ export const make = Effect.gen(function* () {
       options,
     ).pipe(
       Effect.as(prepared.remoteUrl),
+      // @effect-diagnostics-next-line catchConditionalRefailToCatchIf:off - The condition also narrows httpsUrl for the fallback closure.
       Effect.catch((sshError) =>
         httpsUrl === null || !isSshRejection(sshError)
           ? Effect.fail(sshError)

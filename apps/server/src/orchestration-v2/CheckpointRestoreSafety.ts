@@ -34,15 +34,12 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
     if (!shared && worktreePath !== null) {
       // Storage cleanup may have removed the worktree; rollback recreates it.
       const resolve = (target: string) =>
-        fileSystem
-          .realPath(target)
-          .pipe(
-            Effect.catch((error) =>
-              error.reason._tag === "NotFound"
-                ? Effect.succeed(path.resolve(target))
-                : Effect.fail(error),
-            ),
-          );
+        fileSystem.realPath(target).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            (_error) => Effect.succeed(path.resolve(target)),
+          ),
+        );
       const cwd = yield* resolve(scope.cwd);
       const worktreeCwd = yield* resolve(worktreePath);
       shared = cwd !== worktreeCwd;
@@ -74,13 +71,12 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           for (const candidate of paths) {
             if (checkedPaths.has(candidate)) continue;
             checkedPaths.add(candidate);
-            const otherCwd = yield* fileSystem
-              .realPath(candidate)
-              .pipe(
-                Effect.catch((error) =>
-                  error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-                ),
-              );
+            const otherCwd = yield* fileSystem.realPath(candidate).pipe(
+              Effect.catchIf(
+                (error) => error.reason._tag === "NotFound",
+                (_error) => Effect.succeed(null),
+              ),
+            );
             if (otherCwd !== null && (contains(cwd, otherCwd) || contains(otherCwd, cwd))) {
               shared = true;
               break;

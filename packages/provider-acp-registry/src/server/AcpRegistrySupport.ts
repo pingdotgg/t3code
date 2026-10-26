@@ -1294,8 +1294,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* fileSystem.writeFileString(lockPath, "", { flag: "wx" }).pipe(
         Effect.as(true),
-        Effect.catch((error) =>
-          isAlreadyExists(error) ? Effect.succeed(false) : Effect.fail(error),
+        Effect.catchIf(
+          (error) => isAlreadyExists(error),
+          () => Effect.succeed(false),
         ),
       );
       if (acquired) return;
