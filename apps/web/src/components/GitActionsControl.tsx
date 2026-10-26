@@ -1299,9 +1299,12 @@ export default function GitActionsControl({
     const actionResult = result.value;
     syncThreadBranchAfterGitAction(actionResult);
     if (isPanel) {
+      const createdPullRequest = actionResult.pr.status === "created";
       setInlineSuccess({
-        title: actionResult.toast.title,
-        description: actionResult.toast.description ?? null,
+        title: createdPullRequest
+          ? `Created ${changeRequestTerminology.shortLabel}`
+          : actionResult.toast.title,
+        description: createdPullRequest ? null : (actionResult.toast.description ?? null),
         scopeKey: successScopeKey,
       });
       return;
