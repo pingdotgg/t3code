@@ -42,6 +42,7 @@ import { startProviderAuthDelivery } from "./providerAuthDelivery";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { primaryServerConfigAtom } from "./state/server";
+import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { resolveThreadRouteTarget } from "./threadRoutes";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
@@ -168,6 +169,7 @@ export function startAppServices(): AppRouter {
   if (isElectron) startElectronBrowserHost();
   startPreviewTitleRecording();
   startBrowserProfileReporting();
+  installChatRouteCommands(router);
   startThreadOverlayRetention(router);
   startMainAppLocationTracking(router);
   startBackgroundThreadAnnouncements(appAtomRegistry, router);
