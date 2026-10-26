@@ -46,5 +46,15 @@ const alias = useEffect;
 `,
   );
 
+  unbudgeted.valid(
+    "does not count an effect that states its reason",
+    `export function New() {
+  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to the window's resize events
+  React.useEffect(() => {});
+  return null;
+}
+`,
+  );
+
   lint("apps/web/src/Panel.test.tsx").valid("skips test files", component(3));
 });

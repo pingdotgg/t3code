@@ -9,6 +9,12 @@ const EFFECT_HOOKS = new Set(["useEffect", "useLayoutEffect", "useInsertionEffec
 const EFFECT_HOOK_TEXT = /use(?:Layout|Insertion)?Effect/;
 const UNBUDGETED_FILE = /\.test\.[cm]?[jt]sx?$|[\\/](?:test|__tests__)[\\/]/;
 const budgets: Readonly<Record<string, number>> = budget;
+const JUSTIFIED = /oxlint-disable-next-line[^\n]*t3code\/react-effect-budget\s+--\s*\S/;
+
+// An effect with a stated reason on the line above is a reviewed decision: it is not counted, and it
+// is always reported so that the suppression comment above it is used.
+const isJustified = (lines: ReadonlyArray<string>, line: number): boolean =>
+  JUSTIFIED.test(lines[line - 2] ?? "");
 
 const isEffectHookCall = (node: ESTree.CallExpression): boolean => {
   const callee = unwrapExpression(node.callee);
@@ -39,18 +45,25 @@ export default defineRule({
     if (UNBUDGETED_FILE.test(context.filename) || !EFFECT_HOOK_TEXT.test(context.sourceCode.text)) {
       return {};
     }
+    const lines = context.sourceCode.text.split("\n");
     const calls: Array<ESTree.CallExpression> = [];
+    const justified: Array<ESTree.CallExpression> = [];
     return {
       CallExpression(node) {
-        if (isEffectHookCall(node)) calls.push(node);
+        if (!isEffectHookCall(node)) return;
+        (isJustified(lines, node.loc.start.line) ? justified : calls).push(node);
       },
       "Program:exit"() {
+        for (const node of justified) {
+          context.report({ node, message: "A React effect with a stated reason." });
+        }
         const allowed = budgetFor(context.filename);
         if (calls.length <= allowed) return;
         const message =
           `This file has ${calls.length} React ${calls.length === 1 ? "effect" : "effects"} against a budget of ${allowed}. ` +
-          "Prefer deriving in render, event handlers, a `key` reset, an element-owned ref callback, or a store. " +
-          `If an effect is genuinely right, raise this file's entry in ${BUDGET_FILE} in the same PR.`;
+          "First ask whether this is synchronization that belongs in render or in the handler that causes it. " +
+          "If an effect is the honest model, say why on the line above it: " +
+          "`// oxlint-disable-next-line t3code/react-effect-budget -- <why>`.";
         for (const node of calls.slice(allowed)) context.report({ node, message });
       },
     };
