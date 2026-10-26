@@ -2,16 +2,12 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Socket from "effect/socket/Socket";
 
-/**
- * A client sets this on its WebSocket URL to accept large messages in parts.
- * Servers that predate it ignore it and keep sending whole messages.
- */
+// Old clients omit this; old servers ignore it.
 export const SOCKET_FRAME_PARTS_QUERY_PARAM = "frameParts";
 
-// A WebSocket message only arrives once all of it has, so on a slow link a
-// multi-megabyte config snapshot outlasts the RPC ping timeout and the client
-// drops a healthy server. Parts this size arrive within it down to a few KB/s.
-export const SOCKET_FRAME_PART_BYTES = 64 * 1024;
+// WebSocket messages arrive whole. At 4,000 bytes/s each part takes about
+// 12 seconds, leaving margin before the client's 15-second liveness timeout.
+export const SOCKET_FRAME_PART_BYTES = 48 * 1024;
 
 // No JSON message starts with a record separator. It marks every part but the last.
 const PART_PREFIX = "\u001e";
