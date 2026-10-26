@@ -504,6 +504,9 @@ export function CommandPalette(props: {
     results.findIndex((item) => item.key === selection),
   );
   const selectedKey = results[selectedIndex]?.key;
+  // The native list follows the highlighted row. Key presses move it, but so do
+  // live thread updates and late message matches that reorder or drop the
+  // selected row under a kept selection, so no single handler owns the scroll.
   useEffect(() => {
     if (selectedIndex === 0) {
       // Centering before the list measures its height scrolls half the first row out of view.
@@ -514,26 +517,30 @@ export function CommandPalette(props: {
   }, [selectedIndex, selectedKey]);
 
   const dismissed = useRef(false);
+  const dismissFallback = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleDismissed = useCallback(() => {
+    if (dismissFallback.current !== null) clearTimeout(dismissFallback.current);
+    dismissFallback.current = null;
     if (dismissed.current) return;
     dismissed.current = true;
     // Present navigation sheets only after UIKit has dismissed this modal.
     props.onClose();
     pendingAction.current?.();
   }, [props]);
-
-  // iOS may drop onDismiss during presentation or competing sheets; a fallback clears stale palette state.
-  useEffect(() => {
-    if (visible) return;
-    const fallback = setTimeout(handleDismissed, 400);
-    return () => clearTimeout(fallback);
-  }, [visible, handleDismissed]);
+  useEffect(
+    () => () => {
+      if (dismissFallback.current !== null) clearTimeout(dismissFallback.current);
+    },
+    [],
+  );
 
   function close(run?: () => void) {
     if (closing.current) return;
     closing.current = true;
     pendingAction.current = run ?? null;
     setVisible(false);
+    // iOS may drop onDismiss during presentation or competing sheets; a fallback clears stale palette state.
+    dismissFallback.current = setTimeout(handleDismissed, 400);
   }
 
   function onCommand(command: HardwareKeyboardCommand) {
@@ -603,6 +610,8 @@ export function CommandPalette(props: {
                     onChangeText={(value) => {
                       setQuery(value);
                       setSelection(null);
+                      // The follow effect stays idle when the top row and its key are unchanged,
+                      // so a touch-scrolled list would otherwise keep its old offset.
                       listRef.current?.scrollToOffset({ offset: 0, animated: false });
                     }}
                     returnKeyType="go"

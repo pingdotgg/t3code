@@ -1,9 +1,8 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 import { View } from "react-native";
 
 // RN Modals move native window focus and close the keyboard. Keep composer menus in-window.
 type Entries = ReadonlyMap<number, ReactNode>;
-type Listener = (entries: Entries) => void;
 
 let nextKey = 0;
 
@@ -11,24 +10,41 @@ function allocateKey() {
   return nextKey++;
 }
 const entries = new Map<number, ReactNode>();
-const listeners = new Set<Listener>();
+const listeners = new Set<() => void>();
+let snapshot: Entries = new Map();
 
 function emit() {
-  const snapshot = new Map(entries);
+  snapshot = new Map(entries);
   for (const listener of listeners) {
-    listener(snapshot);
+    listener();
   }
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getSnapshot() {
+  return snapshot;
 }
 
 export function OverlayPortal(props: { readonly children: ReactNode }) {
   const [key] = useState(allocateKey);
 
-  // Re-project every render so open menus reflect content and theme changes.
+  // RN has no createPortal, so projecting into the out-of-tree host has to
+  // happen after commit. No dependency array: re-project after every render so
+  // the host always shows the current content (menus re-render while open —
+  // drill-in, theme).
   useEffect(() => {
     entries.set(key, props.children);
     emit();
   });
 
+  // Removal is unmount-only: deleting on every re-projection would move the
+  // entry to the end of the map and restack it above overlays opened later.
   useEffect(
     () => () => {
       entries.delete(key);
@@ -41,14 +57,7 @@ export function OverlayPortal(props: { readonly children: ReactNode }) {
 }
 
 export function OverlayPortalHost() {
-  const [current, setCurrent] = useState<Entries>(() => new Map());
-
-  useEffect(() => {
-    listeners.add(setCurrent);
-    return () => {
-      listeners.delete(setCurrent);
-    };
-  }, []);
+  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   if (current.size === 0) {
     return null;

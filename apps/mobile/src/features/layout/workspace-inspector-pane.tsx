@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Animated, {
+  cubicBezier,
   runOnJS,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withTiming,
   type SharedValue,
@@ -11,6 +13,9 @@ import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
+
+// CSS form of WORKSPACE_PANE_TIMING's Easing.inOut(Easing.cubic).
+const PANE_EASING = cubicBezier(0.65, 0, 0.35, 1);
 
 /** Pass layout props to avoid an import cycle with AdaptiveWorkspaceLayout. */
 export function WorkspaceInspectorPane(props: {
@@ -32,7 +37,7 @@ export function WorkspaceInspectorPane(props: {
 
   const inspectorProgress = useSharedValue(inspectorVisible ? 1 : 0);
   const { renderedInspectorWidth } = props;
-  const renderedContentWidth = useSharedValue(inspectorWidth ?? 0);
+  const reduceMotion = useReducedMotion();
 
   const onClosed = props.onClosed;
   useEffect(() => {
@@ -56,15 +61,6 @@ export function WorkspaceInspectorPane(props: {
     resizing,
   ]);
 
-  useEffect(() => {
-    const targetWidth = inspectorWidth ?? 0;
-    if (!inspectorVisible || resizing) {
-      renderedContentWidth.set(targetWidth);
-      return;
-    }
-    renderedContentWidth.set(withTiming(targetWidth, WORKSPACE_PANE_TIMING));
-  }, [inspectorVisible, inspectorWidth, renderedContentWidth, resizing]);
-
   const inspectorStyle = useAnimatedStyle(
     () => ({
       opacity: inspectorProgress.value,
@@ -73,7 +69,14 @@ export function WorkspaceInspectorPane(props: {
     }),
     [],
   );
-  const inspectorContentStyle = useAnimatedStyle(() => ({ width: renderedContentWidth.value }), []);
+  // A hidden or resizing pane takes its width at once; a visible one eases with the column.
+  const inspectorContentStyle = {
+    width: inspectorWidth ?? 0,
+    transitionProperty: "width",
+    transitionDuration:
+      !inspectorVisible || resizing || reduceMotion ? 0 : WORKSPACE_PANE_TIMING.duration,
+    transitionTimingFunction: PANE_EASING,
+  } as const;
   const beginResize = () => {
     resizeStartWidth.current = inspectorWidth ?? 0;
     setResizing(true);

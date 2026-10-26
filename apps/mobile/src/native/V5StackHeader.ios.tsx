@@ -268,6 +268,8 @@ export function V5StackHeader(props: {
       : undefined;
   const searchOptions = options.headerSearchBarOptions;
   const autofocusRef = searchOptions?.ref ?? searchRef;
+  // iOS ignores the native autoFocus prop, and SearchBar's imperative handle changes every
+  // commit, so a ref callback would refocus on each render; focus once after the header mounts.
   useEffect(() => {
     if (!searchOptions?.autoFocus) return;
     const frame = requestAnimationFrame(() => autofocusRef.current?.focus());
