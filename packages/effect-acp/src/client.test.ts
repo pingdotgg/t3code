@@ -1068,16 +1068,14 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       yield* Queue.offer(
         input,
         concatBytes(
-          yield* Effect.all(
-            ["permission-a", "permission-b"].map((id) =>
-              encodeJsonl(PermissionRequest, {
-                jsonrpc: "2.0",
-                id,
-                method: "session/request_permission",
-                params: payload,
-                headers: [],
-              }),
-            ),
+          yield* Effect.forEach(["permission-a", "permission-b"], (id) =>
+            encodeJsonl(PermissionRequest, {
+              jsonrpc: "2.0",
+              id,
+              method: "session/request_permission",
+              params: payload,
+              headers: [],
+            }),
           ),
         ),
       );
