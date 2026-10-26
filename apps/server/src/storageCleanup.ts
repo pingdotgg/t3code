@@ -427,7 +427,12 @@ const make = Effect.gen(function* () {
           const names = yield* fs.readDirectory(target);
           // Git status omits ignored repositories, and worktree remove deletes them.
           // Registered submodules have their own recursive safety checks below.
-          if (inspectRepositories && names.includes(".git") && !repositories.has(pathKey(target)))
+          if (
+            inspectRepositories &&
+            !repositories.has(pathKey(target)) &&
+            (names.includes(".git") ||
+              (names.includes("HEAD") && names.includes("objects") && names.includes("refs")))
+          )
             return { bytes: null, reason: "contains a nested Git repository" };
           entries += names.length;
           if (entries > 2_000_000) return incomplete;
