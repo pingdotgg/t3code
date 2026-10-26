@@ -37,10 +37,7 @@ const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
 const DieResponse = Schema.Struct({
   id: Schema.Number,
-  error: Schema.Struct({
-    _tag: Schema.Literal("Cause"),
-    data: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Die") })]),
-  }),
+  error: Schema.TaggedStruct("Cause", { data: Schema.Tuple([Schema.TaggedStruct("Die", {})]) }),
 });
 const decodeRequestPermissionRequest = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionRequest),
