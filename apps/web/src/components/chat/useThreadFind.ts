@@ -224,7 +224,7 @@ export function useThreadFind({
   };
 }
 
-interface TimelineFields {
+export interface TimelineFields {
   readonly findOpen: boolean;
   readonly findExpanded: boolean;
   readonly findQuery: string;
