@@ -4,7 +4,7 @@ import {
   type FileTreeIcons,
 } from "@pierre/trees";
 import { VIDEO_FILE_EXTENSIONS } from "@t3tools/shared/video";
-import { fileIconPathForMimeType } from "@t3tools/shared/filePreview";
+import { fileIconPathForMimeType } from "@t3tools/shared/mediaPreview";
 
 export interface PierreIconResolution {
   name: string;
@@ -103,6 +103,8 @@ export const T3_PIERRE_ICONS = {
     ex: "t3-file-icon-elixir",
     exs: "t3-file-icon-elixir",
     hs: "t3-file-icon-haskell",
+    heic: "file-tree-builtin-image",
+    heif: "file-tree-builtin-image",
     lhs: "t3-file-icon-haskell",
     java: "t3-file-icon-java",
     kt: "t3-file-icon-kotlin",
@@ -168,6 +170,8 @@ export function resolvePierreIconForEntry(
 ): PierreIconResolution | null {
   if (kind === "directory") return null;
   const icon = completeIconResolver.resolveIcon("file-tree-icon-file", pathValue);
+  if (icon?.name === "file-tree-builtin-image" && icon.token === undefined)
+    return { ...icon, token: "image" };
   return icon?.token === "default" && mimeType
     ? completeIconResolver.resolveIcon(
         "file-tree-icon-file",
