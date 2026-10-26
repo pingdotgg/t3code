@@ -265,6 +265,10 @@ export function getClientSettings(): ClientSettings {
   return getClientSettingsSnapshot();
 }
 
+export function isClientSettingsHydrated(): boolean {
+  return getClientSettingsHydratedSnapshot();
+}
+
 /** Failed reads reject and remain retryable so defaults cannot overwrite saved preferences. */
 export function ensureClientSettingsHydrated(): Promise<void> {
   return hydrateClientSettings();
