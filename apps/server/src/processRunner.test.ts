@@ -260,9 +260,6 @@ describe("runProcess", () => {
       expect(result.code).toBe(0);
     }),
   );
-
-  for (const {} of ["timeout", "success"] as const) {
-  }
 });
 
 describe("isWindowsCommandNotFound", () => {

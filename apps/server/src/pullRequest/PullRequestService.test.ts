@@ -1433,15 +1433,6 @@ it.effect("stops new reads after a rate limit while leaving manual actions avail
   }),
 );
 
-for (const [] of [
-  ["github", "github.com"],
-  ["gitlab", "gitlab.com"],
-  ["forgejo", "code.example.test"],
-  ["bitbucket", "bitbucket.org"],
-  ["azure-devops", "dev.azure.com"],
-] as const) {
-}
-
 it.effect("refuses a repository that does not belong to the requested project", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
