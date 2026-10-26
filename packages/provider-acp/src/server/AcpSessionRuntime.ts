@@ -10,6 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -482,19 +483,18 @@ export function terminateLinuxCgroupLease(
     let lastRemovalFailure: { readonly cause: unknown } | null = null;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (!lease.exists()) return;
-      try {
-        lease.kill();
-      } catch (cause) {
+      const killed = yield* Effect.try(() => lease.kill()).pipe(Effect.result);
+      if (Result.isFailure(killed)) {
+        const cause = killed.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code !== "ENOENT") return yield* failure("kill", cause);
         if (!lease.exists()) return;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      let populated: boolean;
-      try {
-        populated = lease.populated();
-      } catch (cause) {
+      const populated = yield* Effect.try(() => lease.populated()).pipe(Effect.result);
+      if (Result.isFailure(populated)) {
+        const cause = populated.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code === "ENOENT") {
@@ -503,21 +503,22 @@ export function terminateLinuxCgroupLease(
         }
         return yield* failure("read state for", cause);
       }
-      if (populated) {
+      if (populated.success) {
         lastRemovalFailure = null;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      try {
-        lease.remove();
-        lastRemovalFailure = null;
-      } catch (cause) {
+      const removed = yield* Effect.try(() => lease.remove()).pipe(Effect.result);
+      if (Result.isFailure(removed)) {
+        const cause = removed.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "ENOENT") {
           return yield* failure("remove", cause);
         }
         lastRemovalFailure = { cause };
+      } else {
+        lastRemovalFailure = null;
       }
       if (!lease.exists()) return;
       yield* Effect.sleep("10 millis");

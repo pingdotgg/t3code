@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -245,9 +246,11 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          try {
-            decodeThreadHistoryCursor(args.query.cursor);
-          } catch (cause) {
+          const decoded = yield* Effect.try(() =>
+            decodeThreadHistoryCursor(args.query.cursor),
+          ).pipe(Effect.result);
+          if (Result.isFailure(decoded)) {
+            const cause = decoded.failure.cause;
             if (cause instanceof InvalidThreadHistoryCursorError)
               return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
             return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);

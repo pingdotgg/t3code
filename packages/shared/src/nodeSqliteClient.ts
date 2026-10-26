@@ -6,6 +6,7 @@ import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
@@ -640,21 +641,23 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   }
   const frames = writer.prepare("PRAGMA wal_checkpoint(NOOP)");
   const sizeLimit = writer.prepare("PRAGMA journal_size_limit");
-  let worker: NodeWorkerThreads.Worker;
-  try {
-    worker = new NodeWorkerThreads.Worker(checkpointWorkerSource, {
-      eval: true,
-      workerData: {
-        filename,
-        frames: CHECKPOINT_FRAMES,
-        backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
-        idleMs: CHECKPOINT_IDLE_MS,
-      },
-    });
-  } catch (cause) {
-    yield* warn(String(cause));
+  const started = yield* Effect.try(
+    () =>
+      new NodeWorkerThreads.Worker(checkpointWorkerSource, {
+        eval: true,
+        workerData: {
+          filename,
+          frames: CHECKPOINT_FRAMES,
+          backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
+          idleMs: CHECKPOINT_IDLE_MS,
+        },
+      }),
+  ).pipe(Effect.result);
+  if (Result.isFailure(started)) {
+    yield* warn(String(started.failure.cause));
     return undefined;
   }
+  const worker = started.success;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   let stopped = false;
   let generation = 0;
