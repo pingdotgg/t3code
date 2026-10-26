@@ -31,6 +31,28 @@ describe("Pierre file icons", () => {
     );
   });
 
+  it.each([
+    ["pdf", "pdf"],
+    ["doc", "word"],
+    ["docx", "word"],
+    ["odt", "word"],
+    ["rtf", "word"],
+    ["xls", "spreadsheet"],
+    ["xlsx", "spreadsheet"],
+    ["ods", "spreadsheet"],
+    ["csv", "spreadsheet"],
+    ["tsv", "spreadsheet"],
+    ["ppt", "slides"],
+    ["pptx", "slides"],
+    ["odp", "slides"],
+    ["epub", "epub"],
+  ])("uses the document family icon for %s", (extension, family) => {
+    for (const path of [`report.${extension}`, `folder/REPORT.${extension.toUpperCase()}`]) {
+      assert.equal(resolvePierreIconForEntry(path, "file")?.name, `t3-file-icon-${family}`);
+      assert.isTrue(hasSpecificPierreIconForFileName(path));
+    }
+  });
+
   it("ships every custom icon referenced by the extended resolver", () => {
     const customIconNames = new Set(
       [

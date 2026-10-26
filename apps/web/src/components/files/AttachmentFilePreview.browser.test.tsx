@@ -1,3 +1,4 @@
+import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
 import { act, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -2057,6 +2058,40 @@ describe("attachment HTML preview recovery", () => {
   });
 });
 
+describe("document output sanitization", () => {
+  it("fits saved HTML outputs to their content and resizes when the content changes", async () => {
+    await using screen = await render(
+      <DocumentPages html="<table><tr><td>42</td></tr></table>" name="Output" output />,
+    );
+    const frame = screen.container.querySelector("iframe")!;
+    await vi.waitFor(() => {
+      expect(frame.contentDocument?.querySelector("td")?.textContent).toBe("42");
+      expect(frame.clientHeight).toBeGreaterThan(32);
+      expect(frame.clientHeight).toBeLessThan(120);
+    });
+    const initialHeight = frame.clientHeight;
+    await screen.rerender(
+      <DocumentPages html={"<p>More saved output</p>".repeat(10)} name="Output" output />,
+    );
+    await vi.waitFor(() => {
+      expect(frame.contentDocument?.querySelectorAll("p")).toHaveLength(10);
+      expect(frame.clientHeight).toBeGreaterThan(initialHeight);
+      expect(frame.contentDocument!.body.scrollHeight).toBeLessThanOrEqual(frame.clientHeight);
+    });
+  });
+
+  it("preserves table content and raster data while removing scripts and network resources", () => {
+    const html = sanitizeDocumentHtml(
+      '<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/png;base64,iVBORw0KGgo="><table><tr><td>Research</td></tr></table><a href="https://example.com">Results</a>',
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect(doc.querySelector("td")?.textContent).toBe("Research");
+    expect(doc.images).toHaveLength(1);
+    expect(doc.images[0]!.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(doc.querySelector("script,style,iframe,a,[onerror]")).toBeNull();
+    expect(html).not.toContain("https://");
+  });
+});
 it("opens a known empty attachment even when its range response is inaccessible", async () => {
   refresh.mockResolvedValue("https://unreachable.invalid/empty.txt");
   await using screen = await render(
@@ -2294,4 +2329,433 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(screen.container.querySelector("[data-markdown-mermaid] svg path")).not.toBeNull(),
   );
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("navigates, searches, zooms, and selects mixed-height PDF pages", async () => {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>",
+  ];
+  for (const [index, title] of [
+    "Quarterly outlook",
+    "Delivery milestones",
+    "Budget and risks",
+  ].entries()) {
+    const text = `/GS1 gs BT /F1 24 Tf 30 ${index === 0 ? 70 : 700} Td ${index === 0 ? "(Quarter) Tj /F2 24 Tf (ly outlook) Tj" : `(${title}) Tj`} ET`;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 ${index === 0 ? 140 : 792}] /Rotate ${index === 2 ? 90 : 0} /Resources << /Font << /F1 9 0 R /F2 10 0 R >> /ExtGState << /GS1 << /TR << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 2 >> >> >> >> /Contents ${4 + index * 2} 0 R >>`,
+      `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+    );
+  }
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  let source = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(source.length);
+    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = source.length;
+  source += `xref\n0 11\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("")}trailer\n<< /Size 11 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  const file = new Blob([source], { type: "application/pdf" });
+  const { default: PdfViewer } = await import("./PdfViewer");
+  const url = URL.createObjectURL(file);
+  try {
+    await using screen = await render(
+      <div style={{ display: "flex", height: 600, width: 320 }}>
+        <PdfViewer src={url} title="Planning PDF" />
+      </div>,
+    );
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"), {
+      timeout: 15_000,
+    });
+    const region = screen.container.querySelector<HTMLElement>('[role="region"]')!;
+    await vi.waitFor(() => {
+      expect(region.scrollWidth).toBe(region.clientWidth);
+      expect(region.querySelector("canvas")!.getBoundingClientRect().width).toBeLessThan(
+        region.clientWidth,
+      );
+      expect(screen.container.textContent).toContain("Fit width");
+    });
+    await act(() => {
+      (screen.container.firstElementChild as HTMLElement).style.width = "500px";
+    });
+    await vi.waitFor(() =>
+      expect(region.querySelector("canvas")!.getBoundingClientRect().width).toBe(468),
+    );
+    await screen.getByRole("button", { name: "Next page", exact: true }).click();
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+    await screen.getByRole("button", { name: "Previous page", exact: true }).click();
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await vi.waitFor(() => expect(region.scrollWidth).toBeGreaterThan(region.clientWidth));
+    await screen.getByRole("button", { name: "Fit width", exact: true }).click();
+    await vi.waitFor(() => expect(region.scrollWidth).toBe(region.clientWidth));
+    await screen.getByRole("searchbox", { name: "Find in PDF" }).fill("Quarterly outlook");
+    await vi.waitFor(() => {
+      expect(screen.container.querySelector('[role="status"]')?.textContent).toBe("1/1");
+      expect(
+        Array.from(region.querySelectorAll(".pdf-find-match")).map((span) => span.textContent),
+      ).toEqual(["Quarter", "ly outlook"]);
+    });
+    await screen.getByRole("searchbox", { name: "Find in PDF" }).fill("Budget");
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
+    await vi.waitFor(() => {
+      const span = Array.from(screen.container.querySelectorAll("[data-pdf-text-layer] span")).find(
+        (node) => node.textContent === "Budget and risks",
+      );
+      expect(span).toBeDefined();
+      const textBounds = span!.getBoundingClientRect();
+      const pageBounds = span!.parentElement!.getBoundingClientRect();
+      expect(textBounds.width).toBeGreaterThan(0);
+      expect(textBounds.height).toBeGreaterThan(0);
+      expect(textBounds.left).toBeGreaterThanOrEqual(pageBounds.left - 1);
+      expect(textBounds.top).toBeGreaterThanOrEqual(pageBounds.top - 1);
+      expect(textBounds.right).toBeLessThanOrEqual(pageBounds.right + 1);
+      expect(textBounds.bottom).toBeLessThanOrEqual(pageBounds.bottom + 1);
+      const range = document.createRange();
+      range.selectNodeContents(span!);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      expect(selection.toString()).toBe("Budget and risks");
+      expect(getComputedStyle(span!).userSelect).toBe("text");
+      selection.removeAllRanges();
+    });
+    await screen.getByRole("button", { name: "Fit width", exact: true }).click();
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
+    await screen.getByRole("searchbox", { name: "Find in PDF" }).fill(" ");
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector('[role="status"]')?.textContent).toBe("0/0"),
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+it("mounts a bounded set of saved notebook outputs as the reader scrolls", async () => {
+  const notebook = {
+    nbformat: 4,
+    metadata: {},
+    cells: Array.from({ length: 20 }, (_, cell) => ({
+      cell_type: "code",
+      source: [],
+      metadata: {},
+      outputs: Array.from({ length: 100 }, (_, output) => ({
+        output_type: "display_data",
+        data: { "text/html": `<p>saved ${cell}-${output}</p>` },
+      })),
+    })),
+  };
+  const file = new Blob([JSON.stringify(notebook)]);
+  await using screen = await render(
+    <div style={{ display: "flex", height: 400, width: 600 }}>
+      <AttachmentFilePreview
+        name="observations.ipynb"
+        mimeType="application/json"
+        sizeBytes={file.size}
+        file={file}
+      />
+    </div>,
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelectorAll("iframe").length).toBeGreaterThan(0),
+  );
+  expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
+  const first = screen.container.querySelector("iframe")!;
+  expect(first.srcdoc).toContain("saved 0-0");
+  const viewport = screen.container.querySelector<HTMLElement>(".scrollbar-gutter-both")!;
+  await act(() => {
+    viewport.scrollTop = viewport.scrollHeight;
+  });
+  await vi.waitFor(() => {
+    expect(
+      [...screen.container.querySelectorAll("iframe")].some((frame) =>
+        frame.srcdoc.includes("saved 19-99"),
+      ),
+    ).toBe(true);
+    expect(first.isConnected).toBe(false);
+  });
+  expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
+  await act(() => {
+    viewport.scrollTop = 0;
+  });
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("iframe")?.srcdoc).toContain("saved 0-0"),
+  );
+});
+
+it.each([
+  [String.raw`{\rtf1\uc1\u945{\b bold}Hello}`, "αboldHello"],
+  [String.raw`{\rtf1\uc1{\u945}Hello}`, "αHello"],
+  [
+    String.raw`{\rtf1\ansi{\fonttbl{\f0\fcharset204 Cyrillic;}{\f1\fcharset0 Latin;}}\f0\'c0{\f1\'c0}\'c1}`,
+    "АÀБ",
+  ],
+  [String.raw`{\rtf1\ansi\deff1{\fonttbl{\f1\fcharset204 Cyrillic;}}\'c0\plain\'c1}`, "АБ"],
+])("retains RTF grouped Unicode and font text in %s", async (source, expected) => {
+  const { openRtf } = await import("./extendedDocumentPreview");
+  const result = openRtf(new TextEncoder().encode(source).buffer);
+  if (result.type !== "document") throw new Error("Expected rich text document");
+  const html = result.pages.map((page) => page.html).join("");
+  expect(new DOMParser().parseFromString(html, "text/html").body.textContent).toBe(expected);
+});
+
+it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async (kind) => {
+  const archive = new JSZip().file(
+    "content.xml",
+    `<office:document>${kind === "odt" ? "<office:text>" : "<draw:page>"}<text:p>A<text:s text:c="3"/>B<text:tab/>C</text:p>${kind === "odt" ? "</office:text>" : "</draw:page>"}</office:document>`,
+  );
+  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
+    type: "module",
+  });
+  try {
+    const result = await new Promise<OfficeWorkerResult>((resolve) => {
+      worker.addEventListener(
+        "message",
+        (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
+        { once: true },
+      );
+      worker.postMessage({ type: "open", kind, bytes }, [bytes]);
+    });
+    if (result.type !== "document") throw new Error("Expected document");
+    await using screen = await render(
+      <DocumentPages html={result.pages[0]!.html} name="spacing" output />,
+    );
+    await vi.waitFor(() => {
+      const doc = screen.container.querySelector("iframe")?.contentDocument;
+      const spans = doc?.querySelectorAll<HTMLElement>("span[data-odf-whitespace]");
+      expect(doc?.querySelector("p")?.textContent).toBe("A   B\tC");
+      expect(spans).toHaveLength(2);
+      for (const span of spans!) {
+        expect(doc!.defaultView!.getComputedStyle(span).whiteSpace).toBe("pre-wrap");
+        expect(span.getBoundingClientRect().width).toBeGreaterThan(0);
+      }
+      expect(spans![0]!.getBoundingClientRect().width).toBeGreaterThan(10);
+    });
+  } finally {
+    worker.terminate();
+  }
+});
+
+it.each(["rtf", "epub", "ods"] as const)(
+  "preserves %s document text through the worker and attachment viewer",
+  async (kind) => {
+    const archive = new JSZip();
+    if (kind === "epub") {
+      archive.file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      );
+      archive.file(
+        "book.opf",
+        '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+      );
+      archive.file(
+        "chapter.xhtml",
+        "<html><head><title>Handbook</title></head><body><p>first<br/>second<br/>third</p><hr/></body></html>",
+      );
+    } else if (kind === "ods") {
+      archive.file(
+        "content.xml",
+        '<office:document><table:table table:name="Forecast"><table:table-row><table:table-cell><text:p>North<office:annotation><text:p>nested note</text:p></office:annotation></text:p><office:annotation><text:p>private note</text:p></office:annotation></table:table-cell><table:table-cell office:value="150"><office:annotation><text:p>revised from 120</text:p></office:annotation></table:table-cell><table:table-cell table:number-columns-repeated="1024"/></table:table-row><table:table-row table:number-rows-repeated="1048570"><table:table-cell table:number-columns-repeated="1024"/></table:table-row></table:table></office:document>',
+      );
+    }
+    const file =
+      kind === "rtf"
+        ? new Blob([
+            String.raw`{\rtf1\ansi 10\endash 20 \emdash \bullet \lquote a\rquote \ldblquote b\rdblquote\par Name\cell Value\cell\row 12\cell 34\cell\row{\*\private hidden\endash\cell\row}Unicode:\u8211\endash end}`,
+          ])
+        : await archive.generateAsync({ type: "blob" });
+    const bytes = await file.arrayBuffer();
+    const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    try {
+      const result = await new Promise<OfficeWorkerResult>((resolve) => {
+        worker.addEventListener(
+          "message",
+          (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
+          { once: true },
+        );
+        worker.postMessage({ type: "open", kind, bytes }, [bytes]);
+      });
+      if (kind === "ods") {
+        expect(result.type).toBe("ods");
+        if (result.type !== "ods") throw new Error("Expected spreadsheet");
+        expect(result.sheets[0]!.rows).toEqual([["North", "150"]]);
+      } else {
+        expect(result.type).toBe("document");
+        if (result.type !== "document") throw new Error("Expected document");
+        const body = new DOMParser().parseFromString(result.pages[0]!.html, "text/html").body;
+        if (kind === "epub") {
+          expect(body.querySelectorAll("br")).toHaveLength(2);
+          expect(body.querySelectorAll("hr")).toHaveLength(1);
+        } else {
+          expect(body.textContent).toContain("10–20 —•‘a’“b”");
+          expect(body.textContent).toContain("Name\tValue\t12\t34\t");
+          expect(body.textContent).toContain("Unicode:–end");
+          expect(body.textContent).not.toContain("hidden");
+          expect(body.querySelectorAll("br")).toHaveLength(3);
+        }
+      }
+    } finally {
+      worker.terminate();
+    }
+    await using screen = await render(
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <AttachmentFilePreview
+          name={`report.${kind}`}
+          mimeType="application/octet-stream"
+          sizeBytes={file.size}
+          file={file}
+        />
+      </div>,
+    );
+    await vi.waitFor(() => {
+      if (kind === "ods") {
+        expect(screen.container.textContent).toContain("North");
+        expect(screen.container.textContent).toContain("150");
+        expect(screen.container.textContent).not.toContain("private note");
+        expect(screen.container.textContent).toContain("1 rows · 2 columns");
+        expect(screen.container.textContent).not.toContain("Limited to 500");
+      } else {
+        const frame = screen.container.querySelector("iframe");
+        expect(frame?.srcdoc).toContain(kind === "rtf" ? "10–20" : "first<br>second<br>third");
+      }
+    });
+    expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+  },
+);
+
+it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
+  "bounds %s image pixels before returning browser markup",
+  async (kind) => {
+    const canvas = new OffscreenCanvas(2, 3);
+    canvas.getContext("2d");
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    for (const width of [2, 12000]) {
+      const image = await blob.arrayBuffer();
+      new DataView(image).setUint32(16, width);
+      new DataView(image).setUint32(20, width === 2 ? 3 : 12000);
+      const archive = new JSZip();
+      archive.file("cover.png", image);
+      if (kind === "epub") {
+        archive.file(
+          "META-INF/container.xml",
+          '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+        );
+        archive.file(
+          "book.opf",
+          '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+        );
+        archive.file(
+          "chapter.xhtml",
+          '<html><body><p>retained caption</p><img src="cover.png"/></body></html>',
+        );
+      } else
+        archive.file(
+          "content.xml",
+          '<office:document><office:text><text:p>retained caption</text:p><draw:image xlink:href="cover.png"/></office:text></office:document>',
+        );
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(image)));
+      const bytes =
+        kind === "ipynb" || kind === "html" || kind === "encoded-html"
+          ? new TextEncoder().encode(
+              JSON.stringify({
+                nbformat: 4,
+                cells: [
+                  {
+                    cell_type: "code",
+                    source: "plot()",
+                    outputs: [
+                      {
+                        data: {
+                          ...(kind === "html" || kind === "encoded-html"
+                            ? {
+                                "text/html": `<table><tr><td>retained caption</td></tr></table><img src="${kind === "encoded-html" ? "&#100ata" : "data"}:image/png;base64,${base64}">`,
+                              }
+                            : { "image/png": base64 }),
+                          "text/plain": "retained caption",
+                        },
+                      },
+                    ],
+                  },
+                ],
+              }),
+            ).buffer
+          : await archive.generateAsync({ type: "arraybuffer" });
+      const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
+        type: "module",
+      });
+      try {
+        const result = await new Promise<OfficeWorkerResult>((resolve) => {
+          worker.addEventListener(
+            "message",
+            (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
+            { once: true },
+          );
+          worker.postMessage(
+            {
+              type: "open",
+              kind: kind === "html" || kind === "encoded-html" ? "ipynb" : kind,
+              bytes,
+            },
+            [bytes],
+          );
+        });
+        if (result.type === "notebook") {
+          const output = result.cells[0]!.outputs[0]!;
+          expect(output.kind).toBe(
+            width === 2 ? (kind === "html" || kind === "encoded-html" ? "html" : "image") : "text",
+          );
+          if (output.kind === "html") {
+            const rendered = new DOMParser().parseFromString(
+              sanitizeDocumentHtml(output.text),
+              "text/html",
+            );
+            expect(rendered.images).toHaveLength(1);
+            expect(rendered.querySelector("td")!.textContent).toBe("retained caption");
+          }
+          if (width !== 2) expect(result.cells[0]!.outputs[0]!.text).toBe("retained caption");
+        } else {
+          expect(result.type).toBe("document");
+          if (result.type !== "document") throw new Error("Expected document");
+          expect(result.pages[0]!.html.includes("<img")).toBe(width === 2);
+          expect(result.pages[0]!.html).toContain("retained caption");
+        }
+      } finally {
+        worker.terminate();
+      }
+    }
+  },
+);
+
+it.each([
+  ["standardFontDataUrl", "FoxitSerif.pfb", "standard_fonts"],
+  ["cMapUrl", "78-EUC-H.bcmap", "cmaps"],
+  ["wasmUrl", "openjpeg.wasm", "wasm"],
+])("validates PDF %s assets before decoding", async (kind, filename, directory) => {
+  const { BinaryDataFactory } = await import("./pdfDocument");
+  const factory = new BinaryDataFactory();
+  const fetchAsset = vi.fn(
+    async () =>
+      new Response("<html>app</html>", {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+  );
+  using _fetch = stubGlobal("fetch", fetchAsset);
+  await expect(factory.fetch({ kind, filename })).rejects.toThrow(
+    `PDF ${directory} asset unavailable.`,
+  );
+  fetchAsset.mockImplementation(async () => new Response(new Uint8Array([1, 2, 3])));
+  await expect(factory.fetch({ kind, filename })).resolves.toEqual(new Uint8Array([1, 2, 3]));
+  await expect(factory.fetch({ kind, filename: "missing" })).rejects.toThrow(
+    `Unsupported PDF ${directory} asset.`,
+  );
 });

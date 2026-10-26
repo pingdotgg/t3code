@@ -1,3 +1,4 @@
+import { documentIconColorForFileName } from "~/pierre-icons";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -5,7 +6,7 @@ import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { COMPOSER_CONTEXT_KINDS } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { use, type ReactNode } from "react";
+import { use, type CSSProperties, type ReactNode } from "react";
 import { FileDiff } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -61,12 +62,14 @@ function UserMessageMentionChip(props: {
   copyMarkdown: string;
 }) {
   const ctx = use(TimelineRowCtx);
+  const accent = documentIconColorForFileName(props.record.path);
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <ContextChip
             kind="mention"
+            style={accent ? ({ "--context-chip-accent": accent } as CSSProperties) : undefined}
             render={<button type="button" />}
             aria-label={`Preview ${props.record.path}`}
             data-markdown-copy={props.copyMarkdown}

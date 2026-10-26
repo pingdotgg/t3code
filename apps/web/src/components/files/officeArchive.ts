@@ -225,6 +225,8 @@ function boundedWorksheet(
   let explicitRow = false;
   let rowTag = "";
   let column = 0;
+  let maxRow = 0;
+  let maxColumn = 0;
   let cells = new Map<number, string>();
   let cell: {
     start: number;
@@ -299,7 +301,9 @@ function boundedWorksheet(
         truncated = true;
         return;
       }
-      if (++budget.cells > 2_000_000 || row * column > 8_000_000)
+      maxRow = Math.max(maxRow, row);
+      maxColumn = Math.max(maxColumn, column);
+      if (++budget.cells > 2_000_000 || maxRow * maxColumn > 8_000_000)
         throw new Error(
           "This workbook exceeds the preview limit: 2 million cells or 8 million grid positions.",
         );
@@ -934,7 +938,7 @@ async function wordExpansion(
 
 // Stream each entry before handing it to an engine. A tiny compressed archive
 // must not turn into an unbounded allocation on the UI thread.
-async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open" }>) {
+export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open" }>) {
   const { bytes } = input;
   const spreadsheet = input.kind === "xlsx";
   if (bytes.byteLength > OFFICE_PREVIEW_MAX_BYTES)

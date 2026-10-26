@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useAssetUrlState } from "~/assets/assetUrls";
+import { documentIconColorForFileName } from "~/pierre-icons";
 
 import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRequestIcons";
 import type { PullRequestContextDisplayState } from "~/lib/composerContextRecords";
@@ -242,6 +243,7 @@ export function FileChip(props: {
 }) {
   if (props.svgPreview && !props.unresolved) return <SvgFileChip {...props} />;
   const content = <FileChipContent {...props} />;
+  const accent = props.isVideo ? undefined : documentIconColorForFileName(props.name);
   const state = props.unresolved
     ? ("unresolved" as const)
     : props.error
@@ -249,6 +251,7 @@ export function FileChip(props: {
       : null;
   const attributes = {
     kind: props.isVideo ? "video" : "file",
+    style: accent ? ({ "--context-chip-accent": accent } as CSSProperties) : undefined,
     ...(state ? { state } : {}),
     "aria-label": [props.accessibleLabel, props.suffix].filter(Boolean).join(", "),
     "data-markdown-copy": props.copyMarkdown,
