@@ -286,6 +286,20 @@ describe("Muse launch", () => {
       expect((yield* onWindows("C:\\Muse\\muse.bat", { SYSTEMROOT: "C:\\Windows" })).command).toBe(
         "C:\\Windows\\System32\\cmd.exe",
       );
+      expect(
+        yield* museLaunch("C:\\Muse R&D\\.muse-launcher.ps1", { SystemRoot: "D:\\Windows" }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+        ),
+      ).toEqual({
+        command: "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        args: [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "C:\\Muse R&D\\.muse-launcher.ps1",
+        ],
+      });
       expect(yield* onWindows(undefined)).toEqual({ command: "muse", args: [] });
     }),
   );

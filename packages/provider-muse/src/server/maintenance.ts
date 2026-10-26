@@ -1,6 +1,5 @@
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -18,6 +17,7 @@ import {
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
+import { museLaunch } from "./sdk.ts";
 
 const DRIVER = ProviderDriverKind.make("muse");
 const MUSE_CHANNELS = new Set(["muse-stable", "muse-canary"]);
@@ -53,6 +53,7 @@ export const compareMuseVersions = (current: string, latest: string) =>
  * an update channel; a standalone binary cannot update itself.
  */
 export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
+  windowsScriptExtensions: [".ps1"],
   resolve: Effect.fn("MuseMaintenance.resolve")(function* (context) {
     const manual = {
       ...makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER, packageName: null }),
@@ -91,19 +92,11 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
       return recognized ? launcher : null;
     }).pipe(Effect.orElseSucceed(() => null));
     if (!launcherPath) return manual;
-    let executable = context.resolvedCommandPath;
-    let args = ["--version"];
-    if (windows) {
-      const hostEnv = yield* HostProcess.Environment;
-      const systemRoot = [context.env, hostEnv]
-        .flatMap((env) => Object.entries(env))
-        .find(([key, value]) => key.toUpperCase() === "SYSTEMROOT" && value)?.[1];
-      executable = systemRoot
-        ? `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
-        : "powershell.exe";
-      // -File passes the verified installation's path literally, without cmd parsing it.
-      args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcherPath, "--version"];
-    }
+    const launch = windows
+      ? yield* museLaunch(launcherPath, context.env)
+      : { command: context.resolvedCommandPath, args: [] };
+    const executable = launch.command;
+    const args = [...launch.args, "--version"];
     // The launcher has no `update` subcommand. Its documented launch environment
     // forces a synchronous refresh of this executable's own installation.
     const updateEnv = {

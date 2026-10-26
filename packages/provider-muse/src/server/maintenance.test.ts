@@ -211,26 +211,24 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("recognizes a direct PowerShell launcher at the real installation path", () =>
+  it.effect("resolves a configured PowerShell launcher with default Windows command lookup", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-maintenance-" });
       const launcher = path.join(directory, ".muse-launcher.ps1");
       yield* fs.writeFileString(launcher, windowsLauncher);
-      const result = yield* museMaintenance.resolve({
-        binaryPath: "muse",
-        resolvedCommandPath: path.join(directory, "alias.ps1"),
-        realCommandPath: launcher,
-        platform: "win32",
+      const result = yield* resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
+        binaryPath: launcher,
         env: { SYSTEMROOT: "D:\\Windows" },
-      });
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
       expect(result.update).toMatchObject({
         executable: "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
         args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcher, "--version"],
         lockKey: `muse:${launcher}`,
       });
       expect(result.update?.env).not.toHaveProperty("MUSE_CHANNEL");
+      expect(result.update?.env).not.toHaveProperty("PATHEXT");
     }).pipe(Effect.scoped),
   );
 

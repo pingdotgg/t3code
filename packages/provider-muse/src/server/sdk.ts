@@ -109,7 +109,7 @@ function windowsEnvironmentValue(environment: NodeJS.ProcessEnv, name: string) {
   return key === undefined ? undefined : environment[key];
 }
 
-/** Resolve Windows launchers with PATHEXT and run .cmd/.bat under cmd.exe; SDK spawn has no shell. */
+/** The SDK spawns without a shell, so Windows scripts need their interpreter. */
 export const museLaunch = Effect.fn("museLaunch")(function* (
   binaryPath: string,
   environment?: NodeJS.ProcessEnv,
@@ -118,7 +118,20 @@ export const museLaunch = Effect.fn("museLaunch")(function* (
   const env = environment ?? (yield* HostProcess.Environment);
   const resolveExecutable = yield* SpawnExecutableResolution;
   const resolved =
-    (yield* Effect.promise(async () => resolveExecutable(binaryPath, "win32", env))) ?? binaryPath;
+    (yield* Effect.promise(async () => resolveExecutable(
+      binaryPath,
+      "win32",
+      /\.ps1$/i.test(binaryPath) ? { ...env, PATHEXT: ".PS1" } : env,
+    ))) ?? binaryPath;
+  if (/\.ps1$/i.test(resolved)) {
+    const systemRoot = windowsEnvironmentValue(env, "SystemRoot");
+    return {
+      command: systemRoot
+        ? `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+        : "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolved],
+    };
+  }
   if (!/\.(?:cmd|bat)$/i.test(resolved)) return { command: resolved, args: [] };
   const systemRoot = windowsEnvironmentValue(env, "SystemRoot");
   return {
