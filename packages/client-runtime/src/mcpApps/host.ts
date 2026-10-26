@@ -405,8 +405,16 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       else handleNotification(method, params);
     },
     setToolCall: (call) => {
-      toolCall ??= call;
-      sendToolCall();
+      // A running call has no result yet; only its completion may replace it.
+      if (toolCall === undefined || !toolCallSent) {
+        if (toolCall?.result === undefined) toolCall = call;
+        sendToolCall();
+        return;
+      }
+      if (toolCall.result !== undefined || call.result === undefined) return;
+      // The app already has this call's input; it only needs the result.
+      toolCall = { arguments: toolCall.arguments, result: call.result };
+      notify("ui/notifications/tool-result", normalizeMcpAppToolResult(call.result));
     },
     updateHostContext: () => {
       // The spec forbids messages before the app finishes initializing; it

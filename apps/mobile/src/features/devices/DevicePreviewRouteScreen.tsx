@@ -9,7 +9,7 @@ import {
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
 import { Pressable, StatusBar, View } from "react-native";
@@ -31,7 +31,8 @@ import { useAppForeground } from "../../lib/appState";
 import { useHardwareBack } from "../../lib/backHandler";
 import { deriveBottomControlInsets } from "../../lib/reserved-regions";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
-import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from "../../state/device";
+import { uuidv4 } from "../../lib/uuid";
+import { deviceEnvironment, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -102,13 +103,10 @@ export function DevicePreviewScreen({
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
   const previews = threadDevicePreviews(state.data, threadId);
   const preview = selectedThreadDevicePreview(previews, selectedKey);
-  const onInputConnected = useCallback(
-    async (connected: boolean) => {
-      setInputConnected(connected);
-      if (connected && !embedded) setControlsVisible(false);
-    },
-    [embedded],
-  );
+  const onInputConnected = async (connected: boolean) => {
+    setInputConnected(connected);
+    if (connected && !embedded) setControlsVisible(false);
+  };
   useEffect(() => {
     if (focused && state.data !== null && previews.length === 0) onClose();
   }, [focused, state.data, previews.length, onClose]);
@@ -401,12 +399,9 @@ function OpenDevicePreview({
 }) {
   const { session } = preview;
   const { themeVariables } = useAppearancePreferences();
-  const { access, error, refresh } = useDeviceHubAccess(environmentId, session.hostId);
-  const onUnauthorized = async () => refreshDeviceHubAccess(environmentId);
-  useEffect(() => {
-    refreshDeviceHubAccess(environmentId);
-    return () => void onInputConnected(false);
-  }, [environmentId, onInputConnected]);
+  const [viewer] = useState(uuidv4);
+  const { access, error, refresh } = useDeviceHubAccess(environmentId, session.hostId, viewer);
+  const onUnauthorized = async () => refresh();
   return access ? (
     <DeviceStreamWebView
       ref={streamRef}
