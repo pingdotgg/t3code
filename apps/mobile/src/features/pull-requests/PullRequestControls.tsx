@@ -166,7 +166,7 @@ export function PullRequestActionToolbar(props: {
               >
                 <View pointerEvents="none">
                   <IconButton
-                    icon="wrench.and.screwdriver"
+                    icon="ellipsis.bubble"
                     accessibilityLabel={`${shortLabel} agent actions`}
                     disabled={agent.disabled}
                   />
@@ -237,7 +237,7 @@ export function PullRequestActionToolbar(props: {
   const agentControl = showAgentControls ? (
     <Toolbar.Menu
       identifier="pull-request-agent"
-      icon="wrench.and.screwdriver"
+      icon="ellipsis.bubble"
       title="AI helpers"
       accessibilityLabel={`${shortLabel} agent actions`}
       disabled={agent.disabled}
