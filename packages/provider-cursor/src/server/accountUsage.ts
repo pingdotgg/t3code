@@ -355,13 +355,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       duration: Duration.seconds(60),
       orElse: () => invalid("Account usage read timed out"),
     }),
-    Effect.catch(() =>
-      Effect.succeed({
-        accountKey,
-        records: [],
-        missing: false,
-        error: "Cursor account usage could not be read.",
-      } satisfies CursorAccountUsageReadResult),
+    Effect.orElseSucceed(
+      () =>
+        ({
+          accountKey,
+          records: [],
+          missing: false,
+          error: "Cursor account usage could not be read.",
+        }) satisfies CursorAccountUsageReadResult,
     ),
   );
 });

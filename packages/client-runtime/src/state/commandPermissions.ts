@@ -53,7 +53,7 @@ function makeCommandPermissions<R, E>(
             suspendOnWaiting: false,
           }).pipe(
             Effect.timeoutOption(6_000),
-            Effect.catch(() => Effect.succeed(Option.none<AuthSessionState>())),
+            Effect.orElseSucceed(() => Option.none<AuthSessionState>()),
           );
           const missing = scopes.find(
             (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),

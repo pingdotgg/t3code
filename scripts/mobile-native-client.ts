@@ -448,7 +448,7 @@ const remoteCache = Effect.fn("nativeClient.remoteCache")(
       ...login,
     } satisfies RemoteCache;
   },
-  Effect.catch(() => Effect.succeed(null)),
+  Effect.orElseSucceed(() => null),
 );
 
 const authorized = (remote: RemoteCache, request: HttpClientRequest.HttpClientRequest) =>

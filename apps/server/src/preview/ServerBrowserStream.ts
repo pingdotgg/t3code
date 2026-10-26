@@ -206,7 +206,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
           Effect.as(HttpServerResponse.text("Service Unavailable", { status: 503 })),
         ),
     }),
-    Effect.catch(() => Effect.succeed(HttpServerResponse.empty())),
+    Effect.orElseSucceed(() => HttpServerResponse.empty()),
   );
 });
 
