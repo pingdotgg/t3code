@@ -169,6 +169,24 @@ describe("mobile context clipboard imports", () => {
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 
+  it("releases its files if cancelled after the last copy finishes", async () => {
+    const controller = new AbortController();
+    mocks.dispose.mockImplementationOnce(() => controller.abort());
+    const imageOnly = {
+      text: "![Checkout](t3-context://v1/image/image-source)",
+      fragment: encodeComposerContextFragment({
+        version: 1,
+        source: { environmentId: EnvironmentId.make("source") },
+        records: [image],
+      })!,
+      html: "",
+    };
+    await expect(importComposerContextClipboard(imageOnly, 0, controller.signal)).rejects.toThrow(
+      "cancelled",
+    );
+    expect(mocks.remove).toHaveBeenCalledWith("file:///owned.png");
+  });
+
   it("can copy an image before its source upload completes", async () => {
     mocks.local.mockReturnValue({
       id: "source-file",

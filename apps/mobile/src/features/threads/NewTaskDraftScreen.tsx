@@ -36,6 +36,7 @@ import {
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
+import { abortComposerDraftOperations } from "../../state/composerDraftOperations";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
 
@@ -934,6 +935,9 @@ export function NewTaskDraftScreen(props: {
         submittedThreadParams(String(message.environmentId), String(message.threadId)),
       ),
     );
+    // The composer has moved to the submitted thread; a pick still converting
+    // would otherwise resurrect this draft.
+    abortComposerDraftOperations(draftKey);
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
     if (editingPendingTask) {
       flow.finishEditingPendingTask();

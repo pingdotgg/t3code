@@ -55,6 +55,10 @@ import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../l
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
 import {
+  abortComposerDraftOperations,
+  abortComposerDraftOperationsWhere,
+} from "./composerDraftOperations";
+import {
   isNewTaskDraftKey,
   newTaskDraftKey,
   parseLegacyNewTaskDraftKey,
@@ -1804,6 +1808,7 @@ export function clearComposerDraft(
   draftKey: string,
   options?: { readonly deferAttachmentCleanup?: boolean },
 ): void {
+  abortComposerDraftOperations(draftKey);
   const previousAttachments = getComposerDraftSnapshot(draftKey).attachments;
   updateComposerDrafts((current) => {
     if (!current[draftKey]) {
@@ -1913,6 +1918,13 @@ export async function clearComposerDraftsEnvironment(environmentId: EnvironmentI
   const removedAttachments = Object.entries(current)
     .filter(([draftKey]) => next[draftKey] === undefined)
     .flatMap(([, draft]) => draft.attachments);
+  // Keys with no stored draft yet (an empty thread composer) can still have a pick running.
+  const environmentPrefix = `${environmentId}:`;
+  abortComposerDraftOperationsWhere(
+    (draftKey) =>
+      draftKey.startsWith(environmentPrefix) ||
+      (current[draftKey] !== undefined && next[draftKey] === undefined),
+  );
 
   if (persistTimer !== null) {
     clearTimeout(persistTimer);

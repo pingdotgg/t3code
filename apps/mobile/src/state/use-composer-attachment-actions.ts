@@ -1,5 +1,5 @@
 import * as Dialog from "../components/ui/Dialog";
-import { useLayoutEffect, useRef } from "react";
+import { useRef } from "react";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type ServerConfig } from "@t3tools/contracts";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { nextPastedTextFileName } from "@t3tools/client-runtime/text-paste";
@@ -19,28 +19,22 @@ import {
   getComposerDraftSnapshot,
   type ComposerDraftInsertion,
 } from "./use-composer-drafts";
+import { startComposerDraftOperation } from "./composerDraftOperations";
 
 export function useComposerAttachmentActions(props: {
   readonly draftKey: string | null;
   readonly serverConfig: ServerConfig | null | undefined;
   readonly locked?: boolean;
 }) {
-  const currentKey = useRef(props.draftKey);
   const reservedNames = useRef(new Map<string, Set<string>>());
-  useLayoutEffect(() => {
-    currentKey.current = props.draftKey;
-    return () => {
-      currentKey.current = null;
-    };
-  }, [props.draftKey]);
   const capabilities = props.serverConfig?.environment.capabilities;
   const append = async (
     key: string,
+    signal: AbortSignal,
     attachments: ReadonlyArray<DraftComposerAttachment>,
     insertion: ComposerDraftInsertion,
   ) => {
-    // A picker may finish after selecting another draft or sending this one.
-    if (currentKey.current !== key) {
+    if (signal.aborted) {
       await Promise.all(
         attachments.flatMap((item) =>
           item.fileUri ? [removePersistedComposerAttachmentFile(item.fileUri)] : [],
@@ -49,6 +43,11 @@ export function useComposerAttachmentActions(props: {
       return 0;
     }
     return appendComposerDraftAttachments(key, attachments, { appendReference: true, insertion });
+  };
+  // A picker may finish after its draft was discarded or the composer moved off it.
+  const withDraftOperation = async (key: string, work: (signal: AbortSignal) => Promise<void>) => {
+    const operation = startComposerDraftOperation(key);
+    await work(operation.signal).finally(operation.finish);
   };
   const report = (title: string, error: string | null | undefined, rejected: number) => {
     const problems = [
@@ -63,17 +62,19 @@ export function useComposerAttachmentActions(props: {
     const key = props.draftKey;
     if (!key || props.locked) return;
     const insertion = captureComposerDraftInsertion(key);
-    const result = await pickComposerMedia({
-      existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
-      maxVideoBytes: capabilities?.attachmentUploads
-        ? capabilities.fileAttachments?.maxUploadBytes
-        : undefined,
+    await withDraftOperation(key, async (signal) => {
+      const result = await pickComposerMedia({
+        existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
+        maxVideoBytes: capabilities?.attachmentUploads
+          ? capabilities.fileAttachments?.maxUploadBytes
+          : undefined,
+      });
+      report(
+        "Could not attach photo or video",
+        result.error,
+        await append(key, signal, result.attachments, insertion),
+      );
     });
-    report(
-      "Could not attach photo or video",
-      result.error,
-      await append(key, result.attachments, insertion),
-    );
   };
   const onPickDraftFiles = async () => {
     const key = props.draftKey;
@@ -84,25 +85,36 @@ export function useComposerAttachmentActions(props: {
       return;
     }
     const insertion = captureComposerDraftInsertion(key);
-    const result = await pickComposerFiles({
-      existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
-      maxBytes,
+    await withDraftOperation(key, async (signal) => {
+      const result = await pickComposerFiles({
+        existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
+        maxBytes,
+      });
+      report(
+        "Could not attach file",
+        result.error,
+        await append(key, signal, result.files, insertion),
+      );
     });
-    report("Could not attach file", result.error, await append(key, result.files, insertion));
   };
   const onNativePasteImages = async (uris: ReadonlyArray<string>) => {
     const key = props.draftKey;
     if (!key || props.locked || !uris.length) return;
     const insertion = captureComposerDraftInsertion(key);
-    try {
-      const images = await convertPastedImagesToAttachments({
-        uris,
-        existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
-      });
-      report("Could not paste images", null, await append(key, images, insertion));
-    } catch (error) {
-      Dialog.alert("Could not paste images", error instanceof Error ? error.message : "Try again.");
-    }
+    await withDraftOperation(key, async (signal) => {
+      try {
+        const images = await convertPastedImagesToAttachments({
+          uris,
+          existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
+        });
+        report("Could not paste images", null, await append(key, signal, images, insertion));
+      } catch (error) {
+        Dialog.alert(
+          "Could not paste images",
+          error instanceof Error ? error.message : "Try again.",
+        );
+      }
+    });
   };
   const onNativePasteText = async (paste: ComposerTextPaste) => {
     const key = props.draftKey;
@@ -116,21 +128,26 @@ export function useComposerAttachmentActions(props: {
     for (const attachment of getComposerDraftSnapshot(key).attachments) names.add(attachment.name);
     const name = nextPastedTextFileName([...names]);
     names.add(name);
-    try {
-      const attachment = await createPastedTextComposerAttachment({
-        text: paste.text,
-        name,
-        maxBytes: clampFileAttachmentUploadBytes(maxBytes),
-      });
-      const rejected = await append(key, [attachment], { text: paste.value, ...paste.selection });
-      if (rejected) await removePersistedComposerAttachmentFile(attachment.fileUri);
-      report("Could not attach pasted text", null, rejected);
-    } catch (error) {
-      Dialog.alert(
-        "Could not attach pasted text",
-        error instanceof Error ? error.message : "Try again.",
-      );
-    }
+    await withDraftOperation(key, async (signal) => {
+      try {
+        const attachment = await createPastedTextComposerAttachment({
+          text: paste.text,
+          name,
+          maxBytes: clampFileAttachmentUploadBytes(maxBytes),
+        });
+        const rejected = await append(key, signal, [attachment], {
+          text: paste.value,
+          ...paste.selection,
+        });
+        if (rejected) await removePersistedComposerAttachmentFile(attachment.fileUri);
+        report("Could not attach pasted text", null, rejected);
+      } catch (error) {
+        Dialog.alert(
+          "Could not attach pasted text",
+          error instanceof Error ? error.message : "Try again.",
+        );
+      }
+    });
   };
   return { onPickDraftMedia, onPickDraftFiles, onNativePasteImages, onNativePasteText };
 }

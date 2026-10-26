@@ -106,6 +106,8 @@ export async function importComposerContextClipboard(
         failures.push(record.name);
       }
     }
+    // The last copy can be cancelled after its own check; a cancelled import must not return files nobody will release.
+    checkAborted(signal);
     return {
       text: imported.text,
       context: { version: 1 as const, records },

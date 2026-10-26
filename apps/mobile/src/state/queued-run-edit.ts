@@ -10,6 +10,7 @@ import { useAtomValue } from "@effect/atom-react";
 
 import { uploadedComposerContext } from "../lib/composerContext";
 import { appAtomRegistry } from "./atom-registry";
+import { abortComposerDraftOperations } from "./composerDraftOperations";
 import { queuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   clearComposerDraft,
@@ -59,6 +60,8 @@ export function beginQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void
   if (previous !== null && previous.runId !== edit.runId) {
     clearComposerDraft(queuedEditDraftKey(threadKey, previous.runId));
   }
+  // The composer moves off the thread draft, so a paste or pick still running for it is dropped.
+  abortComposerDraftOperations(threadKey);
   const draftKey = queuedEditDraftKey(threadKey, edit.runId);
   clearComposerDraft(draftKey);
   setComposerDraftText(draftKey, edit.originalText);
