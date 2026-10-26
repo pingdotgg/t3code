@@ -821,6 +821,67 @@ describe("sortScopedProjectsForSidebar", () => {
 });
 
 describe("sortSidebarV2ProjectGroups", () => {
+  it.each(["created_at", "updated_at"] as const)(
+    "ignores excluded environments when sorting project activity by %s",
+    (sortOrder) => {
+      const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+      const olderProjectId = ProjectId.make("project-older");
+      const newerProjectId = ProjectId.make("project-newer");
+      const remoteProjectId = ProjectId.make("project-remote");
+      const olderProject = {
+        ...makeProject({ id: olderProjectId }),
+        projectKey: "logical-older",
+        memberProjectRefs: [
+          { environmentId: localEnvironmentId, projectId: olderProjectId },
+          { environmentId: remoteEnvironmentId, projectId: remoteProjectId },
+        ],
+      };
+      const newerProject = {
+        ...makeProject({ id: newerProjectId }),
+        projectKey: "logical-newer",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: newerProjectId }],
+      };
+      const projects = [olderProject, newerProject];
+      const threads = [
+        makeThread({
+          projectId: olderProjectId,
+          createdAt: "2026-03-09T10:01:00.000Z",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeThread({
+          projectId: newerProjectId,
+          createdAt: "2026-03-09T10:05:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        }),
+        {
+          ...makeThread({
+            projectId: remoteProjectId,
+            createdAt: "2026-03-09T10:10:00.000Z",
+            updatedAt: "2026-03-09T10:10:00.000Z",
+          }),
+          environmentId: remoteEnvironmentId,
+        },
+      ];
+
+      expect(
+        sortSidebarV2ProjectGroups(
+          projects,
+          threads,
+          sortOrder,
+          new Set(),
+          new Set([remoteEnvironmentId]),
+        ),
+      ).toEqual([newerProject, olderProject]);
+      expect(sortSidebarV2ProjectGroups(projects, threads, sortOrder, new Set())).toEqual([
+        olderProject,
+        newerProject,
+      ]);
+      expect(
+        sortSidebarV2ProjectGroups(projects, threads, sortOrder, new Set(), new Set()),
+      ).toEqual([olderProject, newerProject]);
+    },
+  );
+
   it("does not let a hidden subagent thread reorder projects", () => {
     const olderProjectId = ProjectId.make("project-older");
     const newerProjectId = ProjectId.make("project-newer");
@@ -1536,7 +1597,7 @@ describe("resolveSidebarRouteReveal", () => {
   const hiddenKey = "environment-test:thread-test";
   const findThread = (key: string) => (key === hiddenKey ? hidden : undefined);
 
-  it("widens the scope for a newly opened thread the scope hides", () => {
+  it.each([false, true])("only widens for a visible environment (excluded: %s)", (excluded) => {
     expect(
       resolveSidebarRouteReveal({
         reveal: { observedKey: "environment-test:other", pendingKey: null },
@@ -1544,9 +1605,10 @@ describe("resolveSidebarRouteReveal", () => {
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
+        excludedEnvironmentIds: excluded ? new Set([hidden.environmentId]) : new Set(),
         findThread,
       }),
-    ).toEqual({ pendingKey: hiddenKey, widensScope: true });
+    ).toEqual({ pendingKey: hiddenKey, widensScope: !excluded });
   });
 
   it("never widens for a thread whose reveal already completed", () => {

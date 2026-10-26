@@ -824,7 +824,7 @@ function useSidebarLookups(excludedEnvironmentIds: ReadonlySet<EnvironmentId>) {
   const environments = useEnvironmentIdentities();
   const serverConfigs = useServerConfigs();
   const providerEntriesByEnvironment = useAtomValue(sidebarProviderEntriesAtom);
-  const projectGroups = useSidebarProjectGroups();
+  const projectGroups = useSidebarProjectGroups(excludedEnvironmentIds);
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
@@ -1408,7 +1408,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
         ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
+          [...scopeGroups, ...projectGroups.filter((project) => project.archived)].filter((project) =>
+            project.memberProjectRefs.some((ref) => !excludedEnvironmentIds.has(ref.environmentId)),
+          )
         : scopedProjectGroups
       : null,
     keepEmptyFolders: (group) =>
