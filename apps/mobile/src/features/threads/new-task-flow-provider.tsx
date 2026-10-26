@@ -24,7 +24,6 @@ import {
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
-import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -80,7 +79,7 @@ import {
   rememberModelOptions,
   withRememberedModelOptions,
 } from "../../state/use-model-option-memory";
-import { useBranches, useDebouncedValue, usePaginatedBranches } from "../../state/queries";
+import { useBranches, usePaginatedBranches } from "../../state/queries";
 import { vcsEnvironment } from "../../state/vcs";
 import {
   flattenQueuedThreadMessages,
@@ -117,7 +116,6 @@ import {
 } from "../../state/legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
-  filterNewTaskBranches,
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
   resolveNewTaskWorkspaceSelection,
@@ -127,8 +125,6 @@ import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValid
 import { useOlderSettledCount } from "../../state/olderSettledShelf";
 
 type WorkspaceMode = "local" | "worktree";
-
-const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
 function pendingTaskDraftKey(messageId: string): string {
   return `pending-task:${messageId}`;
@@ -182,11 +178,7 @@ type NewTaskFlowContextValue = {
   readonly prompt: string;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly submitting: boolean;
-  readonly branchQuery: string;
   readonly branchesLoading: boolean;
-  readonly branchesError: string | null;
-  readonly branchesFetchingNextPage: boolean;
-  readonly hasMoreBranches: boolean;
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
@@ -204,7 +196,6 @@ type NewTaskFlowContextValue = {
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
-  readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
   readonly setProject: (project: EnvironmentProject) => void;
   /** Returns false if the existing draft is gone, allowing fallback to a fresh draft. */
@@ -238,9 +229,7 @@ type NewTaskFlowContextValue = {
   readonly removeAttachment: (imageId: string) => void;
   readonly clearAttachments: () => void;
   readonly setSubmitting: (value: boolean) => void;
-  readonly setBranchQuery: (value: string) => void;
   readonly loadBranches: () => void;
-  readonly loadMoreBranches: () => void;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
   readonly setSelectedModelOptions: (
@@ -287,7 +276,6 @@ export function NewTaskFlowProvider(
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingPendingTask, setEditingPendingTask] = useState<QueuedThreadMessage | null>(null);
   const pendingLocalBranchSyncDraftKeysRef = useRef(new Set<string>());
@@ -300,7 +288,6 @@ export function NewTaskFlowProvider(
     setSelectedProjectKey(null);
     setActiveDraftKey(null);
     setSubmitting(false);
-    setBranchQuery("");
     setExpandedProvider(null);
     pendingLocalBranchSyncDraftKeysRef.current.clear();
     const editing = editingPendingTaskRef.current;
@@ -684,27 +671,16 @@ export function NewTaskFlowProvider(
     }
     replaceComposerDraftAttachments(selectedProjectDraftKey, []);
   };
-  const branchSearchQuery = sanitizeNewRefName(branchQuery);
-  const debouncedBranchQuery = useDebouncedValue(branchSearchQuery, BRANCH_SEARCH_DEBOUNCE_MS);
-  const branchTarget = {
+  const branchState = usePaginatedBranches({
     environmentId: selectedProject?.environmentId ?? null,
     cwd: selectedProject?.workspaceRoot || null,
-    query: debouncedBranchQuery,
-  };
-  const branchState = usePaginatedBranches(branchTarget);
-  const branchSearchIsDebouncing = branchSearchQuery !== debouncedBranchQuery;
-  const branchesLoading =
-    branchSearchIsDebouncing || (branchState.isPending && branchState.data === null);
-  const branchesFetchingNextPage = branchState.isFetchingNextPage;
-  const hasMoreBranches =
-    branchState.data?.nextCursor !== null && branchState.data?.nextCursor !== undefined;
+  });
+  const branchesLoading = branchState.isPending && branchState.data === null;
   const allBranchRefs = branchState.refs;
   const availableBranches = pipe(
     allBranchRefs,
     Arr.filter((branch) => !branch.isRemote),
   );
-
-  const filteredBranches = filterNewTaskBranches(allBranchRefs, branchQuery);
 
   const carryDraftContentTo = (project: EnvironmentProject) => {
     const target = { environmentId: project.environmentId, projectId: project.id };
@@ -884,7 +860,6 @@ export function NewTaskFlowProvider(
   };
 
   const refreshBranches = branchState.refresh;
-  const loadMoreBranches = branchState.loadNext;
   const loadBranches = () => {
     if (!selectedProject) {
       return;
@@ -1163,11 +1138,7 @@ export function NewTaskFlowProvider(
     prompt,
     attachments,
     submitting,
-    branchQuery,
     branchesLoading,
-    branchesError: branchState.error,
-    branchesFetchingNextPage,
-    hasMoreBranches,
     availableBranches,
     currentCheckoutBranchName,
     runtimeMode,
@@ -1182,7 +1153,6 @@ export function NewTaskFlowProvider(
     selectedModelOption,
     selectedProviderStatus,
     providerGroups,
-    filteredBranches,
     reset,
     setProject,
     openDraft,
@@ -1203,9 +1173,7 @@ export function NewTaskFlowProvider(
     removeAttachment,
     clearAttachments,
     setSubmitting,
-    setBranchQuery,
     loadBranches,
-    loadMoreBranches,
     setRuntimeMode,
     setInteractionMode,
     setSelectedModelOptions,
