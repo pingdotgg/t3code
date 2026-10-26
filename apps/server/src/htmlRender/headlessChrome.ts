@@ -491,20 +491,33 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
         return yield* new HtmlRenderBrowserError({ reason: "the page could not be opened" });
       }
       yield* Deferred.await(loaded);
-      yield* send(
-        "Runtime.evaluate",
-        { expression: SETTLE_EXPRESSION, awaitPromise: true },
+      return yield* settledHeight;
+    });
+
+    const settledHeight = send(
+      "Runtime.evaluate",
+      { expression: SETTLE_EXPRESSION, awaitPromise: true },
+      Ignored,
+      sessionId,
+    ).pipe(
+      Effect.andThen(
+        send(
+          "Runtime.evaluate",
+          { expression: MEASURE_EXPRESSION, returnByValue: true },
+          Measured,
+          sessionId,
+        ),
+      ),
+      Effect.map((measured) => Math.max(0, Math.ceil(measured.result.value))),
+    );
+
+    const resize = (width: number) =>
+      send(
+        "Emulation.setDeviceMetricsOverride",
+        { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false },
         Ignored,
         sessionId,
-      );
-      const measured = yield* send(
-        "Runtime.evaluate",
-        { expression: MEASURE_EXPRESSION, returnByValue: true },
-        Measured,
-        sessionId,
-      );
-      return Math.max(0, Math.ceil(measured.result.value));
-    });
+      ).pipe(Effect.andThen(settledHeight));
 
     const screenshot = (height: number) =>
       send(
@@ -534,7 +547,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Effect.ignore,
     );
 
-    return { load, screenshot, consoleMessages, close };
+    return { load, resize, screenshot, consoleMessages, close };
   });
 
   // Each capture opens one page per browser, so this note belongs to that page alone.
@@ -601,7 +614,12 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
   }),
 );
 
-/** Fresh load per width, since pages may lay out only at load. */
+/**
+ * Resizing a loaded page is exact for pages that lay out with CSS, and far
+ * cheaper than loading it again. Pages may also lay out only at load, so each
+ * resized run ends on a width that another lane loads fresh; a mismatch falls
+ * back to a fresh load per width in that run.
+ */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;
@@ -617,15 +635,43 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
     profileDirectory: path.join(directory, "profile"),
   });
   const body = pageBody(input.html);
-  return yield* Effect.forEach(
-    input.widths,
-    (width) =>
-      browser.openPage(width, "dark").pipe(
-        Effect.flatMap((page) =>
-          page.load(body, input.urlFragment).pipe(Effect.ensuring(page.close)),
+  // Each run shrinks from a fresh load: some pages, such as Chart.js charts, never grow back.
+  const run = (widths: ReadonlyArray<number>) =>
+    browser.openPage(widths[0]!, "dark").pipe(
+      Effect.flatMap((page) =>
+        page.load(body, input.urlFragment).pipe(
+          Effect.flatMap((height) =>
+            Effect.forEach(widths.slice(1), (width) =>
+              page.resize(width).pipe(Effect.map((resized) => [width, resized] as const)),
+            ).pipe(Effect.map((resized) => [[widths[0]!, height] as const, ...resized])),
+          ),
+          Effect.ensuring(page.close),
         ),
-        Effect.map((height) => [width, height] as const),
       ),
-    { concurrency: MEASURE_CONCURRENCY },
+    );
+  const widths = input.widths.toSorted((left, right) => right - left);
+  // Runs share their end widths; the last lane loads the narrowest width fresh.
+  const step = Math.max(1, Math.ceil((widths.length - 1) / (MEASURE_CONCURRENCY - 1)));
+  const runs = Array.from({ length: Math.ceil((widths.length - 1) / step) }, (_, index) =>
+    widths.slice(index * step, index * step + step + 1),
   );
+  const measured = yield* Effect.forEach([...runs, widths.slice(-1)], run, {
+    concurrency: "unbounded",
+  });
+  const fresh = new Map(measured.map((heights) => heights[0]!));
+  const heights = new Map(fresh);
+  const reload: Array<number> = [];
+  for (const resized of measured.slice(0, -1)) {
+    const [endWidth, endHeight] = resized.at(-1)!;
+    if (fresh.get(endWidth) === endHeight) {
+      for (const [width, height] of resized) heights.set(width, height);
+    } else {
+      reload.push(...resized.slice(1, -1).map(([width]) => width));
+    }
+  }
+  const reloaded = yield* Effect.forEach(reload, (width) => run([width]), {
+    concurrency: MEASURE_CONCURRENCY,
+  });
+  for (const [width, height] of reloaded.flat()) heights.set(width, height);
+  return [...heights];
 }, Effect.scoped);

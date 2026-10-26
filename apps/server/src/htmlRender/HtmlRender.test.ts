@@ -5,6 +5,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { HTML_RENDER_MEASURE_WIDTHS } from "@t3tools/shared/htmlRender";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -539,6 +540,29 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
             level: "log",
             text: appearance === "light" ? "false rgb(24, 24, 27)" : "true rgb(250, 250, 250)",
           });
+        }
+      }).pipe(Effect.provide(layerHtmlRender(executable)));
+    }),
+  );
+
+  it.live("measures pages that lay out at load as if each width loaded fresh", (ctx) =>
+    Effect.gen(function* () {
+      const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
+      if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+      yield* Effect.gen(function* () {
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const halfWidth = HTML_RENDER_MEASURE_WIDTHS.map((width) => [width, Math.ceil(width / 2)]);
+        for (const html of [
+          '<div style="aspect-ratio:2/1"></div>',
+          '<div id="box"></div><script>box.style.height = innerWidth / 2 + "px";</script>',
+        ]) {
+          const reference = yield* htmlRender.publish({
+            threadId: ThreadId.make("thread-html-measure"),
+            html,
+            title: "Box",
+            height: 400,
+          });
+          expect(reference.heights).toEqual(halfWidth);
         }
       }).pipe(Effect.provide(layerHtmlRender(executable)));
     }),
