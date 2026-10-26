@@ -1048,6 +1048,7 @@ const main = Command.make(
       Flag.withDescription(
         "Fetch or build the client for this checkout without a device (Android: for --abi). Run it before leasing a device: a build can outlast the lease.",
       ),
+      Flag.withDefault(false),
     ),
   },
   Effect.fn("nativeClient.main")(function* ({
