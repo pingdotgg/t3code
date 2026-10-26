@@ -5,7 +5,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -26,6 +26,52 @@ import {
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
+
+/** Holds the page still behind the open picker; its lifetime is the popup element's. */
+function lockBackgroundScroll(popup: HTMLElement | null) {
+  if (!popup) return;
+  const { documentElement, body } = document;
+  const previousDocumentOverscrollBehavior = documentElement.style.overscrollBehavior;
+  const previousBodyOverflow = body.style.overflow;
+  const previousBodyPaddingRight = body.style.paddingRight;
+  const scrollbarWidth = window.innerWidth - documentElement.clientWidth;
+
+  documentElement.style.overscrollBehavior = "contain";
+  body.style.overflow = "hidden";
+  if (scrollbarWidth > 0) {
+    body.style.paddingRight = `${scrollbarWidth}px`;
+  }
+
+  const shouldAllowOverlayScroll = (target: EventTarget | null) => {
+    return target instanceof Element && target.closest("[data-model-picker-content]");
+  };
+  const preventBackgroundWheel = (event: WheelEvent) => {
+    if (shouldAllowOverlayScroll(event.target)) {
+      return;
+    }
+    event.preventDefault();
+  };
+  const preventBackgroundTouchMove = (event: TouchEvent) => {
+    if (shouldAllowOverlayScroll(event.target)) {
+      return;
+    }
+    event.preventDefault();
+  };
+
+  document.addEventListener("wheel", preventBackgroundWheel, { capture: true, passive: false });
+  document.addEventListener("touchmove", preventBackgroundTouchMove, {
+    capture: true,
+    passive: false,
+  });
+
+  return () => {
+    document.removeEventListener("wheel", preventBackgroundWheel, { capture: true });
+    document.removeEventListener("touchmove", preventBackgroundTouchMove, { capture: true });
+    documentElement.style.overscrollBehavior = previousDocumentOverscrollBehavior;
+    body.style.overflow = previousBodyOverflow;
+    body.style.paddingRight = previousBodyPaddingRight;
+  };
+}
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -57,6 +103,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const size = props.size ?? "sm";
 
   const activeEntry =
@@ -90,54 +137,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       setUncontrolledIsMenuOpen(open);
     }
   };
-
-  useEffect(() => {
-    if (!isMenuOpen) {
-      return;
-    }
-
-    const { documentElement, body } = document;
-    const previousDocumentOverscrollBehavior = documentElement.style.overscrollBehavior;
-    const previousBodyOverflow = body.style.overflow;
-    const previousBodyPaddingRight = body.style.paddingRight;
-    const scrollbarWidth = window.innerWidth - documentElement.clientWidth;
-
-    documentElement.style.overscrollBehavior = "contain";
-    body.style.overflow = "hidden";
-    if (scrollbarWidth > 0) {
-      body.style.paddingRight = `${scrollbarWidth}px`;
-    }
-
-    const shouldAllowOverlayScroll = (target: EventTarget | null) => {
-      return target instanceof Element && target.closest("[data-model-picker-content]");
-    };
-    const preventBackgroundWheel = (event: WheelEvent) => {
-      if (shouldAllowOverlayScroll(event.target)) {
-        return;
-      }
-      event.preventDefault();
-    };
-    const preventBackgroundTouchMove = (event: TouchEvent) => {
-      if (shouldAllowOverlayScroll(event.target)) {
-        return;
-      }
-      event.preventDefault();
-    };
-
-    document.addEventListener("wheel", preventBackgroundWheel, { capture: true, passive: false });
-    document.addEventListener("touchmove", preventBackgroundTouchMove, {
-      capture: true,
-      passive: false,
-    });
-
-    return () => {
-      document.removeEventListener("wheel", preventBackgroundWheel, { capture: true });
-      document.removeEventListener("touchmove", preventBackgroundTouchMove, { capture: true });
-      documentElement.style.overscrollBehavior = previousDocumentOverscrollBehavior;
-      body.style.overflow = previousBodyOverflow;
-      body.style.paddingRight = previousBodyPaddingRight;
-    };
-  }, [isMenuOpen]);
 
   const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
@@ -275,12 +274,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       </PopoverTrigger>
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
+        ref={lockBackgroundScroll}
+        initialFocus={searchInputRef}
         align="start"
         className="before:hidden"
         padding="none"
         touchBackdrop
       >
         <ModelPickerContent
+          searchInputRef={searchInputRef}
           environmentId={props.environmentId}
           activeInstanceId={activeInstanceId}
           model={props.model}

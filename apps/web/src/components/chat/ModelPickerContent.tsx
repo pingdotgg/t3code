@@ -355,8 +355,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  /** The owning popup moves focus here when it opens (its `initialFocus`). */
+  searchInputRef: RefObject<HTMLInputElement | null>;
 }) {
   const {
+    searchInputRef,
     keybindings: providedKeybindings,
     modelOptionsByInstance,
     instanceEntries,
@@ -367,7 +370,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onOpenProviderSetup,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
@@ -452,20 +454,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       focusSearchInput();
     });
   };
-
-  useLayoutEffect(() => {
-    focusSearchInput();
-    const frame = window.requestAnimationFrame(() => {
-      focusSearchInput();
-    });
-    const timeout = window.setTimeout(() => {
-      focusSearchInput();
-    }, 0);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout);
-    };
-  }, [focusSearchInput]);
 
   const toggleLegacySection = (instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {

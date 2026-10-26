@@ -1,5 +1,6 @@
 import { InfoIcon } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -51,39 +52,25 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
   const noticesRef = useRef<HTMLDivElement>(null);
   const peekRef = useRef<HTMLButtonElement>(null);
   const expandedItemsRef = useRef<HTMLDivElement>(null);
-  const pendingFocusRef = useRef<"peek" | "notice" | null>(null);
   const expandedItemsId = useId();
   const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
-  const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitingItemId =
     requestedExitingItemId !== null && items.some((item) => item.id === requestedExitingItemId)
       ? requestedExitingItemId
       : null;
 
-  useEffect(() => {
-    return () => {
-      if (dismissTimeoutRef.current) {
-        clearTimeout(dismissTimeoutRef.current);
-      }
-    };
-  }, []);
-
   if (items.length < 2 && stackExpanded) {
     setStackExpanded(false);
   }
 
-  useLayoutEffect(() => {
-    if (stackExpanded && pendingFocusRef.current === "notice") {
-      pendingFocusRef.current = null;
-      const firstControl = expandedItemsRef.current?.querySelector<HTMLElement>(
-        'button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]',
-      );
-      (firstControl ?? expandedItemsRef.current)?.focus({ preventScroll: true });
-    } else if (!stackExpanded && pendingFocusRef.current === "peek") {
-      pendingFocusRef.current = null;
-      peekRef.current?.focus({ preventScroll: true });
-    }
-  }, [stackExpanded]);
+  const expandAndFocusNotice = () => {
+    flushSync(() => setStackExpanded(true));
+    const container = expandedItemsRef.current;
+    const firstControl = container?.querySelector<HTMLElement>(
+      'button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]',
+    );
+    (firstControl ?? container)?.focus({ preventScroll: true });
+  };
 
   const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
   const frontItem = orderedItems[0];
@@ -106,13 +93,9 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
       return;
     }
     setExitingItemId(item.id);
-    if (dismissTimeoutRef.current) {
-      clearTimeout(dismissTimeoutRef.current);
-    }
-    dismissTimeoutRef.current = setTimeout(() => {
-      dismissTimeoutRef.current = null;
-      item.onDismiss?.();
-    }, DISMISS_TRANSITION_MS);
+    // A timer, not transitionend: the dismissal must commit even when the stack unmounts
+    // (thread switch) or a collapsed composer hides it mid-exit, and transitionend never fires then.
+    setTimeout(() => item.onDismiss?.(), DISMISS_TRANSITION_MS);
   };
 
   return (
@@ -126,7 +109,8 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
           onPointerEnter={(event) => {
             if (event.pointerType === "touch") return;
             if (document.activeElement === peekRef.current) {
-              pendingFocusRef.current = "notice";
+              expandAndFocusNotice();
+              return;
             }
             setStackExpanded(true);
           }}
@@ -145,8 +129,8 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
             if (event.key !== "Escape" || !stackExpanded) return;
             event.preventDefault();
             event.stopPropagation();
-            pendingFocusRef.current = "peek";
-            setStackExpanded(false);
+            flushSync(() => setStackExpanded(false));
+            peekRef.current?.focus({ preventScroll: true });
           }}
         >
           {showCollapsedStackCap && firstStackedItem ? (
@@ -160,8 +144,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
               tabIndex={stackExpanded ? -1 : 0}
               onClick={(event) => {
                 event.currentTarget.focus({ preventScroll: true });
-                pendingFocusRef.current = "notice";
-                setStackExpanded(true);
+                expandAndFocusNotice();
               }}
               className={cn(stackExpanded && "pointer-events-none invisible opacity-0")}
             />
