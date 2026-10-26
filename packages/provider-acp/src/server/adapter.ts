@@ -370,6 +370,8 @@ export interface AcpAdapterV2Flavor {
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
+  /** For agents whose child tools arrive with no launch naming their session. */
+  readonly adoptChildSession?: (childSessionId: string) => AcpAdapterV2SubagentUpdate;
   readonly isProvisionalSubagentTool?: (toolCall: AcpToolCallState) => boolean;
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
@@ -2903,6 +2905,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 creationSource: "provider",
               }),
             });
+          }
+          if (existing === undefined && update.prompt.trim().length > 0) {
             const promptNativeItemId = `${nativeTaskId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
               senderThreadId: context.input.threadId,
@@ -4903,11 +4907,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (notification.sessionId !== rootSessionId) {
             if (context.finalized) return;
             if (flavor.extractSubagentUpdate === undefined) return;
-            const subagent = context.subagentsBySessionId.get(notification.sessionId);
+            let subagent = context.subagentsBySessionId.get(notification.sessionId);
             if (
               update.sessionUpdate === "tool_call" ||
               update.sessionUpdate === "tool_call_update"
             ) {
+              if (subagent === undefined && flavor.adoptChildSession !== undefined) {
+                yield* emitSubagent(context, flavor.adoptChildSession(notification.sessionId));
+                subagent = context.subagentsBySessionId.get(notification.sessionId);
+              }
               if (subagent === undefined) return;
               const nativeTaskId =
                 subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
