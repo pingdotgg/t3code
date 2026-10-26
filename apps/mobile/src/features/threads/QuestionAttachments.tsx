@@ -45,27 +45,23 @@ export function QuestionAttachments(props: {
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const configs = useServerConfigs();
   const drafts = useAtomValue(composerDraftsAtom);
-  const scopeKey = JSON.stringify([
-    selectedThread?.environmentId,
-    selectedThread?.id,
-    props.requestId,
-    props.question.id,
-  ]);
-  // Unmounted inputs never emit onBlur; explicitly release keyboard ownership.
   const focusedRef = useRef(false);
   const onInputFocusChange = props.onInputFocusChange;
-  const releaseFocus = useEffectEvent(() => {
-    if (focusedRef.current) onInputFocusChange?.(false);
-  });
-  useEffect(() => () => releaseFocus(), []);
-  const pickerScope = useRef<{ key: string; active: boolean } | null>(null);
+  // The caller keys this component by request and question, so unmounting ends any open
+  // picker's scope.
+  const pickerScope = useRef<{ active: boolean }>({ active: false });
   useEffect(() => {
-    const scope = { key: scopeKey, active: true };
+    const scope = { active: true };
     pickerScope.current = scope;
     return () => {
       scope.active = false;
     };
-  }, [scopeKey]);
+  }, []);
+  // Unmounted inputs never emit onBlur; explicitly release keyboard ownership.
+  const releaseFocus = useEffectEvent(() => {
+    if (focusedRef.current) onInputFocusChange?.(false);
+  });
+  useEffect(() => () => releaseFocus(), []);
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -106,7 +102,7 @@ export function QuestionAttachments(props: {
     })
       .then(async (images) => {
         if (
-          scope?.active &&
+          scope.active &&
           (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
         ) {
           if (append(key, images) > 0)
@@ -150,7 +146,7 @@ export function QuestionAttachments(props: {
       const picked = "files" in result ? result.files : result.attachments;
       // Resolution on another client clears the reservation while the picker is open.
       if (
-        !scope?.active ||
+        !scope.active ||
         (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) === 0
       ) {
         await releaseUnusedComposerAttachmentFiles(picked);

@@ -14,7 +14,6 @@ const metroConfig: Promise<{ transformer: { babelTransformerPath: string } }> =
 
 // Remove bailout entries and manual memoization when compilation starts; this check rejects stale entries.
 const KNOWN_BAILOUTS: Record<string, string> = {
-  "src/components/ComposerAttachmentStrip.tsx": "unsupported syntax",
   "src/components/ui/Menu.tsx": "ref read during render",
   "src/features/diffs/nativeReviewDiffSurface.ts": "ref read during render",
   "src/features/home/thread-swipe-actions.tsx": "ref read during render",

@@ -1,12 +1,12 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
+import { memo, useCallback, useState, type ReactNode } from "react";
 import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
   ReduceMotion,
   useAnimatedStyle,
+  useDerivedValue,
   useReducedMotion,
-  useSharedValue,
   withTiming,
   type EntryExitAnimationFunction,
   type SharedValue,
@@ -88,10 +88,8 @@ export function ComposerDictationDraftContent(props: {
   readonly compact: boolean;
   readonly hidden: boolean;
 }) {
-  const rotation = useSharedValue(props.hidden ? 1 : 0);
-  useLayoutEffect(() => {
-    rotation.set(withTiming(props.hidden ? 1 : 0, TOOLBAR_FLIP_TIMING));
-  }, [props.hidden, rotation]);
+  const hidden = props.hidden;
+  const rotation = useDerivedValue(() => withTiming(hidden ? 1 : 0, TOOLBAR_FLIP_TIMING));
   const compact = props.compact;
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: compact ? 1 - rotation.value : 1,
@@ -261,11 +259,10 @@ function VoiceActionButton(props: {
   readonly variant?: "plain" | "primary";
 }) {
   const variant = props.variant ?? "plain";
-  const loadingVisibility = useSharedValue(props.loading ? 1 : 0);
-  useLayoutEffect(() => {
-    loadingVisibility.set(withTiming(props.loading ? 1 : 0, DICTATION_TIMING));
-  }, [loadingVisibility, props.loading]);
-  const primaryStyle = useAnimatedStyle(() => ({ opacity: 1 - loadingVisibility.value }));
+  const loading = props.loading === true;
+  const primaryStyle = useAnimatedStyle(() => ({
+    opacity: withTiming(loading ? 0 : 1, DICTATION_TIMING),
+  }));
 
   return (
     <Pressable
@@ -320,15 +317,12 @@ export function ComposerDictationStatus(props: {
   readonly presentation: VoiceComposerPresentation;
   readonly onDismissError: () => void;
 }) {
-  const recordingVisibility = useSharedValue(props.phase === "recording" ? 1 : 0);
-  useLayoutEffect(() => {
-    recordingVisibility.set(withTiming(props.phase === "recording" ? 1 : 0, DICTATION_TIMING));
-  }, [props.phase, recordingVisibility]);
+  const recording = props.phase === "recording";
   const waveformStyle = useAnimatedStyle(() => ({
-    opacity: recordingVisibility.value,
+    opacity: withTiming(recording ? 1 : 0, DICTATION_TIMING),
   }));
   const labelStyle = useAnimatedStyle(() => ({
-    opacity: 1 - recordingVisibility.value,
+    opacity: withTiming(recording ? 0 : 1, DICTATION_TIMING),
   }));
 
   if (!props.presentation.statusLabel) return null;

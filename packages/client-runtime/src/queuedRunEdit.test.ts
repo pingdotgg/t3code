@@ -81,8 +81,17 @@ describe("makeQueuedRunEditStore", () => {
     const finishSave = store.startSave("env:thread");
     registry.set(runs, []);
     expect(exits).toEqual([]);
-    expect(finishSave?.(false)).toBe(true);
+    expect(finishSave?.(false)).toBe(false);
     expect(exits).toHaveLength(1);
+  });
+
+  it("reports the edit still open when a save fails while its run is queued", () => {
+    const { store, exits, begin } = setup();
+    begin();
+    const finishSave = store.startSave("env:thread");
+    expect(finishSave?.(false)).toBe(true);
+    expect(exits).toEqual([]);
+    expect(store.get("env:thread")).toEqual({ runId: RUN, text: "draft" });
   });
 
   it("allows one save at a time and ends the edit when it succeeds", () => {

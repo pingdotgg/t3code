@@ -78,6 +78,7 @@ vi.mock("./threads", async () => {
       setInteractionMode: state.interaction,
     },
     environmentThreadShells: { threadShellsAtom: Atom.make([state.thread]) },
+    environmentThreadDetails: { threadAtom: Atom.family((_key: unknown) => Atom.make(null)) },
   };
 });
 vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => command }));

@@ -69,10 +69,9 @@ interface ExitWatch<E> {
 }
 
 /**
- * Settles a save started with `startSave`. Returns false, changing nothing,
- * when the edit the save started from was ended or begun again meanwhile; the
- * caller must then leave the edit's drafts alone. Otherwise success ends the
- * edit and failure resumes its exit watch.
+ * Settles a save from `startSave`. False, changing nothing, when the edit was
+ * ended or begun again meanwhile. Success ends the edit; failure resumes its
+ * exit watch and returns whether the edit survived it.
  */
 export type FinishQueuedRunEditSave = (succeeded: boolean) => boolean;
 
@@ -196,10 +195,10 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
         if (succeeded) {
           stopWatch(threadKey);
           write(threadKey, null);
-        } else {
-          subscribe(threadKey, watch);
+          return true;
         }
-        return true;
+        subscribe(threadKey, watch);
+        return watches.get(threadKey) === watch;
       };
     },
   };
