@@ -6,7 +6,7 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -27,16 +27,13 @@ export function HtmlRenderFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
-  const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
-  useLayoutEffect(() => {
-    const box = boxRef.current;
-    if (!box) return;
+  const observeBox = (box: HTMLDivElement) => {
     setWidth(box.clientWidth);
     return observeResize(box, ([entry]) => {
       if (entry) setWidth(entry.contentRect.width);
     });
-  }, []);
+  };
   // Client fonts can exceed the server-measured height and cause nested scrolling.
   const [contentHeight, setContentHeight] = useState<number>();
   const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
@@ -59,14 +56,17 @@ export function HtmlRenderFrame(props: {
   const refresh = useAssetUrlRefresh(props.environmentId, resource);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
   const { onFullscreenChange } = props;
+  // Tied to the viewer's lifetime: unmounting while expanded must still release
+  // the timeline's follow pin, which a close handler alone never reaches.
+  const expanded = expandedSrc !== null;
   useEffect(() => {
-    if (expandedSrc === null) return;
+    if (!expanded) return;
     onFullscreenChange?.(true);
     return () => onFullscreenChange?.(false);
-  }, [expandedSrc, onFullscreenChange]);
+  }, [expanded, onFullscreenChange]);
 
   return (
-    <div ref={boxRef} className="group/html-render relative" style={{ height }}>
+    <div ref={observeBox} className="group/html-render relative" style={{ height }}>
       {src !== null ? (
         <>
           <HtmlRenderDocument

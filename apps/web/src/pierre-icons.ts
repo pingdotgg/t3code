@@ -254,7 +254,12 @@ export function hasSpecificPierreIconForFileName(fileName: string): boolean {
 }
 
 export function ensurePierreIconSprite(): void {
-  if (typeof document === "undefined" || document.getElementById(PIERRE_ICON_SPRITE_ID)) return;
+  if (
+    typeof document === "undefined" ||
+    !document.body ||
+    document.getElementById(PIERRE_ICON_SPRITE_ID)
+  )
+    return;
   const container = document.createElement("div");
   container.id = PIERRE_ICON_SPRITE_ID;
   container.setAttribute("aria-hidden", "true");
