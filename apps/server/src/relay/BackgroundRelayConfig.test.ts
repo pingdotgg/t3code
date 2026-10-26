@@ -6,9 +6,7 @@ import * as Redacted from "effect/Redacted";
 import * as BackgroundRelayConfig from "./BackgroundRelayConfig.ts";
 
 const load = (env: Record<string, string>) =>
-  Effect.gen(function* () {
-    return yield* BackgroundRelayConfig.BackgroundRelayConfig;
-  }).pipe(
+  BackgroundRelayConfig.BackgroundRelayConfig.pipe(
     Effect.provide(
       BackgroundRelayConfig.layer.pipe(
         Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
