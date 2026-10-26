@@ -84,6 +84,7 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
   const speakerMeterRef = useRef<HTMLSpanElement>(null);
   const [speaking, setSpeaking] = useState(false);
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe visible meters to the audio level stream.
   useEffect(() => {
     if (!isActive) return;
     // Teardown publishes a silent sample, which clears `speaking` for the next conversation.

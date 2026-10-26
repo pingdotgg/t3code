@@ -1,14 +1,8 @@
 // @effect-diagnostics globalTimers:off - WebRTC lifecycle runs on platform callbacks, outside an Effect runtime.
 import type { ProviderVoiceSessionEvent, ProviderVoiceTranscriptRole } from "@t3tools/contracts";
 
-/**
- * Voice conversations (Codex realtime voice). The client owns the microphone,
- * speaker, and WebRTC peer; the environment only relays the SDP handshake and
- * captions over `provider.voice.session`. Audio never crosses the T3 socket,
- * so voice works the same locally, over a relay, or through a tunnel.
- *
- * The WebRTC surface is structural so browsers and react-native-webrtc both fit.
- */
+/** Clients own WebRTC audio; environments relay only signaling and captions.
+ * Structural interfaces support both browser and React Native WebRTC. */
 
 export interface VoiceMediaTrack {
   enabled: boolean;
@@ -457,6 +451,7 @@ export class VoiceModeController {
   private setState(next: VoiceModeState): void {
     this.state = next;
     // Read the latest state per listener: an earlier listener may have changed it.
+    // oxlint-disable-next-line unicorn/no-useless-spread -- A notification can mutate subscriptions re-entrantly; iterate a snapshot.
     for (const listener of [...this.listeners]) listener(this.state);
   }
 }

@@ -108,6 +108,7 @@ export function ComposerVoiceStrip() {
 
   // Levels arrive at 10Hz; they drive shared values directly, and the
   // speaking flag only re-renders when it flips.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe native meter animations to the audio level stream.
   useEffect(() => {
     const isSpeaking = createSpeakingDetector();
     const unsubscribe = voiceMode.subscribeLevels((levels) => {

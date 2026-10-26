@@ -75,7 +75,6 @@ import {
   ProjectWriteFileError,
   ProjectMutationError,
   ProviderUploadFeedbackError,
-  ProviderVoiceSessionError,
   ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,

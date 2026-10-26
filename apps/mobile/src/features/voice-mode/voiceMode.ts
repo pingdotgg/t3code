@@ -60,13 +60,8 @@ export const voiceMode = new VoiceModeController({
   openSession: makeVoiceSessionOpener(runOnConnectionRuntime),
 });
 
-/*
- * WebRTC's iOS audio session uses voice-chat mode, which plays through the
- * earpiece. Once the call is live, re-apply play-and-record with the speaker
- * as the default route (headphones and Bluetooth still win). WebRTC only sets
- * its category when its audio unit starts, which has happened by then. On
- * Android the same call turns the speakerphone on.
- */
+/* WebRTC resets iOS routing when its audio unit starts; apply speaker routing afterward.
+ * Headphones and Bluetooth still take precedence. */
 async function routeVoiceToSpeaker(): Promise<void> {
   await setAudioModeAsync({
     allowsRecording: true,
