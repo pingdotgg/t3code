@@ -137,9 +137,8 @@ export async function runJourney(
   }
   if (!threads) throw new Error("the app did not show the fixture threads after pairing");
   // Rotated only once the app is up: a rotation during launch is lost.
-  if (device.pose.landscape) await device.agent(["orientation", "landscape-left"]);
-  await delay(device.pose.landscape ? 2_000 : 1_000);
-  threads = await device.snapshot();
+  await delay(1_000);
+  threads = await device.orient(device.pose.landscape ? "landscape" : "portrait");
   const tabs = tabBarRect(threads);
   const wide = threads.viewport.width > threads.viewport.height;
   await capture("threads", threads, [
@@ -270,9 +269,7 @@ export async function runJourney(
   await capture("settings", await device.snapshot());
 
   if (device.pose.form === "tablet" && !device.pose.fold) {
-    await device.agent(["orientation", device.pose.landscape ? "portrait" : "landscape-left"]);
-    await delay(2_000);
-    await capture("rotated", await device.snapshot());
+    await capture("rotated", await device.orient(device.pose.landscape ? "portrait" : "landscape"));
   }
   if (device.pose.fold) {
     await device.agent(["fold", device.pose.fold === "open" ? "closed" : "open"]);

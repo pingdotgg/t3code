@@ -9,6 +9,8 @@ export interface Pose {
   readonly landscape?: boolean;
   readonly fold?: "closed" | "open";
   readonly textSize?: "accessibility-large";
+  /** Why the pose is skipped unless named with --pose. */
+  readonly pending?: string;
 }
 
 const pose = (value: Pose) => value;
@@ -35,6 +37,8 @@ export const POSES: ReadonlyArray<Pose> = [
     form: "phone",
     appearance: "light",
     fold: "closed",
+    pending:
+      "agent-device fold refuses simulators outside the default device set, which Simlock uses",
   }),
   pose({
     id: "iphone-duo-unfolded",
@@ -43,6 +47,8 @@ export const POSES: ReadonlyArray<Pose> = [
     form: "tablet",
     appearance: "dark",
     fold: "open",
+    pending:
+      "agent-device fold refuses simulators outside the default device set, which Simlock uses",
   }),
   pose({
     id: "ipad-13-portrait",

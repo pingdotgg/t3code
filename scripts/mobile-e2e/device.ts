@@ -105,9 +105,9 @@ export class Device {
       try {
         return await this.agentOnce(args, options);
       } catch (error) {
-        if (attempt >= 3 || !(error instanceof AgentDeviceError) || !TRANSIENT.test(error.message))
+        if (attempt >= 5 || !(error instanceof AgentDeviceError) || !TRANSIENT.test(error.message))
           throw error;
-        await delay(3_000 * attempt);
+        await delay(5_000 * attempt);
       }
     }
   }
@@ -172,6 +172,22 @@ export class Device {
       { timeoutMs: 180_000 },
     );
     await this.acceptOpenPrompt();
+  }
+
+  /**
+   * agent-device names rotations relative to the device's natural orientation, which is
+   * landscape on tablets and unfolded folds, so try each name until the screen has the shape.
+   */
+  async orient(shape: "landscape" | "portrait"): Promise<Snapshot> {
+    let snapshot = await this.snapshot();
+    for (const name of ["landscape-left", "portrait", "landscape-right"]) {
+      const { width, height } = snapshot.viewport;
+      if (width > height === (shape === "landscape")) return snapshot;
+      await this.agent(["orientation", name]);
+      await delay(2_000);
+      snapshot = await this.snapshot();
+    }
+    return snapshot;
   }
 
   async openUrl(url: string) {

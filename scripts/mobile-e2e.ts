@@ -139,7 +139,10 @@ async function runPose(
 async function main() {
   const args = NodeProcess.argv.slice(2);
   if (args.includes("--list")) {
-    for (const pose of POSES) NodeProcess.stdout.write(`${pose.id}\t${pose.device}\n`);
+    for (const pose of POSES)
+      NodeProcess.stdout.write(
+        `${pose.id}\t${pose.device}${pose.pending ? `\t(pending: ${pose.pending})` : ""}\n`,
+      );
     return;
   }
   const values = (flag: string) =>
@@ -150,7 +153,7 @@ async function main() {
   const platforms = values("--platform");
   const poses = POSES.filter(
     (pose) =>
-      (selected.length === 0 || selected.includes(pose.id)) &&
+      (selected.length === 0 ? !pose.pending : selected.includes(pose.id)) &&
       (platforms.length === 0 || platforms.includes(pose.platform)),
   );
   const concurrencyFlag = values("--concurrency")[0];
@@ -221,8 +224,15 @@ async function main() {
       },
     );
     await waitForPort(metroPort, "Metro", 120_000);
-    // Warm each platform's bundle once, instead of on every device at once.
+    // Warm each platform's bundle once, instead of on every device at once, and have its dev
+    // client cached before any lease: a cache miss builds, which can outlast a lease.
     for (const platform of new Set(poses.map((pose) => pose.platform))) {
+      log("e2e", `preparing the ${platform} dev client`);
+      await run(
+        NodeProcess.execPath,
+        ["scripts/mobile-native-client.ts", "ensure", platform, "--prepare"],
+        { cwd: REPO_ROOT, timeoutMs: 1_800_000 },
+      );
       log("e2e", `bundling for ${platform}`);
       await run("curl", [
         "-sf",
