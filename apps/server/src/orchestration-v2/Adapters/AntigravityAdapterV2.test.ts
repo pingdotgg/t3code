@@ -904,8 +904,7 @@ describe("AntigravityAdapterV2 subagent tools", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.sync((): string | undefined => undefined),
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
