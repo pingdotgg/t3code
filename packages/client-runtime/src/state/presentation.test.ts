@@ -135,3 +135,25 @@ describe("presentations with providers", () => {
     }
   });
 });
+
+describe("connection presentation", () => {
+  it("presents an enabled environment as connecting until its supervisor reports", () => {
+    const h = harness();
+    const phase = () => h.registry.get(h.full.presentationAtom(FIRST))?.connection.phase;
+    const stop = h.registry.subscribe(h.full.presentationAtom(FIRST), () => {});
+    try {
+      expect(phase()).toBe("connecting");
+      h.registry.set(h.catalog, {
+        isReady: true,
+        entries: new Map([[FIRST, { ...entry(FIRST), enabled: false }]]),
+      });
+      expect(phase()).toBe("available");
+      h.registry.set(h.catalog, { isReady: true, entries: new Map([[FIRST, entry(FIRST)]]) });
+      h.registry.set(h.state, AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE }));
+      expect(phase()).toBe("available");
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
+});

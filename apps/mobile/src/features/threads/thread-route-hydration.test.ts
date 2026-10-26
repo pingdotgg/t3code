@@ -4,6 +4,8 @@ import { threadRouteIsHydrating } from "./thread-route-hydration";
 
 const settled = {
   isLoadingConnections: false,
+  environmentRegistered: true,
+  localCacheRead: true,
   connectionState: "connected" as const,
   shellStatus: "live" as const,
   shellHasError: false,
@@ -17,6 +19,21 @@ describe("threadRouteIsHydrating", () => {
     expect(threadRouteIsHydrating({ ...settled, shellStatus: "empty" })).toBe(true);
     expect(threadRouteIsHydrating({ ...settled, detailStatus: "synchronizing" })).toBe(true);
     expect(threadRouteIsHydrating({ ...settled, detailStatus: "empty" })).toBe(true);
+  });
+
+  it("waits for the local cache before trusting an offline connection", () => {
+    const offline = {
+      ...settled,
+      connectionState: "offline" as const,
+      detailStatus: "empty" as const,
+    };
+    expect(threadRouteIsHydrating({ ...offline, localCacheRead: false })).toBe(true);
+    expect(threadRouteIsHydrating(offline)).toBe(false);
+    expect(threadRouteIsHydrating({ ...offline, connectionState: "reconnecting" })).toBe(false);
+    expect(threadRouteIsHydrating({ ...offline, connectionState: "connecting" })).toBe(true);
+    expect(
+      threadRouteIsHydrating({ ...offline, localCacheRead: false, environmentRegistered: false }),
+    ).toBe(false);
   });
 
   it("stops waiting once an empty detail has an actionable outcome", () => {
