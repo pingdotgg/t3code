@@ -59,6 +59,7 @@ export function useNativeReviewDiffHighlighting(input: {
     const previousRange = scheduler.reset();
     highlightedRowIdsRef.current = new Set();
     pendingPatchesRef.current = [];
+    // oxlint-disable-next-line react/set-state-in-effect -- Resetting the native highlighter clears the viewport and token-patch snapshots together.
     setViewport({ scope: viewportScope, range: null });
     setTokensPatchJson(createEmptyTokenPatch(resetKey));
     // A token reset need not produce another native range event. Reuse only an

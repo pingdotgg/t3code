@@ -64,6 +64,7 @@ function useLocalPlayback(source: LocalVideoPreviewSource): PlaybackState {
   );
   const { id: attachmentId, fileUri } = attachment;
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A new attachment clears the previous attachment's result before loading.
     setUri(null);
     setError(null);
     const controller = new AbortController();

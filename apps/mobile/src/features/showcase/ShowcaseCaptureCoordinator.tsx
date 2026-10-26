@@ -121,6 +121,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     if (orientationSettled) return;
     const orientation = getNativeShowcaseOrientation();
     if (orientation === null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Capture readiness follows the native orientation change.
       setOrientationSettled(true);
       return;
     }
@@ -295,6 +296,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       (scene === "agent-activity" && !agentActivityStaged) ||
       !isShowcaseNativeContentReady({ scene, themeId, renderSignal })
     ) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Capture readiness clears while the scene, fixture, or native content is not ready.
       setReadyScene(null);
       return;
     }

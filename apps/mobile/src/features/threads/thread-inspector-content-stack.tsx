@@ -58,6 +58,7 @@ export function ThreadInspectorContentStack(props: {
   );
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Keeps opened inspector views mounted so UIKit keeps their focus and scroll.
     setMountedModes((current) => {
       if (current.has(props.mode)) {
         return current;

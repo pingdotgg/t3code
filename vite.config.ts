@@ -230,6 +230,7 @@ export default defineConfig({
       "react/purity": "error",
       "react/refs": "error",
       "react/exhaustive-effect-dependencies": "error",
+      "react/set-state-in-effect": "error",
       "react/immutability": "error",
       "react/no-array-index-key": "error",
       "react/no-unstable-nested-components": "error",

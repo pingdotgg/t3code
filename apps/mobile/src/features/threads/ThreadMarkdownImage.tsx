@@ -45,18 +45,15 @@ export function ThreadMarkdownImageView(props: {
     measuredWidth > 0 && contextWidth > 0
       ? Math.min(contextWidth, measuredWidth)
       : contextWidth || measuredWidth;
-  const [decodedSize, setDecodedSize] = useState<{ width: number; height: number } | null>(null);
-  const [failedUri, setFailedUri] = useState<string | null>(null);
-
-  useEffect(() => {
-    setDecodedSize(null);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new source invalidates the decoded image dimensions.
-  }, [props.sourceKey]);
-
-  useEffect(() => {
-    setFailedUri(null);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new image URI clears the previous load failure.
-  }, [props.uri]);
+  // Keyed by source so a new source drops the previous image's decoded dimensions.
+  const [decoded, setDecoded] = useState<{
+    sourceKey: string;
+    size: { width: number; height: number };
+  } | null>(null);
+  const decodedSize = decoded?.sourceKey === props.sourceKey ? decoded.size : null;
+  // A failure belongs to one URI; any URI change, including through null, retries.
+  const [failure, setFailure] = useState({ uri: props.uri, failed: false });
+  if (failure.uri !== props.uri) setFailure({ uri: props.uri, failed: false });
 
   const sourceSize = decodedSize ?? props.knownSize ?? null;
   const displaySize: MarkdownImageDisplaySize | null =
@@ -67,7 +64,8 @@ export function ThreadMarkdownImageView(props: {
           sourceHeight: sourceSize.height,
           availableWidth,
         });
-  const failed = props.unavailable || (props.uri !== null && failedUri === props.uri);
+  const failed =
+    props.unavailable || (props.uri !== null && failure.uri === props.uri && failure.failed);
   const placeholderWidth: ViewStyle["width"] =
     availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
   const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
@@ -129,8 +127,8 @@ export function ThreadMarkdownImageView(props: {
                   key={props.sourceKey}
                   uri={props.uri}
                   format={props.format}
-                  onLoad={setDecodedSize}
-                  onError={() => setFailedUri(props.uri)}
+                  onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
+                  onError={() => setFailure({ uri: props.uri, failed: true })}
                 />
               </View>
             </Pressable>

@@ -91,6 +91,7 @@ function LoadedMediaVideo(props: {
 
   useEffect(() => {
     const controller = new AbortController();
+    // oxlint-disable-next-line react/set-state-in-effect -- Starting a native media load publishes pending before its async result.
     setLoadState("pending");
     // A renewed signature is used on Retry, not as a reason to reset the native player.
     void loadSource(controller.signal).then(

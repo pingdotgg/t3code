@@ -355,6 +355,7 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     if (requestedInitialProjectAvailable) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Ends the return-to-picker flow once the requested project arrives from the catalog.
       setIsReturningToProjectPicker(false);
       return;
     }
@@ -493,6 +494,7 @@ export function NewTaskDraftScreen(props: {
       }
 
       if (projects.length > 0) {
+        // oxlint-disable-next-line react/set-state-in-effect -- Route-driven project resolution starts the return-to-picker flow when no project matches.
         setIsReturningToProjectPicker(true);
       }
       return;
@@ -595,6 +597,7 @@ export function NewTaskDraftScreen(props: {
     let didConsumeShare = false;
     let needsDraftRestore = false;
     activeShareImportTokenRef.current = importToken;
+    // oxlint-disable-next-line react/set-state-in-effect -- Publishes the share import started by this effect before its async work runs.
     setImportingShareKey(importKey);
     void (async () => {
       await reserveShare(shareId, {

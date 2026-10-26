@@ -168,6 +168,7 @@ function ProjectFaviconImage(props: {
     if (faviconRequest === null) return;
 
     const endRequest = beginProjectFaviconRequest(faviconRequest);
+    // oxlint-disable-next-line react/set-state-in-effect -- Publishes the favicon request registered with the external loader until its cleanup runs.
     setActiveFaviconRequest(faviconRequest);
     return endRequest;
   }, [faviconRequest]);

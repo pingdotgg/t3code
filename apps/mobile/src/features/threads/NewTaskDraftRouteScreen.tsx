@@ -37,6 +37,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   const [initialized, setInitialized] = useState(false);
   useLayoutEffect(() => {
     reset();
+    // oxlint-disable-next-line react/set-state-in-effect -- Draft reset runs once before first paint; initialized gates the screen until then.
     setInitialized(true);
   }, [reset]);
   const pendingTaskId = Array.isArray(params.pendingTaskId)
@@ -90,6 +91,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     if (!needsPreparation || !initialProjectRef.branch || waitingForProject) return;
     const branchName = initialProjectRef.branch;
     let active = true;
+    // oxlint-disable-next-line react/set-state-in-effect -- Counts the serialized Git checkout this effect starts.
     setPendingCheckouts((count) => count + 1);
     // Serialize replacements: ignoring a stale result cannot undo its Git mutation.
     checkoutTail.current = checkoutTail.current.then(async () => {

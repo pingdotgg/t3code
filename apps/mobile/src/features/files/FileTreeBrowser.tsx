@@ -153,6 +153,7 @@ export function FileTreeBrowser(props: {
     if (!controlledSelectedPath) {
       return;
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- An externally selected file expands its ancestor folders; the user can collapse them afterwards.
     setExpandedPaths((current) => {
       const ancestors = ancestorPaths(controlledSelectedPath);
       if (ancestors.every((ancestor) => current.has(ancestor))) {

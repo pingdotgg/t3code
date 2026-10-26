@@ -70,6 +70,7 @@ function NativeVideoPreview(props: {
     return () => fullscreenVideoClosed();
   }, []);
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- The native player latches the first resolved URL to keep its playback session.
     if (playbackUrl === null && resolvedUrl !== null) setPlaybackUrl(resolvedUrl);
   }, [playbackUrl, resolvedUrl]);
   useEffect(() => {

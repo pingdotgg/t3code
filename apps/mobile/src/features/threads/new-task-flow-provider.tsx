@@ -418,6 +418,7 @@ export function NewTaskFlowProvider(
     ) {
       return;
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
     setActiveDraftKey(
       createNewTaskDraft({
         environmentId: selectedProject.environmentId,

@@ -27,6 +27,7 @@ export function useWorktreeSetup(input: {
   );
   const snapshot = resolveWorktreeSetupSnapshot(input.threadId, query.data, live);
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Holds the last setup snapshot while the live subscription changes over.
     if (snapshot && snapshot !== live) setHeld({ key, snapshot });
   }, [key, live, snapshot]);
   return {
