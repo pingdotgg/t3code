@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Argument, Command } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -710,6 +710,7 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
   platform: NativePlatform,
   abi: string | null,
   fingerprint: string,
+  allowBuild = true,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -738,6 +739,10 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
       return { ...artifact, source: "remote" as const, buildMs: yield* readBuildMs(directory) };
     }
   }
+  if (!allowBuild)
+    return yield* new NativeClientError({
+      message: `No shared build of ${key} yet. Run \`vp run mobile:install ${platform}\` once on a machine with a local ${platform === "ios" ? "simulator" : "emulator"} of this checkout; it builds the client and shares it.`,
+    });
   const log = yield* BuildLog;
   yield* Console.error(
     `No cached client for ${key}. Building it once for every machine (5-15 min)${log ? `. Log: ${log}` : ""}`,
@@ -830,15 +835,124 @@ const reportTelemetry = Effect.fn("nativeClient.reportTelemetry")(
   (effect) => effect.pipe(Effect.timeout("5 seconds"), Effect.ignore),
 );
 
+/**
+ * Install into an agent-device session the caller already opened (a device pool, a cloud
+ * provider, or a local device), using the shared cache only; such hosts cannot build.
+ */
+const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function* (
+  home: string,
+  platform: NativePlatform,
+  session: string,
+  abi: string,
+  metro: string | undefined,
+) {
+  const started = yield* Clock.currentTimeMillis;
+  const path = yield* Path.Path;
+  const node = yield* HostProcess.ExecutablePath;
+  const agentDevice = path.join(
+    (yield* roots).repo,
+    "scripts/node_modules/agent-device/bin/agent-device.mjs",
+  );
+  // agent-device scopes session ownership to the workspace (working directory) it runs in.
+  const workspace = yield* HostProcess.WorkingDirectory;
+  const deviceAbi = platform === "android" ? abi : null;
+  const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
+  const current = yield* fingerprint(platform);
+  const artifact = yield* resolveArtifact(home, platform, deviceAbi, current, false).pipe(
+    Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
+  );
+  yield* Console.error(`Installing into agent-device session ${session}...`);
+  yield* command(
+    node,
+    [agentDevice, "install", bundleId, artifact.file, "--session", session],
+    true,
+    workspace,
+  );
+  if (metro) {
+    const url = encodeURIComponent(metro);
+    yield* command(
+      node,
+      [
+        agentDevice,
+        "open",
+        bundleId,
+        `t3code-dev://expo-development-client/?url=${url}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
+        "--session",
+        session,
+      ],
+      true,
+      workspace,
+    );
+  }
+  yield* reportTelemetry(
+    home,
+    task,
+    artifact.source === "build" ? "executed" : artifact.source,
+    artifact.buildMs,
+  );
+  const seconds = Math.round(((yield* Clock.currentTimeMillis) - started) / 1000);
+  yield* Console.error(
+    `Installed into session ${session} in ${seconds}s (${artifact.source}).${metro ? "" : " Open it with Metro: --metro http://<this-machine>:8081."}`,
+  );
+  yield* Console.log(
+    yield* encodeOutput({
+      status: "installed",
+      source: artifact.source,
+      fingerprint: current,
+      session,
+      seconds,
+    }),
+  );
+});
+
 const main = Command.make(
   "mobile-native-client",
   {
     mode: Argument.Literals("mode", ["check", "ensure"]),
     platform: Argument.Literals("platform", ["ios", "android"]),
     device: Argument.String("device").pipe(Argument.optional),
+    session: Flag.String("session").pipe(
+      Flag.withDescription(
+        "Install into this already-open agent-device session (a device pool, cloud, or remote host) instead of a local device.",
+      ),
+      Flag.optional,
+    ),
+    abi: Flag.Literals("abi", ["x86_64", "arm64-v8a"]).pipe(
+      Flag.withDescription("Android ABI of the session's device (default x86_64)."),
+      Flag.withDefault("x86_64" as const),
+    ),
+    metro: Flag.String("metro").pipe(
+      Flag.withDescription("With --session, open the dev client against this Metro URL."),
+      Flag.optional,
+    ),
   },
-  Effect.fn("nativeClient.main")(function* ({ mode, platform, device: requested }) {
+  Effect.fn("nativeClient.main")(function* ({
+    mode,
+    platform,
+    device: requested,
+    session,
+    abi: sessionAbi,
+    metro,
+  }) {
     const started = yield* Clock.currentTimeMillis;
+    if (Option.isSome(session)) {
+      if (mode !== "ensure" || Option.isSome(requested))
+        return yield* new NativeClientError({
+          message:
+            "--session installs into an agent-device session; use it with ensure and no device id.",
+        });
+      const environment = yield* HostProcess.Environment;
+      const home = environment.HOME ?? environment.USERPROFILE;
+      if (!home)
+        return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
+      return yield* installIntoSession(
+        home,
+        platform,
+        session.value,
+        sessionAbi,
+        Option.getOrUndefined(metro),
+      );
+    }
     const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
     const device = target.id;
     yield* Console.error(`Device: ${target.label} (${device})`);
