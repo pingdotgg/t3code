@@ -22,6 +22,8 @@ import {
   type FilePreviewItem,
 } from "../../components/FilePreviewModal";
 
+export const PullRequestMediaVisibleContext = createContext(true);
+
 export const PullRequestMediaContext = createContext<{
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -54,6 +56,7 @@ export function PullRequestMedia(props: {
   readonly compact?: boolean;
 }) {
   const media = usePullRequestMediaUrl(props.url);
+  const visible = useContext(PullRequestMediaVisibleContext);
   const context = useContext(PullRequestMediaContext);
   const withGallery = useFilePreviewGallery();
   const [image, setImage] = useState<FilePreviewSource | null>(null);
@@ -86,7 +89,7 @@ export function PullRequestMedia(props: {
         <VideoAttachmentTile
           name={name}
           sourceIdentifier={props.url}
-          thumbnailSource={media.uri}
+          thumbnailSource={visible ? media.uri : null}
           style={{ width: 176, height: 112, borderRadius: 16 }}
           onPress={() =>
             setVideo({
@@ -105,6 +108,8 @@ export function PullRequestMedia(props: {
           unavailable={media.unavailable}
           name={name}
           thumbnailKey={props.url}
+          thumbnailVisible={visible}
+          visible={visible}
           resolvePlaybackUri={media.resolvePlaybackUri}
         />
       )}
