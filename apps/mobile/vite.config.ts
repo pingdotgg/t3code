@@ -4,6 +4,7 @@ import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
 
 const reactTests = [
+  "src/features/projects/AddProjectScreen.test.ts",
   "src/lib/useMediaVideoPlayback.test.tsx",
   "src/features/pull-requests/usePullRequestEnvironmentFallback.test.tsx",
   "src/lib/filePreview.test.ts",

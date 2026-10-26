@@ -134,7 +134,7 @@
     "react-native-pdf-jsi": "5.0.0",
     "react-native-reanimated": "4.7.1",
     "react-native-safe-area-context": "~5.10.1",
-    "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.44.tgz",
+    "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.45.tgz",
     "react-native-svg": "15.16.0",
     "react-native-webview": "14.0.1",
     "react-native-worklets": "0.13.0",
