@@ -67,7 +67,6 @@ interface TargetPathAndPosition {
 }
 
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
-// oxlint-disable-next-line no-control-regex
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
