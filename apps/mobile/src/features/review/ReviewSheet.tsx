@@ -453,6 +453,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   useEffect(() => {
     showAuxiliaryPane("inspector");
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening review for another thread reselects its inspector pane.
   }, [environmentId, showAuxiliaryPane, threadId]);
   const {
     error,

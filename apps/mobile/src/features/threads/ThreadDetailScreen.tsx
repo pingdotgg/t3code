@@ -422,6 +422,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   }, []);
   useEffect(() => {
     setKeyboardStateSuspect(false);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Any keyboard visibility or height report clears the suspect flag set when the app resumed.
   }, [isKeyboardVisible, liveKeyboardHeight]);
   const handleOwnedInputFocusChange = (focused: boolean) => {
     ownedInputFocusedRef.current = focused;

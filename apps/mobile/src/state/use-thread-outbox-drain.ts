@@ -1359,6 +1359,7 @@ export function useThreadOutboxDrain(): void {
     operableEnvironments,
     projects,
     queuedMessagesByThreadKey,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retryTick re-runs the drain when a retry timer fires.
     retryTick,
     restoreQueuedMessage,
     scheduleQueuedMessageRetry,

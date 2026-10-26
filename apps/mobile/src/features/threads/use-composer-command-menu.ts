@@ -337,6 +337,7 @@ export function useComposerCommandMenu({
       else failedRefreshesRef.current = null;
     }, retryLater);
   }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Typing in the draft re-checks whether the provider workspace snapshot needs refreshing.
     draftMessage,
     environmentId,
     projectCwd,

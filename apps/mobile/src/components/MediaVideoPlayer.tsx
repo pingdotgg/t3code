@@ -102,6 +102,7 @@ function LoadedMediaVideo(props: {
       },
     );
     return () => controller.abort();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A play request or Retry (attempt) reloads the source into the same player.
   }, [player, props.playRequested, attempt]);
 
   return (

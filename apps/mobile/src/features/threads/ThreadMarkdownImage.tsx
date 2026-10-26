@@ -50,10 +50,12 @@ export function ThreadMarkdownImageView(props: {
 
   useEffect(() => {
     setDecodedSize(null);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new source invalidates the decoded image dimensions.
   }, [props.sourceKey]);
 
   useEffect(() => {
     setFailedUri(null);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new image URI clears the previous load failure.
   }, [props.uri]);
 
   const sourceSize = decodedSize ?? props.knownSize ?? null;

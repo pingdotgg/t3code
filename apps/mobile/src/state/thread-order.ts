@@ -25,6 +25,7 @@ export function usePendingThreadOrder(nowMinute: string, snoozeWakeTick: number)
   // Clock-driven wakes can change membership without shell events; retire order holds and re-enable moves then.
   useEffect(() => {
     getPendingThreadOrder();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Clock ticks re-evaluate the external pending-order snapshot even without a shell event.
   }, [nowMinute, snoozeWakeTick]);
   return pending;
 }

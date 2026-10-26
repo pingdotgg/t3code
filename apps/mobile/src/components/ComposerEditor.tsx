@@ -79,6 +79,7 @@ export function ComposerEditor({
     () => () => {
       importRef.current?.abort();
     },
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Switching drafts aborts an import owned by the previous draft.
     [draftKey],
   );
   const pasteContext = async (

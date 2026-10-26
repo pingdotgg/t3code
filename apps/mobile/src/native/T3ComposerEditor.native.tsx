@@ -233,7 +233,7 @@ export function ComposerEditor({
       nativeEventSnapshotsRef.current,
       mostRecentEventCount,
     );
-  }, [acknowledgesLatestNativeEvent, mostRecentEventCount]);
+  }, [acknowledgesLatestNativeEvent, mostRecentEventCount, nativeEventSnapshotsRef]);
   const assumedValue = props.value;
   useEffect(() => {
     // Newer native events make this payload stale; do not record it as applied.
@@ -243,7 +243,14 @@ export function ComposerEditor({
       controlledEventCount,
       assumedValue,
     );
-  }, [assumedValue, controlledEventCount, isNativeEcho, controlledDocumentJson]);
+  }, [
+    assumedValue,
+    controlledEventCount,
+    isNativeEcho,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Every changed native payload, including selection-only changes, must update the assumed native snapshot.
+    controlledDocumentJson,
+    nativeEventSnapshotsRef,
+  ]);
   const acceptNativeEvent = useCallback(
     (eventCount: number, value: string, nextSelection: ComposerEditorSelection) => {
       const acknowledgedEventCount = acknowledgeComposerNativeEvent(

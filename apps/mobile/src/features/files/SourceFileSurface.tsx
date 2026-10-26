@@ -254,6 +254,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
     });
     return () => cancelAnimationFrame(frame);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index scrolls the new file to it.
   }, [props.path, targetIndex]);
 
   const renderLine = ({ item, index }: { item: string; index: number }) => (

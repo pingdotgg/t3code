@@ -513,6 +513,7 @@ export function NewTaskDraftScreen(props: {
     projects,
     flow.draftKey,
     props.initialProjectRef,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening a draft from a share, pending task, or draft id re-resolves its project.
     props.incomingShareId,
     props.pendingTaskId,
     props.draftId,
@@ -522,6 +523,7 @@ export function NewTaskDraftScreen(props: {
     setProject,
   ]);
 
+  const { loadBranches } = flow;
   useEffect(() => {
     if (!selectedProject) {
       loadedBranchesProjectKeyRef.current = null;
@@ -532,8 +534,8 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     loadedBranchesProjectKeyRef.current = projectKey;
-    flow.loadBranches();
-  }, [flow.loadBranches, selectedProject]);
+    loadBranches();
+  }, [loadBranches, selectedProject]);
 
   useEffect(() => {
     const shareId = props.incomingShareId;
@@ -745,6 +747,7 @@ export function NewTaskDraftScreen(props: {
     consumeShare,
     cancelledIncomingShareId,
     flow.draftKey,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- hasImportedIncomingShare reflects the draft store; a change re-checks whether the share still needs importing.
     hasImportedIncomingShare,
     incomingShare,
     isIncomingShareInboxLoading,

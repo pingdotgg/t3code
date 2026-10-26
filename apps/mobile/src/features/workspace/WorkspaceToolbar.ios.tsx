@@ -119,6 +119,7 @@ export function WorkspaceToolbar(props: {
     if (!tabActive) return;
     const frame = requestAnimationFrame(restoreSearch);
     return () => cancelAnimationFrame(frame);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Moving the search bar to the bottom toolbar restores its focus and query.
   }, [restoreSearch, tabActive, bottomSearch]);
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button

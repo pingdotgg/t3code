@@ -288,6 +288,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     .map((row) => `${row.key}:${row.thread?.pinOrderKey}:${row.thread?.activeOrderKey}`)
     .join("|");
   useEffect(() => {
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A changed thread order cancels the in-progress drag; stop only touches refs and state setters.
     stop();
   }, [orderVersion]);
   useEffect(

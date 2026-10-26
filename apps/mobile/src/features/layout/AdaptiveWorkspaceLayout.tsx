@@ -148,6 +148,7 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     if (focusedRef.current) {
       syncRegistration();
     }
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed pane content replaces its existing native workspace registration.
   }, [wrappedRender]);
 
   useEffect(

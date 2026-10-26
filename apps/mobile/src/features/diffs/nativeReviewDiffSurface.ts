@@ -263,6 +263,7 @@ function useNativeReviewDiffPayload(
         cancelAnimationFrame(frame);
       }
     };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new resetKey redelivers an unchanged payload after the diff surface resets.
   }, [method, nativeRef, payload, resetKey, onFailure, onDelivered]);
 }
 
