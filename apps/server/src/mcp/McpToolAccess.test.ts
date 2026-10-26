@@ -165,7 +165,7 @@ export const refusedAtCompileTime = () => {
   // @ts-expect-error a declaration built outside McpToolAccess
   McpToolAccess.Declaration.make(unchecked);
   // @ts-expect-error a declaration constructed directly
-  new McpToolAccess.Declaration(unchecked);
+  new McpToolAccess.Declaration(unchecked); // oxlint-disable-line eslint/no-new -- This type-contract test checks direct construction.
   // @ts-expect-error a handlers layer built outside McpToolAccess
   McpToolAccess.HandlersLayer.make(Layer.empty);
   // @effect-diagnostics-next-line anyUnknownInErrorContext:off

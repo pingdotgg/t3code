@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "eslint/no-new": "error",
       "unicorn/no-useless-spread": "error",
       "eslint/no-unused-vars": [
         "error",
