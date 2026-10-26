@@ -1,4 +1,6 @@
-import { assert, beforeEach, it, vi } from "vite-plus/test";
+import * as NodeEvents from "node:events";
+
+import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
 
@@ -207,4 +209,26 @@ it("keeps an untitled content window ahead of a much taller background window", 
 
   assert.strictEqual(window?.id, 1);
   assert.deepEqual(window?.bounds, bounds);
+});
+
+it("reports the process failure when osascript exits before reading stdin", async () => {
+  const failure = Object.assign(new Error("osascript was killed"), { signal: "SIGKILL" });
+  const stdin = new NodeEvents.EventEmitter();
+  execFileMock.mockImplementation(
+    (
+      _file: string,
+      _args: ReadonlyArray<string>,
+      _options: unknown,
+      callback: (error: Error | null, stdout: string) => void,
+    ) => ({
+      stdin: Object.assign(stdin, {
+        end() {
+          stdin.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" }));
+          callback(failure, "");
+        },
+      }),
+    }),
+  );
+
+  await expect(activeWindow("darwin")).rejects.toBe(failure);
 });
