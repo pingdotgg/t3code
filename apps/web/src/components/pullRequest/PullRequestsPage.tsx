@@ -29,8 +29,6 @@ import {
   pullRequestDiffStatKey,
   pullRequestEntryKey,
   rankPullRequestMatches,
-  readPullRequestListSnapshot,
-  writePullRequestListSnapshot,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
   retainVisiblePullRequestStatsBatches,
@@ -103,6 +101,7 @@ import {
   pullRequestEnvironment,
   usePullRequestList,
   usePullRequestListStats,
+  restoredPullRequestList,
   usePullRequestTurnRefreshes,
   useSharedPullRequestSummary,
   type EnvironmentQueryTarget,
@@ -450,20 +449,25 @@ export function PullRequestsPage() {
   if (environmentKey.length > 0 && snapshotEnvironmentKey !== environmentKey) {
     setSnapshotEnvironmentKey(environmentKey);
     if (loaded?.environmentKey !== environmentKey) {
-      const snapshot = readPullRequestListSnapshot(
-        typeof window === "undefined" ? undefined : window.localStorage,
-        environmentKey,
-      );
+      const restored = restoredPullRequestList(baselineTargets);
+      const restoredPartition = (involvement: PullRequestInvolvement) =>
+        restoredPullRequestList(
+          baselineTargets.map((target) => ({ ...target, input: { ...target.input, involvement } })),
+        )?.entries;
+      const authored = partitionsWanted ? restoredPartition("authored") : undefined;
+      const reviewing = partitionsWanted ? restoredPartition("reviewing") : undefined;
       setLoaded(
-        snapshot === null
+        restored === null
           ? null
           : {
               environmentKey,
-              scope: snapshot.scope,
+              scope: scopeKey,
               query: "",
               source: null,
-              data: snapshot.data,
-              ...(snapshot.partitions === undefined ? {} : { partitions: snapshot.partitions }),
+              data: restored,
+              ...(authored === undefined || reviewing === undefined
+                ? {}
+                : { partitions: { authored, reviewing } }),
             },
       );
     }
@@ -507,33 +511,6 @@ export function PullRequestsPage() {
       ...(nextPartitions === undefined ? {} : { partitions: nextPartitions }),
     });
   }
-  const snapshotToWrite =
-    loaded !== null &&
-    loaded.source !== null &&
-    loaded.environmentKey.length > 0 &&
-    loaded.query.length === 0
-      ? loaded
-      : null;
-  const snapshotViewers = baselineQuery.data?.viewers;
-  const snapshotProviders = baselineQuery.data?.providers;
-  useEffect(() => {
-    if (snapshotToWrite === null) return;
-    writePullRequestListSnapshot(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      snapshotToWrite.environmentKey,
-      {
-        scope: snapshotToWrite.scope,
-        data: {
-          ...snapshotToWrite.data,
-          viewers: snapshotViewers ?? snapshotToWrite.data.viewers,
-          providers: snapshotProviders ?? snapshotToWrite.data.providers,
-        },
-        ...(snapshotToWrite.partitions === undefined
-          ? {}
-          : { partitions: snapshotToWrite.partitions }),
-      },
-    );
-  }, [snapshotToWrite, snapshotViewers, snapshotProviders]);
   const narrowed = (() => {
     if (loaded === null || loaded.environmentKey !== environmentKey || loaded.scope === scopeKey) {
       return null;
