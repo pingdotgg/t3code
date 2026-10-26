@@ -3,12 +3,10 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect, useRef } from "react";
 import { useClientSettings } from "../../hooks/useSettings";
 import {
-  browserMiniPlayerSource,
   usePreviewMiniPlayerStore,
   type PreviewMiniPlayerState,
 } from "../../previewMiniPlayerStore";
-import type { ThreadPreviewState } from "../../previewStateStore";
-import { useRightPanelStore, type RightPanelSurface } from "../../rightPanelStore";
+import { useRightPanelStore } from "../../rightPanelStore";
 
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
@@ -17,23 +15,11 @@ export function useAgentOpenedPreviews(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly deviceState: DeviceServiceState;
   readonly deviceStateLoaded: boolean;
-  readonly previewState: ThreadPreviewState;
-  readonly serverBrowserAvailable: boolean;
-  readonly panelSurfaces: ReadonlyArray<RightPanelSurface>;
   readonly miniPlayerSource: PreviewMiniPlayerState["source"] | null;
   // Sheet layouts show neither floating previews nor auto-opened device tabs.
   readonly sheetLayout: boolean;
 }) {
-  const {
-    threadRef,
-    deviceState,
-    deviceStateLoaded,
-    previewState,
-    serverBrowserAvailable,
-    panelSurfaces,
-    miniPlayerSource,
-    sheetLayout,
-  } = input;
+  const { threadRef, deviceState, deviceStateLoaded, miniPlayerSource, sheetLayout } = input;
   const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
   // Baseline sessions to preserve dismissals on reload; missing device summaries must remain eligible to open
   // later.
@@ -87,46 +73,6 @@ export function useAgentOpenedPreviews(input: {
     sheetLayout,
     deviceState.sessions,
     deviceState.devices,
-  ]);
-  // Baseline loaded tabs so reloads never reopen previews the user dismissed.
-  const previousServerPreviewTabs = useRef(new Map<string, Map<string, string | undefined>>());
-  useEffect(() => {
-    if (!threadRef || !serverBrowserAvailable || !previewState.listLoaded) return;
-    const threadKey = scopedThreadKey(threadRef);
-    const serverSessions = Object.values(previewState.sessions).filter(
-      (session) => session.runtime === "server",
-    );
-    const previous = previousServerPreviewTabs.current.get(threadKey);
-    previousServerPreviewTabs.current.set(
-      threadKey,
-      new Map(serverSessions.map((session) => [session.tabId, session.revealRequest?.id])),
-    );
-    if (!previous) return;
-    for (const session of serverSessions) {
-      const requested = session.revealRequest;
-      const fresh = requested
-        ? previous.get(session.tabId) !== requested.id
-        : !previous.has(session.tabId);
-      if (!fresh || session.reveal !== true) continue;
-      if (!autoShowFloatingPreview && requested?.force !== true) continue;
-      const surface = panelSurfaces.find(
-        (surface) => surface.kind === "preview" && surface.resourceId === session.tabId,
-      );
-      if (surface && requested?.force === true) {
-        useRightPanelStore.getState().activateSurface(threadRef, surface.id);
-      } else if (!surface) {
-        usePreviewMiniPlayerStore
-          .getState()
-          .open(threadRef, browserMiniPlayerSource(session.tabId));
-      }
-    }
-  }, [
-    serverBrowserAvailable,
-    previewState.listLoaded,
-    previewState.sessions,
-    threadRef,
-    autoShowFloatingPreview,
-    panelSurfaces,
   ]);
   useEffect(() => {
     if (!threadRef || !deviceStateLoaded) return;

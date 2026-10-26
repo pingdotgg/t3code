@@ -98,20 +98,111 @@ function syncActivePreviewThread(threadKey: string, state: ThreadPreviewState): 
   });
 }
 
+function writeThreadPreviewState(
+  ref: ScopedThreadRef,
+  update: (current: ThreadPreviewState) => ThreadPreviewState,
+): { readonly previous: ThreadPreviewState; readonly next: ThreadPreviewState } | null {
+  const threadKey = scopedThreadKey(ref);
+  const atom = previewStateAtom(threadKey);
+  let previousState = appAtomRegistry.get(atom);
+  let nextState = previousState;
+  const changed = appAtomRegistry.modify(atom, (current) => {
+    previousState = current;
+    nextState = update(current);
+    return [nextState !== current, nextState];
+  });
+  if (!changed) return null;
+  changedPreviewThreadKeys.add(threadKey);
+  syncActivePreviewThread(threadKey, nextState);
+  return { previous: previousState, next: nextState };
+}
+
+/**
+ * Server tabs that are new, or carry a new reveal request, since `previous`.
+ * Nothing is fresh until the first list has loaded: that list is the baseline,
+ * so a reload never reopens previews the user dismissed.
+ */
+function freshlyRevealedServerTabs(
+  previous: ThreadPreviewState,
+  next: ThreadPreviewState,
+): ReadonlyArray<PreviewSessionSnapshot> {
+  if (!previous.listLoaded) return [];
+  return Object.values(next.sessions).filter((session) => {
+    if (session.runtime !== "server" || session.reveal !== true) return false;
+    const before = previous.sessions[session.tabId];
+    const requested = session.revealRequest;
+    return requested ? before?.revealRequest?.id !== requested.id : before === undefined;
+  });
+}
+
+type PreviewSessionsChangedListener = (ref: ScopedThreadRef, next: ThreadPreviewState) => void;
+
+const previewSessionsChangedListeners = new Set<PreviewSessionsChangedListener>();
+
+/**
+ * Panel tabs and the mini player follow the sessions held here. They live in
+ * stores this one cannot import (rightPanelStore -> closedViewStore ->
+ * lib/utils -> composerDraftStore -> previewStateStore is a cycle).
+ */
+export function onPreviewSessionsChanged(listener: PreviewSessionsChangedListener): () => void {
+  previewSessionsChangedListeners.add(listener);
+  return () => {
+    previewSessionsChangedListeners.delete(listener);
+  };
+}
+
+function notifyPreviewSessionsChanged(
+  ref: ScopedThreadRef,
+  result: { readonly previous: ThreadPreviewState; readonly next: ThreadPreviewState },
+): void {
+  if (
+    result.previous.sessions === result.next.sessions &&
+    result.previous.listLoaded === result.next.listLoaded
+  ) {
+    return;
+  }
+  for (const listener of previewSessionsChangedListeners) listener(ref, result.next);
+}
+
 function updateThreadPreviewState(
   ref: ScopedThreadRef,
   update: (current: ThreadPreviewState) => ThreadPreviewState,
 ): void {
-  const threadKey = scopedThreadKey(ref);
-  const atom = previewStateAtom(threadKey);
-  let nextState = appAtomRegistry.get(atom);
-  const changed = appAtomRegistry.modify(atom, (current) => {
-    nextState = update(current);
-    return [nextState !== current, nextState];
-  });
-  if (!changed) return;
-  changedPreviewThreadKeys.add(threadKey);
-  syncActivePreviewThread(threadKey, nextState);
+  const result = writeThreadPreviewState(ref, update);
+  if (result) notifyPreviewSessionsChanged(ref, result);
+}
+
+type ServerTabsRevealedListener = (
+  ref: ScopedThreadRef,
+  sessions: ReadonlyArray<PreviewSessionSnapshot>,
+) => void;
+
+const serverTabsRevealedListeners = new Set<ServerTabsRevealedListener>();
+
+/**
+ * Where a revealed tab shows depends on client settings, which this store
+ * cannot import: lib/utils -> composerDraftStore -> previewStateStore ->
+ * hooks/useSettings -> ui/toast -> lib/utils is a cycle.
+ */
+export function onServerTabsRevealed(listener: ServerTabsRevealedListener): () => void {
+  serverTabsRevealedListeners.add(listener);
+  return () => {
+    serverTabsRevealedListeners.delete(listener);
+  };
+}
+
+function updateThreadPreviewStateFromServer(
+  ref: ScopedThreadRef,
+  update: (current: ThreadPreviewState) => ThreadPreviewState,
+): void {
+  const result = writeThreadPreviewState(ref, update);
+  if (!result) return;
+  // Reveals run first so a revealed tab floats before it gains a panel tab.
+  const revealed = freshlyRevealedServerTabs(result.previous, result.next);
+  if (revealed.length > 0) {
+    for (const listener of serverTabsRevealedListeners) listener(ref, revealed);
+  }
+  notifyPreviewSessionsChanged(ref, result);
 }
 
 const dedupeRecentUrls = (existing: string[], url: string): string[] => {
@@ -166,7 +257,7 @@ export function readThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState
 }
 
 export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEvent): void {
-  updateThreadPreviewState(ref, (current) => {
+  updateThreadPreviewStateFromServer(ref, (current) => {
     if (current.serverEpoch !== null && event.serverEpoch !== current.serverEpoch) return current;
     if (event.revision < current.serverRevision) return current;
     const next = (() => {
@@ -237,7 +328,7 @@ export function applyPreviewServerSnapshot(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot | null,
 ): void {
-  updateThreadPreviewState(ref, (current) => {
+  updateThreadPreviewStateFromServer(ref, (current) => {
     if (!snapshot && current.snapshot === null) return current;
     if (!snapshot) {
       return {
@@ -269,7 +360,7 @@ export function updatePreviewServerSnapshot(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot,
 ): void {
-  updateThreadPreviewState(ref, (current) => {
+  updateThreadPreviewStateFromServer(ref, (current) => {
     if (current.suppressedTabIds.has(snapshot.tabId)) return current;
     const existing = current.sessions[snapshot.tabId];
     if (existing && existing.updatedAt > snapshot.updatedAt) return current;
@@ -292,7 +383,7 @@ export function reconcilePreviewServerSessions(
   ref: ScopedThreadRef,
   result: PreviewListResult,
 ): void {
-  updateThreadPreviewState(ref, (current) => {
+  updateThreadPreviewStateFromServer(ref, (current) => {
     const sameServer = current.serverEpoch === result.serverEpoch;
     if (sameServer && result.revision < current.serverRevision) {
       return current;

@@ -19,6 +19,7 @@ import {
   reconcilePreviewServerSessions,
   resetPreviewStateForTests,
   setActivePreviewTab,
+  onServerTabsRevealed,
 } from "./previewStateStore";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
@@ -416,5 +417,78 @@ describe("previewStateStore (single-tab)", () => {
       url: "http://localhost:5173/new",
       title: "New",
     });
+  });
+});
+
+describe("previewStateStore server reveals", () => {
+  const collectReveals = () => {
+    const tabIds: string[] = [];
+    const stop = onServerTabsRevealed((_ref, sessions) => {
+      tabIds.push(...sessions.map((session) => session.tabId));
+    });
+    return { tabIds, [Symbol.dispose]: stop };
+  };
+  const serverTab = (overrides: Partial<PreviewSessionSnapshot> = {}) =>
+    makeSnapshot({ runtime: "server", reveal: true, ...overrides });
+
+  it("treats the first list as a baseline and reveals tabs opened later", () => {
+    using reveals = collectReveals();
+    const revealed = reveals.tabIds;
+    reconcilePreviewServerSessions(ref, {
+      sessions: [serverTab({ tabId: "tab_restored" })],
+      serverEpoch,
+      revision: 1,
+    });
+    expect(revealed).toEqual([]);
+
+    const opened = serverTab({ tabId: "tab_agent" });
+    applyPreviewServerEvent(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: opened.tabId,
+      createdAt: opened.updatedAt,
+      snapshot: opened,
+    });
+    expect(revealed).toEqual(["tab_agent"]);
+  });
+
+  it("reveals an existing tab only for a new reveal request", () => {
+    using reveals = collectReveals();
+    const revealed = reveals.tabIds;
+    const tab = serverTab({ revealRequest: { id: "r1", force: false } });
+    reconcilePreviewServerSessions(ref, { sessions: [tab], serverEpoch, revision: 1 });
+
+    const navigated = { ...tab, updatedAt: "2026-01-01T00:00:01.000Z" };
+    applyPreviewServerEvent(ref, {
+      type: "navigated",
+      threadId: "thread-1",
+      tabId: tab.tabId,
+      createdAt: navigated.updatedAt,
+      snapshot: navigated,
+    });
+    expect(revealed).toEqual([]);
+
+    const requested = {
+      ...navigated,
+      revealRequest: { id: "r2", force: true },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    };
+    applyPreviewServerEvent(ref, {
+      type: "navigated",
+      threadId: "thread-1",
+      tabId: tab.tabId,
+      createdAt: requested.updatedAt,
+      snapshot: requested,
+    });
+    expect(revealed).toEqual([tab.tabId]);
+  });
+
+  it("never reveals tabs this client opened or desktop tabs", () => {
+    using reveals = collectReveals();
+    const revealed = reveals.tabIds;
+    reconcilePreviewServerSessions(ref, { sessions: [], serverEpoch, revision: 1 });
+    applyPreviewServerSnapshot(ref, serverTab({ tabId: "tab_own", reveal: undefined }));
+    applyPreviewServerSnapshot(ref, makeSnapshot({ tabId: "tab_desktop", reveal: true }));
+    expect(revealed).toEqual([]);
   });
 });
