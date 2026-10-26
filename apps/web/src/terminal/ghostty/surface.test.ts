@@ -142,6 +142,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       }),
     };
     vi.stubGlobal("document", {
+      hasFocus: () => true,
       createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
     });
@@ -391,6 +392,56 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.input.value).toBe("候補");
     expect(surface.hasSelection()).toBe(false);
     expect(harness.onData).not.toHaveBeenCalled();
+  });
+
+  it("copies OSC 52 writes only from focused, visible live output", async () => {
+    const harness = createHarness();
+    const copy = vi.fn();
+    const surface = await harness.create({ onClipboardWrite: copy });
+    const sequence = "\x1b]52;c;aGVsbG8=\x07";
+
+    surface.write(sequence);
+    surface.focus();
+    surface.resetAndWrite(sequence);
+    surface.write("\x1b]52;c;aGVs");
+    surface.resetAndWrite("history");
+    surface.write("bG8=\x07");
+    surface.write("\x1b]52;c;?\x07");
+    surface.setVisible(false);
+    surface.write(sequence);
+    expect(copy).not.toHaveBeenCalled();
+    expect(harness.onData).not.toHaveBeenCalled();
+
+    surface.setVisible(true);
+    surface.focus();
+    for (const char of sequence) surface.write(char);
+    surface.write("\x1b]52;;aMOpbGxvIPCfkYs=\x1b\\");
+    expect(copy.mock.calls).toEqual([["hello"], ["héllo 👋"]]);
+    using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    surface.write(sequence);
+    expect(copy).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores malformed, cancelled and oversized OSC 52 writes and recovers", async () => {
+    const harness = createHarness();
+    const copy = vi.fn();
+    const surface = await harness.create({ onClipboardWrite: copy });
+    surface.focus();
+    for (const data of [
+      "\x1b]0;title\x07",
+      "\x1b]52;c;?\x07",
+      "\x1b]52;x;aGVsbG8=\x07",
+      "\x1b]52;c;!invalid!\x07",
+      "\x1b]52;c;/w==\x07",
+      "\x1b]52;c;aGVsbG8=\x18",
+      "\x1b]52;c;aGVsbG8=\x1a",
+      "\x1b]52;c;" + "A".repeat(1024 * 1024) + "\x07",
+    ])
+      surface.write(data);
+    expect(copy).not.toHaveBeenCalled();
+    expect(harness.onData).not.toHaveBeenCalled();
+    surface.write("\x1b]52;c;aGVsbG8=\x07");
+    expect(copy.mock.calls).toEqual([["hello"]]);
   });
 
   function paste(surface: GhosttyTerminalSurface, text: string) {
