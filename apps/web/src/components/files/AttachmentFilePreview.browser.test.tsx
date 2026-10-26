@@ -1,14 +1,18 @@
 import { act, render, stubGlobal, type Screen } from "../../../test/render";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import "~/index.css";
 
-const { refresh } = vi.hoisted(() => ({ refresh: vi.fn<() => Promise<string | null>>() }));
+const { refresh, assetUrlState } = vi.hoisted(() => ({
+  refresh: vi.fn<() => Promise<string | null>>(),
+  assetUrlState: vi.fn<() => import("~/assets/assetUrls").AssetUrlState>(),
+}));
 
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlRefresh: () => refresh,
+  useAssetUrlState: assetUrlState,
 }));
 // The real source view highlights through a worker pool; the text it receives is what matters here.
 // Never load the original: its highlighter graph can outlast waitFor on a cold CI browser.
@@ -17,10 +21,432 @@ vi.mock(import("./ReadOnlySourcePreview"), () => ({
 }));
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
+import LargeTextViewer from "./LargeTextViewer";
+import VirtualTablePreview from "./VirtualTablePreview";
 import { OfficeFilePreview } from "./OfficeFilePreview";
 import { MermaidFilePreview } from "./MermaidFilePreview";
 import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePreviewProtocol";
 
+describe("large text preview recovery", () => {
+  it("retains the workspace viewer across URL renewals and reloads revisions and manual refreshes", async () => {
+    const { WorkspaceLargeTextPreview } = await import("./FilePreviewPanel");
+    const original = URL.createObjectURL(new Blob(["original\n".repeat(1000)]));
+    const changed = URL.createObjectURL(new Blob(["changed\n".repeat(1000)]));
+    const workers: Worker[] = [];
+    using _worker = stubGlobal(
+      "Worker",
+      class extends Worker {
+        constructor(...args: ConstructorParameters<typeof Worker>) {
+          super(...args);
+          workers.push(this);
+        }
+      },
+    );
+    const preview = (mutation: string, key = 0) => (
+      <div style={{ display: "flex", flexDirection: "column", height: 400, width: 600 }}>
+        <WorkspaceLargeTextPreview
+          key={key}
+          environmentId={EnvironmentId.make("test")}
+          threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+          absolutePath="/repo/large.txt"
+          name="large.txt"
+          delimiter={null}
+          workspaceMutationId={mutation}
+          revealLine={null}
+          revealRequestId={0}
+        />
+      </div>
+    );
+    const state = (url: string, fileRevision?: string) =>
+      assetUrlState.mockReturnValue({
+        _tag: "Success",
+        url,
+        expiresAt: Date.now() + 3_600_000,
+        ...(fileRevision === undefined ? {} : { fileRevision }),
+      });
+    refresh.mockResolvedValue(`${original}#renewed`);
+    try {
+      state(`${original}#initial`, "one");
+      await using screen = await render(preview("first"));
+      await vi.waitFor(() => expect(workers).toHaveLength(1));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("1,000 lines"));
+      const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      await act(() =>
+        viewport.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: 250, bubbles: true, cancelable: true }),
+        ),
+      );
+      await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
+      const scrollTop = viewport.scrollTop;
+      state(`${original}#renewed`, "one");
+      await screen.rerender(preview("unrelated-command"));
+      expect(screen.container.querySelector('[tabindex="0"]')).toBe(viewport);
+      expect(viewport.scrollTop).toBe(scrollTop);
+      expect(workers).toHaveLength(1);
+      state(`${changed}#updated`, "two");
+      await screen.rerender(preview("file-edit"));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
+      expect(workers).toHaveLength(2);
+      await screen.rerender(preview("file-edit", 1));
+      await vi.waitFor(() => expect(workers).toHaveLength(3));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
+      state(`${original}#legacy`);
+      await screen.rerender(preview("legacy-edit", 1));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
+      expect(workers).toHaveLength(4);
+      assetUrlState.mockReturnValue({ _tag: "Failure" });
+      await screen.rerender(preview("legacy-edit", 1));
+      expect(screen.container.textContent).toContain("Unable to load file preview.");
+      refresh.mockClear();
+      refresh.mockImplementation(async () => {
+        state(`${changed}#retried`);
+        return changed;
+      });
+      await screen.getByRole("button", { name: "Try again" }).click();
+      expect(refresh).toHaveBeenCalledOnce();
+      await screen.rerender(preview("legacy-edit", 1));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
+      expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+    } finally {
+      URL.revokeObjectURL(original);
+      URL.revokeObjectURL(changed);
+    }
+  });
+
+  it("scrolls within a wrapped row when the row-count track is shorter than the viewport", async () => {
+    await using screen = await render(
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <VirtualTablePreview
+          name="one.txt"
+          count={1}
+          columns={1}
+          source
+          wrap
+          getRows={() => [["wrapped source text ".repeat(500)]]}
+        />
+      </div>,
+    );
+    const row = () => screen.container.querySelector<HTMLElement>('[data-preview-row="0"]')!;
+    const viewport = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+    await vi.waitFor(() => expect(row()?.offsetHeight).toBeGreaterThan(1000));
+    await act(() =>
+      viewport().dispatchEvent(
+        new WheelEvent("wheel", { deltaY: 150, bubbles: true, cancelable: true }),
+      ),
+    );
+    await vi.waitFor(() => {
+      const offset = viewport().getBoundingClientRect().top - row().getBoundingClientRect().top;
+      expect(offset).toBeGreaterThan(50);
+      expect(offset).toBeLessThan(300);
+    });
+    await act(() =>
+      viewport().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
+    );
+    await vi.waitFor(() =>
+      expect(
+        Math.abs(row().getBoundingClientRect().bottom - viewport().getBoundingClientRect().bottom),
+      ).toBeLessThan(2),
+    );
+    await act(() =>
+      viewport().dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })),
+    );
+    await vi.waitFor(() =>
+      expect(row().getBoundingClientRect().top).toBe(viewport().getBoundingClientRect().top),
+    );
+  });
+
+  it("scrolls every tall row in the final virtual viewport", async () => {
+    const view = (loaded: boolean) => (
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <VirtualTablePreview
+          name="tail.txt"
+          count={100}
+          columns={1}
+          source
+          wrap
+          getRows={(page) =>
+            !loaded && page > 0
+              ? undefined
+              : Array.from({ length: 32 }, (_, i) => [
+                  "line-" + (page * 32 + i + 1) + " wrapped source text".repeat(500),
+                ])
+          }
+        />
+      </div>
+    );
+    await using screen = await render(view(false));
+    const viewport = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+    const row = (index: number) =>
+      screen.container.querySelector<HTMLElement>('[data-preview-row="' + index + '"]')!;
+    await vi.waitFor(() => expect(row(0)?.offsetHeight).toBeGreaterThan(1000));
+    await act(() =>
+      viewport().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
+    );
+    await vi.waitFor(() => expect(row(99)).not.toBeNull());
+    await screen.rerender(view(true));
+    await vi.waitFor(() =>
+      expect(
+        Math.abs(
+          row(99).getBoundingClientRect().bottom - viewport().getBoundingClientRect().bottom,
+        ),
+      ).toBeLessThan(2),
+    );
+    await act(() =>
+      viewport().dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })),
+    );
+    await vi.waitFor(() => expect(row(0)).not.toBeNull());
+    await act(() => {
+      viewport().scrollTop = 100 * 29 - viewport().clientHeight;
+      viewport().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const checkTop = (index: number) =>
+      expect(
+        Math.abs(row(index).getBoundingClientRect().top - viewport().getBoundingClientRect().top),
+      ).toBeLessThan(2);
+    await vi.waitFor(() => checkTop(87));
+    for (let index = 88; index < 100; index++) {
+      await act(() =>
+        viewport().dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: row(index - 1).offsetHeight,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
+      if (index < 99) await vi.waitFor(() => checkTop(index));
+    }
+    await act(() =>
+      viewport().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
+    );
+    await vi.waitFor(() =>
+      expect(
+        Math.abs(
+          row(99).getBoundingClientRect().bottom - viewport().getBoundingClientRect().bottom,
+        ),
+      ).toBeLessThan(2),
+    );
+  });
+
+  it("rejects malformed UTF-8 bytes through the real text worker", async () => {
+    const src = URL.createObjectURL(new Blob([new Uint8Array([0xe9, 10])]));
+    try {
+      await using screen = await render(
+        <LargeTextViewer src={src} name="latin.txt" delimiter={null} />,
+      );
+      await vi.waitFor(() =>
+        expect(screen.container.querySelector('[role="alert"]')).not.toBeNull(),
+      );
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
+  it("replaces both prefetched pages with the worker's current file version", async () => {
+    const old = Array.from({ length: 64 }, (_, i) => "old-" + i).join("\n") + "\n";
+    const current = Array.from({ length: 100 }, (_, i) => "current-" + i).join("\n");
+    const src = URL.createObjectURL(new Blob([current]));
+    using _fetch = stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(old, {
+          status: 206,
+          headers: {
+            "content-length": String(old.length),
+            "content-range": "bytes 0-" + (old.length - 1) + "/100000",
+          },
+        }),
+      ),
+    );
+    try {
+      await using screen = await render(
+        <div style={{ display: "flex", height: 2000, width: 600 }}>
+          <LargeTextViewer src={src} name="log.txt" delimiter={null} />
+        </div>,
+      );
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("current-40"));
+      expect(screen.container.textContent).not.toContain("old-");
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
+  it("fills the horizontal viewport using measured column widths", async () => {
+    const header = Array.from({ length: 20 }, (_, i) => "C" + i);
+    await using screen = await render(
+      <div style={{ display: "flex", height: 400, width: 400 }}>
+        <VirtualTablePreview
+          name="wide.csv"
+          count={2}
+          columns={20}
+          header={header}
+          getRows={() => [header, header]}
+        />
+      </div>,
+    );
+    const outer = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+    const check = () => {
+      const cells = screen.container.querySelectorAll('[role="columnheader"]');
+      expect(cells.length).toBeGreaterThan(0);
+      expect(cells[cells.length - 1]!.getBoundingClientRect().right).toBeGreaterThanOrEqual(
+        outer().getBoundingClientRect().right - 1,
+      );
+    };
+    await vi.waitFor(check);
+    await act(() => {
+      outer().scrollLeft = outer().scrollWidth;
+      outer().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(check);
+    expect(screen.container.textContent).toContain("C19");
+  });
+
+  it("reveals and highlights requested source lines again for a new request", async () => {
+    const view = (line: number, request: number, loaded = true) => (
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <VirtualTablePreview
+          name="log.txt"
+          count={1000}
+          columns={1}
+          source
+          wrap
+          revealLine={line}
+          revealRequestId={request}
+          getRows={(page) =>
+            loaded || page === 0
+              ? Array.from({ length: 32 }, (_, i) => [
+                  "line-" + (page * 32 + i + 1) + " wrapped source text".repeat(20),
+                ])
+              : undefined
+          }
+        />
+      </div>
+    );
+    await using screen = await render(view(500, 1, false));
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector('[data-preview-reveal="true"]')?.textContent).toBe(
+        "500",
+      ),
+    );
+    await screen.rerender(view(500, 1));
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector('[data-preview-reveal="true"]')?.textContent).toContain(
+        "line-500",
+      ),
+    );
+    const checkVisible = () => {
+      const row = screen.container.querySelector<HTMLElement>('[data-preview-reveal="true"]')!;
+      const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      expect(row.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        viewport.getBoundingClientRect().top - 1,
+      );
+      expect(row.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+        viewport.getBoundingClientRect().bottom + 1,
+      );
+    };
+    await vi.waitFor(checkVisible);
+    await screen.rerender(view(900, 2));
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector('[data-preview-reveal="true"]')?.textContent).toContain(
+        "line-900",
+      ),
+    );
+    await vi.waitFor(checkVisible);
+    await screen.rerender(view(999, 3));
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector('[data-preview-reveal="true"]')?.textContent).toContain(
+        "line-999",
+      ),
+    );
+    await vi.waitFor(checkVisible);
+  });
+
+  it.each(
+    [5, 100, 10_000].flatMap((count) => [false, true].map((mixed) => [count, mixed] as const)),
+  )(
+    "preserves the source row when indexing grows beyond %i lines (mixed heights: %s)",
+    async (count, mixed) => {
+      const view = (count: number) => (
+        <div style={{ display: "flex", height: 400, width: 600 }}>
+          <VirtualTablePreview
+            name="growing.txt"
+            count={count}
+            columns={1}
+            source
+            wrap
+            getRows={(page) =>
+              Array.from({ length: 32 }, (_, i) => [
+                `line-${page * 32 + i + 1} ` +
+                  "wrapped source text ".repeat(mixed ? 5 + (i % 4) * 20 : 20),
+              ])
+            }
+          />
+        </div>
+      );
+      await using screen = await render(view(count));
+      const viewport = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      await vi.waitFor(() => expect(viewport()?.scrollHeight).toBeGreaterThan(400));
+      await act(() => {
+        viewport().scrollTop = count === 100 ? 100 * 29 - 400 + 1200 : 1200;
+        viewport().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      const visibleRow = () =>
+        [...screen.container.querySelectorAll<HTMLElement>("[data-preview-row]")].find(
+          (row) => row.getBoundingClientRect().bottom > viewport().getBoundingClientRect().top + 1,
+        )!;
+      await vi.waitFor(() => expect(visibleRow()).toBeDefined());
+      const before = visibleRow().dataset.previewRow;
+      const offset =
+        visibleRow().getBoundingClientRect().top - viewport().getBoundingClientRect().top;
+      await screen.rerender(view(1_000_000));
+      await vi.waitFor(() => {
+        expect(visibleRow().dataset.previewRow).toBe(before);
+        expect(
+          Math.abs(
+            visibleRow().getBoundingClientRect().top -
+              viewport().getBoundingClientRect().top -
+              offset,
+          ),
+        ).toBeLessThan(Math.max(5, visibleRow().offsetHeight / 29 + 1));
+      });
+    },
+  );
+
+  it("recovers from a failed worker load when its source changes", async () => {
+    await using screen = await render(
+      <LargeTextViewer name="log.txt" text={"bad\0text"} delimiter={null} />,
+    );
+    await vi.waitFor(() =>
+      expect(screen.container.textContent).toContain("This file contains binary data."),
+    );
+    await screen.rerender(<LargeTextViewer name="log.txt" text="" delimiter={null} />);
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("This file is empty."));
+    expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("reloads a partial page when the indexed row count grows", async () => {
+    const load = vi.fn();
+    const rows = [["first"]];
+    const view = (count: number) => (
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <VirtualTablePreview
+          name="log.txt"
+          count={count}
+          columns={1}
+          source
+          getRows={() => rows}
+          loadPage={load}
+        />
+      </div>
+    );
+    await using screen = await render(view(1));
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("first"));
+    expect(load).not.toHaveBeenCalled();
+    await screen.rerender(view(2));
+    await vi.waitFor(() => expect(load).toHaveBeenCalledWith(0));
+  });
+});
 it.each(["<w:body/>", "<w:body></w:body>"])(
   "opens an empty Word document with %s",
   async (body) => {
@@ -877,10 +1303,10 @@ it.each(["XFD200", "XFD1048576", "AX500", "AZ9999999"])(
         );
         worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
       });
-      if (ref === "AZ9999999") {
+      if (ref === "AZ9999999" || ref === "XFD1048576") {
         expect(result).toMatchObject({
           type: "error",
-          message: expect.stringContaining("invalid"),
+          message: expect.stringContaining(ref === "AZ9999999" ? "invalid" : "preview limit"),
         });
       } else {
         expect(result.type).toBe("xlsx");
@@ -1216,6 +1642,138 @@ describe("attachment HTML preview recovery", () => {
     expect(alert(screen)).toBeNull();
     expect(screen.container.querySelector("iframe")?.title).toBe("document.html");
   });
+});
+
+it("opens a known empty attachment even when its range response is inaccessible", async () => {
+  refresh.mockResolvedValue("https://unreachable.invalid/empty.txt");
+  await using screen = await render(
+    <AttachmentFilePreview
+      name="empty.txt"
+      mimeType="text/plain"
+      sizeBytes={0}
+      asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "empty" }}
+    />,
+  );
+  await vi.waitFor(
+    () => expect(screen.container.textContent).toContain("This file is empty."),
+    10_000,
+  );
+});
+
+it.each(["draft", "thread"] as const)(
+  "reads an unknown-size %s workspace file instead of treating it as empty",
+  async (source) => {
+    refresh.mockResolvedValue("https://example.test/binary.txt");
+    using _fetch = stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("invalid\0text")),
+    );
+    await using screen = await render(
+      <AttachmentFilePreview
+        name="binary.txt"
+        mimeType="application/octet-stream"
+        sizeBytes={0}
+        asset={{
+          environmentId: EnvironmentId.make("test"),
+          resource:
+            source === "draft"
+              ? { _tag: "draft-workspace-file", cwd: "/repo", path: "/repo/binary.txt" }
+              : { _tag: "media-file", threadId: ThreadId.make("test"), path: "/repo/binary.txt" },
+        }}
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(screen.container.textContent).toContain(
+        "This file contains binary data and cannot be shown as text.",
+      ),
+    );
+    expect(fetch).toHaveBeenCalled();
+    expect(screen.container.textContent).not.toContain("This file is empty.");
+  },
+);
+
+it("refreshes authorization and retries a failed streamed attachment", async () => {
+  const bad = URL.createObjectURL(new Blob(["invalid\0text"]));
+  const good = URL.createObjectURL(new Blob(["recovered text\n"]));
+  refresh.mockReset().mockResolvedValueOnce(bad).mockResolvedValue(good);
+  try {
+    await using screen = await render(
+      <AttachmentFilePreview
+        name="retry.txt"
+        mimeType="text/plain"
+        sizeBytes={2_000_000}
+        asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "retry" }}
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(screen.container.textContent).toContain("This file contains binary data."),
+    );
+    await act(() =>
+      screen.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click(),
+    );
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("recovered text"));
+    expect(refresh).toHaveBeenCalledTimes(2);
+  } finally {
+    URL.revokeObjectURL(bad);
+    URL.revokeObjectURL(good);
+  }
+});
+
+it.each([
+  ["custom/sheet1.xml", 250001],
+  ["/xl/custom/sheet1.bin", 250001],
+  ["custom/valid.xml", 1],
+] as const)(
+  "bounds the worksheet relationship target %s at row %i before the reader allocates its grid",
+  async (target, row) => {
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    zip.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    );
+    zip.file(
+      "xl/_rels/workbook.xml.rels",
+      `<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}"/></Relationships>`,
+    );
+    zip.file(
+      target.startsWith("/") ? target.slice(1) : `xl/${target}`,
+      `<worksheet><sheetData><row r="${row}"><c r="A${row}" t="inlineStr"><is><t>worksheet value</t></is></c></row></sheetData></worksheet>`,
+    );
+    const file = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+    const src = URL.createObjectURL(file);
+    try {
+      await using screen = await render(
+        <div style={{ display: "flex", height: 400, width: 600 }}>
+          <OfficeFilePreview name="custom.xlsx" src={src} kind="xlsx" sizeBytes={file.size} />
+        </div>,
+      );
+      await vi.waitFor(
+        () =>
+          expect(screen.container.textContent).toContain(
+            row > 250000 ? "This workbook exceeds the preview limit" : "worksheet value",
+          ),
+        { timeout: 10_000 },
+      );
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  },
+);
+
+it("copies every indexed line rather than the mounted preview rows", async () => {
+  const text = Array.from({ length: 10_000 }, (_, i) => `line-${i}`).join("\n");
+  const copyContents = { current: null as (() => Promise<string>) | null };
+  await using screen = await render(
+    <LargeTextViewer name="whole.txt" text={text} delimiter={null} copyContents={copyContents} />,
+  );
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("line-0"));
+  await vi.waitFor(async () => expect(await copyContents.current!()).toBe(text));
+  const first = copyContents.current!();
+  await expect(copyContents.current!()).rejects.toThrow("Another copy is in progress.");
+  expect(await first).toBe(text);
+  expect(await copyContents.current!()).toBe(text);
+  expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
 it("loads a font attachment through the lazy preview", async () => {

@@ -111,6 +111,9 @@ const browserTestProject = {
       "@betteroffice/pptx",
       "@betteroffice/xlsx",
       "@betteroffice/xlsx/headless",
+      "fast-xml-parser",
+      "dompurify",
+      "jszip",
     ],
   },
   test: {

@@ -59,4 +59,24 @@ describe("delimited file previews", () => {
     expect(table.rows[0]?.[0]).toHaveLength(2000);
     expect(parseDelimitedPreview('a,"unfinished', ",").truncated).toBe(true);
   });
+  it("reads worker pages beyond the old row, column and cell limits", () => {
+    const text = Array.from({ length: 128 }, (_, row) =>
+      Array.from({ length: 40 }, (_, column) => `${row}:${column}`).join(","),
+    ).join("\n");
+    const result = parseDelimitedPreview(text, ",", {
+      maxRows: 128,
+      maxColumns: 40,
+      maxCellLength: 4096,
+    });
+    expect(result.rows).toHaveLength(128);
+    expect(result.rows.at(-1)?.at(-1)).toBe("127:39");
+    expect(result.truncated).toBe(false);
+    expect(
+      parseDelimitedPreview(`"${"x".repeat(3000)}"`, ",", {
+        maxRows: 1,
+        maxColumns: 1,
+        maxCellLength: 4096,
+      }).rows[0]?.[0],
+    ).toHaveLength(3000);
+  });
 });

@@ -995,7 +995,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("issues exact workspace URLs for image, office, and font previews", () =>
+  it.effect("issues exact workspace URLs for every non-HTML preview", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1009,6 +1009,7 @@ describe("AssetAccess", () => {
         "private document",
       );
       for (const extension of [
+        "pdf",
         "png",
         "bmp",
         "heic",

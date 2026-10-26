@@ -205,7 +205,11 @@ function wordDocuments(
   return { documents, truncated };
 }
 
-function boundedWorksheet(xml: string, strings: readonly string[], budget: { remaining: number }) {
+function boundedWorksheet(
+  xml: string,
+  strings: readonly string[],
+  budget: { remaining: number; cells: number },
+) {
   const parser = xmlParser();
   const rows = new Map<number, Map<number, string>>();
   const rowTags = new Map<number, string>();
@@ -282,7 +286,8 @@ function boundedWorksheet(xml: string, strings: readonly string[], budget: { rem
         .replace(/\/>$/, ">");
       column = 0;
       cells = rows.get(row) ?? new Map<number, string>();
-      if (row > OFFICE_PREVIEW_MAX_ROWS) truncated = true;
+      if (row > OFFICE_PREVIEW_MAX_ROWS)
+        throw new Error("This workbook exceeds the preview limit: 250,000 rows.");
     } else if (depth === 4 && tag.local === "c") {
       const ref = attribute("r");
       const position = ref ? coordinate(ref) : { col: column + 1, line: row };
@@ -294,9 +299,14 @@ function boundedWorksheet(xml: string, strings: readonly string[], budget: { rem
         truncated = true;
         return;
       }
+      if (++budget.cells > 2_000_000 || row * column > 8_000_000)
+        throw new Error(
+          "This workbook exceeds the preview limit: 2 million cells or 8 million grid positions.",
+        );
       // Explicit coordinates also bound sheets whose rows/cells omit r.
-      const letters =
-        column <= 26 ? String.fromCharCode(64 + column) : `A${String.fromCharCode(38 + column)}`;
+      let letters = "";
+      for (let value = column; value > 0; value = Math.floor((value - 1) / 26))
+        letters = String.fromCharCode(65 + ((value - 1) % 26)) + letters;
       const style = attribute("s");
       const type = attribute("t");
       if ((style && !/^\d{1,6}$/.test(style)) || (type && !/^[a-zA-Z]+$/.test(type)))
@@ -360,10 +370,15 @@ function boundedWorksheet(xml: string, strings: readonly string[], budget: { rem
     const [a, b = a] = ref.split(":");
     const first = coordinate(a!);
     const last = coordinate(b!);
-    if (first.col > 50 || first.line > 500) return "";
-    const col = Math.min(50, last.col);
-    const letters = col <= 26 ? String.fromCharCode(64 + col) : "A" + String.fromCharCode(38 + col);
-    return a + ":" + letters + Math.min(500, last.line);
+    if (first.col > OFFICE_PREVIEW_MAX_COLUMNS || first.line > OFFICE_PREVIEW_MAX_ROWS) return "";
+    let letters = "";
+    for (
+      let col = Math.min(OFFICE_PREVIEW_MAX_COLUMNS, last.col);
+      col > 0;
+      col = Math.floor((col - 1) / 26)
+    )
+      letters = String.fromCharCode(65 + ((col - 1) % 26)) + letters;
+    return a + ":" + letters + Math.min(OFFICE_PREVIEW_MAX_ROWS, last.line);
   };
   const metadata = (part: string) =>
     part.replace(
@@ -458,7 +473,7 @@ async function boundWorkbook(archive: JSZip) {
     });
     parser.write(shared).close();
   }
-  const budget = { remaining: 1024 * 1024 };
+  const budget = { remaining: 1024 * 1024, cells: 0 };
   const limited = new Map<string, boolean>();
   for (const path of new Set(sheetPaths)) {
     const file = archive.file(path);
@@ -921,6 +936,7 @@ async function wordExpansion(
 // must not turn into an unbounded allocation on the UI thread.
 async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open" }>) {
   const { bytes } = input;
+  const spreadsheet = input.kind === "xlsx";
   if (bytes.byteLength > OFFICE_PREVIEW_MAX_BYTES)
     throw new Error("Preview limited to files under 50 MB.");
   checkZipDirectory(bytes);
@@ -969,7 +985,7 @@ async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open"
         .on("data", (chunk: Uint8Array) => {
           total += chunk.length;
           length += chunk.length;
-          if (total > OFFICE_PREVIEW_MAX_BYTES) {
+          if (total > (spreadsheet ? 128 * 1024 * 1024 : OFFICE_PREVIEW_MAX_BYTES)) {
             stream.pause();
             reject(new Error("The expanded document is too large to preview safely."));
             return;
@@ -1003,10 +1019,11 @@ async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open"
             }
           }
           if (
-            total > OFFICE_PREVIEW_MAX_BYTES ||
+            total > (spreadsheet ? 128 * 1024 * 1024 : OFFICE_PREVIEW_MAX_BYTES) ||
+            (spreadsheet && total > Math.max(bytes.byteLength * 200, 8 * 1024 * 1024)) ||
             (!document &&
-              (input.kind === "xlsx" || media || entry.name.endsWith(".xml")) &&
-              length > 8 * 1024 * 1024)
+              (spreadsheet || media || entry.name.endsWith(".xml")) &&
+              length > (spreadsheet ? 64 * 1024 * 1024 : 8 * 1024 * 1024))
           ) {
             stream.pause();
             reject(new Error("The expanded document is too large to preview safely."));

@@ -20,10 +20,7 @@ import {
 } from "@t3tools/contracts";
 import {
   hostPreviewMimeTypeFromExtension,
-  officePreviewKind,
   isWorkspaceAudioPreviewPath,
-  isWorkspaceImagePreviewPath,
-  isWorkspaceFontPreviewPath,
   isWorkspacePreviewEntryPath,
   isWorkspaceVideoPreviewPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
@@ -517,24 +514,21 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
     return {
-      claims:
-        isWorkspaceImagePreviewPath(resolved.relativePath) ||
-        isWorkspaceFontPreviewPath(resolved.relativePath) ||
-        officePreviewKind({ name: resolved.relativePath }) !== null
-          ? {
-              version: 1 as const,
-              kind: "workspace-file-exact" as const,
-              workspaceRoot: canonicalWorkspaceRoot,
-              relativePath: resolved.relativePath,
-              expiresAt: input.expiresAt,
-            }
-          : {
-              version: 1 as const,
-              kind: "workspace-file" as const,
-              workspaceRoot: canonicalWorkspaceRoot,
-              baseRelativePath: path.dirname(resolved.relativePath),
-              expiresAt: input.expiresAt,
-            },
+      claims: !/\.html?$/i.test(resolved.relativePath)
+        ? {
+            version: 1 as const,
+            kind: "workspace-file-exact" as const,
+            workspaceRoot: canonicalWorkspaceRoot,
+            relativePath: resolved.relativePath,
+            expiresAt: input.expiresAt,
+          }
+        : {
+            version: 1 as const,
+            kind: "workspace-file" as const,
+            workspaceRoot: canonicalWorkspaceRoot,
+            baseRelativePath: path.dirname(resolved.relativePath),
+            expiresAt: input.expiresAt,
+          },
       fileName: path.basename(resolved.relativePath),
       imageDimensions,
       fileRevision: undefined,
