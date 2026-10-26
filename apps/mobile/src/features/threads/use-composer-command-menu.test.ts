@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
-const refreshProviders = vi.hoisted(() => vi.fn());
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
@@ -15,10 +14,10 @@ vi.mock("../../state/use-composer-drafts", () => ({
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "context-id" }));
 vi.mock("../../state/server", () => ({
-  serverEnvironment: { refreshProviders: Symbol("refreshProviders") },
-}));
-vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => refreshProviders,
+  serverEnvironment: {
+    providersValueAtom: vi.fn(),
+    refreshProviders: Symbol("refreshProviders"),
+  },
 }));
 
 import {
