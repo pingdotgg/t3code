@@ -391,8 +391,10 @@ const make = Effect.gen(function* () {
           maxOutputBytes: 64 * 1024,
         });
         if (submodules.stdoutTruncated || submodules.stderrTruncated) return incomplete;
-        for (const submodule of submodules.stdout.split("\0").filter(Boolean))
+        for (const submodule of submodules.stdout.split("\0").filter(Boolean)) {
           repositories.add(pathKey(path.resolve(submodule)));
+          repositories.add(pathKey(path.resolve(submodule, ".git")));
+        }
       }
       const pending = [root];
       let entries = 1;
