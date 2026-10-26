@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "eslint/no-unsafe-optional-chaining": "error",
       "eslint/no-unneeded-ternary": "error",
       "unicorn/no-useless-fallback-in-spread": "error",
       "unicorn/require-module-specifiers": "error",
