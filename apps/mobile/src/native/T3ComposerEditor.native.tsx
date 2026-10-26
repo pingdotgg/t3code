@@ -110,8 +110,9 @@ interface NativeComposerEditorProps extends ViewProps {
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
-// Fabric does not mount a `display: none` subtree, so a command sent while the composer slot is
-// hidden (an open question) rejects with "Unable to find the view". There is nothing to act on.
+// A view command rejects with "Unable to find the view" when the composer's native view is
+// unmounted, which can happen while an open question hides the composer slot. There is nothing
+// to act on then.
 function settleViewCommand(command: Promise<void> | undefined): void {
   command?.catch(() => undefined);
 }
