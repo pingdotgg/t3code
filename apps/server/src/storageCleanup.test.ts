@@ -608,8 +608,10 @@ const runCleanupTest = <A, E>(
 it.live.each([
   { policy: "tracked-changes", kind: "worktree" },
   { policy: "tracked-changes", kind: "repository" },
+  { policy: "tracked-changes", kind: "bare" },
   { policy: "uncommitted-changes", kind: "worktree" },
   { policy: "uncommitted-changes", kind: "repository" },
+  { policy: "uncommitted-changes", kind: "bare" },
 ] as const)("keeps an ignored nested $policy / $kind", ({ policy, kind }) =>
   runCleanupTest(
     Effect.gen(function* () {
@@ -619,7 +621,13 @@ it.live.each([
       if (kind === "worktree") {
         yield* command(repo, ["worktree", "add", "-b", "nested", nested]);
       } else {
-        yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
+        yield* command(repo, [
+          "clone",
+          "--no-hardlinks",
+          ...(kind === "bare" ? ["--bare"] : []),
+          repo,
+          nested,
+        ]);
       }
       yield* fs.writeFileString(`${nested}/uncommitted.txt`, "irreplaceable work\n");
       expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
@@ -629,7 +637,14 @@ it.live.each([
         reason: "Contains a nested Git repository",
       });
       expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("irreplaceable work\n");
-      expect((yield* command(nested, ["rev-parse", "--show-toplevel"])).stdout.trim()).toBe(nested);
+      expect(
+        (yield* command(nested, [
+          "-c",
+          "safe.bareRepository=all",
+          "rev-parse",
+          "--is-bare-repository",
+        ])).stdout.trim(),
+      ).toBe(String(kind === "bare"));
     }),
   ),
 );
