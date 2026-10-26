@@ -160,8 +160,8 @@ export const make = Effect.gen(function* () {
   });
 
   return GitCafeCredentials.of({
-    get: (host) =>
-      fromSettings(host).pipe(
+    get: Effect.fn("GitCafeCredentials.get")(function (host) {
+      return fromSettings(host).pipe(
         Effect.flatMap(
           (saved): Effect.Effect<GitCafeCredential, GitCafeCredentialUnavailableError> =>
             saved === null
@@ -172,10 +172,16 @@ export const make = Effect.gen(function* () {
                   source: "settings",
                 }),
         ),
-      ),
-    invalidate: (host) => Cache.invalidate(cache, normalizeHost(host)),
-    cliEnv: (host) =>
-      fromSettings(host).pipe(Effect.map((saved) => (saved === null ? {} : { CAFE_TOKEN: saved }))),
+      );
+    }),
+    invalidate: Effect.fn("GitCafeCredentials.invalidate")(function (host) {
+      return Cache.invalidate(cache, normalizeHost(host));
+    }),
+    cliEnv: Effect.fn("GitCafeCredentials.cliEnv")(function (host) {
+      return fromSettings(host).pipe(
+        Effect.map((saved) => (saved === null ? {} : { CAFE_TOKEN: saved })),
+      );
+    }),
   });
 });
 

@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -90,6 +91,37 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
 }
 
 describe("DesktopSettings", () => {
+  it.effect("records one bounds operation span with its input attributes", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.Span> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      yield* withSettings(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setMainWindowBounds({ x: 10, y: 20, width: 900, height: 600 }, true);
+        }),
+      ).pipe(Effect.provideService(Tracer.Tracer, tracer));
+      const operationSpans = spans.filter(
+        (span) => span.name === "desktop.settings.setMainWindowBounds",
+      );
+      assert.lengthOf(operationSpans, 1);
+      assert.deepEqual(Object.fromEntries(operationSpans[0]!.attributes), {
+        x: 10,
+        y: 20,
+        width: 900,
+        height: 600,
+        isMaximized: true,
+      });
+      assert.equal(operationSpans[0]!.status._tag, "Ended");
+    }),
+  );
+
   it.effect(
     "persists disabling and re-enabling local execution without clearing backend settings",
     () =>

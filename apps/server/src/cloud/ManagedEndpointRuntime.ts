@@ -759,7 +759,9 @@ export const make = Effect.gen(function* () {
     inspectConnector,
     readinessChanged: Stream.fromQueue(readinessChanges),
     recoveryRequests: Stream.fromQueue(recoveryRequests),
-    requestRecovery: (config) => Queue.offer(recoveryRequests, config).pipe(Effect.asVoid),
+    requestRecovery: Effect.fn("CloudManagedEndpointRuntime.requestRecovery")(function (config) {
+      return Queue.offer(recoveryRequests, config).pipe(Effect.asVoid);
+    }),
     tunnelConnected: Stream.fromQueue(tunnelConnections),
     withLinkStateLock: linkStateSemaphore.withPermits(1),
   });

@@ -265,13 +265,14 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       textEncoder.encode('"}}\0'),
     ]).pipe(Effect.asVoid);
 
-  const receive = (raw: string) => {
+  // Incoming messages share the session span; frame acknowledgements are frequent.
+  const receive = Effect.fnUntraced(function* (raw: string) {
     const message = Option.getOrUndefined(decodeCdpMessage(raw));
     if (message?.id !== undefined) {
       const waiter = pending.get(message.id);
       pending.delete(message.id);
-      if (!waiter) return Effect.void;
-      return message.error
+      if (!waiter) return yield* Effect.void;
+      return yield* message.error
         ? Deferred.fail(
             waiter.reply,
             new HtmlRenderBrowserError({
@@ -283,24 +284,24 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     }
     const sessionId = message?.sessionId;
     const page = sessionId === undefined ? undefined : pages.get(sessionId);
-    if (sessionId === undefined || !page || !message?.method) return Effect.void;
+    if (sessionId === undefined || !page || !message?.method) return yield* Effect.void;
     if (message.method === "Page.loadEventFired") {
-      return page.loaded ? Deferred.succeed(page.loaded, undefined) : Effect.void;
+      return yield* page.loaded ? Deferred.succeed(page.loaded, undefined) : Effect.void;
     }
     if (message.method === "Fetch.requestPaused") {
       const paused = Option.getOrUndefined(decodeRequestPaused(message.params));
-      if (!paused) return Effect.void;
+      if (!paused) return yield* Effect.void;
       const body = page.body;
       const url = paused.request.url.split("#", 1)[0]!;
       if (url === PAGE_URL && body !== undefined) {
-        return fulfillPage(sessionId, paused.requestId, body);
+        return yield* fulfillPage(sessionId, paused.requestId, body);
       }
       // Subframes may show other sites covered by Local Network Access; the main frame stays on T3's page.
       const otherSiteFrame =
         paused.resourceType === "Document" &&
         paused.frameId !== page.mainFrameId &&
         !url.startsWith(`${PAGE_ORIGIN}/`);
-      return otherSiteFrame
+      return yield* otherSiteFrame
         ? post("Fetch.continueRequest", { requestId: paused.requestId }, sessionId)
         : post(
             "Fetch.failRequest",
@@ -309,10 +310,10 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           );
     }
     const consoleMessage = consoleMessageFromEvent(message.method, message.params);
-    if (!consoleMessage) return Effect.void;
+    if (!consoleMessage) return yield* Effect.void;
     if (page.consoleMessages.length >= MAX_CONSOLE_MESSAGES) {
       page.omittedConsoleMessages += 1;
-      return Effect.void;
+      return yield* Effect.void;
     }
     const text = consoleMessage.text.replaceAll(PAGE_URL, PAGE_NAME);
     page.consoleMessages.push({
@@ -320,8 +321,8 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       text:
         text.length > MAX_CONSOLE_TEXT_CHARS ? `${text.slice(0, MAX_CONSOLE_TEXT_CHARS)}…` : text,
     });
-    return Effect.void;
-  };
+    return yield* Effect.void;
+  });
 
   // Startup aborts close the pipe; let stderr drain to recover the reason.
   const disconnect = Effect.gen(function* () {

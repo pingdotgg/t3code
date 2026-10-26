@@ -843,7 +843,9 @@ export const make = Effect.gen(function* () {
   return AgentAwarenessRelay.of({
     publishThread,
     drain: worker.drain,
-    requestCatchUp: () => Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
+    requestCatchUp: Effect.fn("AgentAwarenessRelay.requestCatchUp")(function () {
+      return Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid);
+    }),
     start,
   });
 });

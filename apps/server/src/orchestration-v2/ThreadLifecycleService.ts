@@ -88,54 +88,61 @@ const make = Effect.gen(function* () {
     );
 
   return ThreadLifecycleService.of({
-    archive: (input) =>
-      dispatch("archive", input.threadId, {
+    archive: Effect.fn("ThreadLifecycleService.archive")(function (input) {
+      return dispatch("archive", input.threadId, {
         type: "thread.archive",
         commandId: input.commandId,
         threadId: input.threadId,
-      }),
-    unarchive: (input) =>
-      dispatch("unarchive", input.threadId, {
+      });
+    }),
+    unarchive: Effect.fn("ThreadLifecycleService.unarchive")(function (input) {
+      return dispatch("unarchive", input.threadId, {
         type: "thread.unarchive",
         commandId: input.commandId,
         threadId: input.threadId,
-      }),
-    delete: (input) =>
-      dispatch("delete", input.threadId, {
+      });
+    }),
+    delete: Effect.fn("ThreadLifecycleService.delete")(function (input) {
+      return dispatch("delete", input.threadId, {
         type: "thread.delete",
         commandId: input.commandId,
         threadId: input.threadId,
-      }),
-    updateMetadata: (input) =>
-      dispatch("update-metadata", input.threadId, {
+      });
+    }),
+    updateMetadata: Effect.fn("ThreadLifecycleService.updateMetadata")(function (input) {
+      return dispatch("update-metadata", input.threadId, {
         type: "thread.metadata.update",
         commandId: input.commandId,
         threadId: input.threadId,
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
-      }),
-    setRuntimeMode: (input) =>
-      dispatch("set-runtime-mode", input.threadId, {
+      });
+    }),
+    setRuntimeMode: Effect.fn("ThreadLifecycleService.setRuntimeMode")(function (input) {
+      return dispatch("set-runtime-mode", input.threadId, {
         type: "thread.runtime-mode.set",
         commandId: input.commandId,
         threadId: input.threadId,
         runtimeMode: input.runtimeMode,
-      }),
-    setInteractionMode: (input) =>
-      dispatch("set-interaction-mode", input.threadId, {
+      });
+    }),
+    setInteractionMode: Effect.fn("ThreadLifecycleService.setInteractionMode")(function (input) {
+      return dispatch("set-interaction-mode", input.threadId, {
         type: "thread.interaction-mode.set",
         commandId: input.commandId,
         threadId: input.threadId,
         interactionMode: input.interactionMode,
-      }),
-    setModelSelection: (input) =>
-      dispatch("set-model-selection", input.threadId, {
+      });
+    }),
+    setModelSelection: Effect.fn("ThreadLifecycleService.setModelSelection")(function (input) {
+      return dispatch("set-model-selection", input.threadId, {
         type: "thread.model-selection.set",
         commandId: input.commandId,
         threadId: input.threadId,
         modelSelection: input.modelSelection,
-      }),
+      });
+    }),
   });
 });
 

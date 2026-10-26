@@ -47,7 +47,7 @@
           "mapSomeToAsSome": "error",
           "unnecessaryPipeChain": "error",
           "returnEffectInGen": "off",
-          "effectFnOpportunity": "suggestion",
+          "effectFnOpportunity": "error",
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",

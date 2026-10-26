@@ -291,13 +291,14 @@ export const layer = Layer.effect(
     });
 
     return DesktopBackendPool.of({
-      get: (id) =>
-        SynchronizedRef.get(instancesRef).pipe(
+      get: Effect.fn("DesktopBackendPool.get")(function (id) {
+        return SynchronizedRef.get(instancesRef).pipe(
           Effect.map((instances) => {
             const entry = instances.get(id);
             return entry?._tag === "Active" ? Option.some(entry.instance) : Option.none();
           }),
-        ),
+        );
+      }),
       list: SynchronizedRef.get(instancesRef).pipe(
         Effect.map((instances) =>
           Array.from(instances.values()).flatMap((entry) =>
@@ -326,11 +327,17 @@ export const layerTest = (
       );
       const primary = instances[0]!;
       return DesktopBackendPool.of({
-        get: (id) => Effect.succeed(Option.fromNullishOr(byId.get(id))),
+        get: Effect.fn("DesktopBackendPool.get")(function (id) {
+          return Effect.succeed(Option.fromNullishOr(byId.get(id)));
+        }),
         list: Effect.succeed(Array.from(byId.values())),
         primary: Effect.succeed(primary),
-        register: () => Effect.die("DesktopBackendPool.layerTest does not support register"),
-        unregister: () => Effect.die("DesktopBackendPool.layerTest does not support unregister"),
+        register: Effect.fn("DesktopBackendPool.register")(function () {
+          return Effect.die("DesktopBackendPool.layerTest does not support register");
+        }),
+        unregister: Effect.fn("DesktopBackendPool.unregister")(function () {
+          return Effect.die("DesktopBackendPool.layerTest does not support unregister");
+        }),
       });
     }),
   );

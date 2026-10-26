@@ -266,11 +266,14 @@ export const make = Effect.gen(function* () {
     get,
     list,
     findActiveByWorkspaceRoot,
-    getShell: (projectId) => get(projectId).pipe(Effect.map(Option.map(toShell))),
-    listShells: (options) =>
-      list(options?.projectIds === undefined ? undefined : { projectIds: options.projectIds }).pipe(
-        Effect.map((rows) => rows.map(toShell)),
-      ),
+    getShell: Effect.fn("ProjectStoreV2.getShell")(function (projectId) {
+      return get(projectId).pipe(Effect.map(Option.map(toShell)));
+    }),
+    listShells: Effect.fn("ProjectStoreV2.listShells")(function (options) {
+      return list(
+        options?.projectIds === undefined ? undefined : { projectIds: options.projectIds },
+      ).pipe(Effect.map((rows) => rows.map(toShell)));
+    }),
   });
 });
 

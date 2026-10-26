@@ -176,12 +176,13 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
           }
         }),
       );
-      const receive = (chunk: Uint8Array | string) => {
+      // Incoming messages share the session span; frame acknowledgements are frequent.
+      const receive = Effect.fnUntraced(function* (chunk: Uint8Array | string) {
         const message = parseMessage(chunk);
         // Ownership serializes actions in the service. Keep reading so dialog
         // replies and takeover can unblock an action already waiting on the page.
         if (!isAck(message))
-          return canOperate
+          return yield* canOperate
             ? viewer.input(message).pipe(Effect.forkScoped, Effect.asVoid)
             : Effect.void;
         const ack = inFlight;
@@ -189,11 +190,11 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
         inFlight = null;
         pending = null;
         // Forked: Chromium acks are paced and must not hold up input.
-        return Effect.andThen(
+        return yield* Effect.andThen(
           ack ? Effect.forkScoped(ack) : Effect.void,
           next ? sendFrame(next) : Effect.void,
         );
-      };
+      });
       const receiveInput = reader.pull.pipe(
         Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
       );

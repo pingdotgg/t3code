@@ -267,10 +267,11 @@ export const layerModelCatalog = Layer.effect(
   Effect.gen(function* () {
     const manifest = yield* ModelManifest;
     return ModelCatalog.ModelCatalog.of({
-      current: (driverKind) =>
-        manifest.current.pipe(
+      current: Effect.fn("ModelCatalog.current")(function (driverKind) {
+        return manifest.current.pipe(
           Effect.map((data) => resolveProviderCatalog(data, driverKind) ?? undefined),
-        ),
+        );
+      }),
       bundled: (driverKind) =>
         resolveProviderCatalog(BUNDLED_MODEL_MANIFEST, driverKind) ?? undefined,
       refreshInBackground: manifest.refreshInBackground,

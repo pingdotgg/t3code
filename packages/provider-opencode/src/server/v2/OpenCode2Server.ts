@@ -139,10 +139,11 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
       Effect.tap(remember),
     );
     return OpenCode2Server.of({
-      withConnection: (use) =>
-        Effect.suspend(() => (latest === undefined ? connect : Effect.succeed(latest))).pipe(
+      withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
+        return Effect.suspend(() => (latest === undefined ? connect : Effect.succeed(latest))).pipe(
           Effect.flatMap(use),
-        ),
+        );
+      }),
     });
   }
 
@@ -154,11 +155,12 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     verify: (url) => connectTo(url, password, false).pipe(Effect.flatMap(remember)),
   });
   return OpenCode2Server.of({
-    withConnection: (use) =>
-      owner.withServer((server) =>
+    withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
+      return owner.withServer((server) =>
         latest?.url === server.url
           ? use(latest)
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
-      ),
+      );
+    }),
   });
 });

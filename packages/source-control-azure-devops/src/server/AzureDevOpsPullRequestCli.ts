@@ -445,8 +445,8 @@ export const make = Effect.gen(function* () {
   };
 
   return AzureDevOpsPullRequestCli.of({
-    getViewer: (input) =>
-      executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
+    getViewer: Effect.fn("AzureDevOpsPullRequestCli.getViewer")(function (input) {
+      return executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
         Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
           const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
           if (!Result.isSuccess(decoded)) {
@@ -495,10 +495,11 @@ export const make = Effect.gen(function* () {
               }),
             ),
         ),
-      ),
+      );
+    }),
 
-    listPullRequests: (input) =>
-      listPullRequestPage({
+    listPullRequests: Effect.fn("AzureDevOpsPullRequestCli.listPullRequests")(function (input) {
+      return listPullRequestPage({
         cwd: input.cwd,
         repository: input.repository,
         state: input.state,
@@ -509,10 +510,11 @@ export const make = Effect.gen(function* () {
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
         items: [],
-      }),
+      });
+    }),
 
-    getPullRequest: (input) =>
-      executeJson({
+    getPullRequest: Effect.fn("AzureDevOpsPullRequestCli.getPullRequest")(function (input) {
+      return executeJson({
         cwd: input.cwd,
         args: ["repos", "pr", "show", ...detectArgs, "--id", String(input.number)],
       }).pipe(
@@ -540,57 +542,62 @@ export const make = Effect.gen(function* () {
               : Effect.succeed(decoded.success);
           },
         ),
-      ),
+      );
+    }),
 
-    listThreads: (input) =>
-      invoke({
+    listThreads: Effect.fn("AzureDevOpsPullRequestCli.listThreads")(function (input) {
+      return invoke({
         cwd: input.cwd,
         operation: "listThreads",
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
-      }),
+      });
+    }),
 
-    listIterations: (input) =>
-      invoke({
+    listIterations: Effect.fn("AzureDevOpsPullRequestCli.listIterations")(function (input) {
+      return invoke({
         cwd: input.cwd,
         operation: "listIterations",
         resource: "pullRequestIterations",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeIterationsJson,
-      }),
+      });
+    }),
 
-    listIterationChanges: (input) => {
-      const page = (skip: number) =>
-        invoke({
-          cwd: input.cwd,
-          operation: "listIterationChanges",
-          resource: "pullRequestIterationChanges",
-          routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
-          queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
-          maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
-          decode: decodeIterationChangesJson,
-        });
-      const from = (
-        skip: number,
-        collected: ReadonlyArray<AzureDevOpsChangeEntry>,
-      ): Effect.Effect<AzureDevOpsIterationChanges, AzureDevOpsPullRequestCliError> =>
-        page(skip).pipe(
-          Effect.flatMap((answer) => {
-            const changes = [...collected, ...answer.changes];
-            if (answer.nextSkip === null) return Effect.succeed({ changes, truncated: false });
-            return answer.nextSkip <= skip || answer.nextSkip >= MAX_CHANGE_ENTRIES
-              ? Effect.succeed({ changes, truncated: true })
-              : from(answer.nextSkip, changes);
-          }),
-        );
-      return from(0, []);
-    },
+    listIterationChanges: Effect.fn("AzureDevOpsPullRequestCli.listIterationChanges")(
+      function (input) {
+        const page = (skip: number) =>
+          invoke({
+            cwd: input.cwd,
+            operation: "listIterationChanges",
+            resource: "pullRequestIterationChanges",
+            routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
+            queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
+            maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
+            decode: decodeIterationChangesJson,
+          });
+        const from = (
+          skip: number,
+          collected: ReadonlyArray<AzureDevOpsChangeEntry>,
+        ): Effect.Effect<AzureDevOpsIterationChanges, AzureDevOpsPullRequestCliError> =>
+          page(skip).pipe(
+            Effect.flatMap((answer) => {
+              const changes = [...collected, ...answer.changes];
+              if (answer.nextSkip === null) return Effect.succeed({ changes, truncated: false });
+              return answer.nextSkip <= skip || answer.nextSkip >= MAX_CHANGE_ENTRIES
+                ? Effect.succeed({ changes, truncated: true })
+                : from(answer.nextSkip, changes);
+            }),
+          );
+        return from(0, []);
+      },
+    ),
 
-    readItemContent: (input) =>
-      invoke({
+    readItemContent: Effect.fn("AzureDevOpsPullRequestCli.readItemContent")(function (input) {
+      return invoke({
         cwd: input.cwd,
         operation: "readItemContent",
         resource: "items",
@@ -607,53 +614,61 @@ export const make = Effect.gen(function* () {
         ],
         maxOutputBytes: ITEM_CONTENT_MAX_OUTPUT_BYTES,
         decode: decodeItemContentJson,
-      }),
+      });
+    }),
 
-    setPullRequestReviewers: (input) =>
-      input.reviewers.some((reviewer) => !isReviewerName(reviewer))
-        ? Effect.fail(new AzureDevOpsReviewerNameError({ command: "az", cwd: input.cwd }))
-        : azure
-            .execute({
-              cwd: input.cwd,
-              args: [
-                "repos",
-                "pr",
-                "reviewer",
-                input.requested ? "add" : "remove",
-                ...detectArgs,
-                "--id",
-                String(input.number),
-                // Repeating `--reviewers` replaces the earlier list.
-                "--reviewers",
-                ...input.reviewers,
-                "--only-show-errors",
-                "--output",
-                "json",
-              ],
-            })
-            .pipe(Effect.asVoid),
+    setPullRequestReviewers: Effect.fn("AzureDevOpsPullRequestCli.setPullRequestReviewers")(
+      function* (input) {
+        if (input.reviewers.some((reviewer) => !isReviewerName(reviewer))) {
+          return yield* new AzureDevOpsReviewerNameError({ command: "az", cwd: input.cwd });
+        }
+        return yield* azure
+          .execute({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "pr",
+              "reviewer",
+              input.requested ? "add" : "remove",
+              ...detectArgs,
+              "--id",
+              String(input.number),
+              // Repeating `--reviewers` replaces the earlier list.
+              "--reviewers",
+              ...input.reviewers,
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+          })
+          .pipe(Effect.asVoid);
+      },
+    ),
 
-    runPullRequestAction: (input) =>
-      azure
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "repos",
-            "pr",
-            "update",
-            ...detectArgs,
-            "--id",
-            String(input.number),
-            ...actionArgs(input.action, input.mergeMethod),
-            "--only-show-errors",
-            "--output",
-            "json",
-          ],
-        })
-        .pipe(Effect.asVoid),
+    runPullRequestAction: Effect.fn("AzureDevOpsPullRequestCli.runPullRequestAction")(
+      function (input) {
+        return azure
+          .execute({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "pr",
+              "update",
+              ...detectArgs,
+              "--id",
+              String(input.number),
+              ...actionArgs(input.action, input.mergeMethod),
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+          })
+          .pipe(Effect.asVoid);
+      },
+    ),
 
-    updatePullRequest: (input) =>
-      azure
+    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
+      return azure
         .execute({
           cwd: input.cwd,
           args: [
@@ -671,7 +686,8 @@ export const make = Effect.gen(function* () {
             "json",
           ],
         })
-        .pipe(Effect.asVoid),
+        .pipe(Effect.asVoid);
+    }),
   });
 });
 

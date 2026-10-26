@@ -459,90 +459,91 @@ const makeBackendOutputLogShape = (
 ): Effect.Effect<DesktopBackendOutputLogShape> =>
   Option.match(sink, {
     onNone: () => Effect.succeed(DesktopBackendOutputLogNoop),
-    onSome: (logFile) =>
-      Effect.gen(function* () {
-        const sessionRef = yield* Ref.make(Option.none<BackendOutputSession>());
-        const writeFailure = Effect.fn("desktop.observability.backendOutput.writeFailure")(
-          function* (session: BackendOutputSession, details: string) {
-            yield* writeBackendChildLogRecord(logFile, {
-              message: "backend child process failure output start",
-              level: "ERROR",
-              annotations: {
-                component: "desktop-backend-child",
-                runId: session.runId,
-                instanceId: id,
-                phase: "START",
-                details: session.startDetails,
-              },
-            });
-            for (const output of session.chunks) {
-              yield* writeBackendChildLogRecord(logFile, {
-                message: "backend child process output",
-                level: output.streamName === "stderr" ? "ERROR" : "INFO",
-                annotations: {
-                  component: "desktop-backend-child",
-                  runId: session.runId,
-                  instanceId: id,
-                  stream: output.streamName,
-                  text: textDecoder.decode(output.chunk.subarray(output.offset)),
-                },
-              });
-            }
-            yield* writeBackendChildLogRecord(logFile, {
-              message: "backend child process failure output end",
-              level: "ERROR",
-              annotations: {
-                component: "desktop-backend-child",
-                runId: session.runId,
-                instanceId: id,
-                phase: "END",
-                details: sanitizeLogValue(details),
-              },
-            });
+    // The enclosing operation owns the span for this inline handler.
+    onSome: Effect.fnUntraced(function* (logFile) {
+      const sessionRef = yield* Ref.make(Option.none<BackendOutputSession>());
+      const writeFailure = Effect.fn("desktop.observability.backendOutput.writeFailure")(function* (
+        session: BackendOutputSession,
+        details: string,
+      ) {
+        yield* writeBackendChildLogRecord(logFile, {
+          message: "backend child process failure output start",
+          level: "ERROR",
+          annotations: {
+            component: "desktop-backend-child",
+            runId: session.runId,
+            instanceId: id,
+            phase: "START",
+            details: session.startDetails,
           },
-        );
-        return {
-          beginSession: Effect.fn("desktop.observability.backendOutput.beginSession")(function* ({
-            details,
-          }) {
-            const runId = yield* currentDesktopRunId;
-            yield* Ref.set(
-              sessionRef,
-              Option.some({
-                runId,
-                startDetails: sanitizeLogValue(details),
-                chunks: [],
-                byteLength: 0,
-              }),
-            );
-          }),
-          writeOutputChunk: Effect.fnUntraced(function* (streamName, chunk) {
-            if (environment.isDevelopment) {
-              yield* writeDevelopmentConsoleOutput(streamName, chunk);
-            }
-            yield* Ref.update(
-              sessionRef,
-              Option.map((session) => appendBoundedOutputChunk(session, streamName, chunk)),
-            );
-          }),
-          persistFailureSnapshot: Effect.fn(
-            "desktop.observability.backendOutput.persistFailureSnapshot",
-          )(function* ({ details }) {
-            const session = yield* Ref.get(sessionRef);
-            if (Option.isSome(session)) {
-              yield* writeFailure(session.value, details);
-            }
-          }),
-          persistFailure: Effect.fn("desktop.observability.backendOutput.persistFailure")(
-            function* ({ details }) {
-              const session = yield* Ref.modify(sessionRef, (current) => [current, Option.none()]);
-              if (Option.isNone(session)) return;
-              yield* writeFailure(session.value, details);
+        });
+        for (const output of session.chunks) {
+          yield* writeBackendChildLogRecord(logFile, {
+            message: "backend child process output",
+            level: output.streamName === "stderr" ? "ERROR" : "INFO",
+            annotations: {
+              component: "desktop-backend-child",
+              runId: session.runId,
+              instanceId: id,
+              stream: output.streamName,
+              text: textDecoder.decode(output.chunk.subarray(output.offset)),
             },
-          ),
-          discardSession: Ref.set(sessionRef, Option.none()),
-        } satisfies DesktopBackendOutputLogShape;
-      }),
+          });
+        }
+        yield* writeBackendChildLogRecord(logFile, {
+          message: "backend child process failure output end",
+          level: "ERROR",
+          annotations: {
+            component: "desktop-backend-child",
+            runId: session.runId,
+            instanceId: id,
+            phase: "END",
+            details: sanitizeLogValue(details),
+          },
+        });
+      });
+      return {
+        beginSession: Effect.fn("desktop.observability.backendOutput.beginSession")(function* ({
+          details,
+        }) {
+          const runId = yield* currentDesktopRunId;
+          yield* Ref.set(
+            sessionRef,
+            Option.some({
+              runId,
+              startDetails: sanitizeLogValue(details),
+              chunks: [],
+              byteLength: 0,
+            }),
+          );
+        }),
+        writeOutputChunk: Effect.fnUntraced(function* (streamName, chunk) {
+          if (environment.isDevelopment) {
+            yield* writeDevelopmentConsoleOutput(streamName, chunk);
+          }
+          yield* Ref.update(
+            sessionRef,
+            Option.map((session) => appendBoundedOutputChunk(session, streamName, chunk)),
+          );
+        }),
+        persistFailureSnapshot: Effect.fn(
+          "desktop.observability.backendOutput.persistFailureSnapshot",
+        )(function* ({ details }) {
+          const session = yield* Ref.get(sessionRef);
+          if (Option.isSome(session)) {
+            yield* writeFailure(session.value, details);
+          }
+        }),
+        persistFailure: Effect.fn("desktop.observability.backendOutput.persistFailure")(function* ({
+          details,
+        }) {
+          const session = yield* Ref.modify(sessionRef, (current) => [current, Option.none()]);
+          if (Option.isNone(session)) return;
+          yield* writeFailure(session.value, details);
+        }),
+        discardSession: Ref.set(sessionRef, Option.none()),
+      } satisfies DesktopBackendOutputLogShape;
+    }),
   });
 
 const layerBackendOutputLogFactory = Layer.effect(
@@ -589,7 +590,9 @@ const layerBackendOutputLogFactory = Layer.effect(
       });
 
     return DesktopBackendOutputLogFactory.of({
-      forInstance: (id) => makeForId(id),
+      forInstance: Effect.fn("DesktopBackendOutputLogFactory.forInstance")(function (id) {
+        return makeForId(id);
+      }),
     });
   }),
 );

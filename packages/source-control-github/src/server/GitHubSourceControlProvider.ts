@@ -844,8 +844,11 @@ export const make = Effect.gen(function* () {
       headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
       limit: 100,
     }),
-    readChangeRequestTemplate: ({ cwd, treeish }) =>
-      GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
+    readChangeRequestTemplate: Effect.fn("GitHubSourceControlProvider.readChangeRequestTemplate")(
+      function ({ cwd, treeish }) {
+        return GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
+      },
+    ),
     // `createChangeRequest` targets what `resolveRepository` picks: GH_REPO when it parses, else
     // the remote `gh repo set-default` marked (`gh-resolved`). An HTTPS remote keeps a
     // non-default port in the context's host, and the mark is then ignored.
@@ -882,8 +885,12 @@ export const make = Effect.gen(function* () {
     ),
     // `gh pr create` run in the checkout, as an agent in a T3 worktree often does, takes its base
     // from this key.
-    recordBranchBase: ({ cwd, branch, baseBranch }) =>
-      git
+    recordBranchBase: Effect.fn("GitHubSourceControlProvider.recordBranchBase")(function ({
+      cwd,
+      branch,
+      baseBranch,
+    }) {
+      return git
         .execute({
           operation: "GitHubSourceControlProvider.recordBranchBase",
           cwd,
@@ -894,7 +901,8 @@ export const make = Effect.gen(function* () {
           Effect.catch((cause) =>
             Effect.logWarning("Could not record the branch base for gh", { cause }),
           ),
-        ),
+        );
+    }),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "github.com") return undefined;
@@ -904,31 +912,37 @@ export const make = Effect.gen(function* () {
       if (!match) return undefined;
       return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
     },
-    listChangeRequests: (input) =>
-      (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
-        Effect.flatMap((allowReserve) =>
-          listByHead({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            state: input.state,
-            limit: input.limit ?? (input.state === "open" ? 1 : 20),
-            host: contextHost(input.context),
-            context: input.context,
-            allowReserve,
-          }),
-        ),
-        Effect.map((records) => records.map(toChangeRequest)),
-        Effect.mapError(
-          providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
-        ),
-      ),
-    getChangeRequest: (input) =>
-      readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
+    listChangeRequests: Effect.fn("GitHubSourceControlProvider.listChangeRequests")(
+      function (input) {
+        return (
+          input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive
+        ).pipe(
+          Effect.flatMap((allowReserve) =>
+            listByHead({
+              cwd: input.cwd,
+              headSelector: input.headSelector,
+              state: input.state,
+              limit: input.limit ?? (input.state === "open" ? 1 : 20),
+              host: contextHost(input.context),
+              context: input.context,
+              allowReserve,
+            }),
+          ),
+          Effect.map((records) => records.map(toChangeRequest)),
+          Effect.mapError(
+            providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
+          ),
+        );
+      },
+    ),
+    getChangeRequest: Effect.fn("GitHubSourceControlProvider.getChangeRequest")(function (input) {
+      return readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
         Effect.map(toChangeRequest),
         Effect.mapError(
           providerError("getChangeRequest", input.cwd, { reference: input.reference }),
         ),
-      ),
+      );
+    }),
     createChangeRequest: Effect.fn("GitHubSourceControlProvider.createChangeRequest")(
       function* (input) {
         const locator = yield* resolveRepository(input);
@@ -1033,11 +1047,14 @@ export const make = Effect.gen(function* () {
       },
       (effect, input) => effect.pipe(Effect.mapError(providerError("getDefaultBranch", input.cwd))),
     ),
-    checkoutChangeRequest: (input) =>
-      checkoutPullRequest(input).pipe(
-        Effect.mapError(
-          providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
-        ),
-      ),
+    checkoutChangeRequest: Effect.fn("GitHubSourceControlProvider.checkoutChangeRequest")(
+      function (input) {
+        return checkoutPullRequest(input).pipe(
+          Effect.mapError(
+            providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
+          ),
+        );
+      },
+    ),
   });
 });

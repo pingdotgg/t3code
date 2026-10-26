@@ -79,14 +79,15 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
       Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(30) : Duration.zero,
   });
   return CursorSdkCatalog.of({
-    read: (apiKey) =>
-      Effect.all(
+    read: Effect.fn("CursorSdkCatalog.read")(function (apiKey) {
+      return Effect.all(
         {
           user: probes.readUser(apiKey),
           models: Cache.get(modelCache, apiKey),
         },
         { concurrency: "unbounded" },
-      ),
+      );
+    }),
   });
 });
 

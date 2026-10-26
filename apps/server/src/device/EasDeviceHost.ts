@@ -862,8 +862,9 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     summary,
     platformAvailability,
     ensureReady,
-    ensureAgentReady: (onPhase) =>
-      ensureReady(onPhase).pipe(Effect.map((value) => ({ ...value, agentDevice: null }))),
+    ensureAgentReady: Effect.fn("DeviceHost.ensureAgentReady")(function (onPhase) {
+      return ensureReady(onPhase).pipe(Effect.map((value) => ({ ...value, agentDevice: null })));
+    }),
     current: Effect.sync(() => ready),
     stopAgent: Effect.void,
     // Unlike machines the user owns, every running session here is billed.

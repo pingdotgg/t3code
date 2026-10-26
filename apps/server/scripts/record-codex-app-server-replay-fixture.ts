@@ -1164,7 +1164,7 @@ function layerCodex({ recorder }: { readonly recorder: Recorder }) {
   const clientOptions: CodexClient.CodexAppServerClientOptions = {
     logIncoming: true,
     logOutgoing: true,
-    logger: (event) => {
+    logger: Effect.fn("logger")(function (event) {
       if (event.stage === "raw") {
         return Effect.void;
       }
@@ -1215,7 +1215,7 @@ function layerCodex({ recorder }: { readonly recorder: Recorder }) {
         yield* updateVersion;
         yield* recorder.writeRecord(record);
       }).pipe(Effect.ignore);
-    },
+    }),
   };
 
   return Layer.effect(

@@ -50,7 +50,9 @@ const make = Effect.gen(function* () {
 
   return PreviewAgentActivity.of({
     begin,
-    active: (threadId) => Effect.sync(() => turns.has(threadId)),
+    active: Effect.fn("PreviewAgentActivity.active")(function (threadId) {
+      return Effect.sync(() => turns.has(threadId));
+    }),
     changes: PubSub.subscribe(changes),
   });
 });

@@ -114,8 +114,11 @@ export const layerAnalytics = Layer.effect(
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService.AnalyticsService;
     return {
-      record: (properties: Readonly<Record<string, unknown>>) =>
-        analytics.record("provider.turn.completed", properties),
+      record: Effect.fn("ProviderTurnAnalytics.record")(function (
+        properties: Readonly<Record<string, unknown>>,
+      ) {
+        return analytics.record("provider.turn.completed", properties);
+      }),
     };
   }),
 );

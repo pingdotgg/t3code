@@ -382,7 +382,10 @@ export const make = Effect.gen(function* () {
         webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
       });
     }),
-    complete: (response) => Effect.sync(() => broker.complete(response)),
+    // The IPC handler owns the activation-completion span.
+    complete: Effect.fnUntraced(function* (response) {
+      return yield* Effect.sync(() => broker.complete(response));
+    }),
   });
 });
 

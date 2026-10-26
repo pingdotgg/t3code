@@ -207,7 +207,7 @@ export const make = Effect.gen(function* () {
   });
 
   return ElectronWindow.of({
-    create: (options) => {
+    create: Effect.fn("ElectronWindow.create")(function (options) {
       const webPreferences = options.webPreferences;
       const diagnosticOptions = {
         title: options.title ?? null,
@@ -235,13 +235,15 @@ export const make = Effect.gen(function* () {
         try: () => new Electron.BrowserWindow(options),
         catch: (cause) => new ElectronWindowCreateError({ options: diagnosticOptions, cause }),
       });
-    },
+    }),
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
-    setMain: (window) => Ref.set(mainWindowRef, Option.some(window)),
-    clearMain: (window) =>
-      Ref.update(mainWindowRef, (current) => {
+    setMain: Effect.fn("ElectronWindow.setMain")(function (window) {
+      return Ref.set(mainWindowRef, Option.some(window));
+    }),
+    clearMain: Effect.fn("ElectronWindow.clearMain")(function (window) {
+      return Ref.update(mainWindowRef, (current) => {
         if (Option.isNone(current)) {
           return current;
         }
@@ -249,9 +251,10 @@ export const make = Effect.gen(function* () {
           return current;
         }
         return Option.none();
-      }),
-    prepareReveal: (window) =>
-      Effect.promise(async () => {
+      });
+    }),
+    prepareReveal: Effect.fn("ElectronWindow.prepareReveal")(function (window) {
+      return Effect.promise(async () => {
         if (platform !== "win32" || window.isDestroyed()) {
           return false;
         }
@@ -259,9 +262,10 @@ export const make = Effect.gen(function* () {
         return ensureWindowsForegroundFocus()
           .prepare(windowsForegroundFocusTarget(window))
           .catch(() => false);
-      }),
-    reveal: (window) =>
-      Effect.tryPromise({
+      });
+    }),
+    reveal: Effect.fn("ElectronWindow.reveal")(function (window) {
+      return Effect.tryPromise({
         try: async () => {
           if (window.isDestroyed()) {
             return;
@@ -322,7 +326,8 @@ export const make = Effect.gen(function* () {
             channel: null,
             cause,
           }),
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.orDie);
+    }),
     sendAll:
       /* Window broadcasts run for streamed updates; avoid a span per broadcast. */
       Effect.fnUntraced(function* (channel, ...args) {

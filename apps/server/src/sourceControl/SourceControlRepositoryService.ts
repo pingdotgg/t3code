@@ -521,29 +521,39 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Forwarders retain the underlying operation spans.
   return SourceControlRepositoryService.of({
-    lookupRepository: (input) =>
-      lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
-    prepareClone: (input) =>
-      prepareClone(input).pipe(
+    lookupRepository: Effect.fnUntraced(function* (input) {
+      return yield* lookupRepository(input).pipe(
+        mapRepositoryError("lookupRepository", input.provider),
+      );
+    }),
+    prepareClone: Effect.fnUntraced(function* (input) {
+      return yield* prepareClone(input).pipe(
         mapRepositoryError(
           "cloneRepository",
           input.provider ?? SourceControlProviderKind.make("unknown"),
         ),
-      ),
-    cloneRepository: (input, options) =>
-      cloneRepository(input, options).pipe(
+      );
+    }),
+    cloneRepository: Effect.fnUntraced(function* (input, options) {
+      return yield* cloneRepository(input, options).pipe(
         mapRepositoryError(
           "cloneRepository",
           input.provider ?? SourceControlProviderKind.make("unknown"),
         ),
-      ),
-    discardClone: (destinationPath) =>
-      discardClone(destinationPath).pipe(
+      );
+    }),
+    discardClone: Effect.fnUntraced(function* (destinationPath) {
+      return yield* discardClone(destinationPath).pipe(
         mapRepositoryError("discardClone", SourceControlProviderKind.make("unknown")),
-      ),
-    publishRepository: (input) =>
-      publishRepository(input).pipe(mapRepositoryError("publishRepository", input.provider)),
+      );
+    }),
+    publishRepository: Effect.fnUntraced(function* (input) {
+      return yield* publishRepository(input).pipe(
+        mapRepositoryError("publishRepository", input.provider),
+      );
+    }),
   });
 });
 

@@ -1070,33 +1070,57 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       isAvailable: Effect.succeed(stub.isAvailable ?? false),
       listDistros: probeDistros.pipe(Effect.orElseSucceed(() => [])),
       probeDistros,
-      preWarm: () => Effect.void,
-      windowsToWslPath: (distro, windowsPath) =>
-        Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
-      getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
-      getDistroIp: (distro) => Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>()),
-      prepareRuntime: (distro, archive) =>
-        Effect.succeed(
+      preWarm: Effect.fn("DesktopWslEnvironment.preWarm")(function () {
+        return Effect.void;
+      }),
+      windowsToWslPath: Effect.fn("DesktopWslEnvironment.windowsToWslPath")(
+        function (distro, windowsPath) {
+          return Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none());
+        },
+      ),
+      getUserHome: Effect.fn("DesktopWslEnvironment.getUserHome")(function (distro) {
+        return Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>());
+      }),
+      getDistroIp: Effect.fn("DesktopWslEnvironment.getDistroIp")(function (distro) {
+        return Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>());
+      }),
+      prepareRuntime: Effect.fn("DesktopWslEnvironment.prepareRuntime")(function (distro, archive) {
+        return Effect.succeed(
           stub.prepareRuntime?.(distro, archive) ?? {
             ok: false,
             reason: "prepareRuntime stub not configured",
           },
-        ),
-      pruneRuntimes: (distro, runtimeId) => stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void,
-      invalidateRuntime: (distro, runtimeId) =>
-        stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void,
-      probeRuntime: (distro, linuxAppRoot) =>
-        Effect.succeed(
-          stub.probeRuntime?.(distro, linuxAppRoot) ?? { ok: true, resolvedPath: "/usr/bin:/bin" },
-        ),
-      ensureNodePty: (distro, linuxAppRoot, options) =>
-        Effect.succeed(
-          stub.ensureNodePty?.(distro, linuxAppRoot, options) ?? {
-            ok: false,
-            reason: "ensureNodePty stub not configured",
-            fatal: true,
-          },
-        ),
+        );
+      }),
+      pruneRuntimes: Effect.fn("DesktopWslEnvironment.pruneRuntimes")(function (distro, runtimeId) {
+        return stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void;
+      }),
+      invalidateRuntime: Effect.fn("DesktopWslEnvironment.invalidateRuntime")(
+        function (distro, runtimeId) {
+          return stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void;
+        },
+      ),
+      probeRuntime: Effect.fn("DesktopWslEnvironment.probeRuntime")(
+        function (distro, linuxAppRoot) {
+          return Effect.succeed(
+            stub.probeRuntime?.(distro, linuxAppRoot) ?? {
+              ok: true,
+              resolvedPath: "/usr/bin:/bin",
+            },
+          );
+        },
+      ),
+      ensureNodePty: Effect.fn("DesktopWslEnvironment.ensureNodePty")(
+        function (distro, linuxAppRoot, options) {
+          return Effect.succeed(
+            stub.ensureNodePty?.(distro, linuxAppRoot, options) ?? {
+              ok: false,
+              reason: "ensureNodePty stub not configured",
+              fatal: true,
+            },
+          );
+        },
+      ),
     }),
   );
 };
@@ -1151,31 +1175,29 @@ export const layer = Layer.effect(
         Effect.withSpan("desktop.wsl.listDistros"),
       ),
       probeDistros,
-      preWarm: (distro) =>
-        provideSpawner(preWarmImpl(distro)).pipe(Effect.withSpan("desktop.wsl.preWarm")),
+      preWarm: Effect.fn("desktop.wsl.preWarm")(function (distro) {
+        return provideSpawner(preWarmImpl(distro));
+      }),
       windowsToWslPath,
       getUserHome,
       getDistroIp,
-      prepareRuntime: (distro, archive) =>
-        provideSpawner(prepareWslRuntimeImpl(distro, archive, windowsToWslPath)).pipe(
-          Effect.withSpan("desktop.wsl.prepareRuntime"),
-        ),
-      pruneRuntimes: (distro, runtimeId) =>
-        provideSpawner(pruneWslRuntimesImpl(distro, runtimeId)).pipe(
-          Effect.withSpan("desktop.wsl.pruneRuntimes"),
-        ),
-      invalidateRuntime: (distro, runtimeId) =>
-        provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId)).pipe(
-          Effect.withSpan("desktop.wsl.invalidateRuntime"),
-        ),
-      probeRuntime: (distro, linuxAppRoot) =>
-        provideSpawner(probeWslRuntimeImpl(distro, linuxAppRoot)).pipe(
-          Effect.withSpan("desktop.wsl.probeRuntime"),
-        ),
-      ensureNodePty: (distro, linuxAppRoot, options) =>
-        provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(
-          Effect.withSpan("desktop.wsl.ensureNodePty"),
-        ),
+      prepareRuntime: Effect.fn("desktop.wsl.prepareRuntime")(function (distro, archive) {
+        return provideSpawner(prepareWslRuntimeImpl(distro, archive, windowsToWslPath));
+      }),
+      pruneRuntimes: Effect.fn("desktop.wsl.pruneRuntimes")(function (distro, runtimeId) {
+        return provideSpawner(pruneWslRuntimesImpl(distro, runtimeId));
+      }),
+      invalidateRuntime: Effect.fn("desktop.wsl.invalidateRuntime")(function (distro, runtimeId) {
+        return provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId));
+      }),
+      probeRuntime: Effect.fn("desktop.wsl.probeRuntime")(function (distro, linuxAppRoot) {
+        return provideSpawner(probeWslRuntimeImpl(distro, linuxAppRoot));
+      }),
+      ensureNodePty: Effect.fn("desktop.wsl.ensureNodePty")(
+        function (distro, linuxAppRoot, options) {
+          return provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options));
+        },
+      ),
     });
   }),
 );

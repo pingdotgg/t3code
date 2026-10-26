@@ -3623,10 +3623,13 @@ export const make = Effect.gen(function* () {
     withRoutingCredential,
     list,
     filterOptions,
-    listStats: (input) =>
-      Effect.forEach(input.refs, (ref) => canonicalRef(ref).pipe(Effect.option)).pipe(
-        Effect.flatMap((refs) => listStats({ ...input, refs: refs.flatMap(Option.toArray) })),
-      ),
+    // The local operation owns the span; this wrapper only canonicalizes refs.
+    listStats: Effect.fnUntraced(function* (input) {
+      const refs = yield* Effect.forEach(input.refs, (ref) =>
+        canonicalRef(ref).pipe(Effect.option),
+      );
+      return yield* listStats({ ...input, refs: refs.flatMap(Option.toArray) });
+    }),
     summary: credentialCached(summary),
     stack: credentialCached(stack),
     subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(

@@ -786,7 +786,7 @@ export const make = Effect.gen(function* () {
           { ...input, authorNarrowed: actorId !== undefined && input.involvement === "authored" },
           base,
         );
-        const readPage = (rows: number, after: string | null) => {
+        const readPage = Effect.fn("readPage")(function (rows: number, after: string | null) {
           const query = new URLSearchParams({ limit: String(rows), sort: "newest" });
           if (input.state !== "all") query.set("state", input.state);
           if (input.query?.trim()) query.set("q", input.query.trim());
@@ -803,7 +803,7 @@ export const make = Effect.gen(function* () {
             { path: `${base}/pulls?${query}` },
             Json.GitCafePulls,
           ).pipe(Effect.tap((page) => Effect.sync(() => learnAuthors(input.host, page.items))));
-        };
+        });
         if (unresolvedAuthor !== null) {
           // Rows are only ever handed out narrowed by actor, so a continuation always carries on
           // the same narrowed listing.

@@ -235,8 +235,9 @@ export const make = Effect.gen(function* () {
         clientMetadata: presentation.metadata,
         connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      });
     },
+    Effect.provideService(HttpClient.HttpClient, httpClient),
   );
 
   const sessionChanged = () =>
@@ -544,14 +545,17 @@ export const make = Effect.gen(function* () {
 
   return RemoteEnvironmentAuthorization.of({
     authorizeBearer,
-    authorizeDpop: (input) =>
-      authorizeDpop(input).pipe(Effect.withSpan("environment.authorization")),
-    authorizeDpopHttp: (input) =>
-      getDpopToken(input).pipe(
+    authorizeDpop: Effect.fn("environment.authorization")(function (input) {
+      return authorizeDpop(input);
+    }),
+    // The relay tracer must wrap span creation, not just the token request.
+    authorizeDpopHttp: Effect.fnUntraced(function* (input) {
+      return yield* getDpopToken(input).pipe(
         Effect.map(({ token }) => httpAuthorization(token)),
         Effect.withSpan("environment.authorization.http"),
         withRelayClientTracing,
-      ),
+      );
+    }),
   });
 });
 
