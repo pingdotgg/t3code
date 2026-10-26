@@ -1,5 +1,4 @@
 // @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
-/* oxlint-disable unicorn/prefer-add-event-listener -- Each client owns its sockets and their handlers. */
 
 import {
   createDuoControl,

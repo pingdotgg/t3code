@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "unicorn/prefer-add-event-listener": "off",
       "unicorn/prefer-string-starts-ends-with": "off",
       "unicorn/prefer-set-has": "off",
       "unicorn/prefer-array-find": "off",
