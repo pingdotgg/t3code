@@ -728,6 +728,10 @@ it.live("removes clean submodules recursively, including deinitialized repositor
         repo,
         "stored",
       ]);
+      const legacy = `${worktree}/legacy`;
+      yield* command(repo, ["clone", "--no-hardlinks", repo, legacy]);
+      yield* command(worktree, ["submodule", "add", repo, "legacy"]);
+      expect((yield* fs.stat(`${legacy}/.git`)).type).toBe("Directory");
       yield* recordSubmodules();
       yield* command(submodule, ["submodule", "deinit", "stored"]);
       const admin = (yield* command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
