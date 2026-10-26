@@ -1576,14 +1576,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           turnItem,
         };
         pendingPrompts.set(String(requestId), pending);
+        yield* emit({ type: "node.updated", driver: PI_PROVIDER, node });
+        yield* emit({ type: "turn_item.updated", driver: PI_PROVIDER, turnItem });
         yield* emit({
           type: "runtime_request.updated",
           driver: PI_PROVIDER,
           threadId,
           runtimeRequest,
         });
-        yield* emit({ type: "node.updated", driver: PI_PROVIDER, node });
-        yield* emit({ type: "turn_item.updated", driver: PI_PROVIDER, turnItem });
         if (expiresAt !== null) {
           const now = yield* DateTime.now;
           pending.expirationFiber = yield* Effect.sleep(

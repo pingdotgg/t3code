@@ -3649,9 +3649,31 @@ describe("PiAdapterV2", () => {
         title: "Run project extensions?",
         message: "This project has .pi/extensions.",
       });
-      const pending = yield* takeEvent(
-        (event) =>
-          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      const artifacts: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      const pending = yield* takeEvent((event) => {
+        artifacts.push(event);
+        return (
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+        );
+      });
+      if (pending.type !== "runtime_request.updated") return;
+      assert.isTrue(
+        artifacts.some(
+          (event) =>
+            event.type === "node.updated" &&
+            event.node.id === pending.runtimeRequest.nodeId &&
+            event.node.status === "waiting",
+        ),
+        "the node must exist before an immediately answerable request",
+      );
+      assert.isTrue(
+        artifacts.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nodeId === pending.runtimeRequest.nodeId &&
+            event.turnItem.status === "waiting",
+        ),
+        "the card must exist before an immediately answerable request",
       );
       const requestId =
         pending.type === "runtime_request.updated" ? pending.runtimeRequest.id : undefined;
