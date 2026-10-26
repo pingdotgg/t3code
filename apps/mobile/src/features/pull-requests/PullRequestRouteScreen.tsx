@@ -400,7 +400,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const result = useEnvironmentQuery(detailAtom);
   const pullRefresh = usePullToRefresh(detailAtom);
   const { refresh: refreshDetail } = result;
-  useFocusEffect(() => refreshDetail());
+  useFocusEffect(refreshDetail);
   const pr = usePullRequestLiveChecks(params, result.data);
   const summary = params.initialSummary;
   const identity = pr ?? summary;
@@ -894,7 +894,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     route.params.focus ? route.params.path : undefined,
   );
   const { refresh: refreshDetail } = detail;
-  useFocusEffect(() => refreshDetail());
+  useFocusEffect(refreshDetail);
   const { loadMore } = result;
   const parsed = filter.parsed;
   const reviewDraft = usePullRequestReviewDraft(route.params);
