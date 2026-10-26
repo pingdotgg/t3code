@@ -95,6 +95,9 @@ const decodeRequestPaused = Schema.decodeUnknownOption(
     resourceType: Schema.optional(Schema.String),
   }),
 );
+const decodeNetworkRequest = Schema.decodeUnknownOption(
+  Schema.Struct({ requestId: Schema.String }),
+);
 const decodeLogEntryAdded = Schema.decodeUnknownOption(
   Schema.Struct({
     entry: Schema.Struct({
@@ -174,6 +177,7 @@ interface PageEvents {
   readonly consoleMessages: Array<ConsoleMessage>;
   omittedConsoleMessages: number;
   requests: number;
+  readonly loading: Set<string>;
 }
 
 // CDP pipe uses fd 3 in, fd 4 out and NUL-delimited JSON.
@@ -295,8 +299,18 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     const sessionId = message?.sessionId;
     const page = sessionId === undefined ? undefined : pages.get(sessionId);
     if (sessionId === undefined || !page || !message?.method) return yield* Effect.void;
-    if (message.method === "Network.requestWillBeSent") {
-      page.requests += 1;
+    if (message.method.startsWith("Network.")) {
+      const requestId = Option.getOrUndefined(decodeNetworkRequest(message.params))?.requestId;
+      if (requestId === undefined) return yield* Effect.void;
+      if (message.method === "Network.requestWillBeSent") {
+        page.requests += 1;
+        page.loading.add(requestId);
+      } else if (
+        message.method === "Network.loadingFinished" ||
+        message.method === "Network.loadingFailed"
+      ) {
+        page.loading.delete(requestId);
+      }
       return yield* Effect.void;
     }
     if (message.method === "Page.loadEventFired") {
@@ -442,6 +456,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       consoleMessages: [],
       omittedConsoleMessages: 0,
       requests: 0,
+      loading: new Set(),
     };
     pages.set(sessionId, events);
     yield* send("Page.enable", {}, Ignored, sessionId);
@@ -522,9 +537,11 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
 
     /**
      * Undefined when the resize made the page fetch anything, such as a
-     * responsive image or a font, which a fresh load would have waited for.
+     * responsive image or a font, which a fresh load would have waited for. A
+     * resize can also adopt a request already in flight, so one must not start.
      */
     const resize = Effect.fnUntraced(function* (width: number) {
+      if (events.loading.size > 0) return undefined;
       const requests = events.requests;
       yield* send(
         "Emulation.setDeviceMetricsOverride",
