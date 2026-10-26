@@ -1742,7 +1742,7 @@ const make = Effect.gen(function* () {
             ? await Effect.runPromise(
                 findTab(request.threadId, request.tabId).pipe(
                   Effect.catchTags({
-                    ServerBrowserTabNotFoundError: () => Effect.succeed(undefined),
+                    ServerBrowserTabNotFoundError: () => Effect.void,
                   }),
                 ),
               )

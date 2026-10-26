@@ -1557,7 +1557,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ).pipe(
               Effect.timeout("1 second"),
               Effect.map((response) => Object.keys(response.data ?? {})),
-              Effect.catch(() => Effect.succeed(undefined)),
+              Effect.catch(() => Effect.void),
             );
             if (serverNames !== undefined) turn.mcpServerNames = serverNames;
           }

@@ -35,6 +35,7 @@ export class EventLoopMonitor extends Context.Reference<{
    */
   readonly latestNoticeableStall: Effect.Effect<ServerEventLoopStall | undefined>;
 }>("t3/observability/EventLoopMonitor", {
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
   defaultValue: () => ({ latestNoticeableStall: Effect.succeed(undefined) }),
 }) {}
 

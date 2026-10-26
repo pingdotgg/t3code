@@ -19,6 +19,7 @@ export const layer = Layer.succeed(
           browserToolsAvailable: true,
         },
       }),
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     resolve: () => Effect.succeed(undefined),
     touch: () => Effect.void,
     revokeProviderSession: () => Effect.void,

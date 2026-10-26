@@ -144,6 +144,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         Effect.orElseSucceed(() => undefined),
       );
     }
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - Missing process observations are undefined, not void.
     return Effect.succeed(undefined);
   };
 

@@ -56,6 +56,7 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
         credentials.get.pipe(
           Effect.flatMap(
             Option.match({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - The SDK credential API requires undefined, not void.
               onNone: () => Effect.succeed(undefined),
               onSome: (bytes) =>
                 decodeCredentials(new TextDecoder().decode(bytes)).pipe(
