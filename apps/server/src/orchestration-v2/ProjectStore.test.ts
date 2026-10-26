@@ -155,6 +155,22 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
           payload: { projectId, scripts: [], updatedAt: "2026-03-24T00:00:03.000Z" },
         });
         assert.strictEqual(yield* hasCustomTitle(), true);
+        yield* projects.apply({
+          ...event,
+          sequence: 5,
+          eventId: EventId.make("migration:39:project:project-renamed:baseline"),
+          type: "project.created",
+          payload: {
+            projectId,
+            title: "repo",
+            workspaceRoot: "/tmp/repo",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-03-24T00:00:00.000Z",
+            updatedAt: "2026-03-24T00:00:03.000Z",
+          },
+        });
+        assert.strictEqual(yield* hasCustomTitle(), true);
       }),
     );
   },

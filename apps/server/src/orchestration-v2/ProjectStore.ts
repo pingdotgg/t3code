@@ -187,7 +187,7 @@ export const make = Effect.gen(function* () {
           ON CONFLICT (project_id)
           DO UPDATE SET
             title = excluded.title,
-            has_custom_title = excluded.has_custom_title,
+            has_custom_title = MAX(projection_projects.has_custom_title, excluded.has_custom_title),
             workspace_root = excluded.workspace_root,
             default_model_selection_json = excluded.default_model_selection_json,
             default_thread_env_mode = excluded.default_thread_env_mode,
