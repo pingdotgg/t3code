@@ -96,6 +96,8 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
+      // Snapshots shrink their screenshot in the page; the header stands in for the result.
+      if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
         return {
