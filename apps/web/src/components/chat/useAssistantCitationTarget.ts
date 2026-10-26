@@ -1,198 +1,148 @@
-import type { LegendListRef } from "@legendapp/list/react";
-import type { RunId } from "@t3tools/contracts";
-import { useEffect, useRef, useState, type RefObject } from "react";
-import type { TimelineEntry } from "../../session-logic";
-import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { useEffect, useRef, useState } from "react";
 import type { AssistantCitationRequest, AssistantCitationTarget } from "./AssistantCitationSource";
-import { toastManager } from "../ui/toast";
+import type { CitationPhase } from "./citationProcedure";
 
-export interface CitationHistoryPage {
-  readonly loading: boolean;
-  readonly cursor?: string | null;
-  readonly onLoadEarlier: () => void;
+const CITATION_SCROLL_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  " ",
+]);
+
+/** One activation of a citation; virtual row remounts and listeners share it. */
+interface CitationNavigation {
+  readonly target: AssistantCitationTarget;
+  /** Takes over from the live follow for this activation. */
+  readonly activate: () => void;
+  /** Stops this activation for good once another one (or none) replaces it. */
+  readonly retire: () => void;
+  /** Listens for user navigation that stops this activation's pending scroll. */
+  readonly attachDismissal: (viewport: HTMLElement | null) => () => void;
+}
+
+interface CitationSettlement {
+  /** Per activation, not per key: Back/Forward can restore an earlier key. */
+  readonly target: AssistantCitationTarget;
+  /** Dismissed citations also drop their highlight; completed ones keep it. */
+  readonly dismissed: boolean;
 }
 
 export function useAssistantCitationTarget({
   request,
-  entries,
-  rows,
-  listRef,
+  phase,
   viewport,
-  historyLoading,
-  loadEarlier,
-  getTurnFoldRunId,
-  onExpandTurn,
   onManualNavigation,
 }: {
   request: AssistantCitationRequest | null;
-  entries: ReadonlyArray<TimelineEntry>;
-  rows: ReadonlyArray<MessagesTimelineRow>;
-  listRef: RefObject<LegendListRef | null>;
+  phase: CitationPhase | null;
   viewport: HTMLElement | null;
-  historyLoading: boolean;
-  loadEarlier: CitationHistoryPage | null;
-  getTurnFoldRunId: (entryId: string) => RunId | undefined;
-  onExpandTurn: (runId: RunId) => void;
   onManualNavigation: () => void;
 }) {
-  const [ready, setReady] = useState<AssistantCitationTarget | null>(null);
-  const [finishedKey, setFinishedKey] = useState<string | null>(null);
+  const [settlement, setSettlement] = useState<CitationSettlement | null>(null);
   const [listLoaded, setListLoaded] = useState(false);
   const onListLoad = () => setListLoaded(true);
-  const navigationRef = useRef<{
-    target: AssistantCitationTarget;
-    requestedPages: Set<string>;
-    done: boolean;
-  } | null>(null);
 
-  if (ready !== null && ready.key !== request?.key) {
-    setReady(null);
+  // Rows and listeners mutate the activation, so it lives as long as its
+  // request; a target belongs to one request, so returning to an earlier key
+  // never reuses it.
+  const [navigation, setNavigation] = useState<CitationNavigation | null>(null);
+  let current = navigation;
+  if ((request?.key ?? null) !== (navigation?.target.key ?? null)) {
+    current = request ? createCitationNavigation(request) : null;
+    setNavigation(current);
   }
-  if (!request && finishedKey !== null) {
-    setFinishedKey(null);
-  }
-
-  useEffect(() => {
-    if (navigationRef.current && navigationRef.current.target.key !== request?.key) {
-      navigationRef.current.target.activationRef.current.dismissed = true;
-      navigationRef.current.target.activationRef.current.cancelScroll?.();
-    }
-    if (!request) {
-      navigationRef.current = null;
-      return;
-    }
-    if (navigationRef.current?.target.key !== request.key) {
-      const target: AssistantCitationTarget = {
-        ...request,
-        activationRef: { current: { scrolled: false, dismissed: false } },
-        onComplete: () => {
-          if (navigationRef.current?.target !== target) return;
-          navigationRef.current.done = true;
-          // ChatView's thread-open effect can run after our initial opt-out.
-          onManualNavigation();
-          setFinishedKey(target.key);
-        },
-      };
-      navigationRef.current = {
-        target,
-        requestedPages: new Set(),
-        done: false,
-      };
-      onManualNavigation();
-    }
-    if (!viewport || historyLoading) return;
-    const navigation = navigationRef.current;
-    if (navigation.done || navigation.target.activationRef.current.dismissed) return;
-    const fail = (title: string, description: string) => {
-      navigation.done = true;
-      setFinishedKey(navigation.target.key);
-      toastManager.add({ type: "warning", title, description });
+  function createCitationNavigation(next: AssistantCitationRequest): CitationNavigation {
+    let done = false;
+    const activationRef: AssistantCitationTarget["activationRef"] = {
+      current: { scrolled: false, dismissed: false },
     };
-    const source = entries.find(
-      (entry) =>
-        entry.kind === "message" && entry.message.id === navigation.target.citation.messageId,
-    );
-    if (!source) {
-      if (loadEarlier) {
-        if (loadEarlier.loading) return;
-        const cursor = loadEarlier.cursor ?? entries[0]?.id ?? "first";
-        if (navigation.requestedPages.has(cursor) || navigation.requestedPages.size >= 20) {
-          fail(
-            "Could not load the cited response",
-            "Load earlier turns, then click the citation to try again. Your saved quote is unchanged.",
-          );
-          return;
+    const target: AssistantCitationTarget = {
+      ...next,
+      activationRef,
+      onComplete: () => {
+        done = true;
+        // The thread-open follow can run after the scroll started.
+        onManualNavigation();
+        setSettlement({ target, dismissed: false });
+      },
+    };
+    const activate = () => {
+      // The follow must yield before the citation row starts scrolling.
+      if (!done) onManualNavigation();
+    };
+    const retire = () => {
+      activationRef.current.dismissed = true;
+      activationRef.current.cancelScroll?.();
+    };
+    const attachDismissal = (citationViewport: HTMLElement | null) => {
+      // User navigation stops a pending citation scroll; Escape dismisses it outright.
+      const dismiss = (onlyPending: boolean) => {
+        const activation = activationRef.current;
+        if (activation.dismissed || (onlyPending && (activation.scrolled || done))) return;
+        activation.dismissed = true;
+        activation.cancelScroll?.();
+        if (!activation.scrolled && !done) onManualNavigation();
+        done = true;
+        setSettlement({ target, dismissed: true });
+      };
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          dismiss(false);
+        } else if (
+          CITATION_SCROLL_KEYS.has(event.key) &&
+          event.target instanceof Node &&
+          citationViewport?.contains(event.target)
+        ) {
+          dismiss(true);
         }
-        navigation.requestedPages.add(cursor);
-        loadEarlier.onLoadEarlier();
-        return;
-      }
-      fail(
-        "The cited response is unavailable",
-        "It may have been removed. The selected text is still saved in your citation.",
-      );
-      return;
-    }
-    if (source.kind !== "message" || source.message.role !== "assistant") {
-      fail(
-        "The citation does not refer to an assistant response",
-        "The selected text is still saved in your citation.",
-      );
-      return;
-    }
-    const index = rows.findIndex(
-      (row) => row.kind === "message" && row.message.id === navigation.target.citation.messageId,
-    );
-    if (index < 0) {
-      const foldRunId = getTurnFoldRunId(source.id);
-      if (foldRunId) onExpandTurn(foldRunId);
-      return;
-    }
-    if (listLoaded && listRef.current) setReady(navigation.target);
-  }, [
-    entries,
-    getTurnFoldRunId,
-    historyLoading,
-    listLoaded,
-    listRef,
-    loadEarlier,
-    onExpandTurn,
-    onManualNavigation,
-    request,
-    rows,
-    viewport,
-  ]);
+      };
+      const onWheel = (event: WheelEvent) => {
+        if (event.deltaY !== 0) dismiss(true);
+      };
+      const onNavigation = () => dismiss(true);
+      document.addEventListener("keydown", onKeyDown);
+      document.addEventListener("pointerdown", onNavigation, true);
+      citationViewport?.addEventListener("wheel", onWheel, { passive: true });
+      citationViewport?.addEventListener("touchmove", onNavigation, { passive: true });
+      return () => {
+        document.removeEventListener("keydown", onKeyDown);
+        document.removeEventListener("pointerdown", onNavigation, true);
+        citationViewport?.removeEventListener("wheel", onWheel);
+        citationViewport?.removeEventListener("touchmove", onNavigation);
+      };
+    };
+    return { target, activate, retire, attachDismissal };
+  }
 
+  // Retiring is one-way, so it runs when the activation is replaced rather than
+  // in a cleanup: StrictMode and <Activity> replay cleanups on a live activation.
+  // Unmounting needs no retire; the rows observing it unmount with the list.
+  const activatedRef = useRef<CitationNavigation | null>(null);
   useEffect(() => {
-    if (!request) return;
-    const dismiss = (onlyPending: boolean) => {
-      const navigation = navigationRef.current;
-      if (!navigation || navigation.target.key !== request.key) return;
-      const activation = navigation.target.activationRef.current;
-      if (activation.dismissed || (onlyPending && (activation.scrolled || navigation.done))) return;
-      activation.dismissed = true;
-      activation.cancelScroll?.();
-      if (!activation.scrolled && !navigation.done) onManualNavigation();
-      navigation.done = true;
-      setReady(null);
-      setFinishedKey(request.key);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        dismiss(false);
-      } else if (
-        viewport?.contains(event.target as Node) &&
-        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)
-      ) {
-        dismiss(true);
-      }
-    };
-    const onWheel = (event: WheelEvent) => {
-      if (event.deltaY !== 0) dismiss(true);
-    };
-    const onNavigation = () => dismiss(true);
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("pointerdown", onNavigation, true);
-    viewport?.addEventListener("wheel", onWheel, { passive: true });
-    viewport?.addEventListener("touchmove", onNavigation, { passive: true });
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("pointerdown", onNavigation, true);
-      viewport?.removeEventListener("wheel", onWheel);
-      viewport?.removeEventListener("touchmove", onNavigation);
-    };
-  }, [onManualNavigation, request, viewport]);
+    if (activatedRef.current === current) return;
+    activatedRef.current?.retire();
+    activatedRef.current = current;
+    current?.activate();
+  }, [current]);
+  // Escape and pointerdown dismiss before the viewport mounts; the viewport
+  // listeners join once it exists.
+  useEffect(() => current?.attachDismissal(viewport), [current, viewport]);
 
-  const target = ready?.key === request?.key ? ready : null;
-  const positioning = request !== null && finishedKey !== request.key;
-  const sourceRow =
-    target && positioning
-      ? rows.find((row) => row.kind === "message" && row.message.id === target.citation.messageId)
-      : undefined;
+  const settled = current !== null && settlement?.target === current.target ? settlement : null;
+  const target =
+    current !== null && phase?._tag === "ready" && listLoaded && settled?.dismissed !== true
+      ? current.target
+      : null;
+  const positioning = current !== null && phase?._tag !== "failed" && settled === null;
+
   return {
     target,
     positioning,
     onListLoad,
-    alwaysRender: sourceRow ? { keys: [sourceRow.id] } : undefined,
+    alwaysRender:
+      target && positioning && phase?._tag === "ready" ? { keys: [phase.rowId] } : undefined,
   };
 }
