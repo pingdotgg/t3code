@@ -156,6 +156,8 @@ const consoleMessageFromEvent = (method: string, params: unknown): ConsoleMessag
 // Wait for fonts and two paint frames to capture late layout.
 const SETTLE_EXPRESSION =
   "document.fonts.ready.then(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
+// A resize can select another responsive image, which a fresh load would wait for.
+const RESIZE_SETTLE_EXPRESSION = `new Promise((resolve) => requestAnimationFrame(resolve)).then(() => Promise.all([...document.images].filter((image) => !image.complete && image.loading !== "lazy").map((image) => new Promise((resolve) => { image.addEventListener("load", resolve, { once: true }); image.addEventListener("error", resolve, { once: true }); })))).then(() => ${SETTLE_EXPRESSION})`;
 // scrollHeight is at least viewport height; use the root box for shorter pages.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
@@ -491,25 +493,21 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
         return yield* new HtmlRenderBrowserError({ reason: "the page could not be opened" });
       }
       yield* Deferred.await(loaded);
-      return yield* settledHeight;
+      return yield* settledHeight(SETTLE_EXPRESSION);
     });
 
-    const settledHeight = send(
-      "Runtime.evaluate",
-      { expression: SETTLE_EXPRESSION, awaitPromise: true },
-      Ignored,
-      sessionId,
-    ).pipe(
-      Effect.andThen(
-        send(
-          "Runtime.evaluate",
-          { expression: MEASURE_EXPRESSION, returnByValue: true },
-          Measured,
-          sessionId,
+    const settledHeight = (settle: string) =>
+      send("Runtime.evaluate", { expression: settle, awaitPromise: true }, Ignored, sessionId).pipe(
+        Effect.andThen(
+          send(
+            "Runtime.evaluate",
+            { expression: MEASURE_EXPRESSION, returnByValue: true },
+            Measured,
+            sessionId,
+          ),
         ),
-      ),
-      Effect.map((measured) => Math.max(0, Math.ceil(measured.result.value))),
-    );
+        Effect.map((measured) => Math.max(0, Math.ceil(measured.result.value))),
+      );
 
     const resize = (width: number) =>
       send(
@@ -517,7 +515,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
         { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false },
         Ignored,
         sessionId,
-      ).pipe(Effect.andThen(settledHeight));
+      ).pipe(Effect.andThen(settledHeight(RESIZE_SETTLE_EXPRESSION)));
 
     const screenshot = (height: number) =>
       send(
