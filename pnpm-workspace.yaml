@@ -1,5 +1,6 @@
 packages:
   - apps/*
+  - evals
   - infra/*
   - oxlint-plugin-t3code
   - packages/*

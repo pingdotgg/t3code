@@ -11,22 +11,22 @@ import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as CodexTextGeneration from "../src/textGeneration/CodexTextGeneration.ts";
-import { threadTitleEvaluationCases } from "./threadTitleEvaluationCases.ts";
+import * as CodexTextGeneration from "../../apps/server/src/textGeneration/CodexTextGeneration.ts";
+import { threadTitleEvaluationCases } from "./cases.ts";
 import {
   formatThreadTitleContext,
   type ThreadTitleMessage,
 } from "@t3tools/provider-core/server/threadTitleContext";
-import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
-import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
-import * as SourceControlBuiltInDrivers from "../src/sourceControl/builtInDrivers.ts";
-import * as ServerSettings from "../src/serverSettings.ts";
-import * as VcsProcess from "../src/vcs/VcsProcess.ts";
-import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
-import * as VcsProjectConfig from "../src/vcs/VcsProjectConfig.ts";
-import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
-import * as ProcessRunner from "../src/processRunner.ts";
-import * as ServerConfig from "../src/config.ts";
+import * as ThreadTitleLinks from "../../apps/server/src/textGeneration/ThreadTitleLinks.ts";
+import * as SourceControlProviderRegistry from "../../apps/server/src/sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlBuiltInDrivers from "../../apps/server/src/sourceControl/builtInDrivers.ts";
+import * as ServerSettings from "../../apps/server/src/serverSettings.ts";
+import * as VcsProcess from "../../apps/server/src/vcs/VcsProcess.ts";
+import * as VcsDriverRegistry from "../../apps/server/src/vcs/VcsDriverRegistry.ts";
+import * as VcsProjectConfig from "../../apps/server/src/vcs/VcsProjectConfig.ts";
+import * as GitVcsDriver from "../../apps/server/src/vcs/GitVcsDriver.ts";
+import * as ProcessRunner from "../../apps/server/src/processRunner.ts";
+import * as ServerConfig from "../../apps/server/src/config.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
