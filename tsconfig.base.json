@@ -24,6 +24,7 @@
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "effectFn": ["span", "inferred-span", "suggested-span"],
         "diagnosticSeverity": {
+          "runEffectInsideEffect": "error",
           "flatMapConditionalToFilterOrFail": "error",
           "catchConditionalRefailToCatchIf": "error",
           "tryCatchInEffectGen": "error",
