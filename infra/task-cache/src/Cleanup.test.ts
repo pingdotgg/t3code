@@ -2,7 +2,6 @@
 import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { cleanup } from "../vendor/vite-plus-remote-cache-cloudflare/src/database.ts";
 import * as Cache from "./Cache.ts";
@@ -89,12 +88,10 @@ it.effect("cleans three full disjoint batches within the D1 invocation budget", 
         },
       } as unknown as Parameters<typeof cleanup>[0];
       yield* Cleanup.run().pipe(
-        Effect.provide(
-          Layer.succeed(Cache.Cache, {
-            handle: () => Effect.die("unused"),
-            cleanup: Effect.promise(() => cleanup(env)),
-          }),
-        ),
+        Effect.provideService(Cache.Cache, {
+          handle: () => Effect.die("unused"),
+          cleanup: Effect.promise(() => cleanup(env)),
+        }),
       );
       expect(claims.map((claim) => claim.length)).toEqual([256, 256, 256]);
       expect(new Set(claims.flat()).size).toBe(768);
