@@ -158,7 +158,8 @@ const SETTLE_EXPRESSION =
   "document.fonts.ready.then(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
 // A resize can select another responsive image, which a fresh load would wait for. Search open
 // shadow roots too, and poll `complete`: a dropped pending request fires neither load nor error.
-const RESIZE_SETTLE_EXPRESSION = `new Promise((resolve) => requestAnimationFrame(() => { const images = []; const collect = (root) => { for (const element of root.querySelectorAll("*")) { if (element instanceof HTMLImageElement && element.loading !== "lazy") images.push(element); if (element.shadowRoot) collect(element.shadowRoot); } }; collect(document); (function wait() { if (images.every((image) => image.complete)) resolve(); else requestAnimationFrame(wait); })(); })).then(() => ${SETTLE_EXPRESSION})`;
+// Settling runs resize observers, which can swap images again; a few rounds bound rotating images.
+const RESIZE_SETTLE_EXPRESSION = `(async () => { const frame = () => new Promise((resolve) => requestAnimationFrame(resolve)); const pending = (root = document) => [...root.querySelectorAll("*")].some((element) => (element instanceof HTMLImageElement && element.loading !== "lazy" && !element.complete) || (element.shadowRoot !== null && pending(element.shadowRoot))); for (let round = 0; round < 5; round += 1) { await frame(); while (pending()) await frame(); await ${SETTLE_EXPRESSION}; if (!pending()) return true; } return true; })()`;
 // scrollHeight is at least viewport height; use the root box for shorter pages.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
