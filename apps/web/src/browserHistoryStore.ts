@@ -421,10 +421,9 @@ export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: num
 }
 
 /**
- * Titles only update entries already in history, so they apply on settle and on
- * visit. History is shared across a project's threads and settled sessions stay
- * retained, so a visit only fills untitled entries: replaying this thread's
- * older settle would clobber a newer title. Settles apply what just changed.
+ * History is shared across a project's threads and settled sessions are retained,
+ * so replaying an old settle would clobber another thread's newer title. Visits
+ * only fill untitled entries; settles apply only pages that loaded or retitled.
  */
 function recordPreviewTitles(
   ref: ScopedThreadRef,
@@ -453,9 +452,15 @@ function recordPreviewTitles(
     "urls" in only
       ? new Set(only.urls.map(titleKey).filter((key) => key !== null && !titled.has(key)))
       : null;
+  // Resizes and list reconciles replace a session without loading a new page.
+  const settledAgain = (session: PreviewSessionSnapshot, previous?: PreviewSessionSnapshot) =>
+    previous?.navStatus._tag === "Success" &&
+    session.navStatus._tag === "Success" &&
+    previous.navStatus.url === session.navStatus.url &&
+    previous.navStatus.title === session.navStatus.title;
   const include = (session: PreviewSessionSnapshot, url: string) =>
     "changedSince" in only
-      ? only.changedSince[session.tabId] !== session
+      ? !settledAgain(session, only.changedSince[session.tabId])
       : (visitKeys?.has(titleKey(url)) ?? false);
   // Tabs can share a URL; applying oldest first lets the newest settle win.
   const sessions = Object.values(preview.sessions).toSorted((a, b) =>

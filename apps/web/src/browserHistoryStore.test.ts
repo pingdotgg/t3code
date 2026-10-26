@@ -240,6 +240,19 @@ describe("useBrowserHistoryStore", () => {
     ).toBe("New");
   });
 
+  it("keeps another thread's newer title when this thread's unchanged tab is re-sent", () => {
+    const otherThreadRef = { ...threadRef, threadId: ThreadId.make("thread-2") };
+    const store = useBrowserHistoryStore.getState();
+    store.registerThreadProject(threadRef, "proj-a");
+    store.registerThreadProject(otherThreadRef, "proj-a");
+    recordVisitForThread(threadRef, "http://a.test/", 1);
+    settle("http://a.test/", "Old", "tab_a", threadRef);
+    settle("http://a.test/", "New", "tab_a", otherThreadRef);
+    // A resize or a list reconcile replaces the session without a new page load.
+    settle("http://a.test/", "Old", "tab_a", threadRef);
+    expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBe("New");
+  });
+
   it("keeps another thread's newer title when this thread revisits the same url", () => {
     const otherThreadRef = { ...threadRef, threadId: ThreadId.make("thread-2") };
     const store = useBrowserHistoryStore.getState();
