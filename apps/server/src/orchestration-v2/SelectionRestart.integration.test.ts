@@ -1298,7 +1298,7 @@ it.live.each(["exclusive", "shared"] as const)(
               ?.cwd,
             targetCwd,
           );
-          assert.deepEqual(yield* orchestrator.dispatch(binding), bound);
+          assert.deepEqual(yield* orchestrator.dispatch(binding), { ...bound, replayed: true });
           for (const worktreePath of [undefined, targetCwd]) {
             const rejected = yield* orchestrator
               .dispatch({
