@@ -3,10 +3,11 @@ import type { EnvironmentId, PreviewSessionSnapshot, ThreadId } from "@t3tools/c
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { useAppForeground } from "../../lib/appState";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { browserTabTitle } from "./browserTabs";
 import { PreviewStreamWebView } from "./PreviewStreamWebView";
@@ -41,13 +42,7 @@ export function ThreadBrowserFloat(props: {
     if (opened !== undefined) setTabId(opened.tabId);
   }, [props.loaded, props.tabs]);
   const focused = useIsFocused();
-  const [foreground, setForeground] = useState(AppState.currentState !== "background");
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) =>
-      setForeground(state !== "background"),
-    );
-    return () => subscription.remove();
-  }, []);
+  const foreground = useAppForeground();
   const tab = props.tabs.find((entry) => entry.tabId === tabId) ?? null;
   const onOpen = props.onOpen;
   const open = useCallback(() => {

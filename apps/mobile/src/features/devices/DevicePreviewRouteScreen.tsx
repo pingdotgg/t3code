@@ -12,7 +12,7 @@ import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { AppState, BackHandler, Pressable, StatusBar, View } from "react-native";
+import { Pressable, StatusBar, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -27,6 +27,8 @@ import {
   findHeaderMenuAction,
 } from "../../components/ui/headerMenu.android";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
+import { useAppForeground } from "../../lib/appState";
+import { useHardwareBack } from "../../lib/backHandler";
 import { deriveBottomControlInsets } from "../../lib/reserved-regions";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from "../../state/device";
@@ -88,7 +90,7 @@ export function DevicePreviewScreen({
   const handleBounds = deriveBottomControlInsets(useNativeColumnLayoutMetrics());
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
-  const [foreground, setForeground] = useState(AppState.currentState !== "background");
+  const foreground = useAppForeground();
   const [selectedKey, setSelectedKey] = useState<string | null>(initialDeviceKey ?? null);
   const [inputConnected, setInputConnected] = useState(false);
   const [streamAttempt, setStreamAttempt] = useState(0);
@@ -108,12 +110,6 @@ export function DevicePreviewScreen({
     [embedded],
   );
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) =>
-      setForeground(state !== "background"),
-    );
-    return () => subscription.remove();
-  }, []);
-  useEffect(() => {
     if (focused && state.data !== null && previews.length === 0) onClose();
   }, [focused, state.data, previews.length, onClose]);
   useEffect(() => {
@@ -127,14 +123,10 @@ export function DevicePreviewScreen({
     });
     return () => subscription.remove();
   }, [focused, foreground, embedded]);
-  useEffect(() => {
-    if (controlsVisible) return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      setControlsVisible(true);
-      return true;
-    });
-    return () => subscription.remove();
-  }, [controlsVisible]);
+  useHardwareBack(!controlsVisible, () => {
+    setControlsVisible(true);
+    return true;
+  });
 
   const shutDownDevice = async () => {
     if (!preview || shuttingDown) return;

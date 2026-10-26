@@ -1,12 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  BackHandler,
-  Keyboard,
-  Pressable,
-  TextInput,
-  type TextInputInstance,
-  View,
-} from "react-native";
+import { useCallback, useRef, useState } from "react";
+import { Keyboard, Pressable, TextInput, type TextInputInstance, View } from "react-native";
+import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AndroidWorkspaceSidebarButton } from "../../features/layout/workspace-sidebar-toolbar";
@@ -34,14 +28,10 @@ export function AppBar(props: AppBarProps) {
     setSearchOpen(false);
     Keyboard.dismiss();
   }, [onSearchChange]);
-  useEffect(() => {
-    if (!searching || search?.mode === "inline") return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      closeSearch();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [closeSearch, searching, search?.mode]);
+  useHardwareBack(searching && search?.mode !== "inline", () => {
+    closeSearch();
+    return true;
+  });
   const menuView = props.menus?.map((menu) => (
     <Menu
       key={menu.title}
