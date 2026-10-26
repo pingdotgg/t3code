@@ -139,11 +139,12 @@ function ThreadLineageGroup(props: {
       {props.label ? (
         <ThreadDetailsControl aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-          <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{props.label}</span>
-          <span aria-hidden className="min-w-2 flex-1" />
+          <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
+            {props.label}
+          </span>
           {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
           {expanded ? null : (
-            <span className="text-xs font-normal tabular-nums text-muted-foreground">
+            <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
               {props.rows.length}
             </span>
           )}
