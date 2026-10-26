@@ -1,12 +1,12 @@
-import { RegistryContext } from "@effect/atom-react";
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
+import type { AnyRouter } from "@tanstack/react-router";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { fakeTimers, render, stubGlobal, type Screen } from "../../test/render";
+import { fakeTimers, stubGlobal } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -16,12 +16,7 @@ const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   sound: vi.fn(),
   badge: vi.fn(),
-  environmentIds: ["one", "two"],
-}));
-vi.mock(import("@tanstack/react-router"), async (original) => ({
-  ...(await original()),
-  useNavigate: (() => state.navigate) as never,
-  useParams: (() => ({})) as never,
+  settingsListeners: new Set<() => void>(),
 }));
 vi.mock(import("./ui/toast"), async (original) => {
   const actual = await original();
@@ -37,16 +32,29 @@ vi.mock(import("../state/shell"), async (original) => {
     },
   };
 });
-vi.mock(import("../state/environments"), async (original) => ({
-  ...(await original()),
-  useEnvironmentIds: (() => state.environmentIds) as never,
-}));
+vi.mock(import("../state/presentation"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentSummaries: {
+      ...actual.environmentSummaries,
+      // Read lazily: the factory runs before this module's own bindings exist.
+      get environmentIdsAtom() {
+        return environmentIdsAtom as never;
+      },
+    },
+  };
+});
 vi.mock(import("../hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useClientSettings: ((
-    select: (settings: { notificationMode: string; inAppNotificationsEnabled: boolean }) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp })) as never,
-  getClientSettings: (() => ({ notificationMode: state.mode })) as never,
+  subscribeClientSettings: ((listener: () => void) => {
+    state.settingsListeners.add(listener);
+    return () => state.settingsListeners.delete(listener);
+  }) as never,
+  getClientSettings: (() => ({
+    notificationMode: state.mode,
+    inAppNotificationsEnabled: state.inApp,
+  })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),
@@ -55,10 +63,11 @@ vi.mock(import("../threadNotifications"), async (original) => ({
   setNotificationBadge: state.badge,
 }));
 
-import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
+import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
+const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
@@ -155,8 +164,8 @@ function shell(overrides: Partial<typeof thread> = {}, ...others: Partial<typeof
     }),
   };
 }
-// The mocked modules read `state`, the registry and the focus flags, so every test starts by
-// resetting them. The first render is left to the test because some tests change state first.
+// The mocked modules read `state` and the focus flags, so every test resets them before
+// starting the service.
 function setup() {
   vi.clearAllMocks();
   const stack = new AsyncDisposableStack();
@@ -165,7 +174,8 @@ function setup() {
   stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
-  state.environmentIds = ["one", "two"];
+  state.settingsListeners.clear();
+  registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
   state.shells.set("two", shell());
   focused = false;
@@ -180,19 +190,18 @@ function setup() {
       .spyOn(document, "visibilityState", "get")
       .mockImplementation(() => visibility as DocumentVisibilityState),
   );
-  const ui = () => (
-    <RegistryContext.Provider value={testRegistry}>
-      <ThreadNotificationCoordinator />
-    </RegistryContext.Provider>
-  );
-  let screen: Screen | undefined;
+  const router = {
+    state: { matches: [{ params: {} }] },
+    navigate: state.navigate,
+  } as unknown as AnyRouter;
   return {
-    ui,
-    async render() {
-      if (screen) await screen.rerender(ui());
-      else screen = stack.use(await render(ui()));
+    start: () => {
+      stack.defer(startThreadNotifications(testRegistry, router));
     },
-    unmount: () => screen!.unmount(),
+    setEnvironmentIds: (ids: ReadonlyArray<string>) => testRegistry.set(environmentIdsAtom, ids),
+    changeSettings: () => {
+      for (const listener of state.settingsListeners) listener();
+    },
     [Symbol.asyncDispose]: () => stack.disposeAsync(),
   };
 }
@@ -201,9 +210,8 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "badges %s and clears when notifications are disabled",
   async (flag) => {
     await using app = setup();
-    await app.render();
+    app.start();
     state.shells.set("one", shell({ [flag]: true }));
-    await app.render();
     expect(state.badge).toHaveBeenLastCalledWith(1);
     const notification = TestNotification.sent[0]!;
     notification.dispatchEvent(new Event("click"));
@@ -212,7 +220,7 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
       params: { environmentId: EnvironmentId.make("one"), threadId: "thread" },
     });
     state.mode = "sound";
-    await app.render();
+    app.changeSettings();
     expect(state.badge).toHaveBeenLastCalledWith(0);
     expect(notification.close).toHaveBeenCalled();
   },
@@ -220,20 +228,17 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
 
 it("holds a completion through a continuation gap and notifies once it settles", async () => {
   await using app = setup();
-  await app.render();
+  app.start();
   using _timers = fakeTimers();
   const finished = (turnId: string, completedAt: string) => ({
     latestTurn: { turnId, state: "completed", completedAt },
   });
   state.shells.set("one", shell(finished("turn-1", "2026-09-13T07:00:01.000Z")));
-  await app.render();
   state.shells.set(
     "one",
     shell({ latestTurn: { turnId: "turn-2", state: "running", completedAt: null } }),
   );
-  await app.render();
   state.shells.set("one", shell(finished("turn-2", "2026-09-13T07:00:02.000Z")));
-  await app.render();
   expect(TestNotification.sent).toEqual([]);
   await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS - 1);
   expect(TestNotification.sent).toEqual([]);

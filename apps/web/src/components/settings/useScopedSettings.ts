@@ -14,11 +14,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
-import {
-  persistClientSettingsPatch,
-  useMergedSettings,
-  useMigrateModelPreferences,
-} from "../../hooks/useSettings";
+import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -38,7 +34,6 @@ export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const { target } = useSettingsScope();
-  useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
   return useMergedSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
