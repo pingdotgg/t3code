@@ -88,26 +88,57 @@ export function setComposerContextImporting(draftKey: string, importing: boolean
   appAtomRegistry.set(composerContextImportsAtom, next);
 }
 
-let lastComposerSelection: { draftKey: string; text: string; start: number; end: number } | null =
-  null;
+interface ComposerDraftSelection {
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+// Keyed by draft so a caret move in one composer neither replaces another draft's caret
+// nor notifies its readers. Kept alive so the caret survives the composer unmounting.
+const composerDraftSelectionAtom = Atom.family((_draftKey: string) =>
+  Atom.make<ComposerDraftSelection | null>(null).pipe(
+    Atom.keepAlive,
+    Atom.withLabel("mobile:composer-draft-selection"),
+  ),
+);
+const NO_COMPOSER_DRAFT_SELECTION_ATOM = Atom.make<ComposerDraftSelection | null>(null);
 
 export function rememberComposerDraftSelection(
   draftKey: string,
   text: string,
   selection: { start: number; end: number },
 ): void {
-  lastComposerSelection = { draftKey, text, ...selection };
+  appAtomRegistry.set(composerDraftSelectionAtom(draftKey), { text, ...selection });
+}
+
+function matchingComposerDraftSelection(
+  selection: ComposerDraftSelection | null,
+  text: string,
+): { start: number; end: number } | null {
+  if (selection?.text !== text) return null;
+  return { start: selection.start, end: selection.end };
 }
 
 /** Read the post-chip-insertion selection or the editor restores the pre-insert caret before the chip. */
-export function readComposerDraftSelection(
+function readComposerDraftSelection(
   draftKey: string,
   text: string,
 ): { start: number; end: number } | null {
-  if (lastComposerSelection?.draftKey !== draftKey || lastComposerSelection.text !== text) {
-    return null;
-  }
-  return { start: lastComposerSelection.start, end: lastComposerSelection.end };
+  return matchingComposerDraftSelection(
+    appAtomRegistry.get(composerDraftSelectionAtom(draftKey)),
+    text,
+  );
+}
+
+export function useComposerDraftSelection(
+  draftKey: string | null,
+  text: string,
+): { start: number; end: number } | null {
+  const selection = useAtomValue(
+    draftKey === null ? NO_COMPOSER_DRAFT_SELECTION_ATOM : composerDraftSelectionAtom(draftKey),
+  );
+  return draftKey === null ? null : matchingComposerDraftSelection(selection, text);
 }
 
 export interface ComposerDraftInsertion {
@@ -133,8 +164,7 @@ function contextInsertionRange(
   draft: ComposerDraft,
   target?: ComposerDraftInsertion,
 ) {
-  const captured =
-    target ?? (lastComposerSelection?.draftKey === draftKey ? lastComposerSelection : null);
+  const captured = target ?? appAtomRegistry.get(composerDraftSelectionAtom(draftKey));
   // Append after text edits during writes; caret-only moves preserve the captured insertion range.
   const selection = captured?.text === draft.text ? captured : null;
   const start = Math.max(0, Math.min(selection?.start ?? draft.text.length, draft.text.length));
@@ -307,12 +337,10 @@ function draftWithInsertedContext(
   for (const record of content.context.records) records.set(record.contextId, record);
   const context = referencedComposerContext(text, { version: 1, records: [...records.values()] });
   if ((context?.records.length ?? 0) > COMPOSER_CONTEXT_MAX_RECORDS) return null;
-  lastComposerSelection = {
-    draftKey,
-    text,
+  rememberComposerDraftSelection(draftKey, text, {
     start: start + insertion.length,
     end: start + insertion.length,
-  };
+  });
   return withReferencedContextFiles(draft, text, context);
 }
 
