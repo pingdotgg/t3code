@@ -22,7 +22,9 @@ vi.mock("expo-audio", () => ({
 import {
   createVoiceInputTarget,
   VoiceInputSession,
+  type VoiceInputSessionDependencies,
   type VoiceInputTarget,
+  type VoiceRecordingSample,
 } from "./voiceInputSession";
 
 function createTarget(
@@ -34,10 +36,17 @@ function createTarget(
   return createVoiceInputTarget(ownerKey, readText, commit, selection, () => () => {});
 }
 
-function createSession(recordingAudio?: {
-  configureRecording: () => Promise<void>;
-  releaseRecording: () => Promise<void>;
-}) {
+function createSession(
+  overrides?: Partial<
+    Pick<
+      VoiceInputSessionDependencies,
+      "configureRecording" | "releaseRecording" | "sampleRecording"
+    >
+  >,
+) {
+  const releaseKeepAwake = vi.fn();
+  const keepAwake = vi.fn(() => releaseKeepAwake);
+  const publishAudioLevels = vi.fn();
   const recorder = {
     uri: "file:///voice.m4a",
     prepareToRecordAsync: vi.fn(async () => {}),
@@ -54,11 +63,13 @@ function createSession(recordingAudio?: {
     requestPermission: async () => ({ granted: true, canAskAgain: true }),
     configureRecording: async () => {},
     releaseRecording: vi.fn(async () => {}),
-    ...recordingAudio,
     deleteRecording: vi.fn(),
-    onStateChange: vi.fn(),
+    sampleRecording: () => null,
+    publishAudioLevels,
+    keepAwake,
+    ...overrides,
   });
-  return { session, recorder, prepare };
+  return { session, recorder, prepare, keepAwake, releaseKeepAwake, publishAudioLevels };
 }
 
 describe("global voice input", () => {
@@ -343,5 +354,60 @@ describe("global voice input", () => {
     expect(recorder.record).toHaveBeenCalledTimes(1);
     expect(oldCommit).not.toHaveBeenCalled();
     expect(nextCommit).toHaveBeenCalledWith("second spoken text", { start: 18, end: 18 });
+  });
+
+  it("holds the screen awake and meters only while recording", async () => {
+    vi.useFakeTimers();
+    try {
+      let sample: VoiceRecordingSample = { durationMillis: 0, metering: -100 };
+      const { session, keepAwake, releaseKeepAwake, publishAudioLevels } = createSession({
+        sampleRecording: () => sample,
+      });
+      const snapshots: number[] = [];
+      session.subscribe(() => snapshots.push(session.getSnapshot().elapsedSeconds));
+
+      await session.start(createTarget("first", () => "first", vi.fn(), { start: 5, end: 5 }));
+      expect(session.getSnapshot().state.phase).toBe("recording");
+      expect(keepAwake).toHaveBeenCalledTimes(1);
+      // Silence on a silent history publishes nothing.
+      expect(publishAudioLevels).not.toHaveBeenCalled();
+
+      sample = { durationMillis: 2_400, metering: 0 };
+      vi.advanceTimersByTime(80);
+      expect(session.getSnapshot().elapsedSeconds).toBe(2);
+      expect(publishAudioLevels).toHaveBeenLastCalledWith(expect.arrayContaining([1]));
+
+      await session.controller.stop();
+      expect(releaseKeepAwake).toHaveBeenCalledTimes(1);
+      const publishedLevels = publishAudioLevels.mock.calls.length;
+      const publishedSnapshots = snapshots.length;
+      vi.advanceTimersByTime(800);
+      expect(publishAudioLevels).toHaveBeenCalledTimes(publishedLevels);
+      expect(snapshots).toHaveLength(publishedSnapshots);
+      // The finished recording's time stays readable until the next one starts.
+      expect(session.getSnapshot().elapsedSeconds).toBe(2);
+
+      sample = { durationMillis: 0, metering: -100 };
+      await session.start(createTarget("first", () => "first", vi.fn(), { start: 5, end: 5 }));
+      expect(session.getSnapshot().elapsedSeconds).toBe(0);
+      expect(publishAudioLevels).toHaveBeenLastCalledWith(expect.not.arrayContaining([1]));
+      expect(keepAwake).toHaveBeenCalledTimes(2);
+      session.dispose();
+      expect(releaseKeepAwake).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes which owners are focused", () => {
+    const { session } = createSession();
+    const listener = vi.fn();
+    session.subscribe(listener);
+    session.setOwnerFocused("first", true);
+    session.setOwnerFocused("first", true);
+    expect(session.getSnapshot().focusedOwners).toEqual(new Set(["first"]));
+    expect(listener).toHaveBeenCalledTimes(1);
+    session.setOwnerFocused("first", false);
+    expect(session.getSnapshot().focusedOwners.size).toBe(0);
   });
 });
