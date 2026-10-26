@@ -61,6 +61,17 @@ export function resolveQueuedEditExit(input: {
   return input.threadDraftEmpty ? "kept" : "discarded";
 }
 
+/**
+ * Why a queued message can't be opened in the composer now, or null when it
+ * can. An open question takes the composer over for its answer, so an edit
+ * begun then would happen out of sight and could be sent before it is seen.
+ */
+export function queuedRunEditBlockedReason(input: {
+  readonly openQuestionCount: number;
+}): string | null {
+  return input.openQuestionCount > 0 ? "Answer the question to edit queued messages" : null;
+}
+
 interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;

@@ -19,6 +19,8 @@ export function resolveThreadQueueRowControls(input: {
   readonly canPromoteToSteer: boolean;
   readonly canSendNow: boolean;
   readonly canReorder: boolean;
+  /** Something else holds the composer, such as an open question. */
+  readonly editBlocked?: boolean;
   readonly index: number;
   readonly isEditing?: boolean;
   /** A guest's message keeps the guest's words; the owner can cancel it, not rewrite it. */
@@ -33,7 +35,8 @@ export function resolveThreadQueueRowControls(input: {
     canDismiss: !input.busy,
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
-    canEdit: mutationEnabled && !isEditing && input.isGuestMessage !== true,
+    canEdit:
+      mutationEnabled && !isEditing && input.isGuestMessage !== true && input.editBlocked !== true,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
     canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
