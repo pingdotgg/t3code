@@ -79,7 +79,7 @@ export const writeTriageSession = Effect.fn("triage.writeTriageSession")(functio
         dbPath: paths.dbPath,
         settingsPath: paths.settingsPath,
         logsDir: paths.logsDir,
-        serviceLogPath: path.join(paths.logsDir, BootService.BOOT_SERVICE_LOG_FILE),
+        serviceLogPath: yield* BootService.resolveBootServiceLogPath(paths.logsDir),
         desktopBackendLogGlob: path.join(paths.logsDir, "server-child*.log*"),
         relayClientLogPath: path.join(paths.logsDir, ManagedEndpointRuntime.RELAY_CLIENT_LOG_FILE),
         serverTracePath: paths.serverTracePath,
