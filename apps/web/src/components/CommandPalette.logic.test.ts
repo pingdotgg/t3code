@@ -10,6 +10,7 @@ import {
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
+  resolveNewThreadProjectGroups,
   reduceCommandPaletteUiState,
   resolveAddProjectEntry,
   createCommandPaletteSearchState,
@@ -959,5 +960,47 @@ describe("newThreadNoProjectIndex", () => {
   it("keeps a pinned or current scratch project in its own place", () => {
     expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
     expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
+  });
+});
+
+describe("open new-thread project choices", () => {
+  it("uses current choices and actions while preserving other submenus", async () => {
+    const staleRun = vi.fn(async () => undefined);
+    const currentRun = vi.fn(async () => undefined);
+    const action = (value: string, run = staleRun) => ({
+      kind: "action" as const,
+      value,
+      title: value,
+      searchTerms: [value],
+      icon: null,
+      run,
+    });
+    const stored = [
+      {
+        value: "new-thread-in",
+        label: "Projects",
+        items: [action("scratch"), action("checkout-a"), action("checkout-b")],
+      },
+    ];
+    const current = [action("grouped-repository"), action("arriving-project", currentRun)];
+    const groups = resolveNewThreadProjectGroups(stored, current);
+    const visible = filterCommandPaletteGroups({
+      activeGroups: groups,
+      query: "",
+      isInSubmenu: true,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+    expect(visible.flatMap((group) => group.items.map((item) => item.title))).toEqual([
+      "grouped-repository",
+      "arriving-project",
+    ]);
+    const arriving = visible[0]!.items[1]!;
+    if (arriving.kind !== "action") throw new Error("Expected a project action");
+    await arriving.run();
+    expect(currentRun).toHaveBeenCalledOnce();
+    expect(staleRun).not.toHaveBeenCalled();
+    const other = [{ ...stored[0]!, value: "projects" }];
+    expect(resolveNewThreadProjectGroups(other, current)).toBe(other);
   });
 });
