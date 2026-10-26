@@ -2,7 +2,10 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState, useSyncExternalStore } from "react";
+
+import { useDeadlinePassed } from "../../hooks/useDeadline";
+import { useNowSecond } from "../../hooks/useNowSecond";
 
 import { Button } from "../ui/button";
 import {
@@ -31,75 +34,70 @@ function getPromptErrorMessage(error: unknown): string {
     : message;
 }
 
+let promptQueue: readonly DesktopSshPasswordPromptRequest[] = [];
+const promptQueueListeners = new Set<() => void>();
+
+function setPromptQueue(next: readonly DesktopSshPasswordPromptRequest[]) {
+  promptQueue = next;
+  for (const listener of promptQueueListeners) listener();
+}
+
+/**
+ * Queues the desktop's SSH password prompts for the life of the page, so a prompt
+ * that arrives while no dialog is mounted still waits for one.
+ */
+export function startSshPasswordPromptQueue(): () => void {
+  return (
+    window.desktopBridge?.onSshPasswordPrompt?.((request) => {
+      setPromptQueue([...promptQueue, request]);
+    }) ?? (() => undefined)
+  );
+}
+
+function subscribePromptQueue(listener: () => void): () => void {
+  promptQueueListeners.add(listener);
+  return () => {
+    promptQueueListeners.delete(listener);
+  };
+}
+
+const readPromptQueue = () => promptQueue;
+
+function removeSshPasswordPrompt(requestId: string) {
+  if (promptQueue[0]?.requestId === requestId) setPromptQueue(promptQueue.slice(1));
+}
+
 export function SshPasswordPromptDialog() {
-  const [queue, setQueue] = useState<readonly DesktopSshPasswordPromptRequest[]>([]);
+  const queue = useSyncExternalStore(subscribePromptQueue, readPromptQueue, readPromptQueue);
   const currentRequest = queue[0] ?? null;
-
-  useEffect(() => {
-    const bridge = window.desktopBridge;
-    if (!bridge?.onSshPasswordPrompt) {
-      return;
-    }
-
-    return bridge.onSshPasswordPrompt((request) => {
-      setQueue((currentQueue) => [...currentQueue, request]);
-    });
-  }, []);
 
   if (!currentRequest) {
     return null;
   }
 
-  return (
-    <ActiveSshPasswordPrompt
-      key={currentRequest.requestId}
-      request={currentRequest}
-      onRemove={(requestId) => {
-        setQueue((currentQueue) =>
-          currentQueue[0]?.requestId === requestId ? currentQueue.slice(1) : currentQueue,
-        );
-      }}
-    />
-  );
+  return <ActiveSshPasswordPrompt key={currentRequest.requestId} request={currentRequest} />;
 }
 
 function ActiveSshPasswordPrompt({
   request,
-  onRemove,
 }: {
   readonly request: DesktopSshPasswordPromptRequest;
-  readonly onRemove: (requestId: string) => void;
 }) {
   const [password, setPassword] = useState("");
   const [isResponding, setIsResponding] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const [responseError, setResponseError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const isRespondingRef = useRef(false);
   const formId = useId();
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, []);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1_000);
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, []);
-
   const expiresAtMs = Date.parse(request.expiresAt);
-  const remainingMs = Number.isFinite(expiresAtMs) ? Math.max(0, expiresAtMs - now) : null;
-  const isExpired = remainingMs !== null && remainingMs <= 0;
+  const now = useNowSecond();
+  const isExpired = useDeadlinePassed(Number.isFinite(expiresAtMs) ? expiresAtMs : null);
+  const remainingMs = Number.isFinite(expiresAtMs)
+    ? isExpired
+      ? 0
+      : Math.max(0, expiresAtMs - now)
+    : null;
   const remainingSeconds = remainingMs === null ? null : Math.ceil(remainingMs / 1_000);
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
@@ -125,7 +123,7 @@ function ActiveSshPasswordPrompt({
       window.desktopBridge?.resolveSshPasswordPrompt(requestId, nextPassword),
     );
     if (AsyncResult.isSuccess(result) || nextPassword === null) {
-      onRemove(requestId);
+      removeSshPasswordPrompt(requestId);
     } else {
       setResponseError(getPromptErrorMessage(Cause.squash(result.cause)));
     }
@@ -134,7 +132,7 @@ function ActiveSshPasswordPrompt({
   };
 
   const dismissExpiredPrompt = () => {
-    onRemove(request.requestId);
+    removeSshPasswordPrompt(request.requestId);
   };
 
   const cancelPrompt = () => {
@@ -156,7 +154,7 @@ function ActiveSshPasswordPrompt({
         }
       }}
     >
-      <DialogPopup className="max-w-md" showCloseButton={false}>
+      <DialogPopup className="max-w-md" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>SSH verification required</DialogTitle>
           <DialogDescription>
