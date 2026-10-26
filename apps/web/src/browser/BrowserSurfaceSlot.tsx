@@ -21,13 +21,11 @@ export function BrowserSurfaceSlot(props: {
     className,
     fitSourceContent = false,
   } = props;
-  const elementRef = useRef<HTMLDivElement | null>(null);
   const presentationRef = useRef({ visible, cornerRadius, zIndex });
   const updateRef = useRef<(() => void) | null>(null);
 
-  useLayoutEffect(() => {
-    const element = elementRef.current;
-    if (!element) return;
+  // The lease lives as long as this element for one tab, so the ref callback owns it.
+  const attachSurface = (element: HTMLDivElement) => {
     let lease = acquireBrowserSurface(tabId, fitSourceContent);
     const update = () => {
       const rect = element.getBoundingClientRect();
@@ -77,7 +75,7 @@ export function BrowserSurfaceSlot(props: {
       if (updateRef.current === update) updateRef.current = null;
       lease.release();
     };
-  }, [fitSourceContent, tabId]);
+  };
 
   useLayoutEffect(() => {
     presentationRef.current = { visible, cornerRadius, zIndex };
@@ -90,5 +88,5 @@ export function BrowserSurfaceSlot(props: {
     zIndex,
   ]);
 
-  return <div ref={elementRef} className={className} data-browser-surface-slot={tabId} />;
+  return <div ref={attachSurface} className={className} data-browser-surface-slot={tabId} />;
 }

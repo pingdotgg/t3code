@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
@@ -18,6 +18,7 @@ export interface UseResizableWidthOptions {
 }
 
 export interface ResizableWidthHandlers {
+  readonly ref: (node: HTMLElement | null) => (() => void) | undefined;
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -53,42 +54,52 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   }
 
   const clampedWidth = clamp(widthState.width);
-  const latestOptions = useRef({ clamp, storageKey, width: clampedWidth });
-  useLayoutEffect(() => {
-    latestOptions.current = { clamp, storageKey, width: clampedWidth };
-  }, [clamp, clampedWidth, storageKey]);
 
-  const { refresh, ...handlers } = useResizeDrag<HTMLElement>((event) => {
+  const drag = useResizeDrag<HTMLElement>((event) => {
     const host = event.currentTarget.parentElement;
     // Disable drag transitions through transition-property; the host renders transition-duration.
     host?.style.setProperty("transition-property", "none");
+    // The drag commits to the key and width it started from, even if the panel
+    // switches keys before the pointer is released.
+    const startStorageKey = storageKey;
+    const startWidth = clampedWidth;
     return {
-      width: clampedWidth,
+      width: startWidth,
       edge,
-      resize(value) {
-        const nextWidth = latestOptions.current.clamp(value);
+      bounds: { min: minWidth, max: maxWidth },
+      resize(nextWidth) {
         host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${nextWidth}px`);
         return nextWidth;
       },
       finish(finalWidth) {
-        setWidthState({ storageKey, width: finalWidth });
+        setWidthState({ storageKey: startStorageKey, width: finalWidth });
         try {
-          setLocalStorageItem(latestOptions.current.storageKey, finalWidth, WidthSchema);
+          setLocalStorageItem(startStorageKey, finalWidth, WidthSchema);
         } catch (error) {
           console.error("Could not persist panel width.", error);
         }
       },
       cleanup(committed) {
         host?.style.removeProperty("transition-property");
-        if (!committed) {
-          host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${latestOptions.current.width}px`);
-        }
+        if (!committed) host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${startWidth}px`);
       },
     };
-  }, storageKey);
+  });
 
-  // Mid-drag bound changes rewrite committed width; restore the live pointer position.
-  useLayoutEffect(refresh, [clamp, clampedWidth, refresh]);
+  // Bounds can change mid-drag (sidebar opens, window narrows), and the render
+  // that carries them rewrites the committed width, so re-apply the live pointer position.
+  const { refresh } = drag;
+  useLayoutEffect(() => refresh({ min: minWidth, max: maxWidth }), [refresh, minWidth, maxWidth]);
 
-  return { width: clampedWidth, handlers };
+  return {
+    width: clampedWidth,
+    handlers: {
+      ref: drag.ref,
+      onPointerDown: drag.onPointerDown,
+      onPointerMove: drag.onPointerMove,
+      onPointerUp: drag.onPointerUp,
+      onPointerCancel: drag.onPointerCancel,
+      onLostPointerCapture: drag.onLostPointerCapture,
+    },
+  };
 }
