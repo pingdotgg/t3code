@@ -18,6 +18,8 @@ export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly url: string;
   readonly version: string;
   readonly external: boolean;
+  /** Only owned processes have an authoritative lifetime signal. */
+  readonly processExit?: Effect.Effect<void>;
 }
 
 export class OpenCode2Server extends Context.Service<
@@ -158,7 +160,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
       return owner.withServer((server) =>
         latest?.url === server.url
-          ? use(latest)
+          ? use({ ...latest, processExit: server.exitCode.pipe(Effect.asVoid) })
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
       );
     }),
