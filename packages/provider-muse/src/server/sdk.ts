@@ -124,7 +124,9 @@ export const museLaunch = Effect.fn("museLaunch")(function* (
       /\.ps1$/i.test(binaryPath) ? { ...env, PATHEXT: ".PS1" } : env,
     ))) ?? binaryPath;
   if (/\.ps1$/i.test(resolved)) {
-    const systemRoot = windowsEnvironmentValue(env, "SystemRoot");
+    const systemRoot =
+      windowsEnvironmentValue(env, "SystemRoot") ??
+      windowsEnvironmentValue(yield* HostProcess.Environment, "SystemRoot");
     return {
       command: systemRoot
         ? `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`

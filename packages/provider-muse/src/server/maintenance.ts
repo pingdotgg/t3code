@@ -79,7 +79,7 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
             return null;
           }
           const path = yield* Path.Path;
-          launcher = path.join(path.dirname(launcher), ".muse-launcher.ps1");
+          launcher = yield* fs.realPath(path.join(path.dirname(launcher), ".muse-launcher.ps1"));
           if (Number((yield* fs.stat(launcher)).size) > 128 * 1_024) return null;
           source = yield* fs.readFileString(launcher);
         } else if (!/\.ps1$/i.test(launcher)) {
@@ -120,7 +120,7 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
             windows ? powerShellQuote(word) : shellQuote(word),
           ),
         ].join(" "),
-        updateLockKey: `muse:${context.realCommandPath}`,
+        updateLockKey: `muse:${launcherPath}`,
         platform: context.platform,
         env: { ...context.env, ...updateEnv },
       }),

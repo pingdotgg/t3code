@@ -197,7 +197,7 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
           },
         });
         expect(result.update?.lockKey.toLowerCase()).toBe(
-          `muse:${yield* fs.realPath(shim)}`.toLowerCase(),
+          `muse:${yield* fs.realPath(launcher)}`.toLowerCase(),
         );
         expect(result.update?.command).toContain("$env:MUSE_CHANNEL='muse-canary';");
         expect(result.update?.command).toContain("$env:MUSE_NO_AUTO_UPDATE='0';");

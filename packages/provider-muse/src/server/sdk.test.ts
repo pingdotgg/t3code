@@ -300,6 +300,12 @@ describe("Muse launch", () => {
           "C:\\Muse R&D\\.muse-launcher.ps1",
         ],
       });
+      expect(
+        (yield* museLaunch("C:\\Muse\\.muse-launcher.ps1", {}).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.Environment, { SYSTEMROOT: "E:\\Windows" }),
+        )).command,
+      ).toBe("E:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
       expect(yield* onWindows(undefined)).toEqual({ command: "muse", args: [] });
     }),
   );
