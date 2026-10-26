@@ -1,10 +1,11 @@
-import { useNavigate } from "@tanstack/react-router";
+import type { AnyRouter } from "@tanstack/react-router";
+import type { PullRequestReviewGuideResult } from "@t3tools/contracts";
 import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import * as Option from "effect/Option";
+import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
 import { getClientSettings } from "~/hooks/useSettings";
-import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useEnvironmentQuery } from "~/state/query";
+import { observedPullRequestTitle, pullRequestEnvironment } from "~/state/pullRequests";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
@@ -18,33 +19,58 @@ import { useGuideRunStore, type GuideRunWatch } from "./guideRunStore";
 const RUN_POLL_MS = 5_000;
 const UNSEEN_RUN_MS = 60_000;
 
-export function PullRequestGuideRunCoordinator() {
-  const watches = useGuideRunStore((state) => state.watches);
-  return Object.entries(watches).map(([key, watch]) => (
-    <GuideRunWatcher key={key} runKey={key} watch={watch} />
-  ));
+// The detail panel marks the guide tab it has on screen.
+function isGuideShown(runKey: string): boolean {
+  return document.querySelector(`[data-guide-shown="${CSS.escape(runKey)}"]`) !== null;
 }
 
-function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWatch }) {
-  const query = useEnvironmentQuery(
-    pullRequestEnvironment.reviewGuide({
-      environmentId: watch.environmentId,
-      input: watch.reference,
-    }),
-  );
-  const navigate = useNavigate();
-  const refresh = query.refresh;
-  useEffect(() => {
-    const timer = setInterval(refresh, RUN_POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+/** Polls every watched guide run and announces each one when it settles. App-lifetime. */
+export function startGuideRunNotifications(
+  registry: AtomRegistry.AtomRegistry,
+  router: AnyRouter,
+): () => void {
+  const running = new Map<string, () => void>();
+  const sync = (watches: Readonly<Record<string, GuideRunWatch>>) => {
+    for (const [key, stop] of running) {
+      if (watches[key] !== undefined) continue;
+      running.delete(key);
+      stop();
+    }
+    for (const [key, watch] of Object.entries(watches)) {
+      if (running.has(key)) continue;
+      const stop = watchGuideRun(registry, router, key, watch);
+      // The first read can settle the run before it is recorded as running.
+      if (useGuideRunStore.getState().watches[key] === watch) running.set(key, stop);
+      else stop();
+    }
+  };
+  sync(useGuideRunStore.getState().watches);
+  const unsubscribe = useGuideRunStore.subscribe((state, previous) => {
+    if (state.watches !== previous.watches) sync(state.watches);
+  });
+  return () => {
+    unsubscribe();
+    for (const stop of running.values()) stop();
+    running.clear();
+  };
+}
 
-  const data = query.data;
-  const sawRunning = useRef(false);
-  useEffect(() => {
-    if (data === null) return;
+function watchGuideRun(
+  registry: AtomRegistry.AtomRegistry,
+  router: AnyRouter,
+  runKey: string,
+  watch: GuideRunWatch,
+): () => void {
+  const atom = pullRequestEnvironment.reviewGuide({
+    environmentId: watch.environmentId,
+    input: watch.reference,
+  });
+  let sawRunning = watch.answeredRunning === true;
+  let subscribing = true;
+  let seen: PullRequestReviewGuideResult | null = null;
+  const onGuide = (data: PullRequestReviewGuideResult) => {
     if (data.run?._tag === "Running") {
-      sawRunning.current = true;
+      sawRunning = true;
       return;
     }
     const failure =
@@ -54,7 +80,7 @@ function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWat
     const written =
       failure === null && data.guide !== null && data.guide.generatedAt !== watch.previousGuideAt;
     if (failure === null && !written) {
-      if (sawRunning.current || Date.now() - watch.since > UNSEEN_RUN_MS) {
+      if (sawRunning || Date.now() - watch.since > UNSEEN_RUN_MS) {
         useGuideRunStore.getState().settle(runKey);
       }
       return;
@@ -62,13 +88,16 @@ function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWat
     const store = useGuideRunStore.getState();
     store.settle(runKey);
     const looking = document.visibilityState === "visible" && document.hasFocus();
-    if (looking && store.shownKey === runKey) return;
+    if (looking && isGuideShown(runKey)) return;
 
     const title = failure === null ? "Review guide ready" : "Review guide failed";
-    const body = watch.title ?? `${watch.reference.repository} #${watch.reference.number}`;
+    const body =
+      watch.title ??
+      observedPullRequestTitle(registry, watch.environmentId, watch.reference) ??
+      `${watch.reference.repository} #${watch.reference.number}`;
     const open = () => {
-      useGuideRunStore.getState().requestOpen(runKey);
-      void navigate({
+      useGuideRunStore.getState().showPageDetailTab(runKey, "guide");
+      void router.navigate({
         to: "/pull-requests",
         search: {
           ...readPullRequestListPreferences(),
@@ -126,7 +155,22 @@ function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWat
     } catch {
       // Some browsers expose Notification but reject desktop presentation.
     }
-  }, [data, navigate, runKey, watch]);
-
-  return null;
+  };
+  const unsubscribe = registry.subscribe(
+    atom,
+    (result) => {
+      const data = Option.getOrNull(AsyncResult.value(result));
+      if (data === null || data === seen) return;
+      seen = data;
+      if (subscribing && watch.answeredRunning === true) return;
+      onGuide(data);
+    },
+    { immediate: true },
+  );
+  subscribing = false;
+  const timer = setInterval(() => registry.refresh(atom), RUN_POLL_MS);
+  return () => {
+    clearInterval(timer);
+    unsubscribe();
+  };
 }

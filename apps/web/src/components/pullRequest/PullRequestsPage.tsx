@@ -1523,6 +1523,7 @@ export function PullRequestsPage() {
                 ) ?? null
               }
               refreshToken={detailRefreshToken}
+              tabOnPage
               onActed={(action, phase = "done") => {
                 // From every row held, not the ones on screen: a pull request closed from an open
                 // list has left the screen, and reopening it has to find it anyway.

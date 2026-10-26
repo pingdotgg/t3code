@@ -8,7 +8,6 @@ import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import type { ExcerptCommenting } from "./guide/GuideExcerpt";
-import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { GuideProseContext } from "./guide/GuideProse";
 import { GuideTour } from "./guide/GuideTour";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
@@ -53,7 +52,6 @@ export function PullRequestGuideTab({
     reference,
     title,
   });
-  const runKey = guideRunKey(environmentId, reference);
   const reviewKey = pullRequestReviewKey(reference);
   const pending = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -77,15 +75,6 @@ export function PullRequestGuideTab({
           onRemove: (commentId) => removeComment(reviewKey, commentId),
           onAskAgent: onAskAboutLines,
         };
-  useEffect(() => {
-    if (!active) return;
-    useGuideRunStore.getState().setShown(runKey);
-    return () => {
-      if (useGuideRunStore.getState().shownKey === runKey)
-        useGuideRunStore.getState().setShown(null);
-    };
-  }, [active, runKey]);
-
   const guide = data?.guide ?? null;
   const tourShown = active && guide !== null;
   const reportTourShown = useEffectEvent(() => onTourShown?.());
