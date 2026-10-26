@@ -1076,7 +1076,8 @@ it.layer(
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-latest");
         const npmBinDir = NodePath.join(tempDir, "npm-bin");
-        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const npmPath = NodePath.join(npmBinDir, "npm");
+        writeExecutable(npmPath);
         const link = linkIntoPackage(tempDir, "package-tool", [
           "lib",
           "node_modules",
@@ -1092,14 +1093,17 @@ it.layer(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
-              (_command, args) =>
-                args[args.indexOf("--prefix") + 1] !== tempDir
-                  ? "{}"
-                  : args[0] === "outdated"
-                    ? JSON.stringify(fixture.outdated)
-                    : JSON.stringify({
+              (command, args) => {
+                expect(command).toBe(npmPath);
+                expect(args.slice(1, 4)).toEqual(["-g", "--prefix", tempDir]);
+                return JSON.stringify(
+                  args[0] === "outdated"
+                    ? fixture.outdated
+                    : {
                         dependencies: { "@example/package-tool": { version: "1.0.0" } },
-                      }),
+                      },
+                );
+              },
               (args) => (args[0] === "outdated" ? fixture.exitCode : (fixture.listExitCode ?? 0)),
             ),
           ),
