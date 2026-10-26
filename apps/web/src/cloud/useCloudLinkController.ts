@@ -160,6 +160,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
           reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
         }
         cloudLinkState.refresh();
+        await refreshRelayEnvironments();
         return false;
       }
     } else {
