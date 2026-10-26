@@ -1511,12 +1511,10 @@ describe("ClaudeAdapterV2 attachments", () => {
                 Effect.gen(function* () {
                   if (failOpen) {
                     failOpen = false;
-                    return yield* Effect.fail(
-                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                        method: "open",
-                        cause: "rejected open",
-                      }),
-                    );
+                    return yield* new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "open",
+                      cause: "rejected open",
+                    });
                   }
                   const messages = yield* Queue.unbounded<SDKMessage>();
                   return {

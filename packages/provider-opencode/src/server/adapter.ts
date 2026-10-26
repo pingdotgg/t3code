@@ -1061,7 +1061,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             return firstFailure ?? failures.find((failure) => failure !== undefined);
           });
           const failure = yield* visit(rootId, false);
-          if (failure) return yield* Effect.fail(failure);
+          if (failure) return yield* failure;
         }, Effect.timeout("15 seconds"));
 
         const updateProviderSession =

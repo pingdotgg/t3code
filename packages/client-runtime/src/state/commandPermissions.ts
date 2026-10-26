@@ -59,12 +59,10 @@ function makeCommandPermissions<R, E>(
             (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),
           );
           if (missing !== undefined)
-            return yield* Effect.fail(
-              new EnvironmentAuthorizationError({
-                ...authScopeRequiredResponse(missing),
-                message: `This connection requires ${missing}.`,
-              }),
-            );
+            return yield* new EnvironmentAuthorizationError({
+              ...authScopeRequiredResponse(missing),
+              message: `This connection requires ${missing}.`,
+            });
         }),
       );
     });

@@ -103,7 +103,7 @@ const refused = Effect.fn("gitHubGraphQlClient.refused")(function* (
 ) {
   const reason = error.reason;
   if (reason._tag !== "TransportError" && reason._tag !== "ResponseError") {
-    return yield* Effect.fail(error);
+    return yield* error;
   }
   const status = reason.status;
   if (reason._tag === "TransportError" && status === undefined) {
