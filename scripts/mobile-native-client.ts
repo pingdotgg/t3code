@@ -453,6 +453,32 @@ const remoteCache = Effect.fn("nativeClient.remoteCache")(
   Effect.orElseSucceed(() => null),
 );
 
+const ReaderLogin = Schema.fromJsonString(
+  Schema.Struct({ name: Schema.String, token: Schema.String }),
+);
+
+/**
+ * A URL another machine can download `key` from. The header goes to that machine, so only a
+ * read-only login (`ci-reader`) is ever handed out, never a developer's writer token.
+ */
+const sharedSource = Effect.fn("nativeClient.sharedSource")(
+  function* (home: string, key: string) {
+    const remote = yield* remoteCache(home);
+    if (!remote) return null;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const reader =
+      remote.name === "ci-reader"
+        ? remote
+        : yield* fs
+            .readFileString(path.join(home, ".config/t3-task-cache/ci-reader.json"))
+            .pipe(Effect.flatMap(Schema.decodeUnknownEffect(ReaderLogin)));
+    const basic = Buffer.from(`${reader.name}:${reader.token}`).toString("base64");
+    return { url: `${remote.url}/${key}`, header: `authorization:Basic ${basic}` };
+  },
+  Effect.orElseSucceed(() => null),
+);
+
 const authorized = (remote: RemoteCache, request: HttpClientRequest.HttpClientRequest) =>
   request.pipe(HttpClientRequest.basicAuth(remote.name, remote.token));
 
@@ -860,16 +886,48 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const deviceAbi = platform === "android" ? abi : null;
   const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
   const current = yield* fingerprint(platform);
-  const artifact = yield* resolveArtifact(home, platform, deviceAbi, current, false).pipe(
-    Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
-  );
-  yield* Console.error(`Installing into agent-device session ${session}...`);
-  yield* command(
-    node,
-    [agentDevice, "install", bundleId, artifact.file, "--session", session],
-    true,
-    workspace,
-  );
+  const key = `${platform}/${deviceAbi ? `development-${deviceAbi}` : "development"}/${current}`;
+  const source = yield* sharedSource(home, key);
+  // The session's host downloads the client itself; uploading a 166 MB APK through a
+  // gateway from here takes minutes and can outlast the remote install timeout.
+  const fetched = source
+    ? yield* command(
+        node,
+        [
+          agentDevice,
+          "install-from-source",
+          source.url,
+          "--header",
+          source.header,
+          "--session",
+          session,
+        ],
+        true,
+        workspace,
+      ).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          Console.error(`The device could not download ${key} (${describe(error)}).`).pipe(
+            Effect.as(false),
+          ),
+        ),
+      )
+    : false;
+  const artifact = fetched
+    ? { source: "remote" as const, buildMs: 0 }
+    : yield* Effect.gen(function* () {
+        const local = yield* resolveArtifact(home, platform, deviceAbi, current, false).pipe(
+          Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
+        );
+        yield* Console.error(`Installing into agent-device session ${session}...`);
+        yield* command(
+          node,
+          [agentDevice, "install", bundleId, local.file, "--session", session],
+          true,
+          workspace,
+        );
+        return local;
+      });
   if (metro) {
     const url = encodeURIComponent(metro);
     yield* command(
