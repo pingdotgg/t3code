@@ -225,21 +225,24 @@ export const CursorDriver: ProviderDriver<
           },
           auth.usesApiKey ? "api-key" : "browser",
         ).pipe(
-          Effect.flatMap((snapshot) =>
-            effectiveConfig.enabled &&
-            snapshot.installed &&
-            snapshot.auth.status === "authenticated"
-              ? host.settings.get.pipe(
-                  Effect.flatMap((settings) =>
-                    readCursorUsageLimits(
-                      effectiveConfig,
-                      { ...processEnv, CURSOR_API_KEY: apiKey },
-                      settings.cursorKeychainUsageEnabled,
-                    ),
+          Effect.filterOrElse(
+            (snapshot) =>
+              !(
+                effectiveConfig.enabled &&
+                snapshot.installed &&
+                snapshot.auth.status === "authenticated"
+              ),
+            (snapshot) =>
+              host.settings.get.pipe(
+                Effect.flatMap((settings) =>
+                  readCursorUsageLimits(
+                    effectiveConfig,
+                    { ...processEnv, CURSOR_API_KEY: apiKey },
+                    settings.cursorKeychainUsageEnabled,
                   ),
-                  Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-                )
-              : Effect.succeed(snapshot),
+                ),
+                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+              ),
           ),
         ),
       ),

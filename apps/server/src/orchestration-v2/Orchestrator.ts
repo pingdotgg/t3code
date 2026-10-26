@@ -11981,21 +11981,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     const plan = yield* dispatchOnce(command).pipe(
-      Effect.flatMap((planned) =>
-        planned.events.length > 0 ||
-        command.type === "thread.background-work.settle" ||
-        command.type === "thread.stop" ||
-        command.type === "subagent.stop" ||
-        // A second Stop sharing, or one after the share already ended, is not an error.
-        command.type === "thread.guest-share.close"
-          ? Effect.succeed(planned)
-          : Effect.fail(
-              new OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause: "Command produced no domain events.",
-              }),
-            ),
+      Effect.filterOrFail(
+        (planned) =>
+          planned.events.length > 0 ||
+          command.type === "thread.background-work.settle" ||
+          command.type === "thread.stop" ||
+          command.type === "subagent.stop" ||
+          // Closing a share again, or after it ended, is not an error.
+          command.type === "thread.guest-share.close",
+        (_planned) =>
+          new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Command produced no domain events.",
+          }),
       ),
       Effect.catch((cause) =>
         Effect.gen(function* () {

@@ -707,15 +707,14 @@ const make = Effect.gen(function* () {
             cause,
           }),
       ),
-      Effect.flatMap((projection) =>
-        projection.thread.projectId === input.projectId && projection.thread.deletedAt === null
-          ? Effect.succeed(projection)
-          : Effect.fail(
-              new ThreadManagementThreadNotFoundError({
-                projectId: input.projectId,
-                threadId: input.threadId,
-              }),
-            ),
+      Effect.filterOrFail(
+        (projection) =>
+          projection.thread.projectId === input.projectId && projection.thread.deletedAt === null,
+        (_projection) =>
+          new ThreadManagementThreadNotFoundError({
+            projectId: input.projectId,
+            threadId: input.threadId,
+          }),
       ),
     );
 
@@ -734,15 +733,14 @@ const make = Effect.gen(function* () {
             cause,
           }),
       ),
-      Effect.flatMap((projection) =>
-        projection.thread.projectId === input.projectId && projection.thread.deletedAt === null
-          ? Effect.succeed(projection)
-          : Effect.fail(
-              new ThreadManagementThreadNotFoundError({
-                projectId: input.projectId,
-                threadId: input.threadId,
-              }),
-            ),
+      Effect.filterOrFail(
+        (projection) =>
+          projection.thread.projectId === input.projectId && projection.thread.deletedAt === null,
+        (_projection) =>
+          new ThreadManagementThreadNotFoundError({
+            projectId: input.projectId,
+            threadId: input.threadId,
+          }),
       ),
     );
 

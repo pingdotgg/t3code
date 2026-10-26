@@ -1578,18 +1578,16 @@ export const make = Effect.gen(function* () {
             ),
           ),
           listActionRequiredRuns(input).pipe(
-            Effect.flatMap((runs) =>
-              runs.length > workflowApprovalLimit
-                ? Effect.fail(
-                    new GitHubWorkflowApprovalRefusedError({
-                      cwd: input.cwd,
-                      number: input.number,
-                      reason: "run-list-truncated",
-                      observedCount: runs.length,
-                      limit: workflowApprovalLimit,
-                    }),
-                  )
-                : Effect.succeed(runs),
+            Effect.filterOrFail(
+              (runs) => !(runs.length > workflowApprovalLimit),
+              (runs) =>
+                new GitHubWorkflowApprovalRefusedError({
+                  cwd: input.cwd,
+                  number: input.number,
+                  reason: "run-list-truncated",
+                  observedCount: runs.length,
+                  limit: workflowApprovalLimit,
+                }),
             ),
           ),
         ],
@@ -1836,40 +1834,41 @@ export const make = Effect.gen(function* () {
           (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
           () => read(false),
         ),
-        Effect.flatMap((batch) => {
-          if (!stacks || batch.items.length === 0) return Effect.succeed(batch);
-          return Effect.forEach(
-            batch.items,
-            (item) => {
-              const lookup = pullRequestLookup({
-                repository: input.repository,
-                number: item.number,
-              });
-              if (lookup === null) return Effect.succeed(item);
-              return GraphQLResolver.request(lookup, stackMembershipResolver).pipe(
-                Effect.map((result) => {
-                  const pullRequest = result.repository?.pullRequest;
-                  const stack = pullRequest == null ? undefined : toStackMembership(pullRequest);
-                  return stack === undefined ? item : { ...item, stack };
-                }),
-                Effect.catch((error) =>
-                  Effect.logWarning("Pull request stack membership enrichment failed", {
-                    operation: "listPullRequestStackMemberships",
-                    host: input.host,
-                    error: error._tag,
-                  }).pipe(Effect.as(item)),
-                ),
-              );
-            },
-            { concurrency: "unbounded" },
-          ).pipe(
-            Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
-              host: input.host,
-              operation: "listPullRequestStackMemberships",
-            }),
-            Effect.map((items) => ({ ...batch, items })),
-          );
-        }),
+        Effect.filterOrElse(
+          (batch) => !stacks || batch.items.length === 0,
+          (batch) =>
+            Effect.forEach(
+              batch.items,
+              (item) => {
+                const lookup = pullRequestLookup({
+                  repository: input.repository,
+                  number: item.number,
+                });
+                if (lookup === null) return Effect.succeed(item);
+                return GraphQLResolver.request(lookup, stackMembershipResolver).pipe(
+                  Effect.map((result) => {
+                    const pullRequest = result.repository?.pullRequest;
+                    const stack = pullRequest == null ? undefined : toStackMembership(pullRequest);
+                    return stack === undefined ? item : { ...item, stack };
+                  }),
+                  Effect.catch((error) =>
+                    Effect.logWarning("Pull request stack membership enrichment failed", {
+                      operation: "listPullRequestStackMemberships",
+                      host: input.host,
+                      error: error._tag,
+                    }).pipe(Effect.as(item)),
+                  ),
+                );
+              },
+              { concurrency: "unbounded" },
+            ).pipe(
+              Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
+                host: input.host,
+                operation: "listPullRequestStackMemberships",
+              }),
+              Effect.map((items) => ({ ...batch, items })),
+            ),
+        ),
       );
     },
 
