@@ -16,6 +16,7 @@ const reactTests = [
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
+  "src/features/terminal/useTerminalExitNavigation.test.tsx",
 ];
 
 export default defineConfig({
