@@ -196,6 +196,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         args: [],
         cwd: dir,
         env: process.env,
+        // @effect-diagnostics-next-line abortControllerInEffect:off - This crash fixture closes pipes itself; aborting on test teardown raises an unrelated process error.
         signal: new AbortController().signal,
       }) as NodeChildProcess.ChildProcess;
       yield* Effect.addFinalizer(() =>

@@ -139,6 +139,7 @@ it.effect.each(deliveries)(
         const sdkMessages = yield* Queue.unbounded<SDKMessage>();
         const offers: SDKUserMessage[] = [];
         const nativeQueue: SDKUserMessage[] = [];
+        // @effect-diagnostics-next-line abortControllerInEffect:off - The fake SDK interrupts its batch independently of the test fiber.
         const batchAbort = new AbortController();
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: modelSelection.instanceId,
