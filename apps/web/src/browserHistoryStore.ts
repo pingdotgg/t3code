@@ -1,10 +1,17 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import {
+  previewStateAtom,
+  previewThreadRefsAtom,
+  readThreadPreviewState,
+  type ThreadPreviewState,
+} from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readPreparedConnection } from "~/state/session";
 
 import { isLocalLoopbackHost, normalizeHostname } from "./browser/browserTargetResolver";
@@ -144,13 +151,11 @@ const PENDING_MAX_PER_THREAD = 10;
 const PENDING_MAX_THREADS = 20;
 
 type PendingVisit = { url: string; at: number; environmentHostname: string | null };
-type PendingTitle = { url: string; title: string; environmentHostname: string | null | undefined };
 
 interface BrowserHistoryStoreState {
   byProjectKey: Record<string, BrowserHistoryEntry[]>;
   projectKeyByThreadKey: Record<string, string>;
   pendingVisitsByThreadKey: Record<string, PendingVisit[]>;
-  pendingTitlesByThreadKey: Record<string, PendingTitle[]>;
   recordVisit: (
     projectKey: string,
     url: string,
@@ -189,7 +194,6 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
       byProjectKey: {},
       projectKeyByThreadKey: {},
       pendingVisitsByThreadKey: {},
-      pendingTitlesByThreadKey: {},
       recordVisit: (projectKey, url, at, options) => {
         const normalized = normalizeHistoryUrl(url);
         if (!normalized) return;
@@ -245,35 +249,22 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
         const threadKey = scopedThreadKey(ref);
         const state = get();
         const pendingVisits = state.pendingVisitsByThreadKey[threadKey];
-        const pendingTitles = state.pendingTitlesByThreadKey[threadKey];
-        if (
-          state.projectKeyByThreadKey[threadKey] === projectKey &&
-          !pendingVisits &&
-          !pendingTitles
-        ) {
-          return;
-        }
+        if (state.projectKeyByThreadKey[threadKey] === projectKey && !pendingVisits) return;
         const nextPendingVisits = { ...state.pendingVisitsByThreadKey };
-        const nextPendingTitles = { ...state.pendingTitlesByThreadKey };
         delete nextPendingVisits[threadKey];
-        delete nextPendingTitles[threadKey];
         set({
           projectKeyByThreadKey: { ...state.projectKeyByThreadKey, [threadKey]: projectKey },
           pendingVisitsByThreadKey: nextPendingVisits,
-          pendingTitlesByThreadKey: nextPendingTitles,
         });
         for (const visit of pendingVisits ?? [])
           get().recordVisit(projectKey, visit.url, visit.at, {
             insertOrdered: true,
             environmentHostname: visit.environmentHostname,
           });
-        for (const pendingTitle of pendingTitles ?? [])
-          get().setTitleForUrl(
-            projectKey,
-            pendingTitle.url,
-            pendingTitle.title,
-            pendingTitle.environmentHostname,
-          );
+        if (pendingVisits)
+          recordPreviewTitles(ref, readThreadPreviewState(ref), {
+            urls: pendingVisits.map((visit) => visit.url),
+          });
       },
     }),
     {
@@ -302,7 +293,6 @@ export function mergeBrowserHistoryState(
     ...migrated,
     projectKeyByThreadKey: migratePersistedThreadProjectKeys(persistedState, migrated.byProjectKey),
     pendingVisitsByThreadKey: {},
-    pendingTitlesByThreadKey: {},
   };
 }
 
@@ -341,28 +331,84 @@ export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: num
     return;
   }
   state.recordVisit(projectKey, url, visitAt, { environmentHostname });
+  // A page can settle before the address bar records its visit.
+  recordPreviewTitles(ref, readThreadPreviewState(ref), { urls: [url] });
 }
 
-export function setTitleForThreadUrl(
+/**
+ * Titles only update entries already in history, so they apply on settle and on
+ * visit. History is shared across a project's threads and settled sessions stay
+ * retained, so a visit only fills untitled entries: replaying this thread's
+ * older settle would clobber a newer title. Settles apply what just changed.
+ */
+function recordPreviewTitles(
   ref: ScopedThreadRef,
-  url: string,
-  title: string,
-  environmentHostname?: string | null,
+  preview: ThreadPreviewState,
+  only:
+    | { readonly urls: ReadonlyArray<string> }
+    | { readonly changedSince: ThreadPreviewState["sessions"] },
 ): void {
-  const threadKey = scopedThreadKey(ref);
   const state = useBrowserHistoryStore.getState();
-  const projectKey = state.projectKeyByThreadKey[threadKey];
-  if (!projectKey) {
-    useBrowserHistoryStore.setState({
-      pendingTitlesByThreadKey: addPendingByThread(state.pendingTitlesByThreadKey, threadKey, {
-        url,
-        title,
-        environmentHostname,
-      }),
-    });
-    return;
+  const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
+  if (!projectKey || !state.byProjectKey[projectKey]?.length) return;
+  const connection = readPreparedConnection(ref.environmentId);
+  const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : null;
+  const titleKey = (url: string) => {
+    const normalized = normalizeHistoryUrl(url);
+    return normalized ? titleLookupKey(normalized, environmentHostname) : null;
+  };
+  const titled = new Set(
+    "urls" in only
+      ? state.byProjectKey[projectKey]?.flatMap((entry) =>
+          entry.title ? [titleLookupKey(entry.url, environmentHostname)] : [],
+        )
+      : [],
+  );
+  const visitKeys =
+    "urls" in only
+      ? new Set(only.urls.map(titleKey).filter((key) => key !== null && !titled.has(key)))
+      : null;
+  const include = (session: PreviewSessionSnapshot, url: string) =>
+    "changedSince" in only
+      ? only.changedSince[session.tabId] !== session
+      : (visitKeys?.has(titleKey(url)) ?? false);
+  // Tabs can share a URL; applying oldest first lets the newest settle win.
+  const sessions = Object.values(preview.sessions).toSorted((a, b) =>
+    a.updatedAt.localeCompare(b.updatedAt),
+  );
+  for (const session of sessions) {
+    const status = session.navStatus;
+    if (status._tag !== "Success" || !status.title || !include(session, status.url)) continue;
+    state.setTitleForUrl(projectKey, status.url, status.title, environmentHostname);
   }
-  state.setTitleForUrl(projectKey, url, title, environmentHostname);
+}
+
+/** Records settled page titles for every thread with previews, for the life of the page. */
+export function startPreviewTitleRecording(): () => void {
+  const followed = new Map<string, () => void>();
+  const followNewThreads = (refs: ReadonlyMap<string, ScopedThreadRef>) => {
+    for (const [threadKey, threadRef] of refs) {
+      if (followed.has(threadKey)) continue;
+      const atom = previewStateAtom(threadKey);
+      let previousSessions = appAtomRegistry.get(atom).sessions;
+      followed.set(
+        threadKey,
+        appAtomRegistry.subscribe(atom, (next) => {
+          if (next.sessions === previousSessions) return;
+          const changedSince = previousSessions;
+          previousSessions = next.sessions;
+          recordPreviewTitles(threadRef, next, { changedSince });
+        }),
+      );
+    }
+  };
+  const stopIndex = appAtomRegistry.subscribe(previewThreadRefsAtom, followNewThreads, {
+    immediate: true,
+  });
+  return () => {
+    stopIndex();
+    for (const stop of followed.values()) stop();
+  };
 }
 
 export function removeUrlForThread(ref: ScopedThreadRef, url: string): void {
@@ -392,7 +438,6 @@ export function resetBrowserHistoryForTests(): void {
     byProjectKey: {},
     projectKeyByThreadKey: {},
     pendingVisitsByThreadKey: {},
-    pendingTitlesByThreadKey: {},
   });
   useBrowserHistoryStore.persist.clearStorage();
 }

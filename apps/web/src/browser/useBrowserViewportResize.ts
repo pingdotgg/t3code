@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { useStableCallback } from "../hooks/useStableCallback";
-import { commitBrowserViewportChange } from "./browserViewportActions";
+import { type BrowserViewportTarget, commitBrowserViewportChange } from "./browserViewportActions";
 import {
   browserViewportSettingKey,
   resizeBrowserViewportFromRail,
@@ -27,14 +27,15 @@ interface ViewportDrag extends PreviewViewportSize {
 const KEYBOARD_RESIZE_COMMIT_DELAY_MS = 150;
 
 export function useBrowserViewportResize(options: {
-  readonly tabId: string;
+  readonly target: BrowserViewportTarget;
   readonly viewport: PreviewViewportSetting;
   readonly zoomFactor: number;
   readonly containerSize: PreviewViewportSize;
   readonly deviceToolbarVisible: boolean;
   readonly aspectRatio: number | null;
 }) {
-  const { tabId, viewport, zoomFactor, containerSize, deviceToolbarVisible, aspectRatio } = options;
+  const { target, viewport, zoomFactor, containerSize, deviceToolbarVisible, aspectRatio } =
+    options;
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const dragVersionRef = useRef(0);
   const keyboardCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -91,7 +92,7 @@ export function useBrowserViewportResize(options: {
     }
     keyboardViewportRef.current = null;
     setDragViewport(null);
-    return commitBrowserViewportChange(tabId, next);
+    return commitBrowserViewportChange(target, next);
   };
 
   const clearDrag = () => setDragViewport(null);
@@ -100,7 +101,7 @@ export function useBrowserViewportResize(options: {
     const clearIfCurrent = () => {
       if (dragVersionRef.current === version) clearDrag();
     };
-    void commitBrowserViewportChange(tabId, next).then(clearIfCurrent, clearIfCurrent);
+    void commitBrowserViewportChange(target, next).then(clearIfCurrent, clearIfCurrent);
   };
 
   const handleResizeKeyDown = (
