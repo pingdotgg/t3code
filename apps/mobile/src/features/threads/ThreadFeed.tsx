@@ -51,6 +51,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
   type ScheduledTaskId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -332,6 +333,8 @@ export interface ThreadFeedProps {
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
+  readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
@@ -2098,12 +2101,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   ...props
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
-  const workflowOpening = useWorkflowOpening(props.environmentId, props.threadId);
-  const guestThreadRef = useMemo(
-    () => scopeThreadRef(props.environmentId, props.threadId),
-    [props.environmentId, props.threadId],
-  );
-  const guestShare = useThreadGuestShare(guestThreadRef);
+  const workflowOpening = useWorkflowOpening(props.detailRef);
+  const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
   const openPullRequest = useOpenPullRequest();

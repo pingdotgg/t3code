@@ -21,6 +21,35 @@ export type PendingThreadCreation = {
   readonly outcome: PendingThreadCreationOutcome | null;
 };
 
+export function selectThreadCreationDetail<Ref>(input: {
+  readonly threadRef: Ref | null;
+  readonly threadKey: string | null;
+  readonly queuedMessagesByThreadKey: Readonly<
+    Record<string, ReadonlyArray<QueuedThreadMessage> | undefined>
+  >;
+  readonly outcomes: Readonly<Record<string, PendingThreadCreationOutcome | undefined>>;
+}): { readonly pendingCreation: PendingThreadCreation | null; readonly detailRef: Ref | null } {
+  const pendingCreation = ((): PendingThreadCreation | null => {
+    if (input.threadKey === null) {
+      return null;
+    }
+    const queued = input.queuedMessagesByThreadKey[input.threadKey]?.find(
+      (message) => message.creation !== undefined,
+    );
+    const outcome = input.outcomes[input.threadKey] ?? null;
+    const message = queued ?? outcome?.message ?? null;
+    return message === null ? null : { message, outcome };
+  })();
+  // The shell can arrive before creation is acknowledged. Wait for delivery
+  // before subscribing: an early not-found is cached as a deleted thread.
+  // Every detail reader must use this ref, not the route id.
+  const detailRef =
+    pendingCreation === null || pendingCreation.outcome?.kind === "delivered"
+      ? input.threadRef
+      : null;
+  return { pendingCreation, detailRef };
+}
+
 export function resolvePendingThreadCreation(input: {
   readonly threadKey: string | null;
   readonly pending: PendingThreadCreation | null;
