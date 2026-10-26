@@ -4,8 +4,10 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { deadlineStore } from "@t3tools/client-runtime/clock";
 import { GaugeIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { Button } from "../ui/button";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { toastManager } from "../ui/toast";
@@ -39,19 +41,12 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
 
 function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
   const [pending, setPending] = useState(false);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const delay = Date.parse(resetAt ?? "") - Math.max(nowMs, Date.now());
-    if (!Number.isFinite(delay) || delay <= 0) return;
-    const timer = window.setTimeout(() => setNowMs(Date.now()), Math.min(delay + 1, 2_147_483_647));
-    return () => window.clearTimeout(timer);
-  }, [resetAt, nowMs]);
 
   const scheduled =
     recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   // The server leaves snoozedUntil in place after the timer wakes the thread,
   // so a snooze whose reset has passed is no longer active.
-  const resetPassed = Date.parse(resetAt ?? "") <= nowMs;
+  const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
   const snoozed =
     recovery?.snooze === true &&
     recovery.runId === runId &&
@@ -68,7 +63,8 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
         title: "Could not snooze thread",
         description: "The reset time has passed. Retry the thread manually.",
       });
-      setNowMs(Date.now());
+      // The deadline timer can lag after a throttled tab or sleep; disable now.
+      deadlineStore(Date.parse(resetAt)).refresh();
       return;
     }
     setPending(true);
