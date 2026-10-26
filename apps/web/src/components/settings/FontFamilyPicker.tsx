@@ -34,6 +34,7 @@ let enumerationState: FontEnumerationState = supportsFontEnumeration()
 const enumerationListeners = new Set<() => void>();
 
 function subscribeToEnumeration(listener: () => void): () => void {
+  probeAlreadyGrantedPermission();
   enumerationListeners.add(listener);
   return () => enumerationListeners.delete(listener);
 }
@@ -74,7 +75,6 @@ function probeAlreadyGrantedPermission(): void {
 }
 
 export function useFontEnumeration(): FontEnumerationState {
-  useEffect(probeAlreadyGrantedPermission, []);
   return useSyncExternalStore(subscribeToEnumeration, readEnumerationState);
 }
 

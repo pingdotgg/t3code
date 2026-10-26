@@ -3,7 +3,7 @@ import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
@@ -716,17 +716,12 @@ function LegacyFeaturesSection() {
   const [open, setOpen] = useState(false);
   const searchTargetId = useSettingsSearchTargetId();
   const targetRef = useSettingsSearchTarget<HTMLElement>("legacy-features");
-  const lastExpandedTargetRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (searchTargetId === null) {
-      lastExpandedTargetRef.current = null;
-      return;
-    }
-    if (!LEGACY_FEATURE_TARGET_IDS.has(searchTargetId)) return;
-    if (lastExpandedTargetRef.current === searchTargetId) return;
-    lastExpandedTargetRef.current = searchTargetId;
-    setOpen(true);
-  }, [searchTargetId]);
+  // A search jump to a legacy setting opens the fold before its row mounts.
+  const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
+  if (seenSearchTargetId !== searchTargetId) {
+    setSeenSearchTargetId(searchTargetId);
+    if (searchTargetId !== null && LEGACY_FEATURE_TARGET_IDS.has(searchTargetId)) setOpen(true);
+  }
 
   return (
     <section id="legacy-features" ref={targetRef} tabIndex={-1} className="space-y-2.5">
