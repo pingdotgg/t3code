@@ -102,13 +102,33 @@ describe("makeQueuedRunEditStore", () => {
     const finishStale = store.startSave("env:thread");
     begin();
     store.update("env:thread", (edit) => ({ ...edit, text: "newer" }));
-    expect(registry.get(store.savingAtom)).toEqual({});
 
     expect(finishStale?.(true)).toBe(false);
     expect(finishStale?.(false)).toBe(false);
     expect(store.get("env:thread")).toEqual({ runId: RUN, text: "newer" });
     registry.set(runs, []);
     expect(exits).toEqual([{ threadKey: "env:thread", text: "newer" }]);
+  });
+
+  // The server orders saves by arrival, not by edit age, so a second save could
+  // land before the first and then be overwritten by it.
+  it("keeps the save claimed until it settles, even when the edit is begun again or ended", () => {
+    const { registry, store, begin } = setup();
+    begin();
+    const finishStale = store.startSave("env:thread");
+    begin();
+    expect(registry.get(store.savingAtom)).toEqual({ "env:thread": true });
+    expect(store.startSave("env:thread")).toBeNull();
+    store.end("env:thread");
+    begin();
+    expect(store.startSave("env:thread")).toBeNull();
+
+    expect(finishStale?.(true)).toBe(false);
+    expect(registry.get(store.savingAtom)).toEqual({});
+    expect(finishStale?.(false)).toBe(false);
+    const finishNewer = store.startSave("env:thread");
+    expect(finishNewer?.(true)).toBe(true);
+    expect(store.get("env:thread")).toBeNull();
   });
 
   it("does not revive a cancelled edit when its save fails", () => {
