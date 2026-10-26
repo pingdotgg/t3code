@@ -90,7 +90,7 @@ export function ComposerDictationDraftContent(props: {
 }) {
   const rotation = useSharedValue(props.hidden ? 1 : 0);
   useLayoutEffect(() => {
-    rotation.value = withTiming(props.hidden ? 1 : 0, TOOLBAR_FLIP_TIMING);
+    rotation.set(withTiming(props.hidden ? 1 : 0, TOOLBAR_FLIP_TIMING));
   }, [props.hidden, rotation]);
   const compact = props.compact;
   const animatedStyle = useAnimatedStyle(() => ({
@@ -263,7 +263,7 @@ function VoiceActionButton(props: {
   const variant = props.variant ?? "plain";
   const loadingVisibility = useSharedValue(props.loading ? 1 : 0);
   useLayoutEffect(() => {
-    loadingVisibility.value = withTiming(props.loading ? 1 : 0, DICTATION_TIMING);
+    loadingVisibility.set(withTiming(props.loading ? 1 : 0, DICTATION_TIMING));
   }, [loadingVisibility, props.loading]);
   const primaryStyle = useAnimatedStyle(() => ({ opacity: 1 - loadingVisibility.value }));
 
@@ -322,7 +322,7 @@ export function ComposerDictationStatus(props: {
 }) {
   const recordingVisibility = useSharedValue(props.phase === "recording" ? 1 : 0);
   useLayoutEffect(() => {
-    recordingVisibility.value = withTiming(props.phase === "recording" ? 1 : 0, DICTATION_TIMING);
+    recordingVisibility.set(withTiming(props.phase === "recording" ? 1 : 0, DICTATION_TIMING));
   }, [props.phase, recordingVisibility]);
   const waveformStyle = useAnimatedStyle(() => ({
     opacity: recordingVisibility.value,

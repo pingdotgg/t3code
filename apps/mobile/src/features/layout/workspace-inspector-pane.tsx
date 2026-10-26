@@ -36,14 +36,12 @@ export function WorkspaceInspectorPane(props: {
 
   const onClosed = props.onClosed;
   useEffect(() => {
-    inspectorProgress.value = withTiming(
-      inspectorVisible ? 1 : 0,
-      WORKSPACE_PANE_TIMING,
-      (finished) => {
+    inspectorProgress.set(
+      withTiming(inspectorVisible ? 1 : 0, WORKSPACE_PANE_TIMING, (finished) => {
         if (finished === true && !inspectorVisible && onClosed !== undefined) {
           runOnJS(onClosed)();
         }
-      },
+      }),
     );
     const targetWidth = inspectorVisible ? (inspectorWidth ?? 0) : 0;
     renderedInspectorWidth.set(
@@ -61,10 +59,10 @@ export function WorkspaceInspectorPane(props: {
   useEffect(() => {
     const targetWidth = inspectorWidth ?? 0;
     if (!inspectorVisible || resizing) {
-      renderedContentWidth.value = targetWidth;
+      renderedContentWidth.set(targetWidth);
       return;
     }
-    renderedContentWidth.value = withTiming(targetWidth, WORKSPACE_PANE_TIMING);
+    renderedContentWidth.set(withTiming(targetWidth, WORKSPACE_PANE_TIMING));
   }, [inspectorVisible, inspectorWidth, renderedContentWidth, resizing]);
 
   const inspectorStyle = useAnimatedStyle(

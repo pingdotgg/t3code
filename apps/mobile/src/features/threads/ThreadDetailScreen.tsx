@@ -968,9 +968,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
   );
   useEffect(() => {
-    floatingControlCoverage.value = withTiming(
-      showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
-      { duration: 180, reduceMotion: ReduceMotion.System },
+    floatingControlCoverage.set(
+      withTiming(showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0, {
+        duration: 180,
+        reduceMotion: ReduceMotion.System,
+      }),
     );
   }, [floatingControlCoverage, showFloatingStatus]);
   // Android measures its expanded card in-flow; only iOS needs extra overlay coverage.
@@ -984,7 +986,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       floatingControlCoverage.value +
       (userInputCoverageApplies ? userInputInsetProgress.value * userInputCardCoverage.value : 0),
     (value) => {
-      combinedContentInsetEndAdjustment.value = value;
+      combinedContentInsetEndAdjustment.set(value);
     },
     [userInputCoverageApplies],
   );

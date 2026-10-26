@@ -105,7 +105,7 @@ export function FloatingWorkingControl(props: {
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
 
   useEffect(() => {
-    separationProgress.value = withTiming(props.showScrollToEnd ? 1 : 0, CONTROL_TIMING);
+    separationProgress.set(withTiming(props.showScrollToEnd ? 1 : 0, CONTROL_TIMING));
   }, [props.showScrollToEnd, separationProgress]);
 
   const lift = props.lift;
@@ -129,14 +129,14 @@ export function FloatingWorkingControl(props: {
     }
     const first = measuredWidthRef.current === null;
     measuredWidthRef.current = width;
-    capsuleWidth.value = first ? width : withTiming(width, CONTROL_TIMING);
+    capsuleWidth.set(first ? width : withTiming(width, CONTROL_TIMING));
   };
   const hasStatus = props.status !== null;
   const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview;
   useEffect(() => {
     if (!hasStatus) {
       measuredWidthRef.current = null;
-      capsuleWidth.value = null;
+      capsuleWidth.set(null);
     }
   }, [capsuleWidth, hasStatus]);
   const capsuleStyle = useAnimatedStyle(() => ({

@@ -87,7 +87,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     }
     // The card resizes with the keyboard every frame, so easing each sample would leave the
     // feed inset and floating controls trailing it.
-    cardCoverage.value = Math.max(0, cardHeightRef.current - barHeightRef.current);
+    cardCoverage.set(Math.max(0, cardHeightRef.current - barHeightRef.current));
   }, [cardCoverage]);
   const handleBarLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -99,7 +99,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const handleCardLayout = useCallback(
     (event: LayoutChangeEvent) => {
       cardHeightRef.current = event.nativeEvent.layout.height;
-      cardHeight.value = event.nativeEvent.layout.height;
+      cardHeight.set(event.nativeEvent.layout.height);
       notifyCoverage();
     },
     [cardHeight, notifyCoverage],

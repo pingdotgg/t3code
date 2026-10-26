@@ -65,7 +65,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
   const [expanded, setExpanded] = useState(false);
   const progress = useSharedValue(0);
   useEffect(() => {
-    progress.value = withTiming(expanded ? 1 : 0, MORPH_TIMING);
+    progress.set(withTiming(expanded ? 1 : 0, MORPH_TIMING));
   }, [expanded, progress]);
   const { collapseRef } = props;
   useEffect(() => {

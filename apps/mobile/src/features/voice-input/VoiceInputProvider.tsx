@@ -195,7 +195,7 @@ function useVoiceInputRuntime() {
 
     if (audioLevelsRef.current.some((level) => level !== 0)) {
       audioLevelsRef.current = Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0);
-      audioLevels.value = audioLevelsRef.current;
+      audioLevels.set(audioLevelsRef.current);
     }
     if (elapsedSecondsRef.current !== 0) {
       elapsedSecondsRef.current = 0;
@@ -213,7 +213,7 @@ function useVoiceInputRuntime() {
       if (level !== 0 || history.some((sample) => sample !== 0)) {
         const nextLevels = [...history.slice(1), level];
         audioLevelsRef.current = nextLevels;
-        audioLevels.value = nextLevels;
+        audioLevels.set(nextLevels);
       }
 
       const nextElapsedSeconds = Math.min(
