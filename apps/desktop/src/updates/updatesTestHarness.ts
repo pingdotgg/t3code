@@ -182,10 +182,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.succeed(
       DesktopSshEnvironment.DesktopSshEnvironment,
       DesktopSshEnvironment.DesktopSshEnvironment.of({
-        discoverHosts: () => Effect.succeed([]),
-        resolveHost: () => Effect.die("unused"),
-        ensureEnvironment: () => Effect.die("unused"),
-        disconnectEnvironment: () => Effect.die("unused"),
+        discoverHosts: Effect.fn("DesktopSshEnvironment.discoverHosts")(() => Effect.succeed([])),
+        resolveHost: Effect.fn("DesktopSshEnvironment.resolveHost")(() => Effect.die("unused")),
+        ensureEnvironment: Effect.fn("DesktopSshEnvironment.ensureEnvironment")(() =>
+          Effect.die("unused"),
+        ),
+        disconnectEnvironment: Effect.fn("DesktopSshEnvironment.disconnectEnvironment")(() =>
+          Effect.die("unused"),
+        ),
         closeLocalForwards: Effect.void,
         reopenLocalForwards: Effect.void,
       }),
@@ -429,17 +433,27 @@ export function makeSshHarness(
           ),
         ),
         Layer.succeed(NetService.NetService, {
-          canListenOnHost: (port) =>
+          canListenOnHost: Effect.fn("NetService.canListenOnHost")((port: number) =>
             Effect.sync(() => !occupiedPorts.has(port) && !listeners.has(port)),
-          isPortAvailableOnLoopback: (port) =>
-            Effect.sync(() => !occupiedPorts.has(port) && !listeners.has(port)),
-          hasListenerOnHost: () => Effect.succeed(false),
-          reserveLoopbackPort: () => Effect.sync(() => nextPort++),
-          findAvailablePort: (preferred) => Effect.succeed(preferred),
+          ),
+          isPortAvailableOnLoopback: Effect.fn("NetService.isPortAvailableOnLoopback")(
+            (port: number) => Effect.sync(() => !occupiedPorts.has(port) && !listeners.has(port)),
+          ),
+          hasListenerOnHost: Effect.fn("NetService.hasListenerOnHost")(() => Effect.succeed(false)),
+          reserveLoopbackPort: Effect.fn("NetService.reserveLoopbackPort")(() =>
+            Effect.sync(() => nextPort++),
+          ),
+          findAvailablePort: Effect.fn("NetService.findAvailablePort")((preferred: number) =>
+            Effect.succeed(preferred),
+          ),
         }),
         Layer.succeed(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
-          request: () => Effect.die("unexpected password prompt"),
-          resolve: () => Effect.die("unexpected password response"),
+          request: Effect.fn("DesktopSshPasswordPrompts.request")(() =>
+            Effect.die("unexpected password prompt"),
+          ),
+          resolve: Effect.fn("DesktopSshPasswordPrompts.resolve")(() =>
+            Effect.die("unexpected password response"),
+          ),
         }),
       ),
     ),
