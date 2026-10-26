@@ -59,7 +59,9 @@ vi.mock("react-native", () => ({
   Keyboard: { dismiss: vi.fn() },
   Alert: { alert: fixture.alert },
 }));
-vi.mock("react-native-screens", () => ({ ScrollViewMarker: "ScrollViewMarker" }));
+vi.mock("../../native/NativeScrollViewMarker", () => ({
+  NativeScrollViewMarker: "ScrollViewMarker",
+}));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 24, bottom: 0 }),
 }));
@@ -112,8 +114,8 @@ vi.mock("../workspace/navigation-tabs", async () => {
   const { NAVIGATION_TAB_ORDER } = await import("../workspace/navigation-tab-order");
   return { useNavigationTabOrder: () => NAVIGATION_TAB_ORDER, useHiddenNavigationTabs: () => [] };
 });
-vi.mock("../workspace/useAndroidWorkspaceSelection", () => ({
-  useAndroidWorkspaceSelection: () => vi.fn(),
+vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+  useSelectWorkspaceDetail: () => vi.fn(),
 }));
 vi.mock("../../components/ui/Dialog", () => ({ prompt: vi.fn() }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "new-view" }));
