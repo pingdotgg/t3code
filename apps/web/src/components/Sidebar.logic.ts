@@ -670,10 +670,13 @@ type ThreadStatusInput = Pick<
  */
 export function useThreadJumpHintsVisible(shouldShow: boolean): boolean {
   const [showAt, setShowAt] = React.useState<number | null>(null);
-  let nextShowAt = shouldShow ? showAt : null;
-  if (shouldShow && showAt === null) nextShowAt = deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS);
-  if (nextShowAt !== showAt) setShowAt(nextShowAt);
-  return useDeadlinePassed(nextShowAt);
+  // The clock is read inside the updater: the compiler caches a bare clock read
+  // in render once per instance, so a second hold would reuse the first deadline.
+  // React discards this render and re-runs with the update.
+  if (shouldShow !== (showAt !== null)) {
+    setShowAt(shouldShow ? () => deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS) : null);
+  }
+  return useDeadlinePassed(showAt);
 }
 
 export function resolveThreadLastVisitedAt(
