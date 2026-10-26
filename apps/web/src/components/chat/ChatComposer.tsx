@@ -1096,7 +1096,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
-  const [hasWrappedPrompt, observeWrappedPrompt] = useComposerMultilinePrompt();
+  const hasWrappedPrompt = useComposerMultilinePrompt(composerMenuAnchor);
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const [isTasksDrawerOpen, setIsTasksDrawerOpen] = useState(false);
   // A pending question stays expanded: its card moves into the banner dock,
@@ -3652,14 +3652,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ) : null}
 
             <div
-              ref={(node) => {
-                setComposerMenuAnchor(node);
-                const stopObserving = observeWrappedPrompt(node);
-                return () => {
-                  setComposerMenuAnchor(null);
-                  stopObserving?.();
-                };
-              }}
+              ref={setComposerMenuAnchor}
               data-chat-composer-body="true"
               className={cn(
                 "relative px-3 pb-2 sm:px-4",
