@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "typescript/no-extraneous-class": "error",
       "eslint/no-empty-pattern": "error",
       "eslint/no-new": "error",
       "unicorn/no-useless-spread": "error",
