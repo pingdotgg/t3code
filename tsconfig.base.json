@@ -24,6 +24,7 @@
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "effectFn": ["span", "inferred-span", "suggested-span"],
         "diagnosticSeverity": {
+          "flatMapIgnoredParamToAndThen": "error",
           "mapSomeToAsSome": "error",
           "unnecessaryPipeChain": "error",
           "effectFnOpportunity": "suggestion",
