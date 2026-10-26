@@ -13,6 +13,7 @@ import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "../../provider/DocumentText.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -100,6 +101,7 @@ const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factor
 const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
 const layerTest = Layer.mergeAll(
+  DocumentText.layer.pipe(Layer.provide(NodeServices.layer)),
   NodeServices.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
