@@ -48,6 +48,8 @@ export function useNativeReviewDiffHighlighting(input: {
     ),
   );
 
+  // Effect on purpose: the native highlighter's token stream and the scheduler's timers must
+  // reset with the diff the view shows, and be cancelled when it unmounts.
   useEffect(() => {
     traceDiffHighlight("viewport-reset", {
       reset: diffHighlightTraceId(resetKey),
@@ -65,6 +67,7 @@ export function useNativeReviewDiffHighlighting(input: {
     return () => scheduler.cancel();
   }, [enabled, resetKey, rows.length, scheduler, viewportScope]);
 
+  // Effect on purpose: abortable async highlighting tied to the visible range's lifetime.
   useEffect(() => {
     if (!enabled || rows.length === 0 || !viewport.range || viewport.scope !== viewportScope) {
       return;

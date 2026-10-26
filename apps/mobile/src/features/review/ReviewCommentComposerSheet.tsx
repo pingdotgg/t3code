@@ -30,6 +30,8 @@ import { changeTone, DiffTokenText, ReviewChangeBar } from "./reviewDiffRenderin
 import { highlightReviewSelectedLines } from "./highlightReviewSelectedLines";
 
 const REVIEW_COMMENT_PREVIEW_MAX_LINES = 5;
+const NO_LINES: ReturnType<typeof getSelectedReviewCommentLines> = [];
+const NO_HIGHLIGHTS: ReturnType<typeof highlightReviewSelectedLines> = {};
 
 type ReviewCommentComposerSheetProps = StaticScreenProps<{
   readonly environmentId: EnvironmentId;
@@ -49,21 +51,18 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
 
-  const selectedLines = useMemo(
-    () => (target ? getSelectedReviewCommentLines(target) : []),
-    [target],
-  );
-  const highlightedLinesById = useMemo(
-    () =>
-      target
-        ? highlightReviewSelectedLines({
-            filePath: target.filePath,
-            lines: selectedLines,
-            theme: selectedTheme,
-          })
-        : {},
-    [selectedLines, selectedTheme, target],
-  );
+  const { selectedLines, highlightedLinesById } = useMemo(() => {
+    if (!target) return { selectedLines: NO_LINES, highlightedLinesById: NO_HIGHLIGHTS };
+    const lines = getSelectedReviewCommentLines(target);
+    return {
+      selectedLines: lines,
+      highlightedLinesById: highlightReviewSelectedLines({
+        filePath: target.filePath,
+        lines,
+        theme: selectedTheme,
+      }),
+    };
+  }, [selectedTheme, target]);
   const firstLine = selectedLines[0] ?? null;
   const lastLine = selectedLines[selectedLines.length - 1] ?? null;
   const firstNumber = firstLine ? getReviewUnifiedLineNumber(firstLine) : null;
