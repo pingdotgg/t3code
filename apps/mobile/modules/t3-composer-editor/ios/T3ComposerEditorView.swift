@@ -419,7 +419,9 @@ private final class ComposerTextView: UITextView {
 }
 
 public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate, UIGestureRecognizerDelegate {
-  private let textView = ComposerTextView()
+  // This view reads `layoutManager`, which otherwise swaps a live TextKit 2 view to
+  // TextKit 1 mid-edit; that swap can leave typed text laid out but never drawn.
+  private let textView = ComposerTextView(usingTextLayoutManager: false)
   private let placeholderLabel = UILabel()
   private var value = ""
   private var tokensJson = "[]"
