@@ -21,13 +21,14 @@ import { type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
-import { type Dispatch, type RefObject, type SetStateAction, useLayoutEffect, useRef } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
 
 /**
  * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
  * prompt history on ArrowUp/ArrowDown, plan-mode toggle, and list continuation.
+ * Returns the editor's key handler; it reads the inputs captured by the render that built it.
  */
-export function useComposerCommandKey(input: {
+export function composerCommandKeyHandler(input: {
   readonly keybindings: ChatComposerProps["keybindings"];
   readonly sendShortcut: ChatComposerProps["settings"]["sendShortcut"];
   readonly routeKind: ChatComposerProps["routeKind"];
@@ -116,12 +117,6 @@ export function useComposerCommandKey(input: {
     applyPromptReplacement,
     submitComposer,
   } = input;
-  // Entries are built on the keypress, not per render: the timeline changes
-  // on every streamed delta and ArrowUp is rare.
-  const promptHistoryMessagesRef = useRef(promptHistoryMessages);
-  useLayoutEffect(() => {
-    promptHistoryMessagesRef.current = promptHistoryMessages;
-  });
 
   // The composer persists across threads. A recall from thread A must not
   // be treated as active in thread B, where the text-match fallback could
@@ -164,7 +159,8 @@ export function useComposerCommandKey(input: {
     }
     const step = stepComposerPromptHistory({
       direction,
-      entries: buildComposerPromptHistoryEntries(promptHistoryMessagesRef.current),
+      // Built on the keypress, not per render: the timeline changes on every streamed delta.
+      entries: buildComposerPromptHistoryEntries(promptHistoryMessages),
       position,
       currentPrompt: promptRef.current,
     });
@@ -258,7 +254,5 @@ export function useComposerCommandKey(input: {
     return false;
   };
 
-  return {
-    onComposerCommandKey,
-  };
+  return onComposerCommandKey;
 }
