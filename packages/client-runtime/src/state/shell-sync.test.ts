@@ -124,11 +124,11 @@ const makePersistenceHarness = Effect.fn("test.makeShellPersistenceHarness")(fun
 describe("environment shell synchronization", () => {
   it.effect("skips unchanged shell writes, persists resets and flushes changed rows", () =>
     Effect.gen(function* () {
-      const saved = yield* Ref.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
+      const saved = yield* SubscriptionRef.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
       yield* Effect.scoped(
         Effect.gen(function* () {
           const h = yield* makePersistenceHarness((_id, snapshot) =>
-            Ref.update(saved, (values) => [...values, snapshot]),
+            SubscriptionRef.update(saved, (values) => [...values, snapshot]),
           );
           yield* TestClock.adjust("500 millis");
           yield* h.send(
@@ -136,7 +136,9 @@ describe("environment shell synchronization", () => {
             (snapshot) => snapshot.snapshotSequence === 10,
           );
           yield* TestClock.adjust("10 seconds");
-          expect((yield* Ref.get(saved)).map((snapshot) => snapshot.snapshotSequence)).toEqual([1]);
+          expect(
+            (yield* SubscriptionRef.get(saved)).map((snapshot) => snapshot.snapshotSequence),
+          ).toEqual([1]);
           const live = Option.getOrThrow((yield* SubscriptionRef.get(h.state)).snapshot);
           expect(live.snapshotSequence).toBe(10);
           const enriched = yield* h.send(
@@ -152,7 +154,9 @@ describe("environment shell synchronization", () => {
           expect(enriched.projects).toEqual(live.projects);
           expect(enriched.snapshotSequence).toBe(10);
           yield* TestClock.adjust("10 seconds");
-          expect((yield* Ref.get(saved)).map((snapshot) => snapshot.snapshotSequence)).toEqual([1]);
+          expect(
+            (yield* SubscriptionRef.get(saved)).map((snapshot) => snapshot.snapshotSequence),
+          ).toEqual([1]);
           yield* h.send(
             { kind: "snapshot", snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 4 } },
             (snapshot) => snapshot.snapshotSequence === 4,
@@ -172,7 +176,7 @@ describe("environment shell synchronization", () => {
         }),
       );
       expect(
-        (yield* Ref.get(saved)).map((snapshot) => [
+        (yield* SubscriptionRef.get(saved)).map((snapshot) => [
           snapshot.snapshotSequence,
           snapshot.projects[0]?.title,
         ]),
@@ -217,7 +221,7 @@ describe("environment shell synchronization", () => {
   it.effect("flushes the latest live snapshot without blocking connection state updates", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
-      const saved = yield* Ref.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
+      const saved = yield* SubscriptionRef.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
       const saveStarted = yield* Deferred.make<void>();
       const releaseSave = yield* Deferred.make<void>();
       const client = {
@@ -241,7 +245,7 @@ describe("environment shell synchronization", () => {
         saveShell: (_environmentId, snapshot) =>
           Deferred.succeed(saveStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseSave)),
-            Effect.andThen(Ref.update(saved, (values) => [...values, snapshot])),
+            Effect.andThen(SubscriptionRef.update(saved, (values) => [...values, snapshot])),
           ),
         loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
@@ -316,21 +320,21 @@ describe("environment shell synchronization", () => {
         lastFailure: null,
         retryAt: null,
       });
-      for (let index = 0; index < 100; index += 1) {
-        if ((yield* SubscriptionRef.get(shellState)).status === "synchronizing") break;
-        yield* Effect.yieldNow;
-      }
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((state) => state.status === "synchronizing"),
+        Stream.runHead,
+      );
 
       expect((yield* SubscriptionRef.get(shellState)).status).toBe("synchronizing");
-      expect(yield* Ref.get(saved)).toEqual([]);
+      expect(yield* SubscriptionRef.get(saved)).toEqual([]);
 
       yield* Deferred.succeed(releaseSave, undefined);
-      for (let index = 0; index < 100; index += 1) {
-        if ((yield* Ref.get(saved)).length > 0) break;
-        yield* Effect.yieldNow;
-      }
+      yield* SubscriptionRef.changes(saved).pipe(
+        Stream.filter((values) => values.length > 0),
+        Stream.runHead,
+      );
 
-      expect(yield* Ref.get(saved)).toEqual([LIVE_SHELL_SNAPSHOT]);
+      expect(yield* SubscriptionRef.get(saved)).toEqual([LIVE_SHELL_SNAPSHOT]);
     }),
   );
 
@@ -356,7 +360,7 @@ describe("environment shell synchronization", () => {
       };
 
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
-      const saved = yield* Ref.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
+      const saved = yield* SubscriptionRef.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
       const unenrichedSaveStarted = yield* Deferred.make<void>();
       const releaseUnenrichedSave = yield* Deferred.make<void>();
       const client = {
@@ -383,7 +387,7 @@ describe("environment shell synchronization", () => {
               yield* Deferred.succeed(unenrichedSaveStarted, undefined);
               yield* Deferred.await(releaseUnenrichedSave);
             }
-            yield* Ref.update(saved, (values) => [...values, snapshot]);
+            yield* SubscriptionRef.update(saved, (values) => [...values, snapshot]);
           }),
         loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
@@ -454,15 +458,12 @@ describe("environment shell synchronization", () => {
       );
 
       yield* Deferred.succeed(releaseUnenrichedSave, undefined);
-      for (let index = 0; index < 100; index += 1) {
-        const values = yield* Ref.get(saved);
-        if (values.length > 0 && values.at(-1)?.projects[0]?.repositoryIdentity != null) {
-          break;
-        }
-        yield* Effect.yieldNow;
-      }
+      yield* SubscriptionRef.changes(saved).pipe(
+        Stream.filter((values) => values.at(-1)?.projects[0]?.repositoryIdentity != null),
+        Stream.runHead,
+      );
 
-      const finalSaved = (yield* Ref.get(saved)).at(-1);
+      const finalSaved = (yield* SubscriptionRef.get(saved)).at(-1);
       expect(finalSaved?.snapshotSequence).toBe(1);
       expect(finalSaved?.projects[0]?.repositoryIdentity).toEqual(repositoryIdentity);
     }),
@@ -476,7 +477,7 @@ describe("environment shell synchronization", () => {
         projects: [{ ...v2Project, title: "Late stream event" }],
       };
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
-      const saved = yield* Ref.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
+      const saved = yield* SubscriptionRef.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
       const saveStarted = yield* Deferred.make<void>();
       const releaseSave = yield* Deferred.make<void>();
       const client = {
@@ -500,7 +501,7 @@ describe("environment shell synchronization", () => {
         saveShell: (_environmentId, snapshot) =>
           Deferred.succeed(saveStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseSave)),
-            Effect.andThen(Ref.update(saved, (values) => [...values, snapshot])),
+            Effect.andThen(SubscriptionRef.update(saved, (values) => [...values, snapshot])),
           ),
         loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
@@ -557,7 +558,7 @@ describe("environment shell synchronization", () => {
       yield* Deferred.succeed(releaseSave, undefined);
       yield* Fiber.join(closeFiber);
 
-      const values = yield* Ref.get(saved);
+      const values = yield* SubscriptionRef.get(saved);
       expect(values.length).toBeGreaterThan(0);
       expect(values.every((snapshot) => snapshot.snapshotSequence === 1)).toBe(true);
       expect(values.every((snapshot) => snapshot.projects[0]?.title !== "Late stream event")).toBe(

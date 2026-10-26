@@ -737,6 +737,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       });
 
       let afterSequence = created[0]!.sequence;
+      // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- Fixed-count writes exercise the catch-up/live handoff; each iteration awaits its event rather than polling.
       for (let index = 1; index <= 32; index += 1) {
         const nextEvent = {
           id: EventId.make(`event:foundation-stream-race:${index}`),
@@ -2426,6 +2427,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const releaseA1 = yield* Deferred.make<void>();
       const releaseA2 = yield* Deferred.make<void>();
       const releaseB1 = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      const completed = yield* Ref.make(0);
       const gates = new Map([
         [effectA1, { started: startedA1, release: releaseA1 }],
         [effectA2, { started: startedA2, release: releaseA2 }],
@@ -2447,7 +2450,24 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         workerId: "concurrency-worker",
       }).pipe(
         Layer.provide(
-          Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
+          Layer.merge(
+            Layer.succeed(EffectOutbox.EffectOutboxV2, {
+              ...outbox,
+              succeed: (input) =>
+                outbox
+                  .succeed(input)
+                  .pipe(
+                    Effect.tap(() =>
+                      Ref.updateAndGet(completed, (count) => count + 1).pipe(
+                        Effect.flatMap((count) =>
+                          count === 3 ? Deferred.succeed(settled, undefined) : Effect.void,
+                        ),
+                      ),
+                    ),
+                  ),
+            }),
+            layerExecutor,
+          ),
         ),
       );
 
@@ -2493,13 +2513,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         yield* Deferred.succeed(releaseB1, undefined);
         yield* Deferred.await(startedA2);
         yield* Deferred.succeed(releaseA2, undefined);
-        let settled = false;
-        while (!settled) {
-          settled = (yield* outbox.listByCommandId(commandId)).every(
+        yield* Deferred.await(settled);
+        assert.isTrue(
+          (yield* outbox.listByCommandId(commandId)).every(
             (effect) => effect.status === "succeeded",
-          );
-          if (!settled) yield* Effect.yieldNow;
-        }
+          ),
+        );
       }).pipe(Effect.provide(layerWorker), Effect.scoped);
     }),
   );

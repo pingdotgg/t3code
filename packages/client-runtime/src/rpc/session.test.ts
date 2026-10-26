@@ -53,10 +53,12 @@ class TestWebSocket {
   readyState = TestWebSocket.CONNECTING;
   readonly sent: string[] = [];
   readonly url: string;
+  readonly sentChanges: Queue.Queue<void>;
   private readonly listeners = new Map<SocketEventType, Set<SocketListener>>();
 
-  constructor(url: string) {
+  constructor(url: string, sentChanges: Queue.Queue<void>) {
     this.url = url;
+    this.sentChanges = sentChanges;
   }
 
   addEventListener(type: SocketEventType, listener: SocketListener) {
@@ -71,6 +73,7 @@ class TestWebSocket {
 
   send(data: string) {
     this.sent.push(data);
+    Queue.offerUnsafe(this.sentChanges, undefined);
   }
 
   close(code = 1000, reason = "") {
@@ -208,10 +211,12 @@ const LEGACY_SERVER_CONFIG = {
 const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* (
   options: RpcSession.RpcSessionOptions = {},
 ) {
-  const sockets: TestWebSocket[] = [];
+  const sentChanges = yield* Queue.unbounded<void>();
+  const sockets = Object.assign([] as TestWebSocket[], { changes: yield* Queue.unbounded<void>() });
   const layerConstructor = Layer.succeed(Socket.WebSocketConstructor, (url) => {
-    const socket = new TestWebSocket(url);
+    const socket = new TestWebSocket(url, sentChanges);
     sockets.push(socket);
+    Queue.offerUnsafe(sockets.changes, undefined);
     return socket as unknown as globalThis.WebSocket;
   });
   const layer = RpcSession.layer(options).pipe(Layer.provide(layerConstructor));
@@ -220,31 +225,29 @@ const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* (
 });
 
 const awaitSocket = Effect.fn("TestRpcSessionFactory.awaitSocket")(function* (
-  sockets: ReadonlyArray<TestWebSocket>,
+  sockets: ReadonlyArray<TestWebSocket> & { readonly changes: Queue.Queue<void> },
   index = 0,
 ) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (;;) {
     const socket = sockets[index];
     if (socket) {
       return socket;
     }
-    yield* Effect.yieldNow;
+    yield* Queue.take(sockets.changes);
   }
-  return yield* Effect.die(new Error("Expected the RPC protocol to create a websocket."));
 });
 
 const awaitRequest = Effect.fn("TestRpcSessionFactory.awaitRequest")(function* (
   socket: TestWebSocket,
   index = 0,
 ) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (;;) {
     const request = socket.sent.map((message) => decodeJson(message)).filter(isRpcRequest)[index];
     if (request) {
       return request;
     }
-    yield* Effect.yieldNow;
+    yield* Queue.take(socket.sentChanges);
   }
-  return yield* Effect.die(new Error("Expected the RPC protocol to send a request."));
 });
 
 const completeInitialConfig = Effect.fn("TestRpcSessionFactory.completeInitialConfig")(function* (
