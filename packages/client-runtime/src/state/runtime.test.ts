@@ -44,6 +44,7 @@ import {
   createRuntimeCommand,
   scheduleAtomCommandEffect,
   executeAtomQuery,
+  type QueryAnswerHandler,
 } from "./runtime.ts";
 
 const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
@@ -92,8 +93,10 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     initialState,
     rpcSession,
     isFinal,
+    onAnswer,
   }: {
     readonly refreshTrigger?: Atom.Atom<unknown>;
+    readonly onAnswer?: QueryAnswerHandler<undefined, A>;
     readonly isFinal?: (value: A) => boolean;
     readonly idleTtlMs?: number;
     readonly persistence?: QueryPersistence<A>;
@@ -142,6 +145,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     ...(refreshTrigger === undefined ? {} : { refreshTrigger: () => refreshTrigger }),
     ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
     ...(isFinal === undefined ? {} : { isFinal }),
+    ...(onAnswer === undefined ? {} : { onAnswer }),
   });
 
   return {
@@ -1150,6 +1154,55 @@ describe("persisted environment queries", () => {
           expect(saved).toEqual(Option.some("updated"));
         }),
       ),
+  );
+
+  it.effect("hands each server answer to onAnswer before readers see it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const answers: Array<readonly [string, string | null]> = [];
+        let served = 0;
+        const recorded = Atom.make<string | null>(null).pipe(Atom.keepAlive);
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => `answer-${++served}`),
+          {
+            onAnswer: (_target, value, registry) =>
+              Effect.sync(() => {
+                answers.push([value, registry.get(recorded)]);
+                registry.set(recorded, value);
+              }),
+          },
+        );
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("answer-1");
+        expect(registry.get(recorded)).toBe("answer-1");
+        registry.refresh(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("answer-2");
+        expect(answers).toEqual([
+          ["answer-1", null],
+          ["answer-2", "answer-1"],
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("does not hand a value restored from persistence to onAnswer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const answers: Array<string> = [];
+        const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("server"), {
+          persistence: { load: () => Effect.succeedSome("cached"), save: () => Effect.void },
+          initialState: queryConnectionState({ phase: "offline", network: "offline" }),
+          onAnswer: (_target, value) => Effect.sync(() => answers.push(value)),
+        });
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("cached");
+        expect(answers).toEqual([]);
+        yield* SubscriptionRef.set(harness.supervisorState, queryConnectionState());
+        yield* Effect.yieldNow;
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("server");
+        expect(answers).toEqual(["server"]);
+      }),
+    ),
   );
 
   it.effect("keeps cached content available when revalidation fails", () =>

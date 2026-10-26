@@ -4,6 +4,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   newestPullRequestObservation,
+  observedPullRequestSummary,
+  observePullRequestChecks,
+  observePullRequestMetadata,
   newestPullRequestSummary,
   threadPullRequestLinkToSummary,
 } from "./pullRequests";
@@ -112,5 +115,75 @@ describe("pull request summary cache", () => {
         stale.projectId,
       ),
     ).toBeNull();
+  });
+});
+
+describe("pull request observations", () => {
+  const fromSummary = (value: PullRequestSummary, observedAt: number) =>
+    observePullRequestMetadata({ metadata: null, checks: null }, observed(value, observedAt));
+  const checksRead = (
+    checksState: "passing" | "failing" | "pending" | null,
+    readAt: number | undefined,
+    observedAt: number,
+  ) => ({ checksState, readAt, observedAt });
+
+  it("keeps a newer list's mergeability when a checks read lands after it", () => {
+    const detail = summary({
+      mergeability: "conflicting",
+      checksState: "pending",
+      observedAt: 100,
+    });
+    let state = fromSummary(detail, 1);
+    state = observePullRequestMetadata(
+      state,
+      observed(summary({ mergeability: "mergeable", checksState: "pending", observedAt: 200 }), 2),
+    );
+    state = observePullRequestChecks(state, checksRead("passing", 300, 3));
+    expect(observedPullRequestSummary(state)).toMatchObject({
+      mergeability: "mergeable",
+      checksState: "passing",
+    });
+  });
+
+  it("keeps a newer checks read when an older list read lands after it", () => {
+    let state = fromSummary(
+      summary({ mergeability: "conflicting", checksState: "pending", observedAt: 100 }),
+      1,
+    );
+    state = observePullRequestChecks(state, checksRead("passing", 300, 2));
+    state = observePullRequestMetadata(
+      state,
+      observed(summary({ mergeability: "mergeable", checksState: "pending", observedAt: 250 }), 3),
+    );
+    expect(observedPullRequestSummary(state)).toMatchObject({
+      mergeability: "mergeable",
+      checksState: "passing",
+    });
+  });
+
+  it("lets a newer read's checks replace an older checks read", () => {
+    let state = fromSummary(summary({ checksState: "pending", observedAt: 100 }), 1);
+    state = observePullRequestChecks(state, checksRead("passing", 300, 2));
+    state = observePullRequestMetadata(
+      state,
+      observed(summary({ checksState: "failing", observedAt: 400 }), 3),
+    );
+    expect(observedPullRequestSummary(state)?.checksState).toBe("failing");
+  });
+
+  it("orders checks by arrival when the server reports no read time", () => {
+    let state = fromSummary(summary({ checksState: "pending" }), 1);
+    state = observePullRequestChecks(state, checksRead("passing", undefined, 2));
+    expect(observedPullRequestSummary(state)?.checksState).toBe("passing");
+    state = observePullRequestChecks(state, checksRead("failing", undefined, 1));
+    expect(observedPullRequestSummary(state)?.checksState).toBe("passing");
+  });
+
+  it("shows nothing until some read has described the pull request", () => {
+    const state = observePullRequestChecks(
+      { metadata: null, checks: null },
+      checksRead("failing", 1, 1),
+    );
+    expect(observedPullRequestSummary(state)).toBeNull();
   });
 });
