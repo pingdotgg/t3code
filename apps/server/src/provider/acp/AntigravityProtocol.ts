@@ -329,6 +329,26 @@ export function normalizeAntigravitySessionUpdate(
   };
 }
 
+const TRAJECTORY_STEP_ID =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32}):\d+$/i;
+
+/**
+ * Step ids are `<trajectory>:<step index>`, and subagent trajectories stream on the
+ * parent session. Opaque ids such as `call_*` carry no owner, so they stay with the parent.
+ */
+export function routeAntigravityChildToolUpdate(
+  notification: EffectAcpSchema.SessionNotification,
+): EffectAcpSchema.SessionNotification {
+  const update = notification.update;
+  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+    return notification;
+  }
+  const owner = TRAJECTORY_STEP_ID.exec(update.toolCallId)?.[1];
+  return owner === undefined || owner.toLowerCase() === notification.sessionId.toLowerCase()
+    ? notification
+    : { ...notification, sessionId: owner };
+}
+
 function localImagePath(imagePath: string | undefined): string | undefined {
   if (!imagePath || imagePath.length > TOOL_TEXT_LIMIT) {
     return undefined;

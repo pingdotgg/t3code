@@ -12,6 +12,7 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
+  routeAntigravityChildToolUpdate,
   sanitizeAntigravityToolPayload,
   makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
@@ -71,6 +72,25 @@ describe("native Antigravity subagent tools", () => {
     expect(
       antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
     ).toBeUndefined();
+  });
+
+  it("routes only child trajectory steps away from the parent session", () => {
+    const root = "89ae71af-4de5-4855-85bf-4790ad91ae76";
+    const sessionFor = (toolCallId: string) =>
+      routeAntigravityChildToolUpdate({
+        sessionId: root,
+        update: { sessionUpdate: "tool_call_update", toolCallId, status: "completed" },
+      }).sessionId;
+    expect(sessionFor("33e9093cd2d9d11b9df002ad1d225480:128")).toBe(
+      "33e9093cd2d9d11b9df002ad1d225480",
+    );
+    expect(sessionFor("0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0:3")).toBe(
+      "0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0",
+    );
+    expect(sessionFor(`${root.toUpperCase()}:121`)).toBe(root);
+    expect(sessionFor("call_2190436")).toBe(root);
+    expect(sessionFor("33e9093cd2d9d11b9df002ad1d225480:")).toBe(root);
+    expect(sessionFor("interaction_33e9093cd2d9d11b9df002ad1d225480:1")).toBe(root);
   });
 });
 
