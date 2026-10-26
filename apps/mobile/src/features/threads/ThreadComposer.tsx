@@ -156,48 +156,18 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
     (contentHeight > text.lineHeight * 1.5 ||
       (compactWidth > 0 && contentSize.width > compactWidth));
   const compactRowHeight = Math.max(44, minimum);
-  const animatedHeight = useSharedValue(height);
-  const surfaceHeight = useSharedValue(compactRowHeight);
-  const targetSurfaceHeight = isExpanded ? height + 52 : compactRowHeight;
-  const expansion = useSharedValue(0);
-  useLayoutEffect(() => {
-    const config = { duration: 180, reduceMotion: ReduceMotion.System };
-    if (Platform.OS === "android") {
-      animatedHeight.set(height);
-      surfaceHeight.set(targetSurfaceHeight);
-      expansion.set(Number(isExpanded));
-      return;
-    }
-    // Resolve wrapping at the destination width before animating vertically.
-    // Intermediate widths otherwise produce taller measurements mid-transition.
-    let nextFrame: number | undefined;
-    const frame = requestAnimationFrame(() => {
-      nextFrame = requestAnimationFrame(() => {
-        animatedHeight.set(withTiming(height, config));
-        surfaceHeight.set(withTiming(targetSurfaceHeight, config));
-        expansion.set(withTiming(Number(isExpanded), config));
-      });
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      if (nextFrame !== undefined) cancelAnimationFrame(nextFrame);
-    };
-  }, [animatedHeight, expansion, height, isExpanded, surfaceHeight, targetSurfaceHeight]);
-  const containerStyle = useAnimatedStyle(() => ({
-    height: surfaceHeight.value,
-  }));
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
     overflow: "hidden",
-    height: animatedHeight.value,
+    height,
     left: isExpanded ? 14 : editorX.value + 4,
     right: isExpanded ? 14 : rowWidth.value - editorX.value - editorWidth.value + 4,
-    bottom:
-      (compactRowHeight - minimum) / 2 + expansion.value * (52 - (compactRowHeight - minimum) / 2),
+    // The full-width editor must move above the controls in the same frame it widens.
+    bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
   }));
   return {
     isExpanded,
-    containerStyle,
+    containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       rowWidth.set(event.nativeEvent.layout.width);
