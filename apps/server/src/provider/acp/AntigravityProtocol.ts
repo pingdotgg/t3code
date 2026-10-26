@@ -228,6 +228,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
 export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
   return sanitizeToolValue(payload, { nodes: 512, text: 64_000 }, 0);
 }
+const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
@@ -256,9 +257,7 @@ export function normalizeAntigravitySessionUpdate(
         ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }
         : {}),
       ...(update.content !== undefined ? { content: content ?? [] } : {}),
-      ...(update._meta !== undefined
-        ? { _meta: Schema.is(Schema.Record(Schema.String, Schema.Json))(meta) ? meta : null }
-        : {}),
+      ...(update._meta !== undefined ? { _meta: isJsonRecord(meta) ? meta : null } : {}),
     },
   };
 }

@@ -120,8 +120,12 @@ const boundedBody = (compact: boolean) => ({
 });
 const BoundedJson = Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot);
 const idTableBody = () => {
-  const snapshot = Schema.decodeSync(BoundedJson)(boundedBody(true));
-  return Schema.encodeSync(BoundedJson)({ ...snapshot, idTable: true });
+  const decodeBoundedJson = Schema.decodeSync(BoundedJson);
+
+  const snapshot = decodeBoundedJson(boundedBody(true));
+  const encodeBoundedJson = Schema.encodeSync(BoundedJson);
+
+  return encodeBoundedJson({ ...snapshot, idTable: true });
 };
 
 describe("boundedThreadSnapshotLoader", () => {

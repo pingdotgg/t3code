@@ -278,7 +278,7 @@ export default defineConfig({
         { paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS] },
       ],
       "t3code/no-global-process-runtime": "error",
-      "t3code/no-inline-schema-compile": "warn",
+      "t3code/no-inline-schema-compile": "error",
       "t3code/no-low-value-comments": "error",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",

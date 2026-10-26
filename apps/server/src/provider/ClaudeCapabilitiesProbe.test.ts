@@ -13,6 +13,8 @@ import {
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
+const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
+
 it("drops strict MCP mode, and only that, next to an administrator's managed-mcp.json", () => {
   const options = buildClaudeCapabilitiesProbeQueryOptions({
     executablePath: "/usr/bin/claude",
@@ -31,7 +33,7 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
 it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   Effect.gen(function* () {
     const snapshot = yield* probeClaudeWorkspaceSnapshot(
-      yield* Schema.decodeEffect(ClaudeSettings)({}),
+      yield* decodeClaudeSettings({}),
       { skills: [], slashCommands: [] } as unknown as ServerProvider,
       "/nonexistent/t3-deleted-worktree",
       { HOME: "/nonexistent/t3-home" },
