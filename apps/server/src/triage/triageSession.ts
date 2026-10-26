@@ -13,6 +13,7 @@ import * as BootService from "../cloud/bootService.ts";
 import * as ManagedEndpointRuntime from "../cloud/ManagedEndpointRuntime.ts";
 import type * as ServerConfig from "../config.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { buildRecoverySeedPrompt } from "./recoveryPrompt.ts";
 import {
   buildTriageContext,
   buildTriageSeedPrompt,
@@ -46,6 +47,7 @@ export const triageSourceCacheDir = (baseDir: string, path: Path.Path) =>
  * folder. Both `t3 triage` and the in-app entry point start from these files.
  */
 export const writeTriageSession = Effect.fn("triage.writeTriageSession")(function* (input: {
+  readonly command?: "triage" | "unfuck";
   readonly baseDir: string;
   readonly paths: ServerConfig.ServerDerivedPaths;
   readonly entry: TriageEntry;
@@ -59,7 +61,7 @@ export const writeTriageSession = Effect.fn("triage.writeTriageSession")(functio
   const now = yield* DateTime.now;
   const sessionDir = path.join(
     paths.stateDir,
-    "triage",
+    input.command ?? "triage",
     DateTime.formatIso(now).replaceAll(":", "-").replace(".", "-"),
   );
   yield* fs.makeDirectory(sessionDir, { recursive: true });
@@ -68,6 +70,7 @@ export const writeTriageSession = Effect.fn("triage.writeTriageSession")(functio
   yield* fs.writeFileString(
     contextFilePath,
     buildTriageContext({
+      command: input.command ?? "triage",
       generatedAt: DateTime.formatIso(now),
       entry: input.entry,
       os: `${yield* HostProcess.Platform} ${yield* HostProcess.Architecture} (${NodeOS.release()})`,
@@ -95,7 +98,9 @@ export const writeTriageSession = Effect.fn("triage.writeTriageSession")(functio
   const promptFilePath = path.join(sessionDir, TRIAGE_PROMPT_FILE_NAME);
   yield* fs.writeFileString(
     promptFilePath,
-    buildTriageSeedPrompt({ contextFilePath, entry: input.entry }),
+    input.command === "unfuck"
+      ? buildRecoverySeedPrompt(contextFilePath)
+      : buildTriageSeedPrompt({ contextFilePath, entry: input.entry }),
   );
 
   return { sessionDir, contextFilePath, promptFilePath };
