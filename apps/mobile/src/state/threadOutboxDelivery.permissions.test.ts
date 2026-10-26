@@ -13,15 +13,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
 const state = vi.hoisted(() => ({
-  grantedEnvironments: new Set<string>(),
   draftText: "Keep this draft separate",
   cleanups: [] as Array<() => void>,
+  delivery: null as {
+    readonly drain: () => void;
+    readonly dispose: () => void;
+  } | null,
   start: vi.fn(),
   metadata: vi.fn(),
   runtime: vi.fn(),
   interaction: vi.fn(),
   prepare: vi.fn(),
   checkout: vi.fn(),
+  modelUnavailable: vi.fn(() => false),
+  familyMount: vi.fn(() => () => {}),
+  threadShells: null as unknown as Atom.Writable<ReadonlyArray<unknown>>,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
@@ -34,42 +40,53 @@ const state = vi.hoisted(() => ({
     session: null,
   },
   config: {
+    shellThreadFamilies: false,
     providers: [{ instanceId: "codex", driver: "codex" }],
     environment: { capabilities: {} },
   },
 }));
-vi.mock("react", () => ({
-  useCallback: <A>(callback: A) => callback,
-  useEffect: (effect: () => void | (() => void)) => {
-    const cleanup = effect();
-    if (cleanup) state.cleanups.push(cleanup);
-  },
-  useRef: <A>(value: A) => ({ current: value }),
-  useState: <A>(initial: A) => [initial, vi.fn()],
-}));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
-vi.mock("@effect/atom-react", async () => {
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  runAtomCommand: (_registry: unknown, command: (input: unknown) => unknown, input: unknown) =>
+    command(input),
+}));
+vi.mock("./session", async () => {
+  const { Atom } = await import("effect/reactivity");
   const { appAtomRegistry } = await import("./atom-registry");
-  return { useAtomValue: <A>(atom: Atom.Atom<A>) => appAtomRegistry.get(atom) };
+  // A session's state is reduced to whether it grants the operate scope.
+  const sessionStateAtom = Atom.family((_id: string) => Atom.make(false).pipe(Atom.keepAlive));
+  const sessionHasScope = (granted: boolean, scope: string) =>
+    granted && scope === AuthOrchestrationOperateScope;
+  return {
+    environmentSession: { sessionStateAtom },
+    sessionHasScope,
+    readEnvironmentScope: (environmentId: string, scope: string) =>
+      sessionHasScope(appAtomRegistry.get(sessionStateAtom(environmentId)), scope),
+  };
 });
-vi.mock("./session", () => ({
-  readEnvironmentScope: (environmentId: string, scope: string) =>
-    scope === AuthOrchestrationOperateScope && state.grantedEnvironments.has(environmentId),
-  useEnvironmentsWithScope: () => state.grantedEnvironments,
-}));
-vi.mock("./entities", () => ({
-  useProjects: () => [],
-  useThreadShells: () => [state.thread],
-  useServerConfigs: () => new Map([["secondary", state.config]]),
-}));
+vi.mock("./projects", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentProjects: { projectsAtom: Atom.make([]) } };
+});
+vi.mock("./workspace", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    workspaceConnections: {
+      environmentsAtom: Atom.make([{ environmentId: "secondary", connectionState: "connected" }]),
+    },
+  };
+});
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     serverEnvironment: { configValueAtom: Atom.family((_id: string) => Atom.make(state.config)) },
+    environmentServerConfigsAtom: Atom.make(new Map([["secondary", state.config]])),
   };
 });
 vi.mock("./threads", async () => {
-  const { Atom } = await import("effect/reactivity");
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  state.threadShells = Atom.make<ReadonlyArray<unknown>>([state.thread]).pipe(Atom.keepAlive);
   return {
     threadEnvironment: {
       startTurn: state.start,
@@ -77,21 +94,19 @@ vi.mock("./threads", async () => {
       setRuntimeMode: state.runtime,
       setInteractionMode: state.interaction,
     },
-    environmentThreadShells: { threadShellsAtom: Atom.make([state.thread]) },
-    environmentThreadDetails: { threadAtom: Atom.family((_key: unknown) => Atom.make(null)) },
+    environmentThreadShells: { threadShellsAtom: state.threadShells },
+    threadFamilies: {
+      mount: state.familyMount,
+      familyAtom: () => Atom.make(AsyncResult.success({})),
+      refresh: vi.fn(),
+    },
+    environmentThreadDetails: { threadAtom: () => Atom.make(null) },
   };
 });
-vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => command }));
 vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
-vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: () => false }));
+vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
-vi.mock("./use-remote-environment-registry", () => ({
-  setPendingConnectionError: vi.fn(),
-  useRemoteConnectionStatus: () => ({
-    connectedEnvironments: [{ environmentId: "secondary", connectionState: "connected" }],
-  }),
-}));
 vi.mock("./thread-outbox", async () => {
   const { createThreadOutboxManager } = await import("./thread-outbox-manager");
   const { appAtomRegistry } = await import("./atom-registry");
@@ -118,13 +133,10 @@ vi.mock("./thread-outbox-removal", () => ({
 }));
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
-  const { appAtomRegistry } = await import("./atom-registry");
-  await import("./thread-outbox");
   return {
     editingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     dispatchingQueuedMessageIdAtom: Atom.make<MessageId | null>(null).pipe(Atom.keepAlive),
-    useThreadOutboxMessages: () => appAtomRegistry.get(state.manager.queuedMessagesByThreadKeyAtom),
-    useThreadOutboxShellStatuses: () => new Map([["secondary", "live"]]),
+    threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
   };
 });
 vi.mock("./use-composer-drafts", async () => {
@@ -146,8 +158,9 @@ vi.mock("./use-composer-drafts", async () => {
 });
 
 import { appAtomRegistry } from "./atom-registry";
-import { dispatchingQueuedMessageIdAtom } from "./use-thread-outbox";
-import { useThreadOutboxDrain } from "./use-thread-outbox-drain";
+import { environmentSession } from "./session";
+import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
+import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("secondary"),
@@ -162,20 +175,46 @@ const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMess
 const remaining = () =>
   Object.values(appAtomRegistry.get(state.manager.queuedMessagesByThreadKeyAtom)).flat();
 
+function setOperateGrant(environmentId: string, granted: boolean): void {
+  // The mocked session atom holds the grant itself (see the ./session mock).
+  const sessionAtom = environmentSession.sessionStateAtom(EnvironmentId.make(environmentId));
+  appAtomRegistry.set(sessionAtom as unknown as Atom.Writable<boolean>, granted);
+}
+
 function runDrain() {
   const settled = Promise.withResolvers<void>();
   const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
     if (id === null) settled.resolve();
   });
-  useThreadOutboxDrain();
+  startDelivery();
   return settled.promise.finally(release);
 }
 
+/** Starts the service once per test; later calls run another drain pass. */
+function startDelivery(): void {
+  if (state.delivery !== null) {
+    state.delivery.drain();
+    return;
+  }
+  const delivery = createThreadOutboxDelivery();
+  state.delivery = delivery;
+  state.cleanups.push(() => {
+    delivery.dispose();
+    state.delivery = null;
+  });
+}
+
 beforeEach(() => {
-  state.grantedEnvironments = new Set(["primary"]);
+  setOperateGrant("primary", true);
+  setOperateGrant("secondary", false);
   state.draftText = "Keep this draft separate";
+  state.config.shellThreadFamilies = false;
+  state.modelUnavailable.mockReset().mockReturnValue(false);
+  state.familyMount.mockReset().mockReturnValue(() => {});
+  appAtomRegistry.set(state.threadShells, [state.thread]);
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
+  appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
   for (const command of [
     state.start,
     state.metadata,
@@ -214,7 +253,7 @@ describe("queued PR checkout", () => {
   };
 
   it("waits for the provider's PR checkout and launches in that worktree", async () => {
-    state.grantedEnvironments.add("secondary");
+    setOperateGrant("secondary", true);
     await state.manager.enqueue(queuedPullRequest());
     const started = Promise.withResolvers<void>();
     const checkout =
@@ -243,7 +282,7 @@ describe("queued PR checkout", () => {
   });
 
   it("keeps the PR source queued on a transport failure without starting the agent", async () => {
-    state.grantedEnvironments.add("secondary");
+    setOperateGrant("secondary", true);
     const queued = queuedPullRequest();
     await state.manager.enqueue(queued);
     state.checkout.mockResolvedValueOnce(
@@ -255,11 +294,11 @@ describe("queued PR checkout", () => {
   });
 
   it("stops launch if operation access is revoked while checking out the PR", async () => {
-    state.grantedEnvironments.add("secondary");
+    setOperateGrant("secondary", true);
     const queued = queuedPullRequest();
     await state.manager.enqueue(queued);
     state.checkout.mockImplementationOnce(async () => {
-      state.grantedEnvironments.delete("secondary");
+      setOperateGrant("secondary", false);
       return AsyncResult.success(preparedCheckout);
     });
     await runDrain();
@@ -268,7 +307,7 @@ describe("queued PR checkout", () => {
   });
 
   it("does not launch a stale task edited while the PR checkout was running", async () => {
-    state.grantedEnvironments.add("secondary");
+    setOperateGrant("secondary", true);
     const queued = queuedPullRequest();
     await state.manager.enqueue(queued);
     const edited = { ...queued, text: "Updated instructions" };
@@ -289,18 +328,63 @@ describe("queued task operation access", () => {
   it("parks a connected read-only target, then delivers its unchanged queue after a grant", async () => {
     const queued = message();
     await state.manager.enqueue(queued);
-    useThreadOutboxDrain();
+    startDelivery();
     expect(state.start).not.toHaveBeenCalled();
     expect(state.prepare).not.toHaveBeenCalled();
     expect(remaining()).toEqual([queued]);
-    state.grantedEnvironments.add("secondary");
+    setOperateGrant("secondary", true);
     await runDrain();
     expect(state.start).toHaveBeenCalledOnce();
     expect(remaining()).toEqual([]);
   });
 
+  it("backs off instead of redelivering at once when a delivery hits a defect", async () => {
+    setOperateGrant("secondary", true);
+    const queued = message();
+    await state.manager.enqueue(queued);
+    // Awaited steps catch their own failures, so a defect in the delivery's own code is what
+    // rejects a delivery.
+    state.modelUnavailable.mockImplementationOnce(() => {
+      throw new TypeError("Cannot read properties of undefined");
+    });
+    await runDrain();
+    expect(state.modelUnavailable).toHaveBeenCalledOnce();
+    expect(state.prepare).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+    expect(remaining()).toEqual([queued]);
+  });
+
+  it("starts one delivery when mounting a thread family changes the rows mid-pass", async () => {
+    setOperateGrant("secondary", true);
+    state.config.shellThreadFamilies = true;
+    const subAgentThread = { ...state.thread, id: "sub-agent" };
+    // A cached family merges its rows into the shell list as soon as it is mounted.
+    state.familyMount.mockImplementationOnce(() => {
+      appAtomRegistry.set(state.threadShells, [state.thread, subAgentThread]);
+      return () => {};
+    });
+    const queued = message({ threadId: ThreadId.make("sub-agent") });
+    startDelivery();
+    appAtomRegistry.set(editingQueuedMessageIdsAtom, { [queued.messageId]: true });
+    await state.manager.enqueue(queued);
+    using confirm = vi.spyOn(state.manager, "confirmQueued");
+    const delivered = Promise.withResolvers<void>();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
+      if (id === null) delivered.resolve();
+    });
+    // Ending the edit wakes the drain through a registry notification, the path on which the
+    // mount's synchronous row change notifies the drain again mid-pass.
+    appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
+    expect(state.familyMount).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledOnce();
+    await delivered.promise.finally(release);
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(remaining()).toEqual([]);
+  });
+
   it("stops the remaining settings and turn commands when an earlier update loses access", async () => {
-    state.grantedEnvironments.add("secondary");
+    setOperateGrant("secondary", true);
     const queued = message({
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "different-model" },
       runtimeMode: "approval-required",
@@ -308,7 +392,7 @@ describe("queued task operation access", () => {
     });
     await state.manager.enqueue(queued);
     state.runtime.mockImplementationOnce(async () => {
-      state.grantedEnvironments.delete("secondary");
+      setOperateGrant("secondary", false);
       return AsyncResult.success(undefined);
     });
     await runDrain();
@@ -325,7 +409,7 @@ describe("queued task operation access", () => {
   ])(
     "preserves a rejected queue but removes an accepted turn after access loss (new task: $isCreation, accepted: $accepted)",
     async ({ isCreation, accepted }) => {
-      state.grantedEnvironments.add("secondary");
+      setOperateGrant("secondary", true);
       const queued = message(
         isCreation
           ? {
@@ -350,7 +434,7 @@ describe("queued task operation access", () => {
       });
       const drained = runDrain();
       await started.promise;
-      state.grantedEnvironments.delete("secondary");
+      setOperateGrant("secondary", false);
       delivery.resolve(
         accepted
           ? AsyncResult.success(undefined)
@@ -361,7 +445,7 @@ describe("queued task operation access", () => {
       expect(remaining()).toEqual(accepted ? [] : [queued]);
       expect(state.draftText).toBe("Keep this draft separate");
       if (!accepted) {
-        state.grantedEnvironments.add("secondary");
+        setOperateGrant("secondary", true);
         await runDrain();
         expect(state.start).toHaveBeenCalledTimes(2);
         expect(remaining()).toEqual([]);
@@ -378,7 +462,7 @@ describe("queued task operation access", () => {
   ])(
     "keeps the message queued after upload revocation (new task: $isCreation, upload fails: $uploadFails)",
     async ({ isCreation, uploadFails }) => {
-      state.grantedEnvironments.add("secondary");
+      setOperateGrant("secondary", true);
       const queued = message(
         isCreation
           ? {
@@ -396,7 +480,7 @@ describe("queued task operation access", () => {
       );
       await state.manager.enqueue(queued);
       state.prepare.mockImplementationOnce(async ({ attachments }) => {
-        state.grantedEnvironments.delete("secondary");
+        setOperateGrant("secondary", false);
         if (uploadFails) throw new Error("This connection cannot upload attachments.");
         return {
           status: "ready",

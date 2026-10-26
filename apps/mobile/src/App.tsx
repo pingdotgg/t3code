@@ -1,4 +1,6 @@
 import { installPermissionUpdateNotice } from "./features/connection/permissionUpdateNotice";
+import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
+import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
@@ -86,11 +88,14 @@ const navigationRef = createNavigationContainerRef();
 
 declare const module: { readonly hot?: FoundationHotModule } | undefined;
 
-const disposePermissionUpdateNotice = installPermissionUpdateNotice();
-disposeOnFoundationReplace(
-  typeof module === "undefined" ? undefined : module.hot,
-  disposePermissionUpdateNotice,
-);
+const appServiceDisposers = [
+  installPermissionUpdateNotice(),
+  installThreadOutboxDelivery(),
+  installComposerAttachmentUploads(),
+];
+disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.hot, () => {
+  for (const dispose of appServiceDisposers) dispose();
+});
 
 function SplashScreenCoordinator() {
   const { isReady } = useAppearancePreferences();

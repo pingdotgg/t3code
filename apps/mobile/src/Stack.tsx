@@ -149,8 +149,6 @@ import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
-import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
-import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
 import {
   selectWorkspaceDetail,
   workspaceDetailRouter,
@@ -485,13 +483,6 @@ function workspaceLocationFromState(state: NavigationState) {
   };
 }
 
-// Isolate subscriptions so streaming updates cannot re-render RootStackLayout and every screen.
-function ThreadOutboxDrainWorker() {
-  useThreadOutboxDrain();
-  useComposerAttachmentUploadWorker();
-  return null;
-}
-
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
@@ -546,7 +537,6 @@ function RootStackLayout(props: {
       routePendingTaskId={routePendingTaskId}
     >
       <HardwareKeyboardCommandProvider pathname={pathname}>
-        <ThreadOutboxDrainWorker />
         <ShowcaseCaptureCoordinator pathname={pathname} />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>

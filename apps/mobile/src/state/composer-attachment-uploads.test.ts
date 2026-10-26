@@ -19,20 +19,9 @@ const native = vi.hoisted(() => ({
   remove: Symbol("remove"),
   transfer:
     vi.fn<(uri: string, url: string, options: UploadOptions) => Promise<{ status: number }>>(),
-  effects: [] as Array<() => void | (() => void)>,
-  queueRef: {
-    current: null as ReturnType<
-      typeof import("../lib/composerAttachmentUploadQueue").createComposerAttachmentUploadQueue
-    > | null,
-  },
 }));
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
-vi.mock("react", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react")>()),
-  useEffect: (effect: () => void | (() => void)) => native.effects.push(effect),
-  useRef: () => native.queueRef,
-}));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: Parameters<typeof appAtomRegistry.get>[0]) => appAtomRegistry.get(atom),
 }));
@@ -111,6 +100,8 @@ vi.mock("./entities", () => ({
   useServerConfigs: () => new Map([["environment-1", config]]),
   useThreadShells: () => [],
 }));
+vi.mock("./projects", () => ({ environmentProjects: {} }));
+vi.mock("./workspace", () => ({ workspaceConnections: {} }));
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
@@ -173,14 +164,9 @@ vi.mock("./use-thread-outbox", async () => {
     dispatchingQueuedMessageIdAtom: Atom.make<Record<string, string>>({}).pipe(Atom.keepAlive),
     useThreadOutboxMessages: () =>
       appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
-    useThreadOutboxShellStatuses: () => new Map(),
+    threadOutboxShellStatusesAtom: Atom.make(new Map()),
   };
 });
-vi.mock("./use-remote-environment-registry", () => ({
-  useRemoteConnectionStatus: () => ({
-    connectedEnvironments: [{ environmentId: "environment-1", connectionState: "connected" }],
-  }),
-}));
 
 import {
   composerAttachmentUploadBlockReason,
@@ -188,10 +174,12 @@ import {
   composerAttachmentUploadKey,
 } from "../lib/composerAttachmentUploadQueue";
 import type { DraftComposerAttachment } from "../lib/composerImages";
+import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "./atom-registry";
 import {
+  composerAttachmentUploadRequests,
   composerAttachmentUploadsAtom,
-  useComposerAttachmentUploadWorker,
+  createComposerAttachmentUploadWorker,
 } from "./composer-attachment-uploads";
 import {
   enqueueThreadOutboxMessage,
@@ -200,7 +188,7 @@ import {
 } from "./thread-outbox";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as drafts from "./use-composer-drafts";
-import { prepareQueuedMessageAttachments } from "./use-thread-outbox-drain";
+import { prepareQueuedMessageAttachments } from "./threadOutboxDelivery";
 
 const environmentId = EnvironmentId.make("environment-1");
 const draftKey = "environment-1:thread-1";
@@ -217,12 +205,19 @@ const image: DraftComposerAttachment = {
 };
 let disposeWorker: (() => void) | undefined;
 
+const requestsAtom = Atom.make((get) =>
+  composerAttachmentUploadRequests({
+    drafts: get(drafts.composerDraftUploadSourcesAtom),
+    queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+    connectedEnvironmentIds: new Set([environmentId]),
+    operableEnvironmentIds: new Set([environmentId]),
+    serverConfigs: new Map([[environmentId, config]]),
+  }),
+);
+
 function worker() {
-  native.effects = [];
-  useComposerAttachmentUploadWorker();
-  disposeWorker = native.effects[0]!() ?? undefined;
-  const queue = native.queueRef.current!;
-  native.effects[1]!();
+  const { queue, dispose } = createComposerAttachmentUploadWorker(requestsAtom);
+  disposeWorker = dispose;
   return queue;
 }
 

@@ -13,6 +13,9 @@ import type { PreparedTurnAttachments } from "../lib/attachmentUpload";
 
 const harness = vi.hoisted(() => ({
   canOperate: true,
+  threadProjection: null as unknown as import("effect/reactivity").Atom.Writable<{
+    readonly projection: { readonly messages: ReadonlyArray<{ readonly id: string }> };
+  } | null>,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
@@ -76,11 +79,9 @@ vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: harness.prepareTurnAttachments,
 }));
 
-vi.mock("./entities", () => ({
-  useProjects: () => [],
-  useServerConfigs: () => new Map(),
-  useThreadShells: () => [],
-}));
+vi.mock("./projects", () => ({ environmentProjects: {} }));
+
+vi.mock("./workspace", () => ({ workspaceConnections: {} }));
 
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -91,33 +92,29 @@ vi.mock("./git", () => ({ gitEnvironment: {} }));
 
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
+  harness.threadProjection = Atom.make<{
+    readonly projection: { readonly messages: ReadonlyArray<{ readonly id: string }> };
+  } | null>(null).pipe(Atom.keepAlive);
   return {
     threadEnvironment: {},
-    environmentThreadDetails: { threadAtom: Atom.family((_key: unknown) => Atom.make(null)) },
+    environmentThreadDetails: { threadAtom: () => harness.threadProjection },
   };
 });
 
-vi.mock("./use-atom-command", () => ({
-  useAtomCommand: () => async () => undefined,
-}));
-
 vi.mock("./session", () => ({
+  environmentSession: {},
   readEnvironmentScope: () => harness.canOperate,
-  useEnvironmentsWithScope: () => new Set(),
+  sessionHasScope: () => harness.canOperate,
 }));
 
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
-    useThreadOutboxMessages: () => ({}),
-    useThreadOutboxShellStatuses: () => new Map(),
+    dispatchingQueuedMessageIdAtom: Atom.make(null).pipe(Atom.keepAlive),
+    threadOutboxShellStatusesAtom: Atom.make(new Map()),
   };
 });
-
-vi.mock("./use-remote-environment-registry", () => ({
-  useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
-}));
 
 vi.mock("./thread-outbox", async () => {
   const { createThreadOutboxManager } = await import("./thread-outbox-manager");
@@ -154,7 +151,7 @@ import {
   recoverEditedCreationAfterDelivery,
   removeAcknowledgedExistingThreadMessage,
   restoreRejectedQueuedMessage,
-} from "./use-thread-outbox-drain";
+} from "./threadOutboxDelivery";
 
 function queuedMessage(input: {
   readonly messageId: string;
@@ -207,6 +204,7 @@ function remainingMessages(): ReadonlyArray<QueuedThreadMessage> {
 
 beforeEach(() => {
   appAtomRegistry.set(acknowledgedThreadMessagesAtom, []);
+  appAtomRegistry.set(harness.threadProjection, null);
   harness.canOperate = true;
   harness.draftFile.setDocument({ schemaVersion: 1, drafts: {} });
 });
@@ -332,6 +330,28 @@ describe("thread outbox attachment preparation", () => {
 });
 
 describe("thread outbox drain delivery cleanup", () => {
+  it("drops echoed acknowledged rows at the next delivery without subscribing to the thread", async () => {
+    const first = queuedMessage({ messageId: "awaiting-echo", text: "Delivered" });
+    const second = queuedMessage({ messageId: "next-delivery", text: "Also delivered" });
+    await harness.manager.enqueue(first);
+    await harness.manager.enqueue(second);
+
+    await expect(
+      completeQueuedMessageDelivery(first, harness.manager.revisionOf(first.messageId)),
+    ).resolves.toBe("removed");
+    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([first]);
+
+    appAtomRegistry.set(harness.threadProjection, {
+      projection: { messages: [{ id: "unrelated" }, { id: first.messageId }] },
+    });
+    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([first]);
+
+    await expect(
+      completeQueuedMessageDelivery(second, harness.manager.revisionOf(second.messageId)),
+    ).resolves.toBe("removed");
+    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([second]);
+  });
+
   it("removes an acknowledged outbox item even when the sign-out archive write fails", async () => {
     const message = queuedMessage({ messageId: "archive-write-failure", text: "Delivered" });
     await harness.manager.enqueue(message);
