@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { RELAY_GATEWAY_TIMEOUT_MESSAGE, relayRequestFailureDetail } from "./errorPresentation.ts";
 import * as ManagedRelay from "./managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
@@ -417,6 +418,57 @@ describe("ManagedRelayClient", () => {
         error._tag === "ManagedRelayRequestFailedError" ? relayRequestFailureDetail(error) : null,
       ).toBe(RELAY_GATEWAY_TIMEOUT_MESSAGE);
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+  });
+
+  it.effect("names the relay's reason when unlinking fails and keeps its trace ID", () => {
+    const fetchFn = (() =>
+      Promise.resolve(
+        Response.json(
+          {
+            _tag: "RelayInternalError",
+            code: "internal_error",
+            reason: "upstream_unavailable",
+            traceId: "trace-unlink",
+          },
+          { status: 500 },
+        ),
+      )) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const error = yield* relayClient
+        .unlinkEnvironment({
+          clerkToken: "clerk-token",
+          environmentId: EnvironmentId.make("env-1"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayRequestFailedError",
+        traceId: "trace-unlink",
+        relayError: { _tag: "RelayInternalError", reason: "upstream_unavailable" },
+      });
+      expect(error.message).toBe(
+        "Could not unlink relay environment: Relay encountered an internal error (upstream_unavailable).",
+      );
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+  });
+
+  it("keeps an undeclared relay status and the network hint in the message", () => {
+    expect(
+      new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "unlink relay environment",
+        cause: new Error("Bad Gateway"),
+        status: 502,
+      }).message,
+    ).toBe("Could not unlink relay environment: Relay returned an unexpected HTTP 502.");
+    expect(
+      new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "unlink relay environment",
+        transportFailed: true,
+        cause: new TypeError("Failed to fetch"),
+      }).message,
+    ).toBe(`Could not unlink relay environment. ${NETWORK_BLOCKING_HINT}`);
   });
 
   it.effect("accepts generic DPoP errors from relays without the optional reason", () => {
