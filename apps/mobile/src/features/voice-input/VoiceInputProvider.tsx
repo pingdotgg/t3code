@@ -3,7 +3,6 @@ import {
   AudioModule,
   RecordingPresets,
   requestRecordingPermissionsAsync,
-  type RecorderState,
   type RecordingStatus,
 } from "expo-audio";
 import { File } from "expo-file-system";
@@ -35,7 +34,7 @@ import {
   voiceInputBlocksSubmission,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
-import { createLazyVoiceRecorder, type LazyVoiceRecorder } from "./lazyVoiceRecorder";
+import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import {
@@ -93,17 +92,18 @@ function useVoiceInputRuntime() {
   const keepAwakeId = useId();
   const keepAwakeSessionRef = useRef(0);
   const elapsedSecondsRef = useRef(0);
-  const audioLevelsRef = useRef(Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0));
-  const audioLevels = useSharedValue(audioLevelsRef.current);
-  const sessionRef = useRef<VoiceInputSession | null>(null);
-  const recorderRef = useRef<LazyVoiceRecorder<RecorderState> | null>(null);
+  const [initialLevels] = useState(() => Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0));
+  const audioLevelsRef = useRef(initialLevels);
+  const audioLevels = useSharedValue(initialLevels);
   const audioToken = useRef<ReturnType<typeof acquireAudioSession> | null>(null);
 
-  if (!sessionRef.current || !recorderRef.current) {
+  /* oxlint-disable react/refs -- The initializer captures the audio-session ref for later recording callbacks; it does not read it. */
+  const [{ session, recorder }] = useState(() => {
+    let session: VoiceInputSession | null = null;
     const recorder = createLazyVoiceRecorder({
       create: () => new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS),
       onStatus: (status: RecordingStatus) => {
-        sessionRef.current?.controller.handleRecorderStatus({
+        session?.controller.handleRecorderStatus({
           isFinished: status.isFinished,
           hasError: status.hasError || status.mediaServicesDidReset === true,
           error: status.error,
@@ -126,8 +126,7 @@ function useVoiceInputRuntime() {
         return preferredMicrophoneInput(inputs, order);
       },
     });
-    recorderRef.current = recorder;
-    sessionRef.current = new VoiceInputSession({
+    session = new VoiceInputSession({
       recorder,
       getTranscriber: getLocalVoiceTranscriber,
       requestPermission: async () => {
@@ -152,15 +151,15 @@ function useVoiceInputRuntime() {
       onStateChange: (nextState) =>
         setState({
           state: nextState,
-          ownerKey: sessionRef.current?.ownerKey ?? null,
-          label: sessionRef.current?.label ?? null,
+          ownerKey: session?.ownerKey ?? null,
+          label: session?.label ?? null,
         }),
     });
-  }
+    return { session, recorder };
+  });
+  /* oxlint-enable react/refs */
 
-  const session = sessionRef.current;
   const controller = session.controller;
-  const recorder = recorderRef.current;
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {

@@ -24,6 +24,7 @@ export function useVoiceInputController(input: {
   const global = useGlobalVoiceInput();
   const { setOwnerFocused, session } = global;
   const latestInput = useRef(input);
+  // oxlint-disable-next-line react/refs -- Transcription finishes asynchronously and must reach the composer's current selection setter, not the one captured at start.
   latestInput.current = input;
   const mounted = useRef(true);
   useEffect(() => {

@@ -506,7 +506,11 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           rightThreshold={actionsWidth * 0.42}
           simultaneousWith={props.simultaneousWith}
         >
-          {props.children(close)}
+          {
+            /* oxlint-disable react/refs -- The render callback receives a close/open handler; only invoking that handler accesses the ref. */
+            props.children(close)
+            /* oxlint-enable react/refs */
+          }
         </ReanimatedSwipeable>
       </View>
     </Animated.View>

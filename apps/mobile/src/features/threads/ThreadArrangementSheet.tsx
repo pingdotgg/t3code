@@ -102,6 +102,7 @@ function DragHandle(props: {
   canMoveDown: boolean;
 }) {
   const latest = useRef(props);
+  /* oxlint-disable react/refs -- The pan gesture captures its callbacks once per `disabled` change; they read the latest handlers when native gesture events fire. */
   latest.current = props;
   const gesture = useMemo(
     () =>
@@ -117,6 +118,7 @@ function DragHandle(props: {
         .onFinalize((_, success) => latest.current.onEnd(!success)),
     [props.disabled, latest],
   );
+  /* oxlint-enable react/refs */
   return (
     <GestureDetector gesture={gesture}>
       <View
@@ -271,8 +273,9 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const drag = useRef<Drag | null>(null);
   const frame = useRef<number | null>(null);
   const [preview, setPreview] = useState<Drag | null>(null);
-  const translateY = useRef(new Animated.Value(0)).current;
+  const [translateY] = useState(() => new Animated.Value(0));
   const latest = useRef({ rows, planners, moveThread });
+  // oxlint-disable-next-line react/refs -- The autoscroll rAF loop started at drag start reads the current rows and planners on every frame.
   latest.current = { rows, planners, moveThread };
 
   function stop() {

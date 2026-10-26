@@ -387,6 +387,7 @@ function NativeReviewDiffContent(
     return null;
   }
 
+  /* oxlint-disable react/refs -- The native view receives this ref; only event callbacks access its current value. */
   return createElement(RawNativeView, {
     ...nativeProps,
     refreshEnabled: props.onPullToRefresh !== undefined,
@@ -399,6 +400,7 @@ function NativeReviewDiffContent(
     },
     ref: nativeRef,
   });
+  /* oxlint-enable react/refs */
 }
 
 export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffViewProps> | null {
