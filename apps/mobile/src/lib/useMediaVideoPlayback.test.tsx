@@ -1,3 +1,5 @@
+import { RegistryContext } from "@effect/atom-react";
+import { AtomRegistry } from "effect/reactivity";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { AppStateStatus } from "react-native";
@@ -158,38 +160,43 @@ function setup(kind: "thread" | "PR", compact = false) {
   mocks.thumbnail.mockReset().mockResolvedValue(null);
   const container = document.createElement("div");
   const root = createRoot(container);
+  // Configured like the app's registry: the React default keeps unmounted atoms for 400ms,
+  // which would hold thumbnail loads open across renders and tests.
+  const registry = AtomRegistry.make();
   const environmentId = EnvironmentId.make("test");
   return {
     render(visible = true) {
       act(() =>
         root.render(
-          kind === "thread" ? (
-            <ThreadMediaVisibleContext value={visible}>
-              <ThreadMarkdownVideo
-                source={{
-                  type: "media",
-                  name: "clip.mp4",
-                  mimeType: "video/mp4",
-                  environmentId,
-                  resource: {
-                    _tag: "github-media",
-                    cwd: "/project",
-                    url: "https://github.com/user-attachments/assets/video",
-                  },
-                }}
-              />
-            </ThreadMediaVisibleContext>
-          ) : (
-            <PullRequestMediaContext value={{ environmentId, cwd: "/project" }}>
-              <PullRequestMediaVisibleContext value={visible}>
-                <PullRequestMedia
-                  url="https://github.com/user-attachments/assets/video"
-                  kind="video"
-                  compact={compact}
+          <RegistryContext.Provider value={registry}>
+            {kind === "thread" ? (
+              <ThreadMediaVisibleContext value={visible}>
+                <ThreadMarkdownVideo
+                  source={{
+                    type: "media",
+                    name: "clip.mp4",
+                    mimeType: "video/mp4",
+                    environmentId,
+                    resource: {
+                      _tag: "github-media",
+                      cwd: "/project",
+                      url: "https://github.com/user-attachments/assets/video",
+                    },
+                  }}
                 />
-              </PullRequestMediaVisibleContext>
-            </PullRequestMediaContext>
-          ),
+              </ThreadMediaVisibleContext>
+            ) : (
+              <PullRequestMediaContext value={{ environmentId, cwd: "/project" }}>
+                <PullRequestMediaVisibleContext value={visible}>
+                  <PullRequestMedia
+                    url="https://github.com/user-attachments/assets/video"
+                    kind="video"
+                    compact={compact}
+                  />
+                </PullRequestMediaVisibleContext>
+              </PullRequestMediaContext>
+            )}
+          </RegistryContext.Provider>,
         ),
       );
     },
@@ -215,6 +222,7 @@ function setup(kind: "thread" | "PR", compact = false) {
     },
     [Symbol.dispose]() {
       act(() => root.unmount());
+      registry.dispose();
     },
   };
 }
@@ -263,14 +271,16 @@ it.each([false, true])(
   "stops inactive PR thumbnail requests (compact: %s) and restarts on return",
   async (compact) => {
     using screen = setup("PR", compact);
+    mocks.thumbnail.mockReturnValue(new Promise(() => {}));
     screen.render(false);
     expect(mocks.thumbnail).not.toHaveBeenCalled();
     await act(async () => screen.render(true));
     expect(mocks.thumbnail).toHaveBeenCalledTimes(1);
     const signal = mocks.thumbnail.mock.calls[0]![2];
     expect(signal.aborted).toBe(false);
+    const aborted = new Promise((resolve) => signal.addEventListener("abort", resolve));
     screen.render(false);
-    expect(signal.aborted).toBe(true);
+    await act(() => aborted);
     expect(mocks.thumbnail).toHaveBeenCalledTimes(1);
     await act(async () => screen.render(true));
     expect(mocks.thumbnail).toHaveBeenCalledTimes(2);

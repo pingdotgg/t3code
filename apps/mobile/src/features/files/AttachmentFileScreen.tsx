@@ -5,7 +5,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import type { MenuAction } from "@react-native-menu/menu";
 import { EnvironmentId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Platform, View } from "react-native";
 
 import {
@@ -165,12 +165,11 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     if (navigation.canGoBack()) navigation.goBack();
   };
   const { uri, resource } = document;
-  useEffect(() => {
-    if (nativeViewer !== "pending" || !uri) return;
-    // oxlint-disable-next-line react/set-state-in-effect -- Presenting the viewer waits on the resolved file.
+  // A file only the native viewer can show opens it as soon as the file resolves.
+  if (nativeViewer === "pending" && uri) {
     setNativeViewer("open");
     setNativeOpen(true);
-  }, [nativeViewer, uri]);
+  }
   // Mint a fresh URL: cached URLs may expire in the background before Quick Look or ACTION_VIEW opens.
   const nativeSource = ((): FilePreviewSource | null => {
     const kind = nativeKind ?? "document";

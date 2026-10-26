@@ -7,12 +7,16 @@ import {
   createProjectFaviconUrlAtomFamily,
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { projectFaviconDatabaseCache } from "../lib/projectFaviconDatabaseCache";
 import { type AssetUrlState, deriveAssetUrlState } from "./asset-url-state";
+import { appAtomRegistry } from "./atom-registry";
 import { environmentProjectCloneListAtom } from "./projectClones";
 import { environmentSession, usePreparedConnection } from "./session";
 import { useEnvironmentPresentation } from "./presentation";
@@ -91,4 +95,80 @@ export function useRefreshAssetUrl(
     );
     return state._tag === "Success" ? state.url : null;
   }, [createUrl, environmentId, httpBaseUrl, resource]);
+}
+
+/** {@link useRefreshAssetUrl} for async tasks that resolve several resources at once. */
+export async function refreshAssetUrl(
+  environmentId: EnvironmentId,
+  resource: AssetResource,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const connectionAtom = environmentSession.preparedConnectionValueAtom(environmentId);
+  if (appAtomRegistry.get(connectionAtom)._tag === "None") return null;
+  const atom = assetEnvironment.createUrl({ environmentId, input: { resource } });
+  const result = await executeAtomQuery(appAtomRegistry, atom, {
+    label: atom.label?.[0] ?? "asset url",
+    refresh: true,
+    reportFailure: false,
+    ...(signal ? { signal } : {}),
+  });
+  // The query can wait through a reconnect; resolve against the connection that answered it.
+  const connection = appAtomRegistry.get(connectionAtom);
+  if (connection._tag === "None") return null;
+  const state = assetUrlStateFromResult(result, connection.value.httpBaseUrl);
+  return state._tag === "Success" ? state.url : null;
+}
+
+export interface AuthorizedAssetUrl {
+  readonly url: string;
+  readonly authorizedAt: number;
+}
+
+interface FreshAssetUrlKey {
+  readonly environmentId: EnvironmentId | null;
+  readonly resource: AssetResource;
+  /** A reconnect changes the base URL, and any URL minted against the old one is unusable. */
+  readonly httpBaseUrl: string | null;
+  /** Bumped by Retry so a file replaced on disk is reauthorized. */
+  readonly revision: number;
+}
+
+// Plain-object keys compare structurally (Effect `Equal`/`Hash`).
+const freshAssetUrlFamily = Atom.family((key: FreshAssetUrlKey) =>
+  Atom.make(
+    Effect.tryPromise({
+      try: async (signal): Promise<AuthorizedAssetUrl> => {
+        const url =
+          key.environmentId === null
+            ? null
+            : await refreshAssetUrl(key.environmentId, key.resource, signal);
+        if (!url) throw new Error("Reconnect to this environment and try again.");
+        return { url, authorizedAt: Date.now() };
+      },
+      catch: (cause) =>
+        cause instanceof Error ? cause : new Error("The attachment is unavailable."),
+    }),
+  ).pipe(Atom.withLabel("fresh-asset-url")),
+);
+
+const noFreshAssetUrl = Atom.make(AsyncResult.initial<AuthorizedAssetUrl, Error>()).pipe(
+  Atom.withLabel("fresh-asset-url:none"),
+);
+
+/**
+ * A signed URL minted when the reader mounts, not a cached one: cached links can
+ * expire while the client is suspended.
+ */
+export function useFreshAssetUrl(
+  environmentId: EnvironmentId | null,
+  resource: AssetResource | null,
+  revision: number,
+): AsyncResult.AsyncResult<AuthorizedAssetUrl, Error> {
+  const connection = usePreparedConnection(environmentId);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  return useAtomValue(
+    resource === null
+      ? noFreshAssetUrl
+      : freshAssetUrlFamily({ environmentId, resource, httpBaseUrl, revision }),
+  );
 }
