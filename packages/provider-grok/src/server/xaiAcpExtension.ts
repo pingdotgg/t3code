@@ -1443,7 +1443,7 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
         pendingRef: pendingXAiPromptCompletionsRef,
         completedPromptIdsRef: completedXAiPromptIdsRef,
         notification,
-      }).pipe(Effect.catch(() => Effect.void));
+      }).pipe(Effect.ignore);
 
     yield* Effect.forEach(
       ["x.ai/session/prompt_complete", "_x.ai/session/prompt_complete"] as const,

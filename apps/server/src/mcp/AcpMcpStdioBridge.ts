@@ -314,7 +314,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
 
     const reader = NodeReadline.createInterface({ input: options.input });
     yield* Stream.runForEach(Stream.fromAsyncIterable(reader, bridgeError), dispatch).pipe(
-      Effect.catchCause(() => Effect.void),
+      Effect.ignoreCause,
     );
     yield* Fiber.awaitAll(running);
   });
