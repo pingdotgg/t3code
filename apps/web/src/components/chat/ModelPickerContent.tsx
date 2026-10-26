@@ -1,3 +1,4 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -265,37 +266,12 @@ function ModelPickerList({
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
   const updateScrollFades = () => {
-    const scrollElement = listRef.current?.getScrollableNode();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    setShowTopScrollFade(!metrics.isAtStart);
+    setShowBottomScrollFade(!metrics.isAtEnd);
   };
-
-  // Disabled-reason closures rebuild identical key arrays; compare contents.
-  const itemListKey = JSON.stringify(itemKeys);
-  const [fadesResetFor, setFadesResetFor] = useState(itemListKey);
-  if (fadesResetFor !== itemListKey) {
-    setFadesResetFor(itemListKey);
-    setShowTopScrollFade(false);
-    setShowBottomScrollFade(itemKeys.length > 5);
-  }
-  const measureScrollFades = useEffectEvent(updateScrollFades);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the list scroller in animation frames after a new list lays out to set scroll fades
-  useLayoutEffect(() => {
-    let nestedFrame = 0;
-    const frame = window.requestAnimationFrame(() => {
-      measureScrollFades();
-      nestedFrame = window.requestAnimationFrame(() => measureScrollFades());
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.cancelAnimationFrame(nestedFrame);
-    };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new list re-measures its scroll fades once it has laid out.
-  }, [itemListKey]);
+  const scrollRef = useLegendListRef(listRef, updateScrollFades);
 
   return (
     <div
@@ -306,7 +282,7 @@ function ModelPickerList({
     >
       <ComboboxListVirtualized>
         <LegendList<string>
-          ref={listRef}
+          ref={scrollRef}
           data={itemKeys}
           extraData={extraData}
           keyExtractor={(modelKey) => modelKey}
@@ -318,6 +294,7 @@ function ModelPickerList({
           ItemSeparatorComponent={ModelListSeparator}
           onLayout={updateScrollFades}
           onScroll={updateScrollFades}
+          onReady={updateScrollFades}
           className={cn(
             "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
             getVirtualizedScrollFadeClassName({
