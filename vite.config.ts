@@ -216,6 +216,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "unicorn/require-module-specifiers": "error",
       "unicorn/no-array-sort": "off",
       "unicorn/consistent-function-scoping": "off",
       "oxc/no-map-spread": "off",

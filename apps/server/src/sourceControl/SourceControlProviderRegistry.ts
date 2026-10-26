@@ -12,7 +12,6 @@ import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
 } from "@t3tools/contracts";
-import type {} from "@t3tools/contracts";
 
 import * as BuiltInDrivers from "./builtInDrivers.ts";
 import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
