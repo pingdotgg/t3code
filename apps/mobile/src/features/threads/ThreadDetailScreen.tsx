@@ -917,6 +917,7 @@ function ThreadDetailBody(
     null;
   const voiceTarget = { environmentId: props.environmentId, threadId: props.selectedThread.id };
   const voiceLiveHere = useVoiceModePhase(voiceTarget) !== "idle";
+  // Keep live quota data visible, but close the panel when a turn consumes quota.
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;

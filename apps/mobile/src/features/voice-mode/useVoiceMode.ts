@@ -39,11 +39,13 @@ export function useVoiceModeThreadLifecycle(target: VoiceSessionTarget): void {
     const params = route?.params;
     return params && "threadId" in params ? String(params.threadId) : null;
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the WebRTC lifetime with the visible native thread.
   useEffect(() => {
     if (visibleThreadId !== threadId && voiceMode.isActiveFor({ environmentId, threadId }))
       voiceMode.stop();
   }, [environmentId, threadId, visibleThreadId]);
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- Release the native call when its owning thread screen unmounts.
   useEffect(
     () => () => {
       if (routeName === "Thread" && voiceMode.isActiveFor({ environmentId, threadId }))
@@ -52,6 +54,7 @@ export function useVoiceModeThreadLifecycle(target: VoiceSessionTarget): void {
     [environmentId, threadId, routeName],
   );
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to call lifecycle failures and remote endings.
   useEffect(() => {
     // Reads the live state: dismissing notifies listeners re-entrantly, so a
     // listener's argument can already be stale.
