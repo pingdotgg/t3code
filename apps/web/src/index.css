@@ -1327,6 +1327,8 @@ html.dark[data-redesign]:not([data-theme-id]) {
   --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
   --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
   --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
+  /* A user turn sits above the composer tone, level with the selected sidebar row. */
+  --message-surface: color-mix(in srgb, var(--color-neutral-950) 92%, var(--color-white));
 }
 
 /* Theme files are expressed in app color roles and mapped to the existing
