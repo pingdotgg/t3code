@@ -106,7 +106,10 @@ export function ComposerInlineControl(props: {
         )}
         {!props.iconOnly && props.suffix ? (
           <View
-            className={cn("min-w-0", props.suffixFixed || props.suffixWidth !== undefined ? "shrink-0" : "shrink")}
+            className={cn(
+              "min-w-0",
+              props.suffixFixed || props.suffixWidth !== undefined ? "shrink-0" : "shrink",
+            )}
             style={{ width: props.suffixWidth }}
           >
             {props.suffix}

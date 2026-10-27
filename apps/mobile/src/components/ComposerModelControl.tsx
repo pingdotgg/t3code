@@ -61,65 +61,68 @@ export function ComposerModelControl(props: {
     : overflows
       ? [traits?.compactEffortLabel, traits?.speedLabel].filter(Boolean).join(" ")
       : summary;
-  const renderControl = (full: boolean) => (
-    <ComposerInlineControl
-      accessibilityLabel={[
-        "Model and reasoning settings",
-        label,
-        badge?.showBadge ? badge.displayName : null,
-        summary,
-      ]
-        .filter(Boolean)
-        .join(", ")}
-      size={props.size}
-      disabled={props.disabled}
-      emphasized
-      renderIcon={(size) =>
-        badge?.showBadge ? (
-          <ProviderInstanceIcon
-            iconUrl={props.modelOption?.providerIconUrl}
-            provider={props.modelOption?.providerDriver}
-            displayName={badge.displayName}
-            accentColor={badge.accentColor}
-            showBadge
-            surfaceColor={props.surfaceColor}
-            size={size}
-          />
-        ) : (
-          <ProviderIcon
-            iconUrl={props.modelOption?.providerIconUrl}
-            provider={props.modelOption?.providerDriver}
-            size={size}
-          />
-        )
-      }
-      label={providerNameLabel ?? shortLabel}
-      labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
-      iconOnly={props.iconOnly}
-      suffixWidth={providerNameLabel ? 96 : undefined}
-      suffixFixed={!full && compact}
-      suffix={
-        providerNameLabel || (full ? summary : visibleSummary) ? (
-          <Text
-            className={
-              props.size === "large"
-                ? "text-sm text-foreground-muted"
-                : "text-xs text-foreground-muted"
-            }
-            numberOfLines={1}
-          >
-            {providerNameLabel
-              ? [shortLabel, full ? summary : visibleSummary].filter(Boolean).join(" · ")
-              : full
-                ? summary
-                : visibleSummary}
-          </Text>
-        ) : undefined
-      }
-      maxWidth={full ? 10_000 : "100%"}
-      onPress={props.onPress}
-    />
-  );
+  const renderControl = (full: boolean) => {
+    const controlSummary = full ? summary : visibleSummary;
+    const suffixLabel = providerNameLabel
+      ? [shortLabel, controlSummary].filter(Boolean).join(" · ")
+      : controlSummary;
+    return (
+      <ComposerInlineControl
+        accessibilityLabel={[
+          "Model and reasoning settings",
+          label,
+          badge?.showBadge ? badge.displayName : null,
+          summary,
+        ]
+          .filter(Boolean)
+          .join(", ")}
+        size={props.size}
+        disabled={props.disabled}
+        emphasized
+        renderIcon={(size) =>
+          badge?.showBadge ? (
+            <ProviderInstanceIcon
+              iconUrl={props.modelOption?.providerIconUrl}
+              provider={props.modelOption?.providerDriver}
+              displayName={badge.displayName}
+              accentColor={badge.accentColor}
+              showBadge
+              surfaceColor={props.surfaceColor}
+              size={size}
+            />
+          ) : (
+            <ProviderIcon
+              iconUrl={props.modelOption?.providerIconUrl}
+              provider={props.modelOption?.providerDriver}
+              size={size}
+            />
+          )
+        }
+        label={providerNameLabel ?? shortLabel}
+        labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
+        iconOnly={props.iconOnly}
+        suffixWidth={providerNameLabel ? 96 : undefined}
+        // Only short abbreviations keep their width; an unrecognized effort name truncates.
+        suffixFixed={!full && compact && (traits?.compactEffortLabel?.length ?? 0) <= 4}
+        suffix={
+          suffixLabel ? (
+            <Text
+              className={
+                props.size === "large"
+                  ? "text-sm text-foreground-muted"
+                  : "text-xs text-foreground-muted"
+              }
+              numberOfLines={1}
+            >
+              {suffixLabel}
+            </Text>
+          ) : undefined
+        }
+        maxWidth={full ? 10_000 : "100%"}
+        onPress={props.onPress}
+      />
+    );
+  };
   if (props.fitWidth === undefined) return renderControl(false);
   return (
     <>
