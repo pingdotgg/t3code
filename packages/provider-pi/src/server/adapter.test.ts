@@ -48,6 +48,7 @@ import {
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
+import { PI_USER_INPUT_PREFIX } from "./userInput.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
 
 const layerTest = Layer.mergeAll(
@@ -2173,6 +2174,359 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  const lifecycle = (data: Record<string, unknown>): PiRpcRecord => ({
+    type: "entry_appended",
+    entry: { type: "custom", customType: "t3-subagent", data: { version: 1, ...data } },
+  });
+
+  it.effect("tracks lifecycle entries independently of tool names and tool completion", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolName: "delegate_background",
+        toolCallId: "spawn-1",
+        args: { task: "Inspect the repo" },
+      });
+      yield* fake.emit(
+        lifecycle({
+          id: "sa-1",
+          toolCallId: "spawn-1",
+          status: "running",
+          title: "Scout",
+          prompt: "Inspect the repo",
+          model: "openai/test",
+        }),
+      );
+      const spawned = yield* takeEvent((e) => e.type === "subagent.updated");
+      if (spawned.type !== "subagent.updated") return assert.fail("Expected a subagent");
+      assert.equal(spawned.subagent.status, "running");
+      assert.equal(spawned.subagent.prompt, "Inspect the repo");
+      assert.equal(spawned.subagent.model, "openai/test");
+      assert.isNull(spawned.subagent.childThreadId);
+      const spawnedItem = yield* takeEvent(
+        (e) => e.type === "turn_item.updated" && e.turnItem.type === "subagent",
+      );
+      yield* takeEvent(
+        (e) =>
+          e.type === "provider_thread.updated" &&
+          e.providerThread.pendingBackgroundTasks?.length === 1,
+      );
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      // Returning the spawn tool does not finish its independently running child.
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolName: "delegate_background",
+        toolCallId: "spawn-1",
+        result: {},
+      });
+      yield* fake.emit(
+        lifecycle({
+          id: "sa-1",
+          toolCallId: "spawn-1",
+          status: "running",
+          progress: "Checking tests",
+        }),
+      );
+      const progress = yield* takeEvent((e) => e.type === "subagent.updated");
+      assert.isTrue(
+        progress.type === "subagent.updated" &&
+          progress.subagent.id === spawned.subagent.id &&
+          progress.subagent.progress === "Checking tests",
+      );
+
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolName: "delegate_background",
+        toolCallId: "spawn-2",
+        args: {},
+      });
+      // A second call can reuse a native child id without overwriting the first.
+      yield* fake.emit(
+        lifecycle({
+          id: "sa-1",
+          toolCallId: "spawn-2",
+          status: "running",
+          title: "Reviewer",
+          prompt: "Review changes",
+        }),
+      );
+      const reviewer = yield* takeEvent((e) => e.type === "subagent.updated");
+      assert.isTrue(
+        reviewer.type === "subagent.updated" && reviewer.subagent.id !== spawned.subagent.id,
+      );
+      yield* fake.emit(
+        lifecycle({
+          id: "sa-1",
+          toolCallId: "spawn-1",
+          status: "completed",
+          progress: null,
+          result: "Tests passed",
+        }),
+      );
+      const completed = yield* takeEvent(
+        (e) => e.type === "subagent.updated" && e.subagent.status === "completed",
+      );
+      assert.isTrue(
+        completed.type === "subagent.updated" &&
+          completed.subagent.id === spawned.subagent.id &&
+          completed.subagent.result === "Tests passed" &&
+          completed.subagent.progress === undefined,
+      );
+      const completedItem = yield* takeEvent(
+        (e) =>
+          e.type === "turn_item.updated" &&
+          e.turnItem.type === "subagent" &&
+          e.turnItem.status === "completed",
+      );
+      assert.isTrue(
+        spawnedItem.type === "turn_item.updated" &&
+          completedItem.type === "turn_item.updated" &&
+          spawnedItem.turnItem.id === completedItem.turnItem.id,
+      );
+      yield* takeEvent(
+        (e) =>
+          e.type === "provider_thread.updated" &&
+          e.providerThread.pendingBackgroundTasks?.length === 1,
+      );
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+
+      yield* fake.emit(
+        lifecycle({ id: "sa-1", toolCallId: "spawn-2", status: "interrupted", result: "Stopped" }),
+      );
+      const cancelled = yield* takeEvent(
+        (e) => e.type === "subagent.updated" && e.subagent.status === "interrupted",
+      );
+      assert.isTrue(
+        cancelled.type === "subagent.updated" && cancelled.subagent.title === "Reviewer",
+      );
+      yield* takeEvent(
+        (e) =>
+          e.type === "provider_thread.updated" &&
+          e.providerThread.pendingBackgroundTasks?.length === 0,
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["idle", "next turn"] as const)(
+    "applies background completion to its original run while the parent is %s",
+    (phase) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolName: "subagent_spawn",
+          toolCallId: "spawn-background",
+          args: {},
+        });
+        yield* fake.emit(
+          lifecycle({
+            id: "sa-1",
+            toolCallId: "spawn-background",
+            status: "running",
+            prompt: "Check files",
+            title: "Scout",
+          }),
+        );
+        yield* fake.emit({
+          type: "tool_execution_end",
+          toolName: "subagent_spawn",
+          toolCallId: "spawn-background",
+          result: {},
+        });
+        const spawned = yield* takeEvent((e) => e.type === "subagent.updated");
+        if (spawned.type !== "subagent.updated") return assert.fail("Expected a subagent");
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((e) => e.type === "turn.terminal");
+        const switchCount = fake
+          .allRequests()
+          .filter((request) => request.type === "switch_session").length;
+        const resumed = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: providerThread,
+        });
+        assert.equal(
+          fake.allRequests().filter((request) => request.type === "switch_session").length,
+          switchCount,
+        );
+        const otherThread = {
+          ...providerThread,
+          id: ProviderThreadId.make("other-provider-thread"),
+          appThreadId: ThreadId.make("other-thread"),
+        };
+        const switchError = yield* runtime
+          .resumeThread({ providerThread: otherThread })
+          .pipe(Effect.flip);
+        assert.equal(switchError._tag, "ProviderAdapterResumeThreadError");
+        if (phase === "next turn") {
+          yield* startTurn(runtime, resumed, "default", [], "Continue", undefined, 2);
+          yield* fake.takeRequest("prompt");
+        }
+        // appendEntry metadata arrives without a model message or another user turn.
+        yield* fake.emit(
+          lifecycle({
+            id: "sa-1",
+            toolCallId: "spawn-background",
+            status: "failed",
+            result: "Build failed",
+          }),
+        );
+        const result = yield* takeEvent((e) => e.type === "subagent.updated");
+        if (result.type !== "subagent.updated") return assert.fail("Expected a result");
+        assert.equal(result.subagent.id, spawned.subagent.id);
+        assert.equal(result.subagent.runId, spawned.subagent.runId);
+        assert.equal(result.subagent.status, "failed");
+        assert.equal(result.subagent.result, "Build failed");
+        yield* takeEvent(
+          (e) =>
+            e.type === "provider_thread.updated" &&
+            e.providerThread.pendingBackgroundTasks?.length === 0,
+        );
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["active stop", "idle stop", "transport death"] as const)(
+    "settles background subagents on %s",
+    (shutdown) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        const started = yield* takeEvent(
+          (e) => e.type === "provider_turn.updated" && e.providerTurn.status === "running",
+        );
+        if (started.type !== "provider_turn.updated")
+          return assert.fail("Expected a provider turn");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolName: "subagent_spawn",
+          toolCallId: "spawn-background",
+          args: {},
+        });
+        yield* fake.emit(
+          lifecycle({
+            id: "sa-1",
+            toolCallId: "spawn-background",
+            status: "running",
+            prompt: "Check files",
+            title: "Scout",
+          }),
+        );
+        yield* fake.emit({
+          type: "tool_execution_end",
+          toolName: "subagent_spawn",
+          toolCallId: "spawn-background",
+          result: {},
+        });
+        yield* takeEvent((e) => e.type === "subagent.updated" && e.subagent.status === "running");
+        if (shutdown === "idle stop") {
+          yield* fake.emit({ type: "agent_settled" });
+          yield* takeEvent((e) => e.type === "turn.terminal");
+        }
+        if (shutdown === "transport death") yield* fake.closeStdout;
+        else
+          yield* runtime.interruptTurn({
+            providerThread,
+            providerTurnId: started.providerTurn.id,
+            requestRuntimeRestart: shutdown === "idle stop",
+          });
+        const ended = yield* takeEvent(
+          (e) => e.type === "subagent.updated" && e.subagent.status !== "running",
+        );
+        assert.isTrue(
+          ended.type === "subagent.updated" &&
+            ended.subagent.status === (shutdown === "transport death" ? "failed" : "interrupted"),
+        );
+        yield* takeEvent(
+          (e) =>
+            e.type === "provider_thread.updated" &&
+            e.providerThread.pendingBackgroundTasks?.length === 0,
+        );
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("ignores output-only subagents and lifecycle entries without an observed origin", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolName: "subagent_spawn",
+        toolCallId: "spawn-1",
+        args: { prompt: "Inspect" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolName: "subagent_spawn",
+        toolCallId: "spawn-1",
+        result: { details: { id: "sa-1", title: "Scout" } },
+      });
+      yield* fake.emit(
+        lifecycle({ id: "sa-1", toolCallId: "unobserved", status: "running", prompt: "Inspect" }),
+      );
+      yield* fake.emit(lifecycle({ id: "sa-1", toolCallId: "spawn-1", status: "running" }));
+      yield* fake.emit(
+        lifecycle({
+          version: 2,
+          id: "sa-1",
+          toolCallId: "spawn-1",
+          status: "running",
+          prompt: "Inspect",
+        }),
+      );
+      yield* fake.emit({ type: "tool_execution_end", toolName: "marker", toolCallId: "marker" });
+      const subagents: unknown[] = [];
+      yield* takeEvent((e) => {
+        if (e.type === "subagent.updated") subagents.push(e.subagent);
+        return (
+          e.type === "turn_item.updated" &&
+          e.turnItem.type === "dynamic_tool" &&
+          e.turnItem.toolName === "marker"
+        );
+      });
+      assert.deepEqual(subagents, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("observes official subagent results without inventing child threads", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -3065,6 +3419,152 @@ describe("PiAdapterV2", () => {
           other.runtimeRequest.nativeRequestRef?.nativeId === "ui-other",
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "preserves multi-select questions and submits every answer in one Pi dialog response",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        const questions = [
+          {
+            id: "changes",
+            header: "Changes",
+            question: "Which changes should I start on?",
+            multiSelect: true,
+            allowCustomAnswer: false,
+            options: [
+              { value: "pr-1", label: "First change", description: "Rebase" },
+              { value: "pr-2", label: "Second change", description: "Fix config" },
+            ],
+          },
+          {
+            id: "notes",
+            header: "Notes",
+            question: "Any instructions?",
+            options: [],
+            allowCustomAnswer: true,
+          },
+        ];
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "ui-ask-user",
+          method: "input",
+          title: "Ask User",
+          placeholder: PI_USER_INPUT_PREFIX + encodeJsonLine({ version: 1, questions }),
+        });
+        const event = yield* takeEvent(
+          (e) => e.type === "turn_item.updated" && e.turnItem.type === "user_input_request",
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request")
+          return assert.fail("Expected questions");
+        assert.deepEqual(event.turnItem.questions, questions);
+        yield* runtime.respondToRuntimeRequest({
+          requestId: event.turnItem.requestId,
+          answers: {
+            changes: ["pr-2", "pr-1"],
+            notes: "Keep the edits small",
+            unrelated: "Do not forward",
+          },
+        });
+        const response = yield* fake.takeRequest("extension_ui_response");
+        assert.equal(response["id"], "ui-ask-user");
+        assert.deepEqual(decodeJsonLine(response["value"] as string), {
+          version: 1,
+          answers: { changes: ["pr-2", "pr-1"], notes: "Keep the edits small" },
+        });
+        const resolved = yield* takeEvent(
+          (e) => e.type === "runtime_request.updated" && e.runtimeRequest.status === "resolved",
+        );
+        assert.isTrue(
+          resolved.type === "runtime_request.updated" &&
+            resolved.runtimeRequest.id === event.turnItem.requestId,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("cancels structured questions without submitting partial selections", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "cancel-multi",
+        method: "input",
+        title: "Ask User",
+        placeholder:
+          PI_USER_INPUT_PREFIX +
+          encodeJsonLine({
+            version: 1,
+            questions: [
+              {
+                id: "changes",
+                header: "Changes",
+                question: "Which changes?",
+                multiSelect: true,
+                options: [],
+              },
+            ],
+          }),
+      });
+      const event = yield* takeEvent(
+        (e) => e.type === "turn_item.updated" && e.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request")
+        return;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: event.turnItem.requestId,
+        decision: "decline",
+      });
+      const response = yield* fake.takeRequest("extension_ui_response");
+      assert.equal(response["cancelled"], true);
+      assert.isUndefined(response["value"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "rejects malformed structured dialogs without exposing their envelopes as question text",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const question = { id: "same", header: "Question", question: "Pick", options: [] };
+        for (const body of [
+          "invalid JSON",
+          encodeJsonLine({ version: 2, questions: [question] }),
+          encodeJsonLine({ version: 1, questions: [] }),
+          encodeJsonLine({ version: 1, questions: [question, question] }),
+        ]) {
+          yield* fake.emit({
+            type: "extension_ui_request",
+            id: "malformed",
+            method: "input",
+            title: "Ask User",
+            placeholder: PI_USER_INPUT_PREFIX + body,
+          });
+          const response = yield* fake.takeRequest("extension_ui_response");
+          assert.equal(response["id"], "malformed");
+          assert.equal(response["cancelled"], true);
+        }
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("offers an explicit empty value for extension input dialogs", () =>

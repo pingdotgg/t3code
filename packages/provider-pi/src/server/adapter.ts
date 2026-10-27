@@ -17,6 +17,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type ProviderApprovalDecision,
@@ -72,6 +73,11 @@ import {
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import {
+  piBackgroundSubagentEntryUpdate,
+  type PiBackgroundSubagentUpdate,
+} from "./backgroundSubagents.ts";
+import { PI_USER_INPUT_PREFIX, piStructuredAnswers, piStructuredQuestions } from "./userInput.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -390,6 +396,7 @@ interface PendingPiPrompt {
   readonly nativeRequestId: string;
   readonly method: "select" | "confirm" | "input" | "editor";
   readonly questionId: string;
+  readonly structured: boolean;
   readonly approvalKey: string;
   readonly expiresAt: number | null;
   expirationFiber: Fiber.Fiber<void> | null;
@@ -409,6 +416,14 @@ function piApprovalRequestKind(title: string): "command" | "file-change" {
 interface PiThreadState {
   providerThread: OrchestrationV2ProviderThread;
   activeTurn: ActivePiTurn | null;
+  readonly backgroundSubagents: Map<
+    string,
+    {
+      readonly identity: { readonly id: string; readonly toolCallId: string };
+      readonly subagent: OrchestrationV2Subagent;
+      readonly item: Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
+    }
+  >;
 }
 
 interface PiWake {
@@ -1069,6 +1084,107 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
+      const emitBackgroundSubagent = Effect.fnUntraced(function* (
+        state: PiThreadState,
+        observation: PiBackgroundSubagentUpdate,
+        source?: { readonly turn: ActivePiTurn; readonly toolCallId: string },
+      ) {
+        const nativeTaskId = `${observation.toolCallId}:subagent:${observation.id}`;
+        const prior = state.backgroundSubagents.get(nativeTaskId);
+        // A new child must identify an observed tool call in the active turn.
+        // Later lifecycle entries retain that child's original owning run.
+        if (prior === undefined && (source === undefined || observation.prompt === undefined))
+          return;
+        const emittedAt = yield* DateTime.now;
+        const base =
+          prior?.item ??
+          (source === undefined
+            ? undefined
+            : baseItemFields(
+                source.turn,
+                nativeTaskId,
+                source.turn.toolStartedAt.get(source.toolCallId) ?? emittedAt,
+                emittedAt,
+              ));
+        if (base === undefined || base.nodeId === null) return;
+        const finished = observation.status !== "running";
+        const completedAt = finished ? (prior?.subagent.completedAt ?? emittedAt) : null;
+        const progress = finished
+          ? undefined
+          : observation.progress === undefined
+            ? prior?.subagent.progress
+            : (observation.progress ?? undefined);
+        const result =
+          observation.result === undefined ? (prior?.subagent.result ?? null) : observation.result;
+        const subagent: OrchestrationV2Subagent = {
+          id: base.nodeId,
+          threadId: base.threadId,
+          runId: base.runId,
+          parentNodeId:
+            prior !== undefined
+              ? prior.subagent.parentNodeId
+              : idAllocator.derive.nodeFromProviderItem({
+                  driver: PI_PROVIDER,
+                  nativeItemId: source!.toolCallId,
+                }),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver: PI_PROVIDER,
+          providerInstanceId: options.instanceId,
+          providerThreadId: base.providerThreadId,
+          childThreadId: null,
+          nativeTaskRef: providerRef(observation.id),
+          title: observation.title ?? prior?.subagent.title ?? null,
+          prompt: observation.prompt ?? prior?.subagent.prompt ?? "",
+          model:
+            observation.model === undefined ? (prior?.subagent.model ?? null) : observation.model,
+          status: observation.status,
+          ...(progress === undefined ? {} : { progress }),
+          result,
+          startedAt: base.startedAt,
+          completedAt,
+          updatedAt: emittedAt,
+        };
+        const item: Extract<OrchestrationV2TurnItem, { type: "subagent" }> = {
+          ...base,
+          type: "subagent",
+          subagentId: subagent.id,
+          title: subagent.title,
+          origin: "provider_native",
+          driver: PI_PROVIDER,
+          providerInstanceId: options.instanceId,
+          childThreadId: null,
+          prompt: subagent.prompt,
+          status: subagent.status,
+          progress,
+          result,
+          completedAt,
+          updatedAt: emittedAt,
+        };
+        state.backgroundSubagents.set(nativeTaskId, {
+          identity: { id: observation.id, toolCallId: observation.toolCallId },
+          subagent,
+          item,
+        });
+        for (const [id, task] of state.backgroundSubagents) {
+          if (state.backgroundSubagents.size <= 128) break;
+          if (task.subagent.status !== "running") state.backgroundSubagents.delete(id);
+        }
+        yield* emit({ type: "subagent.updated", driver: PI_PROVIDER, subagent });
+        yield* emit({ type: "turn_item.updated", driver: PI_PROVIDER, turnItem: item });
+        const pendingBackgroundTasks = [...state.backgroundSubagents.entries()].flatMap(
+          ([taskId, task]) =>
+            task.subagent.status === "running" ? [{ taskId, kind: "subagent" as const }] : [],
+        );
+        const previousTasks = state.providerThread.pendingBackgroundTasks ?? [];
+        if (
+          pendingBackgroundTasks.length !== previousTasks.length ||
+          pendingBackgroundTasks.some((task, index) => task.taskId !== previousTasks[index]?.taskId)
+        ) {
+          yield* updateProviderThread(state, { pendingBackgroundTasks });
+        }
+      });
+
       const emitSubagentTasks = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         toolCallId: string,
@@ -1246,6 +1362,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         if (nativeRequestId === undefined) return;
+        const placeholder = recordString(event, "placeholder") ?? "";
+        const structured = method === "input" && placeholder.startsWith(PI_USER_INPUT_PREFIX);
+        const questions = structured ? piStructuredQuestions(placeholder) : null;
+        if (structured && questions === null) {
+          yield* connection.send({
+            type: "extension_ui_response",
+            id: nativeRequestId,
+            cancelled: true,
+          });
+          return;
+        }
         const approvalTitle = recordString(event, "title") ?? "";
         const approvalKey = `${approvalTitle.length}:${approvalTitle}${recordString(event, "message") ?? ""}`;
         if (method === "confirm" && sessionApprovals.has(approvalKey)) {
@@ -1333,11 +1460,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [piQuestion(nativeRequestId, method, title, event)],
+                questions: questions ?? [piQuestion(nativeRequestId, method, title, event)],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
           method,
+          structured,
           questionId: nativeRequestId,
           approvalKey,
           expiresAt,
@@ -1738,6 +1866,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             return;
           }
+          case "entry_appended": {
+            const observation = piBackgroundSubagentEntryUpdate(event["entry"]);
+            if (state !== null && observation !== null) {
+              const source = turn?.toolArgs.has(observation.toolCallId)
+                ? { turn, toolCallId: observation.toolCallId }
+                : undefined;
+              yield* emitBackgroundSubagent(state, observation, source);
+            }
+            return;
+          }
           case "message_end": {
             if (turn === null) return;
             const message = event["message"];
@@ -2104,6 +2242,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 );
               pendingWake = null;
               const interrupted = state?.activeTurn?.interrupted === true;
+              if (state !== null) {
+                for (const task of state.backgroundSubagents.values()) {
+                  if (task.subagent.status !== "running") continue;
+                  yield* emitBackgroundSubagent(state, {
+                    version: 1,
+                    ...task.identity,
+                    status: interrupted || stopRequested || closed ? "interrupted" : "failed",
+                    ...(interrupted || stopRequested || closed
+                      ? {}
+                      : {
+                          result: "Pi exited before this subagent reported a result.",
+                        }),
+                  });
+                }
+              }
               if (state?.activeTurn != null) {
                 state.activeTurn.failure = interrupted
                   ? null
@@ -2151,19 +2304,25 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (threadState !== null && threadState.activeTurn !== null) {
           return yield* protocolError("Cannot register a Pi thread while a turn is active");
         }
-        if (pendingWake !== null) {
+        if (
+          pendingWake !== null ||
+          (threadState?.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
+        ) {
           const state = threadState;
           if (
             state !== null &&
-            state === pendingWake.state &&
+            (pendingWake === null || state === pendingWake.state) &&
             state.providerThread.appThreadId === threadInput.threadId &&
             (threadInput.existingProviderThread === undefined ||
               threadInput.existingProviderThread.nativeThreadRef?.nativeId ===
                 state.providerThread.nativeThreadRef?.nativeId)
-          )
+          ) {
+            // switch_session tears down extensions, including live children.
+            // Reuse the already bound session while its native work continues.
             return state.providerThread;
+          }
           return yield* protocolError(
-            "Cannot switch Pi threads while native work is awaiting a turn",
+            "Cannot switch Pi threads while native work is running or awaiting a turn",
           );
         }
         const existing = threadInput.existingProviderThread;
@@ -2230,6 +2389,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           existing !== undefined
             ? {
                 ...existing,
+                pendingBackgroundTasks: [],
                 providerSessionId: input.providerSessionId,
                 nativeThreadRef: providerRef(nativeId),
                 ...(needsNewSession ? { nativeConversationHeadRef: null, contextUsage: null } : {}),
@@ -2257,7 +2417,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
-        threadState = { providerThread, activeTurn: null };
+        threadState = {
+          providerThread,
+          activeTurn: null,
+          backgroundSubagents: new Map(),
+        };
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
           Effect.orElseSucceed(() => undefined),
         );
@@ -2360,10 +2524,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
+        hasPendingBackgroundWork: Effect.sync(
+          () =>
+            pendingWake !== null ||
+            (threadState?.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              (threadState?.providerThread.id === providerThread.id &&
+                (threadState.providerThread.pendingBackgroundTasks?.length ?? 0) > 0),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
@@ -2660,6 +2831,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
               if (pendingWake !== null)
                 yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));
+              if ((threadState?.providerThread.pendingBackgroundTasks?.length ?? 0) > 0) {
+                stopRequested = true;
+                yield* connection.terminate;
+              }
               return;
             }
             if (turn === null || turn.providerTurn.id !== interruptInput.providerTurnId) {
@@ -2668,12 +2843,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             turn.interrupted = true;
             if (
               interruptInput.requestRuntimeRestart === true ||
+              (threadState?.providerThread.pendingBackgroundTasks?.length ?? 0) > 0 ||
               turn.settleWhenIdle ||
               turn.activeCompaction !== null ||
               turn.manualCompactInFlight
             ) {
-              // Pi's generic abort does not cancel manual compaction. Terminate
-              // so Stop covers user /compact as well as detached recovery compact.
+              // Pi's abort leaves extension children and manual compaction
+              // running. Terminate their session so Stop covers them too.
               stopRequested = true;
               if (interruptInput.requestRuntimeRestart === true && !turn.settleWhenIdle) {
                 yield* request({ type: "abort" }, 2_000).pipe(Effect.ignore);
@@ -2852,8 +3028,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (state.activeTurn !== null) {
               return yield* protocolError("Cannot roll back while a Pi turn is active");
             }
-            if (pendingWake !== null) {
-              return yield* protocolError("Cannot roll back while native Pi work awaits a turn");
+            if (
+              pendingWake !== null ||
+              (state.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
+            ) {
+              return yield* protocolError(
+                "Cannot roll back while native Pi work is running or awaits a turn",
+              );
             }
             const forkEntryId = piRollbackForkEntry(rollbackInput);
             if (forkEntryId === null) {
@@ -3220,6 +3401,10 @@ function piUiResponse(
     return { cancelled: true };
   }
   const answer = answers?.[pending.questionId];
+  if (pending.structured && pending.turnItem.type === "user_input_request") {
+    const value = piStructuredAnswers(pending.turnItem.questions, answers);
+    return value === null ? { cancelled: true } : { value };
+  }
   // An empty string is a valid dialog value per the RPC spec (the extension
   // receives ""), distinct from cancelling (the extension receives undefined).
   if (typeof answer === "string") return { value: answer };

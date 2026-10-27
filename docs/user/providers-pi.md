@@ -72,6 +72,19 @@ installs Pi's example `subagent` extension, T3 Code also shows its task progress
 UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
 threads.
 
+Background subagent extensions can report lifecycle changes with Pi's
+`appendEntry("t3-subagent", data)`. T3 Code shows these children in the shared Agents view,
+including progress and completion after the parent turn ends. These entries do not start a
+model turn or depend on formatted tool output. Children without T3 Code threads cannot be
+opened or resumed from that view.
+
+The version 1 payload requires `version: 1`, `id`, the originating `toolCallId`, and `status`
+(`running`, `completed`, `failed`, or `interrupted`). The first entry must include `prompt`
+and arrive after that tool call starts in an active T3 turn. Optional `title` and `model`
+identify the child. Later entries reuse its identity and can update `progress` or `result`;
+`null` clears either field. T3 bounds progress to 200 characters and results to 10,000.
+Extensions should limit streaming updates and publish status changes immediately.
+
 ## Troubleshooting
 
 - If Pi is unavailable, confirm that the configured binary runs on the server machine, then refresh

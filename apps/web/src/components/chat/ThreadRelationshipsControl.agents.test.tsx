@@ -653,7 +653,7 @@ it("shows the matching child agent details and refreshes them when the agent set
   expect(text()).not.toContain("gpt-5.4");
   expect(text()).not.toContain("gpt-5.3");
   expect(text()).not.toContain("tok");
-  expect(text()).not.toContain("Unlinked agent");
+  expect(text()).toContain("Unlinked agent");
   expect(text()).not.toContain("Active agents");
   expect(renderer.root.findAllByProps({ type: "button", "aria-expanded": true })).toHaveLength(0);
 
@@ -732,6 +732,66 @@ it("shows the matching child agent details and refreshes them when the agent set
   };
   await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("Lineage · 1 running");
+  expect(text()).toContain("Checker");
+});
+
+it("keeps Pi agents without child threads visible through completion without offering navigation", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const agent = {
+    id: "pi-scout",
+    childThreadId: null,
+    origin: "provider_native",
+    driver: "pi",
+    providerInstanceId: "pi",
+    title: "Pi scout",
+    prompt: "Inspect files",
+    model: "openai/gpt-5.6-sol",
+    status: "running",
+    startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+    result: null,
+  };
+  const projection = {
+    thread: { id: "parent", lineage: { relationshipToParent: null } },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [agent],
+  };
+  state.projection = projection;
+  const panel = (
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("test")}
+      threadId={ThreadId.make("parent")}
+    />
+  );
+  await act(async () => {
+    renderer = create(panel);
+  });
+  const row = renderer.root.findByProps({ "aria-label": "Pi scout Running" });
+  expect(row.props.onClick).toBeUndefined();
+  expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Pi scout" })).toHaveLength(0);
+  expect(state.navigate).not.toHaveBeenCalled();
+
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        ...agent,
+        status: "completed",
+        result: "All checks passed",
+        completedAt: DateTime.makeUnsafe("2026-09-16T12:02:00Z"),
+      },
+    ],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(renderer.root.findAllByProps({ "aria-label": "Pi scout Running" })).toHaveLength(0);
+  await act(async () =>
+    renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
+  );
+  expect(renderer.root.findAllByProps({ "aria-label": "Pi scout Done" }).length).toBeGreaterThan(0);
 });
 
 it("shows readable models and only differing workspace details in agent tooltips", async () => {

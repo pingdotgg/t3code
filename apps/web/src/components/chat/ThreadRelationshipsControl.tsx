@@ -20,7 +20,6 @@ import {
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
   type ThreadRelationshipEdge,
-  type ThreadRelationshipWalkRow,
 } from "@t3tools/client-runtime/state/thread-relationships";
 import {
   canDetachThreadProviderSession,
@@ -117,11 +116,13 @@ export function ThreadLineageRowList(props: {
   );
 }
 
-function ThreadLineageGroup(props: {
+function ThreadLineageGroup<
+  Row extends { readonly edge: { readonly status: string | null } },
+>(props: {
   readonly label: string | null;
-  readonly rows: ReadonlyArray<ThreadRelationshipWalkRow>;
+  readonly rows: ReadonlyArray<Row>;
   readonly expanded: boolean;
-  readonly children: (rows: ReadonlyArray<ThreadRelationshipWalkRow>) => ReactNode;
+  readonly children: (rows: ReadonlyArray<Row>) => ReactNode;
 }) {
   const [expanded, setExpanded] = useState(props.expanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
@@ -215,15 +216,18 @@ export function ThreadRelationshipsPanel(props: {
     () => projectedSubagentsToRuntime(projection?.subagents ?? []),
     [projection?.subagents],
   );
+  const runtimeSubagentsById = useMemo(
+    () => new Map(runtimeSubagents.map((agent) => [agent.id, agent])),
+    [runtimeSubagents],
+  );
   const subagentsByThreadId = useMemo(() => {
-    const byId = new Map(runtimeSubagents.map((agent) => [agent.id, agent]));
     return new Map(
       (projection?.subagents ?? [])
         .filter((subagent) => subagent.childThreadId !== null)
         .map((subagent) => [
           subagent.childThreadId,
           {
-            ...byId.get(subagent.id)!,
+            ...runtimeSubagentsById.get(subagent.id)!,
             id: subagent.id,
             threadId: subagent.threadId,
             runId: subagent.runId,
@@ -236,7 +240,7 @@ export function ThreadRelationshipsPanel(props: {
           },
         ]),
     );
-  }, [projection?.subagents, runtimeSubagents]);
+  }, [projection?.subagents, runtimeSubagentsById]);
   const workflowGroupsById = useMemo(
     () =>
       new Map(deriveWorkflowGroups(runtimeSubagents).map((group) => [group.workflow.id, group])),
@@ -292,13 +296,27 @@ export function ThreadRelationshipsPanel(props: {
   );
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
+  const agentRows = [
+    ...relationshipRows.map((row) => ({ ...row, type: "thread" as const })),
+    ...(projection?.subagents ?? [])
+      .filter((agent) => agent.childThreadId === null)
+      .map((agent) => ({
+        type: "native" as const,
+        agent,
+        edge: { kind: "subagent" as const, status: agent.status },
+      })),
+  ];
 
   const {
     related = [],
     active = [],
     previous = [],
-  } = groupBy(relationshipRows, ({ edge }) => {
-    if (edge.kind !== "subagent" || isParentThreadRelationship(edge, props.threadId))
+  } = groupBy(agentRows, (row) => {
+    const { edge } = row;
+    if (
+      row.type === "thread" &&
+      (edge.kind !== "subagent" || isParentThreadRelationship(row.edge, props.threadId))
+    )
       return "related";
     return ["completed", "failed", "error", "cancelled", "interrupted", "idle"].includes(
       edge.status ?? "",
@@ -311,12 +329,9 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: active, expanded: true },
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
-  const runningCount =
-    (projection?.subagents.filter(
-      (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+  const runningCount = active.filter(({ edge }) => edge.status === "running").length;
 
-  if (relationshipRows.length === 0 && runningCount === 0) {
+  if (agentRows.length === 0) {
     return null;
   }
 
@@ -423,7 +438,64 @@ export function ThreadRelationshipsPanel(props: {
       {groups.map((group) => (
         <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
           {(visibleRows) =>
-            visibleRows.map(({ threadId, edge }) => {
+            visibleRows.map((row) => {
+              if (row.type === "native") {
+                const { agent } = row;
+                const provider = providers?.find(
+                  (entry) => entry.instanceId === agent.providerInstanceId,
+                );
+                const timing = runtimeSubagentsById.get(agent.id)!;
+                const title = formatSubagentDisplayTitle(agent.title ?? "Subagent");
+                return (
+                  <li key={agent.id} className="group relative flex h-8 items-center rounded-lg">
+                    <Tooltip>
+                      <TooltipTrigger
+                        delay={200}
+                        render={
+                          <ThreadDetailsControl
+                            size="sm"
+                            variant="ghost"
+                            part="row"
+                            render={<div tabIndex={0} />}
+                            aria-label={`${title} ${threadRelationshipStatusLabel(agent.status)}`}
+                          />
+                        }
+                      >
+                        <ThreadRelationshipIcon
+                          driver={agent.driver}
+                          provider={provider}
+                          status={agent.status}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-4 text-foreground/85">
+                          {title}
+                        </span>
+                        <span className="shrink-0 text-2xs text-muted-foreground">
+                          {threadRelationshipStatusLabel(agent.status)}
+                        </span>
+                      </TooltipTrigger>
+                      <ThreadHoverCardPopup side="left">
+                        <SubagentTooltipContent
+                          title={title}
+                          model={agent.model}
+                          providerInstanceId={agent.providerInstanceId}
+                          origin={agent.origin}
+                          modelSelection={agent.modelSelection}
+                          provider={provider}
+                          providers={providers}
+                          driver={agent.driver}
+                          elapsed={<AgentElapsed agent={timing} />}
+                          status={agent.status}
+                          result={agent.result}
+                          progress={agent.progress}
+                          parentThread={currentThread ?? undefined}
+                          parentProject={currentProject}
+                        />
+                      </ThreadHoverCardPopup>
+                    </Tooltip>
+                  </li>
+                );
+              }
+              const { threadId, edge } = row;
               const node = graph.nodes.get(threadId);
               const isSubagent = edge.kind === "subagent";
               const isMergeTarget = threadId === mergeTargetThreadId;
