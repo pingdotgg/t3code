@@ -2,7 +2,7 @@ import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   resolveNewThreadModelSelectionOverride,
-  shouldClearSyncedDraftBranch,
+  shouldResetBranchForNewWorktree,
 } from "./chatThreadActions";
 
 const PROJECT_DEFAULT_SELECTION: ModelSelection = {
@@ -38,25 +38,29 @@ describe("chatThreadActions", () => {
   });
 });
 
-describe("shouldClearSyncedDraftBranch", () => {
+describe("shouldResetBranchForNewWorktree", () => {
   const input = {
+    currentEnvMode: "local",
     nextEnvMode: "worktree",
     worktreeBaseBranch: "dev",
-    draftBranch: "feature/checked-out",
-    environmentSelection: "auto",
   } as const;
 
-  it("drops the checkout branch so a new worktree starts from the configured base", () => {
-    expect(shouldClearSyncedDraftBranch(input)).toBe(true);
-    expect(shouldClearSyncedDraftBranch({ ...input, environmentSelection: undefined })).toBe(true);
+  it("starts a new worktree from the configured base instead of the checkout's branch", () => {
+    expect(shouldResetBranchForNewWorktree(input)).toBe(true);
   });
 
-  it("keeps a branch the user picked", () => {
-    expect(shouldClearSyncedDraftBranch({ ...input, environmentSelection: "manual" })).toBe(false);
+  it("keeps a base already picked in worktree mode", () => {
+    expect(shouldResetBranchForNewWorktree({ ...input, currentEnvMode: "worktree" })).toBe(false);
   });
 
-  it("keeps today's behavior without a configured base or outside worktree mode", () => {
-    expect(shouldClearSyncedDraftBranch({ ...input, worktreeBaseBranch: "" })).toBe(false);
-    expect(shouldClearSyncedDraftBranch({ ...input, nextEnvMode: "local" })).toBe(false);
+  it("keeps today's behavior without a configured base or when leaving worktree mode", () => {
+    expect(shouldResetBranchForNewWorktree({ ...input, worktreeBaseBranch: "" })).toBe(false);
+    expect(
+      shouldResetBranchForNewWorktree({
+        currentEnvMode: "worktree",
+        nextEnvMode: "local",
+        worktreeBaseBranch: "dev",
+      }),
+    ).toBe(false);
   });
 });

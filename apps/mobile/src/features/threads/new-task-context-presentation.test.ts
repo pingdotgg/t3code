@@ -202,14 +202,15 @@ describe("fillNewTaskWorkspaceBranch", () => {
 });
 
 describe("resolveWorktreeSwitchBranch", () => {
-  const input = { selectedBranch: "feature", checkoutBranch: "feature", worktreeBaseBranch: "dev" };
-
-  it("drops the checkout branch so the configured base applies", () => {
-    expect(resolveWorktreeSwitchBranch(input)).toBeNull();
+  it("starts a new worktree from the configured base, not the checkout's branch", () => {
+    expect(
+      resolveWorktreeSwitchBranch({ selectedBranch: "release", worktreeBaseBranch: "dev" }),
+    ).toBeNull();
   });
 
-  it("keeps another branch the user chose, and today's behavior without a base", () => {
-    expect(resolveWorktreeSwitchBranch({ ...input, selectedBranch: "release" })).toBe("release");
-    expect(resolveWorktreeSwitchBranch({ ...input, worktreeBaseBranch: "" })).toBe("feature");
+  it("keeps today's behavior without a configured base", () => {
+    expect(resolveWorktreeSwitchBranch({ selectedBranch: "release", worktreeBaseBranch: "" })).toBe(
+      "release",
+    );
   });
 });

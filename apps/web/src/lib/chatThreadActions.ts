@@ -43,18 +43,16 @@ export function resolveNewDraftStartFromOrigin(input: {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
 }
 
-/** A configured base replaces the branch a draft synced from its checkout, never one the user picked. */
-export function shouldClearSyncedDraftBranch(input: {
+/** A checkout's branch is not a worktree base, so leaving it for a new worktree starts from the configured base. */
+export function shouldResetBranchForNewWorktree(input: {
+  currentEnvMode: DraftThreadEnvMode | undefined;
   nextEnvMode: DraftThreadEnvMode;
   worktreeBaseBranch: string;
-  draftBranch: string | null;
-  environmentSelection: "auto" | "manual" | undefined;
 }): boolean {
   return (
+    input.currentEnvMode === "local" &&
     input.nextEnvMode === "worktree" &&
-    input.worktreeBaseBranch !== "" &&
-    input.draftBranch !== null &&
-    input.environmentSelection !== "manual"
+    input.worktreeBaseBranch !== ""
   );
 }
 

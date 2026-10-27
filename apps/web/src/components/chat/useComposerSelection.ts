@@ -20,7 +20,7 @@ import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import {
   resolveNewDraftStartFromOrigin,
-  shouldClearSyncedDraftBranch,
+  shouldResetBranchForNewWorktree,
 } from "../../lib/chatThreadActions";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
 import {
@@ -235,11 +235,10 @@ export function useComposerSelection(input: ComposerSelectionInput) {
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
         }),
         ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
-        ...(shouldClearSyncedDraftBranch({
+        ...(shouldResetBranchForNewWorktree({
+          currentEnvMode: draftThread?.envMode,
           nextEnvMode: mode,
           worktreeBaseBranch: activeProjectSettings.settings.newWorktreesBaseBranch,
-          draftBranch: draftThread?.branch ?? null,
-          environmentSelection: draftThread?.environmentSelection,
         })
           ? { branch: null }
           : {}),

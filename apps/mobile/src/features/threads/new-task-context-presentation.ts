@@ -72,15 +72,12 @@ export function resolveNewTaskLocalWorkspaceSelection(input: {
   };
 }
 
-/** Leaving the checkout for a new worktree drops the checkout's branch when a base is configured. */
+/** A checkout's branch is not a worktree base, so leaving it for a new worktree starts from the configured base. */
 export function resolveWorktreeSwitchBranch(input: {
   readonly selectedBranch: string | null;
-  readonly checkoutBranch: string | null;
   readonly worktreeBaseBranch: string;
 }): string | null {
-  return input.worktreeBaseBranch !== "" && input.selectedBranch === input.checkoutBranch
-    ? null
-    : input.selectedBranch;
+  return input.worktreeBaseBranch === "" ? input.selectedBranch : null;
 }
 
 export function resolveNewTaskBranchLabel(input: {
