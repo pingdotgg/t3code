@@ -832,136 +832,164 @@ describe("AntigravityAdapterV2 html_render pages", () => {
 });
 
 describe("AntigravityAdapterV2 subagent tools", () => {
-  it.effect("keeps the parent's message whole while a child trajectory runs tools", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-      const instanceId = ProviderInstanceId.make("antigravity-child-tools-test");
-      const threadId = ThreadId.make("thread-antigravity-child-tools");
-      const childTool = "33e9093cd2d9d11b9df002ad1d225480:128";
-      const adapter = yield* makeAntigravityAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
-            ...input,
-            childProcessSpawner,
-            spawn: {
-              command: process.execPath,
-              args: [mockAgentPath],
-              cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
-            },
-          }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
-            Effect.map((runtime): RuntimeService => ({
-              ...runtime,
-              handleSessionUpdate: (handler) =>
-                Effect.sync(() => {
-                  sessionUpdate = handler;
-                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
-              // agy_acp_server streams child trajectories' steps on the parent session.
-              prompt: () =>
-                Effect.gen(function* () {
-                  const updates: ReadonlyArray<EffectAcpSchema.SessionUpdate> = [
-                    {
-                      sessionUpdate: "agent_message_chunk",
-                      content: { type: "text", text: "WS3 covers `SpectatorGui" },
-                    },
-                    {
-                      sessionUpdate: "tool_call",
-                      toolCallId: childTool,
-                      title: "find crates/mc-audio",
-                      kind: "execute",
-                      status: "in_progress",
-                      rawInput: { CommandLine: "find crates/mc-audio" },
-                    },
-                    {
-                      sessionUpdate: "agent_message_chunk",
-                      content: { type: "text", text: "`, AdvancementsScreen and more." },
-                    },
-                    {
-                      sessionUpdate: "tool_call_update",
-                      toolCallId: childTool,
-                      status: "completed",
-                      rawOutput: { combinedOutput: "crates/mc-audio/src/lib.rs" },
-                    },
-                  ];
-                  for (const update of updates) {
-                    if (sessionUpdate === undefined) {
-                      return yield* Effect.die("the adapter must handle session updates");
-                    }
-                    yield* sessionUpdate({ sessionId: "mock-session-1", update });
-                  }
-                  return { stopReason: "end_turn" as const };
-                }),
-            })),
-          ),
-        withProcess: (_stop, task) => task,
-        defaultModel: Effect.sync((): string | undefined => undefined),
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
-      const session = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-child-tools"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* session.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      yield* session.startTurn(
-        makeTurnInput({
-          threadId,
-          providerThread,
+  it.effect.each(["end_turn", "cancelled", "failed"] as const)(
+    "keeps the parent message whole and settles child tools on %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const instanceId = ProviderInstanceId.make("antigravity-child-tools-test");
+        const threadId = ThreadId.make("thread-antigravity-child-tools");
+        const childTool = "33e9093cd2d9d11b9df002ad1d225480:128";
+        const unfinishedTool = "33e9093cd2d9d11b9df002ad1d225480:129";
+        const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
-          runtimePolicy,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                // agy_acp_server streams child trajectories' steps on the parent session.
+                prompt: () =>
+                  Effect.gen(function* () {
+                    const updates: ReadonlyArray<EffectAcpSchema.SessionUpdate> = [
+                      {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "WS3 covers `SpectatorGui" },
+                      },
+                      {
+                        sessionUpdate: "tool_call",
+                        toolCallId: childTool,
+                        title: "find crates/mc-audio",
+                        kind: "execute",
+                        status: "in_progress",
+                        rawInput: { CommandLine: "find crates/mc-audio" },
+                      },
+                      {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "`, AdvancementsScreen and more." },
+                      },
+                      {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: childTool,
+                        status: "completed",
+                        rawOutput: { combinedOutput: "crates/mc-audio/src/lib.rs" },
+                      },
+                      {
+                        sessionUpdate: "tool_call",
+                        toolCallId: unfinishedTool,
+                        title: "read child output",
+                        kind: "read",
+                        status: "in_progress",
+                      },
+                    ];
+                    for (const update of updates) {
+                      if (sessionUpdate === undefined) {
+                        return yield* Effect.die("the adapter must handle session updates");
+                      }
+                      yield* sessionUpdate({ sessionId: "mock-session-1", update });
+                    }
+                    if (outcome === "failed") {
+                      return yield* new EffectAcpErrors.AcpTransportError({
+                        detail: "Child lifecycle failure",
+                        cause: "test",
+                      });
+                    }
+                    return { stopReason: outcome };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.sync((): string | undefined => undefined),
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-child-tools"),
           modelSelection,
-          now: yield* DateTime.now,
-        }),
-      );
-      const events = Array.from(
-        yield* session.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runCollect,
-        ),
-      );
-      const items = events.flatMap((event) =>
-        event.type === "turn_item.updated" ? [event.turnItem] : [],
-      );
-      const parentMessages = items.filter(
-        (item) => item.threadId === threadId && item.type === "assistant_message",
-      );
-      assert.equal(new Set(parentMessages.map((item) => item.id)).size, 1);
-      const lastParent = parentMessages.at(-1);
-      assert.equal(
-        lastParent?.type === "assistant_message" ? lastParent.text : undefined,
-        "WS3 covers `SpectatorGui`, AdvancementsScreen and more.",
-      );
-      const toolItems = items.filter(
-        (item) => item.nativeItemRef?.nativeId?.endsWith(childTool) === true,
-      );
-      assert.isTrue(toolItems.length > 0);
-      assert.isFalse(toolItems.some((item) => item.threadId === threadId));
-      const child = events.findLast((event) => event.type === "subagent.updated");
-      const childThreadId =
-        child?.type === "subagent.updated" ? child.subagent.childThreadId : null;
-      assert.equal(toolItems.at(-1)?.threadId, childThreadId);
-      assert.equal(toolItems.at(-1)?.status, "completed");
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            modelSelection,
+            now: yield* DateTime.now,
+          }),
+        );
+        const events = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const items = events.flatMap((event) =>
+          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        const parentMessages = items.filter(
+          (item) => item.threadId === threadId && item.type === "assistant_message",
+        );
+        assert.equal(new Set(parentMessages.map((item) => item.id)).size, 1);
+        const lastParent = parentMessages.at(-1);
+        assert.equal(
+          lastParent?.type === "assistant_message" ? lastParent.text : undefined,
+          "WS3 covers `SpectatorGui`, AdvancementsScreen and more.",
+        );
+        const toolItems = items.filter(
+          (item) => item.nativeItemRef?.nativeId?.endsWith(childTool) === true,
+        );
+        assert.isTrue(toolItems.length > 0);
+        assert.isFalse(toolItems.some((item) => item.threadId === threadId));
+        const child = events.findLast((event) => event.type === "subagent.updated");
+        const childThreadId =
+          child?.type === "subagent.updated" ? child.subagent.childThreadId : null;
+        assert.equal(toolItems.at(-1)?.threadId, childThreadId);
+        assert.equal(toolItems.at(-1)?.status, "completed");
+        assert.equal(
+          items.findLast((item) => item.nativeItemRef?.nativeId?.endsWith(unfinishedTool))?.status,
+          "interrupted",
+        );
+        assert.equal(events.filter((event) => event.type === "app_thread.created").length, 1);
+        assert.isFalse(
+          items.some((item) => item.threadId === childThreadId && item.type === "user_message"),
+        );
+        assert.equal(
+          child?.type === "subagent.updated" ? child.subagent.status : undefined,
+          outcome === "end_turn" ? "idle" : outcome,
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
