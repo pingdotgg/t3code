@@ -708,7 +708,6 @@ export default function ChatView(props: ChatViewProps) {
   const composerReservedHeightRef = useRef(0);
   const composerExpandedHeightRef = useRef(0);
   const composerRestingRef = useRef(false);
-  const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const [timelineOverflows, setTimelineOverflows] = useState(false);
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
@@ -2127,7 +2126,7 @@ export default function ChatView(props: ChatViewProps) {
     const nextHeight = Math.ceil(height);
     if (nextHeight <= 0) return;
     const isResting = overlayComposerIsResting({
-      composerMounted: composerMountedRef.current,
+      composerMounted,
       composerReportedResting: composerRestingRef.current,
     });
     const modelStrip = composerOverlayElement?.querySelector<HTMLElement>(
@@ -2200,8 +2199,13 @@ export default function ChatView(props: ChatViewProps) {
     composerReservedHeightRef.current = 0;
     composerExpandedHeightRef.current = 0;
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch must re-measure the overlay for the new timeline.
-  }, [activeThreadKey, composerOverlayElement, publishComposerOverlayHeightStable]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch or a composer mount/unmount must re-measure the overlay for the new timeline.
+    activeThreadKey,
+    composerMounted,
+    composerOverlayElement,
+    publishComposerOverlayHeightStable,
+  ]);
 
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
@@ -2226,15 +2230,6 @@ export default function ChatView(props: ChatViewProps) {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The scroll-to-bottom button changes the overlay's height without resizing the observed node first.
     showScrollToBottom,
   ]);
-  useLayoutEffect(() => {
-    if (composerMountedRef.current === composerMounted) return;
-    composerMountedRef.current = composerMounted;
-    if (!composerOverlayElement) return;
-    composerTimelineInsetRef.current = 0;
-    composerReservedHeightRef.current = 0;
-    composerExpandedHeightRef.current = 0;
-    publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
-  }, [composerMounted, composerOverlayElement, publishComposerOverlayHeightStable]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
   const activeThreadReferenceCopyTarget =
     activeThreadId === null || !isServerThread
