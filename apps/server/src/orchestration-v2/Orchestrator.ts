@@ -23,6 +23,7 @@ import {
   type ChatAttachment,
   CommandId,
   type GuestMessageId,
+  isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -5774,13 +5775,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (goalStopRunId !== undefined) {
-        return yield* stopRunForGoalCommand({
+        return yield* stopRunForQueuedCommand({
           command,
           events,
           effects,
           projection: yield* getProjectionWithPendingEvents(command.threadId, events),
           queuedRunId: runId,
           targetRunId: goalStopRunId,
+          reason: "Stopped to apply /goal",
           now,
         });
       }
@@ -8355,15 +8357,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (yield* goalDriverFor(command, queuedRun.providerInstanceId)) === undefined
         ? null
         : parsedGoalCommand;
+    const target = projection.runs.find((run) => run.id === command.targetRunId);
+    const targetMessage = projection.messages.find(
+      (message) => message.id === target?.userMessageId,
+    );
+    // A compacting turn cannot take steering input, so steering skips the compaction instead.
+    if (
+      target !== undefined &&
+      targetMessage !== undefined &&
+      isCompactionCommandMessage(targetMessage)
+    ) {
+      if (goalCommand !== null) {
+        yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+      }
+      yield* emitEvent({
+        type: "run.updated",
+        threadId: command.threadId,
+        runId: queuedRun.id,
+        nodeId: queuedRootNode.id,
+        providerInstanceId: queuedRun.providerInstanceId,
+        occurredAt: now,
+        payload: { ...queuedRun, queuePosition: 1 },
+      });
+      const stops =
+        isLiveRun(target) && !(yield* stopReachedRun(command, command.threadId, target.id));
+      return yield* stopRunForQueuedCommand({
+        command,
+        events,
+        effects,
+        projection,
+        queuedRunId: queuedRun.id,
+        targetRunId: stops ? target.id : undefined,
+        reason: "Skipped compaction to send a queued message",
+        now,
+      });
+    }
     if (goalCommand !== null) {
       yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
-      const target = projection.runs.find((run) => run.id === command.targetRunId);
       const goal = projection.providerThreads.find(
         (candidate) => candidate.id === target?.providerThreadId,
       )?.goal;
-      const targetMessage = projection.messages.find(
-        (message) => message.id === target?.userMessageId,
-      );
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
@@ -8379,13 +8412,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
         (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
         !(yield* stopReachedRun(command, command.threadId, target.id));
-      return yield* stopRunForGoalCommand({
+      return yield* stopRunForQueuedCommand({
         command,
         events,
         effects,
         projection,
         queuedRunId: queuedRun.id,
         targetRunId: stops ? target.id : undefined,
+        reason: "Stopped to apply /goal",
         now,
       });
     }
@@ -10496,71 +10530,74 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /** Puts a queued goal command first and, given a target, stops the run in its way. */
-  const stopRunForGoalCommand = Effect.fn("Orchestrator.stopRunForGoalCommand")(function* (input: {
-    readonly command: Extract<
-      OrchestrationV2Command,
-      { readonly type: "message.dispatch" | "queued-message.promote-to-steer" }
-    >;
-    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
-    readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
-    readonly projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">;
-    readonly queuedRunId: RunId;
-    readonly targetRunId: RunId | undefined;
-    readonly now: DateTime.Utc;
-  }) {
-    const { command, events, effects, projection, now, targetRunId } = input;
-    const others = queuedRunsInDeliveryOrder(projection).filter(
-      (run) => run.id !== input.queuedRunId && !isAutomaticCompletionRun(projection, run),
-    );
-    for (const [index, run] of others.entries()) {
-      const queuePosition = index + 2;
-      if (run.queuePosition === queuePosition) continue;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "run.updated",
-        threadId: command.threadId,
-        runId: run.id,
-        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: { ...run, queuePosition },
-      });
-    }
-    if (targetRunId === undefined) return undefined;
-    const interruptEvents = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
-    const interruptEffects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
-    const interrupted = yield* Effect.exit(
-      dispatchRunInterrupt(
-        {
-          type: "run.interrupt",
-          commandId: command.commandId,
+  const stopRunForQueuedCommand = Effect.fn("Orchestrator.stopRunForQueuedCommand")(
+    function* (input: {
+      readonly command: Extract<
+        OrchestrationV2Command,
+        { readonly type: "message.dispatch" | "queued-message.promote-to-steer" }
+      >;
+      readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+      readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
+      readonly projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">;
+      readonly queuedRunId: RunId;
+      readonly targetRunId: RunId | undefined;
+      readonly reason: string;
+      readonly now: DateTime.Utc;
+    }) {
+      const { command, events, effects, projection, now, targetRunId } = input;
+      const others = queuedRunsInDeliveryOrder(projection).filter(
+        (run) => run.id !== input.queuedRunId && !isAutomaticCompletionRun(projection, run),
+      );
+      for (const [index, run] of others.entries()) {
+        const queuePosition = index + 2;
+        if (run.queuePosition === queuePosition) continue;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, queuePosition },
+        });
+      }
+      if (targetRunId === undefined) return undefined;
+      const interruptEvents = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
+      const interruptEffects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+      const interrupted = yield* Effect.exit(
+        dispatchRunInterrupt(
+          {
+            type: "run.interrupt",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            runId: targetRunId,
+            reason: input.reason,
+          },
+          interruptEvents,
+          interruptEffects,
+        ),
+      );
+      // A failed interrupt may have written part of its events, so they are kept apart.
+      // The queued command then waits for the turn to end.
+      if (Exit.isFailure(interrupted)) {
+        yield* Effect.logWarning("queued command could not stop the running turn", {
           threadId: command.threadId,
           runId: targetRunId,
-          reason: "Stopped to apply /goal",
-        },
-        interruptEvents,
-        interruptEffects,
-      ),
-    );
-    // A failed interrupt may have written part of its events, so they are kept apart.
-    // The goal command then waits for the turn to end.
-    if (Exit.isFailure(interrupted)) {
-      yield* Effect.logWarning("goal command could not stop the running turn", {
-        threadId: command.threadId,
-        runId: targetRunId,
-        cause: interrupted.cause,
-      });
-      return undefined;
-    }
-    const written = yield* Ref.get(interruptEvents);
-    const enqueued = yield* Ref.get(interruptEffects);
-    yield* Ref.update(events, (existing) => [...existing, ...written]);
-    yield* Ref.update(effects, (existing) => [...existing, ...enqueued]);
-    // Like Stop: a run stopped before its provider started also abandons that start.
-    return interrupted.value;
-  });
+          cause: interrupted.cause,
+        });
+        return undefined;
+      }
+      const written = yield* Ref.get(interruptEvents);
+      const enqueued = yield* Ref.get(interruptEffects);
+      yield* Ref.update(events, (existing) => [...existing, ...written]);
+      yield* Ref.update(effects, (existing) => [...existing, ...enqueued]);
+      // Like Stop: a run stopped before its provider started also abandons that start.
+      return interrupted.value;
+    },
+  );
 
   const dispatchThreadStop = Effect.fn("Orchestrator.dispatchThreadStop")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,

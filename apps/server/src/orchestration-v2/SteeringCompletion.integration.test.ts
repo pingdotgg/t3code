@@ -429,6 +429,29 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     openSession: (input) =>
       Effect.gen(function* () {
         const now = yield* DateTime.now;
+        const startTurn = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+          Effect.gen(function* () {
+            started.push(turn);
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: {
+                id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                providerThreadId: turn.providerThread.id,
+                nodeId: turn.rootNodeId,
+                runAttemptId: turn.attemptId,
+                nativeTurnRef: {
+                  driver,
+                  nativeId: `native:${turn.attemptId}`,
+                  strength: "strong",
+                },
+                ordinal: turn.providerTurnOrdinal,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            });
+          });
         return {
           instanceId,
           driver,
@@ -465,29 +488,8 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
               updatedAt: now,
             }),
           resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-          startTurn: (turn) =>
-            Effect.gen(function* () {
-              started.push(turn);
-              yield* Queue.offer(events, {
-                type: "provider_turn.updated",
-                driver,
-                providerTurn: {
-                  id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                  providerThreadId: turn.providerThread.id,
-                  nodeId: turn.rootNodeId,
-                  runAttemptId: turn.attemptId,
-                  nativeTurnRef: {
-                    driver,
-                    nativeId: `native:${turn.attemptId}`,
-                    strength: "strong",
-                  },
-                  ordinal: turn.providerTurnOrdinal,
-                  status: "running",
-                  startedAt: now,
-                  completedAt: null,
-                },
-              });
-            }),
+          startTurn,
+          compactThread: startTurn,
           steerTurn: (turn) =>
             Effect.sync(() => {
               steered.push(turn.message.text);
@@ -1165,6 +1167,96 @@ it.effect("promotes a queued goal by stopping the running turn", () =>
       }).pipe(Effect.provide(layer));
     }),
   ),
+);
+
+it.effect.each(["next", "/goal ship it"])(
+  "promoting %s into a compaction stops it and sends it next",
+  (promoted) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { events, layer, send, read, started, steered, startFirstTurn } = yield* goalHarness(
+          `compaction-promote-${promoted.length}`,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          yield* send("compact", "/compact", "queue");
+          yield* send("queued", "queued", "queue");
+          yield* send("next", promoted, "queue");
+          const settled = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === started[0]!.runId &&
+                event.payload.status === "waiting",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          const compacting = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.status === "running" &&
+                event.payload.runAttemptId !== started[0]!.attemptId,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+          yield* Queue.offer(events, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+          });
+          yield* Queue.offer(events, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: turn.providerThreadId,
+            providerTurnId: turn.id,
+            runOrdinal: started[0]!.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* Fiber.join(settled);
+          yield* worker.drain();
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          yield* Fiber.join(compacting);
+          const compactRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === MessageId.make("message:compact"),
+          )!;
+          const nextRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === MessageId.make("message:next"),
+          )!;
+          yield* orchestrator.dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("promote"),
+            threadId,
+            queuedRunId: nextRun.id,
+            targetRunId: compactRun.id,
+          });
+          yield* worker.drain();
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(steered, []);
+          assert.isTrue(
+            projection.turnItems.some(
+              (item) => item.type === "run_interrupt_request" && item.runId === compactRun.id,
+            ),
+          );
+          assert.deepEqual((yield* read(threadId)).queue, ["queued"]);
+          assert.deepEqual(
+            started.map((turn) => turn.message.text),
+            ["first", "/compact", promoted],
+          );
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
 );
 
 it.effect("stops a turn that is still starting when a goal is sent into it", () =>
