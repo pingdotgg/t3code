@@ -39,6 +39,19 @@ describe("findPromptLinkProjects", () => {
     expect(ids("me", "t3code")).toEqual(["fork"]);
     expect(ids("gitlab", "x")).toEqual([]);
   });
+
+  it("matches a checkout of the repository's GitCafe mirror", () => {
+    const projects = [
+      { id: "gitcafe", repositoryIdentity: identity("git.cafe/pingdotgg/t3code") },
+      { id: "staging", repositoryIdentity: identity("staging.git.cafe/pingdotgg/t3code") },
+      { id: "gitlab", repositoryIdentity: identity("gitlab.com/pingdotgg/t3code") },
+    ];
+    expect(
+      findPromptLinkProjects(projects, { owner: "pingdotgg", name: "t3code" }).map(
+        (project) => project.id,
+      ),
+    ).toEqual(["gitcafe", "staging"]);
+  });
 });
 
 describe("pickPromptLinkPullRequestThread", () => {
