@@ -57,9 +57,11 @@ if (clientPlatform === "darwin") {
 }
 
 document.addEventListener("fullscreenchange", () => {
+  const element = document.fullscreenElement;
+  // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window.
   void ipcRenderer.invoke(
     IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
-    document.fullscreenElement !== null,
+    element !== null && element.tagName !== "WEBVIEW",
   );
 });
 
