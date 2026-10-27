@@ -13,6 +13,7 @@ import { useKeyboardState } from "react-native-keyboard-controller";
 
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { rootNavigationRef } from "../../lib/rootNavigation";
 import { useWorkspaceConnectionState } from "../../state/workspace";
 import { androidWorkspaceNavigationColors } from "./android-workspace-navigation-colors";
 import {
@@ -116,11 +117,12 @@ export function AndroidWorkspaceNavigation(props: {
           const tab = event.nativeEvent.tab;
           if (tab !== "settings") workspace.dispatch({ type: "select", tab });
           // Reset the root stack even when a nested settings navigator has focus.
-          if (root) {
+          // The provider renders inside the root stack's layout, so the container's root state is
+          // that stack's current state.
+          const rootState = rootNavigationRef.getRootState();
+          if (root && rootState) {
             navigation.dispatch({
-              ...CommonActions.reset(
-                androidWorkspaceTabNavigationState(root.getState(), tab, rail),
-              ),
+              ...CommonActions.reset(androidWorkspaceTabNavigationState(rootState, tab, rail)),
               target: root.key,
             });
           }
