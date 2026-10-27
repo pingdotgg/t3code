@@ -14,6 +14,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
@@ -436,9 +437,7 @@ const make = Effect.gen(function* () {
       if (
         session === undefined ||
         !timingSafeEqualBase64Url(decision.csrfToken, session.csrfToken) ||
-        !EnvironmentAuth.mcpClientScopes(decision.access).every((scope) =>
-          session.scopes.includes(scope),
-        )
+        !mcpClientScopes(decision.access).every((scope) => session.scopes.includes(scope))
       ) {
         return yield* new McpOAuthPageError({
           description: "Your session cannot approve this request. Enter a pairing code instead.",
@@ -523,7 +522,7 @@ const make = Effect.gen(function* () {
         access_token: issued.token,
         token_type: "Bearer",
         expires_in: Math.max(0, Math.floor((issued.expiresAt.epochMilliseconds - now) / 1000)),
-        scope: encodeOAuthScope(EnvironmentAuth.mcpClientScopes(pending.access)),
+        scope: encodeOAuthScope(mcpClientScopes(pending.access)),
       };
     },
   );

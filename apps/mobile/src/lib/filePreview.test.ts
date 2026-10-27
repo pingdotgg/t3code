@@ -271,6 +271,7 @@ vi.mock("../features/threads/thread-context-divider", () => ({}));
 vi.mock("../features/threads/thread-handoff-row", () => ({}));
 vi.mock("../features/threads/ThreadGuestShareBar", () => ({ useThreadGuestShare: () => null }));
 vi.mock("../features/threads/SecretRequestCard", () => ({}));
+vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => null }));
 vi.mock("../features/threads/worktree-setup-card", () => ({}));
 vi.mock("../features/threads/CopyTextButton", () => ({ CopyTextButton: () => null }));
 vi.mock("../features/threads/thread-work-log", () => ({ THREAD_DISCLOSURE_TRANSITION_MS: 100 }));

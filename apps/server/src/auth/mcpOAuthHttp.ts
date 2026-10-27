@@ -3,6 +3,7 @@ import {
   type AuthMcpAuthorizationRequest,
   AuthMcpClientAccess,
   EnvironmentHttpApi,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -10,7 +11,6 @@ import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
@@ -121,9 +121,7 @@ export const layer = HttpApiBuilder.group(
               : {
                   csrfToken: session.csrfToken,
                   oneClickAccess: AuthMcpClientAccess.literals.filter((access) =>
-                    EnvironmentAuth.mcpClientScopes(access).every((scope) =>
-                      session.scopes.includes(scope),
-                    ),
+                    mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
                   ),
                 }),
           };

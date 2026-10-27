@@ -148,11 +148,14 @@ export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
  * The environment that links: its own database and secret store, reaching
  * peers over plain HTTP. Provide it to anything built on its links.
  */
-export const layerLinkingEnvironment = (descriptor: ExecutionEnvironmentDescriptor) =>
+export const layerLinkingEnvironment = (
+  descriptor: ExecutionEnvironmentDescriptor,
+  secrets: typeof ServerSecretStore.layer = ServerSecretStore.layer,
+) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
     Layer.provideMerge(Sqlite.layerMemory),
-    Layer.provide(Layer.mergeAll(ServerSecretStore.layer, FetchHttpClient.layer)),
+    Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
     // Services that act for this environment, such as delegation, name it too.
     Layer.provideMerge(
       Layer.succeed(ServerEnvironment.ServerEnvironment, {

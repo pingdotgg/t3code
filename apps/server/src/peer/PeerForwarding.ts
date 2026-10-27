@@ -213,6 +213,13 @@ const make = Effect.gen(function* () {
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
 
+  /**
+   * The next step for an agent whose machine is not linked: without it, an
+   * empty list reads as a dead end and agents go looking elsewhere.
+   */
+  const NOT_LISTED =
+    "Not listed: not linked yet. Call t3_environment_link with a hint from the user's words.";
+
   const listLinks: PeerForwarding["Service"]["links"] = Effect.fn("PeerForwarding.listLinks")(
     function* (scope) {
       yield* callerLimits(scope);
@@ -232,6 +239,7 @@ const make = Effect.gen(function* () {
           expiresAt: DateTime.formatIso(link.expiresAt),
           lastError: link.lastError,
         })),
+        notListed: NOT_LISTED,
       };
     },
   );

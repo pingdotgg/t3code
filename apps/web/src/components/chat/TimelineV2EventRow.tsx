@@ -18,6 +18,7 @@ import {
   SubagentElapsed,
   V2LifecycleRow,
 } from "./V2LifecycleRow";
+import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
 import { v2EventPresentation, subagentGroupTiming } from "./TimelineV2EventRow.logic";
@@ -31,6 +32,15 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   if (item.type === "secret_request") {
     return (
       <SecretRequestCard
+        environmentId={ctx.activeThreadEnvironmentId}
+        item={item}
+        visibility={visibility}
+      />
+    );
+  }
+  if (item.type === "link_request") {
+    return (
+      <LinkRequestCard
         environmentId={ctx.activeThreadEnvironmentId}
         item={item}
         visibility={visibility}
