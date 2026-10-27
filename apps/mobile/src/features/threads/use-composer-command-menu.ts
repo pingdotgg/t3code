@@ -7,13 +7,22 @@ import type {
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  type ComposerEnvironmentCandidate,
+  matchComposerEnvironmentItems,
+  matchComposerThreadItems,
+} from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
+const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
-import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
+import {
+  environmentComposerContext,
+  pullRequestComposerContext,
+  threadComposerContext,
+} from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -201,6 +210,7 @@ export function useComposerCommandMenu({
   ownerKey,
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
+  environments = EMPTY_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
@@ -219,6 +229,7 @@ export function useComposerCommandMenu({
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
+  readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
@@ -452,8 +463,12 @@ export function useComposerCommandMenu({
             now,
           })
         : [];
+      const environmentItems = environmentId
+        ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
+        : [];
       return [
         ...threadItems,
+        ...environmentItems,
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.split("/");
           return {
@@ -473,6 +488,32 @@ export function useComposerCommandMenu({
 
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
+    if (item.type === "environment") {
+      if (!ownerKey || trigger.kind !== "path") return;
+      const record = environmentComposerContext(item.environmentId, item.label);
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        return;
+      }
+      const result = replaceTextRange(
+        draftMessage,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      if (!alreadyAttached) {
+        const draft = getComposerDraftSnapshot(ownerKey);
+        setComposerDraftContext(ownerKey, {
+          version: 1,
+          records: [...(draft.context?.records ?? []), record],
+        });
+      }
+      setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
     if (item.type === "thread") {
       if (!ownerKey || trigger.kind !== "path") return;
       const shell = threadShells.find(

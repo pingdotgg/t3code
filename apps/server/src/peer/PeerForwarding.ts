@@ -80,6 +80,13 @@ export class PeerForwarding extends Context.Service<
   }
 >()("t3/peer/PeerForwarding") {}
 
+/** What an agent hears when it names another machine while the beta is off here. */
+export const linkedEnvironmentsOff = new OrchestratorMcpFailure({
+  code: "capability_denied",
+  message:
+    "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
+});
+
 /** The linked environment a call names, or nothing when it names this one. */
 export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefined) =>
   environmentId === scope.environmentId ? undefined : environmentId;
@@ -204,14 +211,25 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) =>
-    tool.name === "t3_thread_wait"
+  // While the beta is off, agents start nothing over links. Tasks already running there keep
+  // following through readThread, waitForThread and interruptThread, so they still finish.
+  const requireEnabled = links.enabled.pipe(
+    Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
+  );
+
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
+    const forwarded: Effect.Effect<
+      Tool.Success<typeof tool>,
+      OrchestratorMcpFailure
+    > = tool.name === "t3_thread_wait"
       ? (waitForThread(
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+    return Effect.andThen(requireEnabled, forwarded);
+  };
 
   /**
    * The next step for an agent whose machine is not linked: without it, an
@@ -223,6 +241,7 @@ const make = Effect.gen(function* () {
   const listLinks: PeerForwarding["Service"]["links"] = Effect.fn("PeerForwarding.listLinks")(
     function* (scope) {
       yield* callerLimits(scope);
+      yield* requireEnabled;
       const listed = yield* links.list.pipe(
         Effect.mapError(
           (error) =>

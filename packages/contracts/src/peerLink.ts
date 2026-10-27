@@ -67,6 +67,7 @@ export class PeerLinkError extends Schema.TaggedError<PeerLinkError>()("PeerLink
     "expired",
     "unknown_link",
     "storage",
+    "disabled",
   ]),
   message: Schema.String,
   cause: Schema.optionalKey(Schema.Defect()),

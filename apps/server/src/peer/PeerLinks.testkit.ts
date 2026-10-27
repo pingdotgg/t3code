@@ -28,6 +28,7 @@ import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
 class PeerTestApi extends HttpApi.make("environment")
@@ -70,6 +71,7 @@ export const servePeer = <E, R>(
       getDescriptor: Ref.get(descriptor),
     });
     const authContext = yield* EnvironmentAuth.layer.pipe(
+      Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
       Layer.provide(Sqlite.layerMemory),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provideMerge(ServerEnvironment.layerIdentity),
@@ -127,6 +129,8 @@ export const servePeer = <E, R>(
     return {
       url,
       auth,
+      /** Its settings, as for turning its Linked environments beta off. */
+      settings: Context.get(authContext, ServerSettings.ServerSettingsService),
       descriptor,
       bearers,
       /** How often its descriptor was asked for, as a probe of whether it answers. */
@@ -154,6 +158,7 @@ export const layerLinkingEnvironment = (
 ) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
+    Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(Sqlite.layerMemory),
     Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
     // Services that act for this environment, such as delegation, name it too.

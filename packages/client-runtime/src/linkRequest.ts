@@ -6,6 +6,7 @@ import {
   type PeerLinkRequestAnswerInput,
   type PeerLinkSummary,
   resolveEnvironmentMachineKind,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
@@ -14,6 +15,12 @@ import { connectionRoutes, routeHttpBaseUrl } from "./connection/routes.ts";
 import type { RelayDiscoveredEnvironment } from "./relay/discovery.ts";
 
 export type LinkRequestItem = Extract<OrchestrationV2TurnItem, { readonly type: "link_request" }>;
+
+/** Whether an environment offers links: it supports them and its Linked environments beta is on. */
+export const offersLinkedEnvironments = (
+  config: Pick<ServerConfig, "environment" | "settings"> | null | undefined,
+): boolean =>
+  config?.environment.capabilities.peerLinks === true && config.settings.linkedEnvironmentsEnabled;
 
 /** The access a request opens with: the agent's suggestion, else supervised. */
 export const linkRequestDefaultAccess = (

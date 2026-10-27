@@ -76,6 +76,13 @@ const fromLinkError = (error: PeerLinkError) =>
     message: error.message,
   });
 
+/** Not final, so a task already running there resumes once the beta is on there again. */
+const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
+  code: "orchestration_error",
+  message:
+    "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
+});
+
 /** The body of an MCP response: JSON, or a single server-sent event carrying JSON. */
 const responseJson = (contentType: string | undefined, text: string) =>
   contentType?.includes("text/event-stream") === true
@@ -126,6 +133,7 @@ const make = Effect.gen(function* () {
       limitHeader,
     );
     const sessionId = initialized.headers["mcp-session-id"];
+    if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
     if (initialized.status !== 200 || sessionId === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: initialized.status === 401 ? "capability_denied" : "orchestration_error",
@@ -182,6 +190,7 @@ const make = Effect.gen(function* () {
             "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
         });
       }
+      if (response.status === 403) return yield* linkedEnvironmentsOffThere;
       if (response.status !== 200) {
         return yield* new OrchestratorMcpFailure({
           code: "orchestration_error",

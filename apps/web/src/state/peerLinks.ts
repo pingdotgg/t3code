@@ -1,11 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
-import { linkableMachines } from "@t3tools/client-runtime/link-request";
+import { linkableMachines, offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import { createPeerLinkEnvironmentAtoms } from "@t3tools/client-runtime/state/peerLinks";
 import { AuthAccessReadScope, type EnvironmentId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironments } from "./environments";
+import { environmentPresentations } from "./presentation";
 import { relayEnvironmentDiscovery } from "./relay";
 import { useEnvironmentQuery } from "./query";
 import { useEnvironmentsWithScope } from "./session";
@@ -13,12 +15,19 @@ import { useAtomCommand } from "./use-atom-command";
 
 export const peerLinkEnvironment = createPeerLinkEnvironmentAtoms(connectionAtomRuntime);
 
+/** Whether `environmentId` offers links, so its threads may name another machine. */
+export const offersLinkedEnvironmentsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    offersLinkedEnvironments(get(environmentPresentations.serverConfigsAtom).get(environmentId)),
+  ).pipe(Atom.withLabel(`peer-links:offered:${environmentId}`)),
+);
+
 export function usePeerLinkHosts() {
   const { environments } = useEnvironments();
   const supported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities.peerLinks === true,
+      offersLinkedEnvironments(environment.serverConfig),
   );
   const readable = useEnvironmentsWithScope(supported, AuthAccessReadScope);
   return supported.filter((environment) => readable.has(environment.environmentId));

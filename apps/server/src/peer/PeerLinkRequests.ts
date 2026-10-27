@@ -143,6 +143,12 @@ const make = Effect.gen(function* () {
         "t3_environment_link",
       );
       const threadId = threadScope.thread.threadId;
+      if (!(yield* peerLinks.enabled)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: PeerLinks.LINKED_ENVIRONMENTS_OFF,
+        });
+      }
       const unreadable = (error: unknown) =>
         new OrchestratorMcpFailure({
           code: "orchestration_error",

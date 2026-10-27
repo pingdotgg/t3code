@@ -419,6 +419,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta share guest invite link teammate watch t3 connect tunnel"],
   },
   {
+    id: "linked-environments-beta",
+    title: "Linked environments",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["beta link another machine vps peer agents work there delegate"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",

@@ -38,7 +38,7 @@ import {
   ThreadMetadataMcpUpdateResult,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
@@ -316,7 +316,8 @@ const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   .annotate(Tool.Title, "List linked environments")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
 const EnvironmentLinkTool = Tool.make("t3_environment_link", {
   description:
@@ -329,7 +330,8 @@ const EnvironmentLinkTool = Tool.make("t3_environment_link", {
 })
   .annotate(Tool.Title, "Link another environment")
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
 const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   description:
@@ -342,7 +344,8 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 })
   .annotate(Tool.Title, "Forget a linked environment")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,

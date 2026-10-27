@@ -31,6 +31,7 @@ import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassifi
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
@@ -49,6 +50,9 @@ export interface ResolvedPeerLink {
   readonly token: string;
 }
 
+export const LINKED_ENVIRONMENTS_OFF =
+  "Linked environments is off on this machine. Turn it on in Settings → Labs.";
+
 /**
  * Links from this environment to others. Linking signs this environment in to
  * the peer's `/mcp` as an outside agent with a pairing code from the peer, the
@@ -58,6 +62,8 @@ export interface ResolvedPeerLink {
 export class PeerLinks extends Context.Service<
   PeerLinks,
   {
+    /** Whether the Linked environments beta (Settings → Labs) is on here. */
+    readonly enabled: Effect.Effect<boolean>;
     readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
     /**
      * The environment answering at `url`, or nothing when it is not a usable
@@ -159,6 +165,11 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const enabled = serverSettings.getSettings.pipe(
+    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
+    Effect.orElseSucceed(() => false),
+  );
 
   /** A fresh name for one link's token; the row records it. */
   const newSecretName = crypto.randomBytes(16).pipe(
@@ -388,6 +399,9 @@ const make = Effect.gen(function* () {
   });
 
   const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {
+    if (!(yield* enabled)) {
+      return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
+    }
     const urls = [input.url, ...(input.alternateUrls ?? [])];
     // The user picked a machine: link through the addresses that prove to
     // be it, so a reused LAN address never receives the pairing code.
@@ -591,6 +605,7 @@ const make = Effect.gen(function* () {
     );
 
   return PeerLinks.of({
+    enabled,
     link,
     describe: describeUrl,
     list,

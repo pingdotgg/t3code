@@ -307,18 +307,23 @@ const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
   description: Tool.getDescription(tool) ?? "",
   input_schema: advertisedJsonSchema(tool),
 }));
+const enabledWhen = (predicate: () => boolean) =>
+  new Set(
+    t3SourceTools
+      .filter(
+        (tool) => Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) === predicate,
+      )
+      .map((tool) => `${T3_PREFIX}${tool.name}`),
+  );
 // T3 does not offer these to a delegated child, so its harness never lists them.
-const hiddenFromSubagents = new Set(
-  t3SourceTools
-    .filter(
-      (tool) =>
-        Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) ===
-        McpInvocationContext.hiddenFromSubagents,
-    )
-    .map((tool) => `${T3_PREFIX}${tool.name}`),
-);
+const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
+// The Linked environments beta starts off, and T3 lists its tools only while it is on.
+const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
 const visibleT3Tools = (subagent: boolean) =>
-  subagent ? t3Tools.filter((tool) => !hiddenFromSubagents.has(tool.name)) : t3Tools;
+  t3Tools.filter(
+    (tool) =>
+      !hiddenWhileLinksOff.has(tool.name) && !(subagent && hiddenFromSubagents.has(tool.name)),
+  );
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
 export const t3SystemAppend = (model: Model) => {

@@ -76,6 +76,13 @@ token in its own secret store. The other environment needs nothing new: it
 sees one more OAuth client, lists it in Connections, and revokes it there.
 Unlinking on the linking side only forgets the token.
 
+- **The Linked environments beta (`linkedEnvironmentsEnabled`) gates both
+  sides.** Off on the linking side, `PeerLinks.link`, link requests and
+  `PeerForwarding.call`/`links` refuse; `readThread`, `waitForThread` and
+  `interruptThread` do not, so a remote task already running still completes
+  and can still be cancelled. Off on the receiving side, link registrations are
+  refused and link sessions get a 403, which the linking side reports as
+  retryable so the task's follower waits rather than failing it.
 - **A tool runs in a linked environment when its parameters take
   `OrchestratorMcpEnvironmentTarget`** as `environmentId`.
   [`McpToolAccess.toLayer`](../../apps/server/src/mcp/McpToolAccess.ts) sends
