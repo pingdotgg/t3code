@@ -44,6 +44,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -932,6 +933,181 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         ),
       );
     }),
+  );
+
+  it.effect.each(["fork", "delete"] as const)(
+    "preserves page ownership when %s commits before a concurrent fork or deletion",
+    (first) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const now = yield* DateTime.now;
+        const sourceThreadId = ThreadId.make(`fork-delete-source:${first}`);
+        const targetThreadId = ThreadId.make(`fork-delete-target:${first}`);
+        const runId = RunId.make(`fork-delete-run:${first}`);
+        const forkCommandId = CommandId.make(`fork-delete-fork:${first}`);
+        const deleteCommandId = CommandId.make(`fork-delete-delete:${first}`);
+        const attachmentId = createAttachmentId(sourceThreadId, "html")!;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`fork-delete-create:${first}`),
+          threadId: sourceThreadId,
+          projectId: ProjectId.make(`fork-delete-project:${first}`),
+          title: "Page source",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`fork-delete-run:${first}`),
+              type: "run.created",
+              threadId: sourceThreadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: runId,
+                threadId: sourceThreadId,
+                ordinal: 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: null,
+                userMessageId: MessageId.make(`fork-delete-message:${first}`),
+                rootNodeId: null,
+                activeAttemptId: null,
+                status: "completed",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+            {
+              id: EventId.make(`fork-delete-page:${first}`),
+              type: "turn-item.updated",
+              threadId: sourceThreadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`fork-delete-page:${first}`),
+                threadId: sourceThreadId,
+                runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: "Shared page",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "dynamic_tool",
+                toolName: "mcp__t3-code__html_render",
+                input: {},
+                output: { htmlRender: { attachmentId, title: "Shared page", height: 300 } },
+              },
+            },
+          ],
+        });
+        const firstReady = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const secondQueued = yield* Deferred.make<void>();
+        const cleanupIds: Array<string> = [];
+        const commitCommand = eventSink.commitCommand;
+        const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) => {
+          if (input.commandId === deleteCommandId) {
+            for (const effect of input.effects ?? []) {
+              if (effect.request.type === "attachment.cleanup")
+                cleanupIds.push(...effect.request.attachmentIds);
+            }
+          }
+          return input.commandId === (first === "fork" ? forkCommandId : deleteCommandId)
+            ? Deferred.succeed(firstReady, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirst)),
+                Effect.andThen(commitCommand(input)),
+              )
+            : commitCommand(input);
+        });
+        const withDeletionLock = executor.withDeletionLock;
+        let lockRequests = 0;
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
+          (effect) =>
+            ++lockRequests === 2
+              ? Deferred.succeed(secondQueued, undefined).pipe(
+                  Effect.andThen(withDeletionLock(effect)),
+                )
+              : withDeletionLock(effect);
+        const lockSpy = vi.spyOn(executor, "withDeletionLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          const fork = orchestrator
+            .dispatch({
+              type: "thread.fork",
+              commandId: forkCommandId,
+              sourceThreadId,
+              targetThreadId,
+              sourcePoint: { type: "run", runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.result);
+          const deletion = orchestrator
+            .dispatch({
+              type: "thread.delete",
+              commandId: deleteCommandId,
+              threadId: sourceThreadId,
+            })
+            .pipe(Effect.result);
+          const firstFiber = yield* (first === "fork" ? fork : deletion).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(
+            Deferred.await(firstReady),
+            Fiber.join(firstFiber).pipe(Effect.andThen(Effect.die("Missing commit barrier"))),
+          );
+          const secondFiber = yield* (first === "fork" ? deletion : fork).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(Deferred.await(secondQueued), Fiber.await(secondFiber));
+          yield* Deferred.succeed(releaseFirst, undefined);
+          const firstResult = yield* Fiber.join(firstFiber);
+          const secondResult = yield* Fiber.join(secondFiber);
+          assert.equal(firstResult._tag, "Success");
+          if (first === "fork") {
+            assert.equal(secondResult._tag, "Success");
+            assert.deepEqual(cleanupIds, []);
+            const forkProjection = yield* orchestrator.getThreadProjection(targetThreadId);
+            assert.isNull(forkProjection.thread.deletedAt);
+            assert.isTrue(
+              forkProjection.visibleTurnItems.some(
+                (row) => row.item.id === TurnItemId.make(`fork-delete-page:${first}`),
+              ),
+            );
+          } else {
+            assert.equal(secondResult._tag, "Failure");
+            assert.deepEqual(cleanupIds, [attachmentId]);
+            const target = yield* orchestrator
+              .getThreadProjection(targetThreadId)
+              .pipe(Effect.result);
+            assert.equal(target._tag, "Failure");
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              commitSpy.mockRestore();
+              lockSpy.mockRestore();
+            }),
+          ),
+        );
+      }),
   );
 });
 

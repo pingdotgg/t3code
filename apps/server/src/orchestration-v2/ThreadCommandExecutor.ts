@@ -9,9 +9,8 @@ export class ThreadCommandExecutor extends Context.Service<
   ThreadCommandExecutor,
   KeyedLock.KeyedLock<ThreadId> & {
     /**
-     * Serializes thread deletion planning through its commit, since deleting one thread
-     * reads whether other threads still show its pages. Take it inside the thread lock and
-     * never take a thread lock while holding it.
+     * Serializes fork and deletion planning through commit because forks retain source pages.
+     * Take it inside the thread lock; never take a thread lock while holding it.
      */
     readonly withDeletionLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
