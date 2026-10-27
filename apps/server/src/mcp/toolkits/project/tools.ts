@@ -65,7 +65,7 @@ const ProjectListTool = Tool.make("t3_project_list", {
   .annotate(Tool.Destructive, false);
 const ProjectReadTool = Tool.make("t3_project_read", {
   ...shared,
-  description: "Read one project: workspace and saved scripts.",
+  description: "Read one project.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
@@ -76,7 +76,7 @@ const ProjectReadTool = Tool.make("t3_project_read", {
 const ProjectCreateTool = Tool.make("t3_project_create", {
   ...shared,
   description:
-    "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `t3_project_clone` if needed.",
+    "Register a folder; createWorkspaceRootIfMissing if absent. Existing registrations fail. Omit workspaceRoot for a Git repo from title; commitError leaves it created. Clone first with t3_project_clone.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...ProjectCreatePayload.fields,
@@ -88,7 +88,7 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
 const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
   description:
-    "Update project settings; omitted fields stay unchanged. groupingIdentity: shared lowercase UUID v4 for non-Git copies, null to clear. Git identity wins; read/list shows the value.",
+    "Update settings; omitted fields stay. groupingIdentity: shared lowercase UUID v4 for non-Git copies; null clears. Git wins.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
@@ -108,7 +108,7 @@ const ProjectDeleteTool = Tool.make("t3_project_delete", {
 const ProjectCloneTool = Tool.make("t3_project_clone", {
   ...shared,
   description:
-    "Clone a repository (`destinationPath` new or empty). Register after with `t3_project_create`, with the same `environmentId`.",
+    "Clone into new/empty destinationPath; register via t3_project_create on the same environmentId.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...SourceControlCloneRepositoryInput.fields,
