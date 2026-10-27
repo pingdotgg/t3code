@@ -1,106 +1,53 @@
-import { useStableCallback } from "../../hooks/useStableCallback";
-import { type EnvironmentId, type MessageId } from "@t3tools/contracts";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type EnvironmentId, type MessageId, type ThreadId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { type Dispatch, type SetStateAction, useEffect } from "react";
 import { selectHandoffImageResources } from "../../session-logic";
-import { type ChatMessage } from "../../types";
 import type { useQuietThreadVisibleTurnItems } from "../../state/entities";
-import { revokeBlobPreviewUrl, revokeUserMessagePreviewUrls } from "../ChatView.logic";
 import { useAssetUrls } from "../../assets/assetUrls";
+import {
+  dropOptimisticHandoff,
+  loadedHandoffMessageIdsAtom,
+  type OptimisticBlobPreviews,
+  type OptimisticUserMessages,
+} from "./optimisticUserMessages";
+
 interface AttachmentPreviewHandoffInput {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly serverVisibleTurnItems: ReturnType<typeof useQuietThreadVisibleTurnItems>;
-  readonly optimisticUserMessages: ReadonlyArray<ChatMessage>;
+  /** Blob previews of acknowledged messages, by message id; they stand in for the server's copy. */
+  readonly handoff: OptimisticUserMessages["handoff"];
+  readonly blobPreviews: OptimisticBlobPreviews;
+  readonly setOptimisticUserMessages: Dispatch<SetStateAction<OptimisticUserMessages>>;
 }
 
 /**
  * A sent image keeps showing its local blob preview until the server's copy has loaded, so the
- * timeline does not flash an empty frame. Returns the attachment URLs the timeline renders and
- * the handoff for a message whose optimistic row was replaced by the server's.
+ * timeline does not flash an empty frame. The handoff ends, and its blobs are revoked, once the
+ * server previews load.
  */
 export function useAttachmentPreviewHandoff(input: AttachmentPreviewHandoffInput) {
-  const { environmentId, serverVisibleTurnItems, optimisticUserMessages } = input;
+  const {
+    environmentId,
+    threadId,
+    serverVisibleTurnItems,
+    blobPreviews,
+    setOptimisticUserMessages,
+  } = input;
+  const handoffByMessageId = input.handoff;
 
-  const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  useLayoutEffect(() => {
-    optimisticUserMessagesRef.current = optimisticUserMessages;
-  });
-  const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
-    Record<string, string[]>
-  >({});
-  const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
-  const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
-  useEffect(() => {
-    attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
-  }, [attachmentPreviewHandoffByMessageId]);
-  const clearAttachmentPreviewHandoff = (
-    messageId: MessageId,
-    previewUrls?: ReadonlyArray<string>,
-  ) => {
-    delete attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId];
-    const currentPreviewUrls =
-      previewUrls ?? attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
-    setAttachmentPreviewHandoffByMessageId((existing) => {
-      if (!(messageId in existing)) {
-        return existing;
-      }
-      const next = { ...existing };
-      delete next[messageId];
-      attachmentPreviewHandoffByMessageIdRef.current = next;
-      return next;
-    });
-    for (const previewUrl of currentPreviewUrls) {
-      revokeBlobPreviewUrl(previewUrl);
-    }
-  };
-  const clearAttachmentPreviewHandoffStable = useStableCallback(clearAttachmentPreviewHandoff);
-  const clearAttachmentPreviewHandoffs = () => {
-    attachmentPreviewPromotionInFlightByMessageIdRef.current = {};
-    for (const previewUrls of Object.values(attachmentPreviewHandoffByMessageIdRef.current)) {
-      for (const previewUrl of previewUrls) {
-        revokeBlobPreviewUrl(previewUrl);
-      }
-    }
-    attachmentPreviewHandoffByMessageIdRef.current = {};
-    setAttachmentPreviewHandoffByMessageId({});
-  };
-  const clearAttachmentPreviewHandoffsStable = useStableCallback(clearAttachmentPreviewHandoffs);
-  useEffect(() => {
-    return () => {
-      clearAttachmentPreviewHandoffsStable();
-      for (const message of optimisticUserMessagesRef.current) {
-        revokeUserMessagePreviewUrls(message);
-      }
-    };
-  }, [clearAttachmentPreviewHandoffsStable]);
-  const handoffAttachmentPreviews = (messageId: MessageId, previewUrls: string[]) => {
-    if (previewUrls.length === 0) return;
+  // Blob URLs are a browser resource owned per thread; leaving the thread or the view ends them.
+  useEffect(() => () => blobPreviews.revokeThread(threadId), [blobPreviews, threadId]);
 
-    const previousPreviewUrls = attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
-    const nextPreviewUrlSet = new Set(previewUrls);
-    for (const previewUrl of previousPreviewUrls) {
-      if (!nextPreviewUrlSet.has(previewUrl)) {
-        revokeBlobPreviewUrl(previewUrl);
-      }
-    }
-    setAttachmentPreviewHandoffByMessageId((existing) => {
-      const next = {
-        ...existing,
-        [messageId]: previewUrls,
-      };
-      attachmentPreviewHandoffByMessageIdRef.current = next;
-      return next;
-    });
-  };
-  const handoffAttachmentPreviewsStable = useStableCallback(handoffAttachmentPreviews);
   const serverAttachmentResources = selectHandoffImageResources(
-    Object.keys(attachmentPreviewHandoffByMessageId).length === 0
+    Object.keys(handoffByMessageId).length === 0
       ? undefined
       : serverVisibleTurnItems.flatMap(({ item }) =>
           item.type === "user_message"
             ? [{ id: item.messageId, role: "user" as const, attachments: item.attachments }]
             : [],
         ),
-    attachmentPreviewHandoffByMessageId,
+    handoffByMessageId,
   );
   const serverAttachmentUrls = useAssetUrls(environmentId, serverAttachmentResources);
   const serverAttachmentUrlById = new Map(
@@ -109,104 +56,47 @@ export function useAttachmentPreviewHandoff(input: AttachmentPreviewHandoffInput
       return url ? [[resource.attachmentId, url] as const] : [];
     }),
   );
-  useEffect(() => {
-    if (typeof Image === "undefined" || serverVisibleTurnItems.length === 0) {
-      return;
-    }
 
-    const cleanups: Array<() => void> = [];
-    const userMessagesById = new Map(
-      serverVisibleTurnItems.flatMap((row) =>
-        row.item.type === "user_message" ? [[String(row.item.messageId), row.item] as const] : [],
+  // Each handoff whose server previews are all minted, as [messageId, serverUrls, blobUrls].
+  const pendingPreloads: Array<readonly [MessageId, ReadonlyArray<string>, ReadonlyArray<string>]> =
+    [];
+  for (const row of serverVisibleTurnItems) {
+    if (row.item.type !== "user_message") continue;
+    const handoffUrls = handoffByMessageId[row.item.messageId];
+    if (handoffUrls === undefined || row.item.attachments.length === 0) continue;
+    const serverPreviewUrls = row.item.attachments.flatMap((attachment) => {
+      if (attachment.type !== "image") return [];
+      const url = serverAttachmentUrlById.get(attachment.id);
+      return url === undefined ? [] : [url];
+    });
+    if (
+      serverPreviewUrls.length === 0 ||
+      serverPreviewUrls.length !== handoffUrls.length ||
+      serverPreviewUrls.some((previewUrl) => previewUrl.startsWith("blob:"))
+    ) {
+      continue;
+    }
+    pendingPreloads.push([row.item.messageId, serverPreviewUrls, handoffUrls]);
+  }
+  const loadedHandoffMessageIds = useAtomValue(
+    loadedHandoffMessageIdsAtom(JSON.stringify(pendingPreloads)),
+  );
+  // The handoff is state of the rendering ChatView, so dropping a loaded one here is React's
+  // adjust-state-while-rendering pattern; the preload atom has already revoked its blobs.
+  if (loadedHandoffMessageIds.length > 0) {
+    setOptimisticUserMessages((state) =>
+      loadedHandoffMessageIds.reduce(
+        (next, messageId) => dropOptimisticHandoff(next, threadId, messageId),
+        state,
       ),
     );
+  }
 
-    for (const [messageId, handoffPreviewUrls] of Object.entries(
-      attachmentPreviewHandoffByMessageId,
-    )) {
-      if (attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId]) {
-        continue;
-      }
-
-      const serverMessage = userMessagesById.get(messageId);
-      if (serverMessage === undefined || serverMessage.attachments.length === 0) {
-        continue;
-      }
-
-      const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image"
-          ? [serverAttachmentUrlById.get(attachment.id)].filter(
-              (previewUrl): previewUrl is string => previewUrl !== undefined,
-            )
-          : [],
-      );
-      if (
-        serverPreviewUrls.length === 0 ||
-        serverPreviewUrls.length !== handoffPreviewUrls.length ||
-        serverPreviewUrls.some((previewUrl) => previewUrl.startsWith("blob:"))
-      ) {
-        continue;
-      }
-
-      attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId] = true;
-
-      let cancelled = false;
-      const imageInstances: HTMLImageElement[] = [];
-
-      const preloadServerPreviews = Promise.all(
-        serverPreviewUrls.map(
-          (previewUrl) =>
-            new Promise<void>((resolve, reject) => {
-              const image = new Image();
-              imageInstances.push(image);
-              const handleLoad = () => resolve();
-              const handleError = () =>
-                reject(new Error(`Failed to load server preview for ${messageId}.`));
-              image.addEventListener("load", handleLoad, { once: true });
-              image.addEventListener("error", handleError, { once: true });
-              image.src = previewUrl;
-            }),
-        ),
-      );
-
-      void preloadServerPreviews
-        .then(() => {
-          if (cancelled) {
-            return;
-          }
-          clearAttachmentPreviewHandoffStable(messageId as MessageId, handoffPreviewUrls);
-        })
-        .catch(() => {
-          if (!cancelled) {
-            delete attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId];
-          }
-        });
-
-      cleanups.push(() => {
-        cancelled = true;
-        delete attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId];
-        for (const image of imageInstances) {
-          image.src = "";
-        }
-      });
-    }
-
-    return () => {
-      for (const cleanup of cleanups) {
-        cleanup();
-      }
-    };
-  }, [
-    attachmentPreviewHandoffByMessageId,
-    clearAttachmentPreviewHandoffStable,
-    serverAttachmentUrlById,
-    serverVisibleTurnItems,
-  ]);
   const timelineAttachmentUrlById = (() => {
     const urls = new Map(serverAttachmentUrlById);
     for (const row of serverVisibleTurnItems) {
       if (row.item.type !== "user_message") continue;
-      const handoffUrls = attachmentPreviewHandoffByMessageId[row.item.messageId];
+      const handoffUrls = handoffByMessageId[row.item.messageId];
       if (handoffUrls === undefined) continue;
       let imageIndex = 0;
       for (const attachment of row.item.attachments) {
@@ -218,8 +108,5 @@ export function useAttachmentPreviewHandoff(input: AttachmentPreviewHandoffInput
     }
     return urls;
   })();
-  return {
-    handoffAttachmentPreviewsStable,
-    timelineAttachmentUrlById,
-  };
+  return { timelineAttachmentUrlById };
 }
