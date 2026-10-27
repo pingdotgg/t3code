@@ -24,6 +24,7 @@ import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcase
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
 import {
   AppearancePreferencesProvider,
+  installAppearanceRuntime,
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
@@ -107,6 +108,7 @@ const appServiceDisposers = [
     threadRefsAtom: environmentThreadShells.threadRefsAtom,
     shellStateAtom: environmentShell.stateAtom,
   }),
+  installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),
   installPermissionUpdateNotice(),
   installThreadOutboxDelivery(),
