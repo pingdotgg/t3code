@@ -294,14 +294,18 @@ describe("RpcSessionFactory", () => {
       const parts = new URL(socket.url).searchParams.has("frameParts")
         ? splitSocketFrame(frame)
         : [frame];
+      expect(parts.length).toBeGreaterThan(1);
+      expect(yield* session.inboundFrames).toBe(0);
 
-      for (const part of parts) {
+      for (const [index, part] of parts.entries()) {
         yield* TestClock.adjust((new TextEncoder().encode(part).length / 4000) * 1000);
         socket.serverMessage(part);
+        expect(yield* session.inboundFrames).toBe(index + 1);
       }
       yield* Fiber.join(readyFiber);
 
       expect(yield* session.initialConfig).toEqual(config);
+      expect(yield* session.inboundFrames).toBe(parts.length);
     }),
   );
 
