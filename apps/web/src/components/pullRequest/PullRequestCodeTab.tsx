@@ -13,7 +13,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -439,9 +439,6 @@ function PullRequestCodeTab({
     readonly slices: ReadonlyArray<DiffSlice>;
     readonly refreshing: ReadonlyArray<DiffSlice> | null;
   }>({ key: "", cursor: null, slices: NO_SLICES, refreshing: null });
-  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
-    null,
-  );
 
   const referenceKey = pullRequestReviewKey(reference);
   // A commit opened from the timeline or left selected across a force-push may no longer be
