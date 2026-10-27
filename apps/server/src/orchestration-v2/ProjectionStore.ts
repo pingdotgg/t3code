@@ -5816,7 +5816,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               yield* sql<PayloadRow>`
                 SELECT item.payload_json
                 FROM orchestration_v2_projection_runtime_requests AS request
-                JOIN orchestration_v2_projection_turn_items AS item
+                CROSS JOIN orchestration_v2_projection_turn_items AS item
                   ON item.node_id = request.node_id
                   AND item.type IN ('approval_request', 'user_input_request')
                   AND json_extract(item.payload_json, '$.requestId') = request.runtime_request_id

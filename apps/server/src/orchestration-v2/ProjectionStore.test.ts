@@ -1559,7 +1559,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
 it.effect.each([
   ["memory", ProjectionStore.layerMemory],
   ["SQL", layerTest],
-] as const)("%s snapshot windows keep cards for requests still pending", ([, layer]) =>
+] as const)("%s snapshot windows keep cards for requests still pending", ([storeKind, layer]) =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
@@ -1732,10 +1732,33 @@ it.effect.each([
       TurnItemId.make("item:pending-request-window:question:pending"),
       TurnItemId.make("item:pending-request-window:approval:pending"),
     ];
-    const snapshot = yield* store.getThreadSnapshotWindow(threadId, {
-      rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
-      userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
-    });
+    const { statements, tracer } = traceSqlStatements();
+    const snapshot = yield* store
+      .getThreadSnapshotWindow(threadId, {
+        rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
+        userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+      })
+      .pipe(Effect.withTracer(tracer));
+    if (storeKind === "SQL") {
+      const sql = yield* SqlClient.SqlClient;
+      const query = statements.find(
+        (statement) =>
+          statement.includes("FROM orchestration_v2_projection_runtime_requests AS request") &&
+          statement.includes("SELECT item.payload_json"),
+      );
+      assert.isDefined(query);
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${query}`,
+      )).map((row) => row.detail);
+      assert.include(
+        plan[0],
+        "SEARCH request USING INDEX orchestration_v2_projection_runtime_requests_thread_status_idx",
+      );
+      assert.include(
+        plan[1],
+        "SEARCH item USING INDEX orchestration_v2_projection_turn_items_node_ordinal_idx",
+      );
+    }
     const bounded = buildBoundedThreadProjection({
       projection: snapshot.projection,
       snapshotSequence: snapshot.snapshotSequence,
