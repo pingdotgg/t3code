@@ -23,6 +23,7 @@
     "@types/plist": "catalog:",
     "@types/pngjs": "6.0.5",
     "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
     "typescript": "catalog:",
     "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:"
