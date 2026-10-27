@@ -1,6 +1,12 @@
 import { createContext, startTransition, use, useCallback, useMemo, type ReactNode } from "react";
 import { AppState, Appearance, Platform, useColorScheme } from "react-native";
 
+import { manufacturer } from "expo-device";
+import {
+  resolveAndroidNavigationStyle,
+  type AndroidNavigationStyle,
+} from "../../../lib/androidNavigationStyle";
+
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Atom, AsyncResult } from "effect/reactivity";
 
@@ -43,6 +49,8 @@ interface AppearancePreferencesContextValue {
   readonly themeId: MobileThemeId;
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
+  readonly androidNavigationStyle: AndroidNavigationStyle;
+  readonly setAndroidNavigationStyle: (value: AndroidNavigationStyle) => void;
   readonly themeAppearance: MobileThemeAppearance;
   readonly systemColorsAvailable: boolean;
   readonly systemColorsActive: boolean;
@@ -188,6 +196,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     () => resolveAppearancePreferences(storedPreferences),
     [storedPreferences],
   );
+  const androidNavigationStyle = resolveAndroidNavigationStyle(
+    storedPreferences?.androidNavigationStyle,
+    manufacturer,
+    process.env.EXPO_PUBLIC_T3_FLOATING_TABS === "1",
+  );
   const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
   const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
@@ -271,6 +284,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [updateThemePreferences],
   );
 
+  const setAndroidNavigationStyle = useCallback(
+    (value: AndroidNavigationStyle) => updatePreferences({ androidNavigationStyle: value }),
+    [updatePreferences],
+  );
+
   const setBaseFontSize = useCallback(
     (value: number) => {
       applyThemeRuntime({ ...currentRuntimeState(), baseFontSize: value });
@@ -312,6 +330,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeId,
       themeIds,
       themeMode,
+      androidNavigationStyle,
+      setAndroidNavigationStyle,
       themeAppearance,
       systemColorsAvailable: isSystemColorsAvailable,
       systemColorsActive,
@@ -334,6 +354,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeId,
       themeIds,
       themeMode,
+      androidNavigationStyle,
+      setAndroidNavigationStyle,
       themeAppearance,
       systemColorsActive,
       themeVariables,
@@ -367,4 +389,9 @@ export function useAppearancePreferences(): AppearancePreferencesContextValue {
     throw new Error("useAppearancePreferences must be used within AppearancePreferencesProvider");
   }
   return context;
+}
+
+export function useAndroidFloatingTabs() {
+  const { androidNavigationStyle } = useAppearancePreferences();
+  return Platform.OS === "android" && androidNavigationStyle === "one-ui";
 }
