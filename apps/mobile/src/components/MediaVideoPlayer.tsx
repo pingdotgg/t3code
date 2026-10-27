@@ -3,7 +3,7 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import { useIsFocused } from "@react-navigation/native";
 import { T, useGT } from "gt-react-native";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, View, type LayoutChangeEvent } from "react-native";
 
 import { AppActivityIndicator } from "./ui/AppActivityIndicator";
 import { AppText } from "./ui/AppText";
@@ -155,6 +155,8 @@ interface MediaVideoPlayerProps {
   readonly borderRadius?: number;
 }
 
+const INLINE_MAX_SIZE = 480;
+
 function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
   const gt = useGT();
   const mediaActions = useMediaActions(props.actionsSource);
@@ -167,7 +169,9 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
     : gt("Video unavailable");
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
   const [bounds, setBounds] = useState<{ width: number; height: number } | null>(null);
-  const sizeSource = props.fitToVideo && isFocused && videoSize === null ? props.uri : null;
+  const inline = !props.expanded && !props.fitToVideo;
+  const measuresVideo = props.fitToVideo || (inline && props.thumbnailVisible !== false);
+  const sizeSource = measuresVideo && isFocused && videoSize === null ? props.uri : null;
   // Queue before the poster so early Play cannot cancel the extraction that supplies frame dimensions.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads native thumbnail dimensions independently of the poster's lifetime
   useLayoutEffect(() => {
@@ -186,7 +190,17 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
     return () => controller.abort();
   }, [props.thumbnailKey, sizeSource]);
   const fittedFrame =
-    props.fitToVideo && videoSize && bounds ? fitVideoFrame(videoSize, bounds, 480) : null;
+    videoSize && bounds
+      ? fitVideoFrame(
+          videoSize,
+          inline ? { width: bounds.width, height: INLINE_MAX_SIZE } : bounds,
+          INLINE_MAX_SIZE,
+        )
+      : null;
+  const measureBounds = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setBounds({ width, height });
+  };
 
   const frame = (
     <View
@@ -195,7 +209,7 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
       style={[
         props.expanded
           ? { flex: 1 }
-          : (fittedFrame ?? { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 }),
+          : (fittedFrame ?? { width: "100%", maxWidth: INLINE_MAX_SIZE, aspectRatio: 16 / 9 }),
         props.borderRadius === undefined ? null : { borderRadius: props.borderRadius },
       ]}
     >
@@ -259,15 +273,16 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
       )}
     </View>
   );
-  if (!props.fitToVideo) return frame;
+  if (props.fitToVideo) {
+    return (
+      <View className="flex-1 items-center justify-center self-stretch" onLayout={measureBounds}>
+        {frame}
+      </View>
+    );
+  }
+  if (props.expanded) return frame;
   return (
-    <View
-      className="flex-1 items-center justify-center self-stretch"
-      onLayout={(event) => {
-        const { width, height } = event.nativeEvent.layout;
-        setBounds({ width, height });
-      }}
-    >
+    <View style={{ width: "100%", maxWidth: INLINE_MAX_SIZE }} onLayout={measureBounds}>
       {frame}
     </View>
   );
