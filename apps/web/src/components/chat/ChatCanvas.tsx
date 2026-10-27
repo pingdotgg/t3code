@@ -1,60 +1,35 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
+import { useStore } from "zustand";
 import { ChatCanvasContext } from "./ChatCanvasContext";
-import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
-import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
+import type { ChatCanvasPreview } from "./chatCanvasLayout";
+import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
+import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { observeResize } from "../../lib/observeResize";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useClientSettings } from "~/hooks/useSettings";
 
 export function ChatCanvas({
+  store,
+  threadRef,
+  preview,
   composerOverlayElement,
   detailsCardTopInset = 0,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
+  store: ChatCanvasStore;
+  /** The thread whose details card sits on the canvas; other threads' measurements are stale. */
+  threadRef: ScopedThreadRef | null;
+  /** The thread's mini player while it renders on this canvas. */
+  preview: ChatCanvasPreview | null;
   composerOverlayElement: HTMLElement | null;
   detailsCardTopInset?: number;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
-  const [preview, setPreview] = useState<ChatCanvasPreview | null>(null);
-  const [detailsCard, setDetailsCard] = useState<PreviewMiniPlayerObstacles["detailsCard"]>(null);
-  const reportDetailsCard = (next: PreviewMiniPlayerObstacles["detailsCard"]) => {
-    setDetailsCard((current) =>
-      current?.left === next?.left &&
-      current?.right === next?.right &&
-      current?.bottom === next?.bottom
-        ? current
-        : next,
-    );
-  };
-  const [measurements, setMeasurements] = useState({
-    width: 0,
-    height: 0,
-    padding: 48,
-    maxChatWidth: 768,
-    minChatWidth: 640,
-    composerHeight: 0,
-    timelineGutter: 0,
-    findBarLeft: 0,
-    findBarRight: 0,
-    findBarBottom: 0,
-  });
-  const reportPreview = (next: ChatCanvasPreview) => {
-    setPreview((current) =>
-      current?.key === next.key &&
-      current.width === next.width &&
-      current.lastInteraction === next.lastInteraction &&
-      current.position?.x === next.position?.x &&
-      current.position?.y === next.position?.y &&
-      current.source.width === next.source.width &&
-      current.source.height === next.source.height
-        ? current
-        : next,
-    );
-  };
-  const clearPreview = (key: string) =>
-    setPreview((current) => (current?.key === key ? null : current));
+  const measurements = useStore(store, (state) => state.measurements);
+  const detailsCardMeasurement = useStore(store, (state) => state.detailsCardMeasurement);
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
@@ -65,10 +40,15 @@ export function ChatCanvas({
       const canvasBounds = element.getBoundingClientRect();
       const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
-      const next = {
-        findBarLeft: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
-        findBarRight: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
-        findBarBottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
+      store.getState().setMeasurements({
+        findBar:
+          detailsCardTopInset > 0
+            ? {
+                left: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
+                right: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
+                bottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
+              }
+            : null,
         width: element.clientWidth,
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
@@ -78,14 +58,7 @@ export function ChatCanvas({
         timelineGutter: timelineElement
           ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
           : 0,
-      };
-      setMeasurements((current) =>
-        Object.keys(next).every(
-          (key) => current[key as keyof typeof current] === next[key as keyof typeof next],
-        )
-          ? current
-          : next,
-      );
+      });
     };
     measure();
     const observed: Element[] = [element, probe];
@@ -93,34 +66,31 @@ export function ChatCanvas({
     if (composerOverlayElement) observed.push(composerOverlayElement);
     if (timelineElement) observed.push(timelineElement);
     return observeResize(observed, measure);
-  }, [composerOverlayElement, timelineElement, detailsCardTopInset]);
-  const redesign = useClientSettings((s) => s.redesignEnabled);
-  const container = { width: measurements.width, height: measurements.height };
-  const findBar =
-    detailsCardTopInset > 0
-      ? {
-          left: measurements.findBarLeft,
-          right: measurements.findBarRight,
-          bottom: measurements.findBarBottom,
-        }
-      : null;
+  }, [store, composerOverlayElement, timelineElement, detailsCardTopInset]);
+  const detailsCardInlineOpen = useRightPanelStore((state) =>
+    threadRef === null
+      ? false
+      : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
+  );
+  const centerBesideDetails = useClientSettings((s) => s.redesignEnabled);
+  const model = resolveChatCanvasModel({
+    measurements,
+    detailsCardMeasurement,
+    threadRef,
+    preview,
+    detailsCardInlineOpen,
+    centerBesideDetails,
+  });
   const context = {
-    container,
-    lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
-    layout: resolveChatCanvasLayout({
-      ...measurements,
-      container,
-      preview,
-      detailsCard,
-      findBar,
-      centerBesideDetails: redesign,
-    }),
+    container: model.container,
+    lane: model.lane,
+    layout: model.layout,
     previewKey: preview?.key ?? null,
-    reportPreview,
-    clearPreview,
     registerTimeline,
-    reportDetailsCard,
-    detailsCardTopInset: findBar?.bottom ?? 0,
+    measureDetailsCard: store.getState().measureDetailsCard,
+    detailsCardTopInset: model.detailsCardTopInset,
+    preferredDetailsCard: model.preferredDetailsCard,
+    detailsCardPlacement: model.detailsCardPlacement,
   };
   const { layout } = context;
   return (
