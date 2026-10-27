@@ -50,6 +50,7 @@ describe("V2 preview upgrade", () => {
         [68, "ShellStopRequestIndex"],
         [69, "ThreadMessageSearch"],
         [70, "PeerLinks"],
+        [71, "PeerLinkFence"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -143,6 +144,7 @@ describe("V2 preview upgrade", () => {
         [68, "ShellStopRequestIndex"],
         [69, "ThreadMessageSearch"],
         [70, "PeerLinks"],
+        [71, "PeerLinkFence"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

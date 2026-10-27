@@ -70,7 +70,7 @@ const fromLinkError = (error: PeerLinkError) =>
     code:
       error.reason === "unknown_link"
         ? "invalid_request"
-        : error.reason === "expired"
+        : error.reason === "expired" || error.reason === "incompatible"
           ? "capability_denied"
           : "orchestration_error",
     message: error.message,
