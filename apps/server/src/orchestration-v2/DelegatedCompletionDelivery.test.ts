@@ -974,6 +974,104 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         );
       }),
   );
+
+  it.effect.each([
+    { before: "running", after: "failed", capture: false },
+    { before: "waiting", after: "completed", capture: true },
+  ] as const)(
+    "keeps a $after run that settled between task_status's acknowledge read and commit",
+    ({ before, after, capture }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:ack-settle-race-${after}`);
+        const runId = RunId.make(`run:ack-settle-race-${after}`);
+        const taskId = NodeId.make(`node:ack-settle-race-${after}-task`);
+        const checkpointId = CheckpointId.make(`checkpoint:ack-settle-race-${after}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:ack-settle-race-${after}`),
+          runId,
+          rootNodeId: NodeId.make(`node:ack-settle-race-${after}-root`),
+          taskId,
+          deliveryState: "claimed",
+          deliveryTaskIds: [taskId],
+          now,
+        });
+        const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:ack-settle-race-${after}-before`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...parent, status: before },
+            },
+          ],
+        });
+        const { delegatedCompletion: _cohort, ...settledRun } = parent;
+        const commit = sink.commitCommand;
+        let settled = false;
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() =>
+            vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
+              Effect.gen(function* () {
+                if (
+                  !settled &&
+                  input.commandType === "delegated_task.completion-delivery.acknowledge"
+                ) {
+                  settled = true;
+                  // The provider turn ends (or its checkpoint lands) after acknowledge read the run.
+                  yield* commit({
+                    commandId: CommandId.make(`command:ack-settle-race-${after}`),
+                    threadId,
+                    commandType: capture ? "checkpoint.capture" : "provider.event",
+                    acceptedAt: now,
+                    effects: [],
+                    events: [
+                      {
+                        id: EventId.make(`event:ack-settle-race-${after}-settled`),
+                        type: "run.updated",
+                        threadId,
+                        runId,
+                        occurredAt: now,
+                        payload: {
+                          ...settledRun,
+                          status: after,
+                          completedAt: now,
+                          checkpointId: capture ? checkpointId : null,
+                        },
+                      },
+                    ],
+                  });
+                }
+                return yield* commit(input);
+              }),
+            ),
+          ),
+          () =>
+            orchestrator.dispatch({
+              type: "delegated_task.completion-delivery.acknowledge",
+              commandId: CommandId.make(`command:ack-settle-race-${after}:task-status`),
+              parentThreadId: threadId,
+              taskId,
+              observedByRunId: runId,
+            }),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        assert.isTrue(settled);
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.id === runId,
+        )!;
+        assert.deepEqual(
+          { status: run.status, completedAt: run.completedAt, checkpointId: run.checkpointId },
+          { status: after, completedAt: now, checkpointId: capture ? checkpointId : null },
+        );
+      }),
+  );
 });
 
 const reconcileCommandId = (name: string) => CommandId.make(`command:runtime-reconcile:${name}`);
