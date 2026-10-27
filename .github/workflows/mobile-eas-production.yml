@@ -275,6 +275,7 @@ jobs:
             --environment production \
             --platform ${{ inputs.platform }} \
             --message "$OTA_MESSAGE" \
+            --emit-metadata \
             --non-interactive
 
       # Reconcile each version separately because the major is in the fingerprint.
@@ -313,8 +314,11 @@ jobs:
                 --environment production \
                 --platform "$platform" \
                 --message "$message" \
+                --emit-metadata \
                 --non-interactive; then
                 echo ":white_check_mark: $platform/$profile: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+                # The next target's export replaces dist; keep this one for the map upload.
+                rm -rf "dist-$platform-$profile" && mv dist "dist-$platform-$profile"
               else
                 failed=1
                 echo ":x: $platform/$profile: OTA publish failed (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
@@ -354,3 +358,18 @@ jobs:
             fi
           done
           exit "$failed"
+
+      # Lets the relay symbolicate crash stacks from the updates published
+      # above. A step of its own so the R2 credentials reach only this script,
+      # not `eas update` and the dependencies it runs. Never fails the job.
+      - name: Upload OTA source maps
+        if: ${{ !cancelled() && steps.expo-token.outputs.present == 'true' }}
+        working-directory: apps/mobile
+        env:
+          MOBILE_SOURCEMAPS_R2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
+        run: |
+          for dir in dist dist-*; do
+            if [ -f "$dir/eas-update-metadata.json" ]; then
+              node scripts/upload-sourcemaps.mts ota "$dir"
+            fi
+          done

@@ -35,6 +35,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./mobileSourceMaps": {
+      "types": "./src/mobileSourceMaps.ts",
+      "import": "./src/mobileSourceMaps.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"

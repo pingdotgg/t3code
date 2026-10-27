@@ -1250,6 +1250,22 @@ const RelayHooksGroup = HttpApiGroup.make("hooks")
   )
   .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
 
+export const RelayMobileTelemetrySignal = Schema.Literals(["logs", "metrics", "traces"]);
+export type RelayMobileTelemetrySignal = typeof RelayMobileTelemetrySignal.Type;
+
+// expo-observe appends `<easProjectId>/v1/<signal>` to its endpoint URL and cannot send credentials.
+const RelayMobileTelemetryParams = Schema.Struct({
+  projectId: Schema.String.check(Schema.isGUID()),
+  signal: RelayMobileTelemetrySignal,
+});
+const RelayMobileTelemetryGroup = HttpApiGroup.make("mobileTelemetry")
+  .add(
+    HttpApiEndpoint.post("ingest", "/v1/mobile/observe/:projectId/v1/:signal", {
+      params: RelayMobileTelemetryParams,
+    }),
+  )
+  .annotate(OpenApi.Description, "Receive mobile app telemetry from expo-observe.");
+
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
@@ -1260,6 +1276,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayDpopClientGroup,
     RelayServerGroup,
     RelayHooksGroup,
+    RelayMobileTelemetryGroup,
   )
   .annotate(OpenApi.Title, "T3 Code Relay API")
   .annotate(OpenApi.Version, "1.0.0")

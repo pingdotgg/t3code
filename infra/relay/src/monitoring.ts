@@ -343,7 +343,7 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
   ];
 };
 
-const notifierConfig = (name: string) =>
+export const notifierConfig = (name: string) =>
   Config.String(name).pipe(
     Config.option,
     Config.map(Option.flatMap((value) => Option.liftPredicate(value.trim(), Boolean))),
