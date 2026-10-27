@@ -22,7 +22,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { isExplicitRelativePath, isNetworkPath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -201,6 +201,21 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const canFollowBrowseLink = Effect.fn("WorkspaceEntries.canFollowBrowseLink")(function* (
+    fullPath: string,
+  ) {
+    let currentPath = fullPath;
+    for (let hop = 0; hop < 40; hop++) {
+      const target = yield* Effect.tryPromise(() => NodeFSP.readlink(currentPath));
+      // Inspect link targets before following them: UNC paths can trigger Windows NTLM sign-in.
+      if (isNetworkPath(target)) return false;
+      currentPath = path.resolve(path.dirname(currentPath), target);
+      const stats = yield* Effect.tryPromise(() => NodeFSP.lstat(currentPath));
+      if (!stats.isSymbolicLink()) return true;
+    }
+    return false;
+  });
+
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
@@ -229,23 +244,31 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
-      for (const dirent of dirents) {
-        if (
-          dirent.isDirectory() &&
+      const candidates = dirents.filter(
+        (dirent) =>
+          (dirent.isDirectory() || dirent.isSymbolicLink()) &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
-        ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
-        }
-      }
+          (showHidden || !dirent.name.startsWith(".")),
+      );
+      const entries = yield* Effect.forEach(
+        candidates,
+        (dirent) => {
+          const entry = { name: dirent.name, fullPath: path.join(parentPath, dirent.name) };
+          if (dirent.isDirectory()) return Effect.succeed(entry);
+          return Effect.gen(function* () {
+            if (!(yield* canFollowBrowseLink(entry.fullPath))) return undefined;
+            const stats = yield* Effect.tryPromise(() => NodeFSP.stat(entry.fullPath));
+            return stats.isDirectory() ? entry : undefined;
+          }).pipe(Effect.orElseSucceed(() => undefined));
+        },
+        { concurrency: 16 },
+      );
 
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entries
+          .filter((entry) => entry !== undefined)
+          .toSorted((left, right) => left.name.localeCompare(right.name)),
       };
     },
   );
