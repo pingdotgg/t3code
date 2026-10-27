@@ -10,6 +10,7 @@ export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A
   );
   const [refreshingAtom, setRefreshingAtom] = useState<typeof atom>(null);
   if (refreshingAtom !== null && refreshingAtom !== atom) setRefreshingAtom(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight refresh for an atom when the atom changes or the component unmounts
   useEffect(
     () => () => {
       if (request.current?.atom === atom) request.current.controller.abort();

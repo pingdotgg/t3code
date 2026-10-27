@@ -156,6 +156,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   const { theme, resolvedTheme } = useTheme();
 
   // The box grows with the font so the whole transcript shows without scrolling.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the font to the Ghostty preview surface and resizes its DOM box to fit the rows
   useEffect(() => {
     if (!surface) return;
     void surface.setFont(previewTerminalFont(family, size)).then(() => {
@@ -169,6 +170,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   }, [surface, family, size]);
 
   // Palette changes may preserve light/dark mode; re-read terminal tokens for every theme change.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes theme tokens read from the DOM's computed styles into the Ghostty preview surface
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount || !surface) return;

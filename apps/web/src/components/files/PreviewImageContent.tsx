@@ -17,7 +17,7 @@ export default function PreviewImageContent(props: {
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Measure the image viewport before paint and observe resizes to keep fit-to-view scaling accurate.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the image viewport before paint and observe resizes to keep fit-to-view scaling accurate.
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;

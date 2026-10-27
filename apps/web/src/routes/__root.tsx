@@ -366,6 +366,7 @@ function EventRouter({
     })().catch(() => undefined);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the bootstrap project in the UI store and navigates the router on a server welcome
   useEffect(() => {
     handleWelcome(serverWelcome);
   }, [serverWelcome]);

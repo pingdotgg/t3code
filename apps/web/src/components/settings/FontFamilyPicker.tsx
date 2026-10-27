@@ -98,6 +98,7 @@ export function FontFamilyPicker({
   // Base UI needs an initial closed commit; mounting open loses exit transitionend and leaves the popup
   // stuck.
   const [openAfterMount] = useState(initialOpen);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the Base UI popup after its first closed commit so the entrance transition is recorded
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- Base UI needs one closed commit first to record the popup's entrance style.
     if (openAfterMount) setOpen(true);

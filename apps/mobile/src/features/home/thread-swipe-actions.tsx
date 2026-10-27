@@ -164,6 +164,7 @@ export function useSwipeableScrollGate(options?: {
       settleTimerRef.current = null;
     }
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the scroll settle timer on unmount
   useEffect(() => clearSettle, [clearSettle]);
 
   const onScrollBeginDrag = useCallback(
@@ -289,6 +290,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     pending.resolve();
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the row's Reanimated animations and settles a pending dismissal on unmount
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -302,6 +304,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   }, [actionOpacity, collapse, fallbackTranslation, finishDismiss]);
 
   // Reset recycled rows in place so their child views stay mounted.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the swipeable and its shared values when the list recycles this row for new content
   useLayoutEffect(() => {
     if (contentRef.current === content) return;
     contentRef.current = content;
@@ -309,6 +312,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     restoreRow();
   }, [content, finishDismiss, restoreRow]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the open swipeable and resets its shared values when the row goes dormant
   useLayoutEffect(() => {
     if (props.dormant && activeTranslationRef.current && dismissalRef.current === null) {
       restoreRow();
@@ -339,6 +343,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     },
     [actionOpacity, collapse, dismissing, finishDismiss, rowWidth],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this row's animated dismissal in the module-level thread dismissal registry
   useLayoutEffect(
     () =>
       props.dormant

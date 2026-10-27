@@ -274,10 +274,12 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const orderVersion = rows
     .map((row) => `${row.key}:${row.thread?.pinOrderKey}:${row.thread?.activeOrderKey}`)
     .join("|");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the in-progress drag gesture when the thread order changes underneath it
   useEffect(() => {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies, react/set-state-in-effect -- A changed thread order cancels the in-progress drag and clears its preview; stop only touches refs and state setters.
     stop();
   }, [orderVersion]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending drag animation frame on unmount
   useEffect(
     () => () => {
       if (frame.current !== null) cancelAnimationFrame(frame.current);

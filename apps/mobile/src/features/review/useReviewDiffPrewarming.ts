@@ -105,6 +105,7 @@ export function useReviewDiffPrewarming(input: {
 }): void {
   const { sections, selectedSectionId, threadKey } = input;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prewarms pending review diff sections in idle callbacks and cancels the idle handle on cleanup
   useEffect(() => {
     if (!threadKey) {
       return;

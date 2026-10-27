@@ -34,6 +34,7 @@ function NativeFilePreview(props: {
     else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native file preview and dismisses it on cleanup
   useEffect(() => {
     let canceled = false;
     const presentation =

@@ -65,6 +65,7 @@ function NativeVideoPreview(props: {
     }
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native fullscreen video and owns its audio session and file lease until cleanup
   useEffect(() => {
     const controller = new AbortController();
     let token: ReturnType<typeof acquireAudioSession> | null = null;

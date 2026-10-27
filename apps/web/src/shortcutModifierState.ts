@@ -31,6 +31,7 @@ export function useShortcutModifierState(ignoreEditable = false): ShortcutModifi
   const [state, setState] = useState(EMPTY_SHORTCUT_MODIFIER_STATE);
   const stateRef = useRef(EMPTY_SHORTCUT_MODIFIER_STATE);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window key, focus, paste and blur listeners that track held shortcut modifiers
   useEffect(() => {
     const updateState = (next: ShortcutModifierState) => {
       if (areShortcutModifierStatesEqual(stateRef.current, next)) return;

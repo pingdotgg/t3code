@@ -89,6 +89,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   // Bounds can change mid-drag (sidebar opens, window narrows), and the render
   // that carries them rewrites the committed width, so re-apply the live pointer position.
   const { refresh } = drag;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reapplies the live drag pointer position to the DOM before paint when the bounds change
   useLayoutEffect(() => refresh({ min: minWidth, max: maxWidth }), [refresh, minWidth, maxWidth]);
 
   return {

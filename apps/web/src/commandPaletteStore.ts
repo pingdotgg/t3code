@@ -33,7 +33,7 @@ export function isCommandPaletteMounted(): boolean {
  * palette cannot stay open, so the last unmount resets the store.
  */
 export function useCommandPaletteMount(): void {
-  // oxlint-disable-next-line t3code/react-effect-budget -- The palette's mount gates its global shortcuts, and leaving the route while it is open calls no close handler, so only unmount can reset the store.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The palette's mount gates its global shortcuts, and leaving the route while it is open calls no close handler, so only unmount can reset the store.
   useEffect(() => {
     mountedPalettes += 1;
     return () => {

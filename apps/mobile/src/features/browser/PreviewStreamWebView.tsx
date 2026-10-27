@@ -295,6 +295,7 @@ function PreviewStreamDocumentView({
     onControl?.(null);
   });
   // The stream lives exactly as long as this view.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the bootstrap timeout and stops the WebView stream when this view unmounts
   useLayoutEffect(() => {
     active.current = true;
     const view = webView.current;

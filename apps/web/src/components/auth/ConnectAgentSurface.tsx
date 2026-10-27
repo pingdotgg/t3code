@@ -93,6 +93,7 @@ export function ConnectAgentSurface() {
   const [errorMessage, setErrorMessage] = useState("");
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the MCP OAuth approval and redirects the window or stores details, ignoring stale answers
   useEffect(() => {
     let cancelled = false;
     void runApproval((client) => client.mcpOAuth.approval({ payload: authorization })).then(

@@ -180,6 +180,7 @@ export function useFileTreeEntries(input: {
   const { target } = directories;
   const requestsByTarget = useRef(new WeakMap<object, ReturnType<typeof createRequests>>());
   // Cancel the old target before consumers' passive effects start new directory loads.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the root and aborts the old target's directory requests before consumers start new loads
   useLayoutEffect(() => {
     const requests = getRequests(requestsByTarget.current, target);
     requests.active = true;

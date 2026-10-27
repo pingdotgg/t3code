@@ -20,6 +20,7 @@ export function useMediaVideoPlayback(
   const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
   useMediaAudioSessionHold(isPlaying);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState for the player's lifetime and pauses the native player when unfocused or backgrounded
   useEffect(() => {
     active.current = focused && !paused && AppState.currentState === "active";
     if (!active.current) interruption.current += 1;

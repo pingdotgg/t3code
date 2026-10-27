@@ -56,6 +56,7 @@ export function useFullscreenVideoOpen(): boolean {
 }
 
 export function useMediaAudioSessionHold(active: boolean): void {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the shared native audio session while media plays and releases it on cleanup
   useEffect(() => {
     if (!active) return;
     mediaPlaybackStarted();

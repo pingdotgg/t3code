@@ -593,7 +593,7 @@ export default defineConfig({
       },
       {
         files: ["apps/web/src/**", "apps/mobile/src/**", "packages/*/src/**"],
-        rules: { "t3code/react-effect-budget": "error" },
+        rules: { "t3code/no-unreasoned-state-sync": "error" },
       },
       {
         // React Compiler caches use* functions only if they call a hook.

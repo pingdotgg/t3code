@@ -13,6 +13,7 @@ export function DraftHeroProjectHeading({
   const inlineRef = useRef<HTMLSpanElement>(null);
   const [fitsInline, setFitsInline] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the heading against its container via ResizeObserver to choose inline or stacked layout
   useLayoutEffect(() => {
     const container = containerRef.current;
     const inline = inlineRef.current;

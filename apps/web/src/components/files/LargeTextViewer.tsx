@@ -47,7 +47,7 @@ export default function LargeTextViewer(props: {
   } | null>(null);
   const pending = useRef(new Set<number>());
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own the prefix fetch and indexing worker, cancelling requests and pending copies when the source changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the prefix fetch and indexing worker, cancelling requests and pending copies when the source changes or unmounts.
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- A replacement source must discard the previous worker's error and pages.
     setError(null);

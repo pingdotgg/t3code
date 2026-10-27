@@ -220,6 +220,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   const writerRef = useRef<ReturnType<typeof createTerminalOutputWriter> | null>(null);
   const [nativeReady, setNativeReady] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the output writer for the native terminal view once it is ready and disposes it on cleanup
   useEffect(() => {
     const view = nativeRef.current;
     if (!streaming || !nativeReady || view === null) return;
@@ -231,6 +232,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     };
   }, [nativeReady, streaming]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- streams new terminal output into the native terminal view through its writer
   useEffect(() => {
     if (!streaming || !nativeReady || props.output === null) return;
     void writerRef.current?.write(props.output).catch((error: unknown) => {
@@ -238,6 +240,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     });
   }, [nativeReady, props.output, streaming]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the native surface state to the terminal debug log after each relevant commit
   useEffect(() => {
     terminalDebugLog("native:surface", {
       terminalKey: props.terminalKey,

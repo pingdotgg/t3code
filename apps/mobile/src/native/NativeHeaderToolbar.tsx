@@ -244,6 +244,7 @@ function NativeHeaderToolbarRoot(props: {
   }, [props.children, committedHandlers]);
   // Native retains actions when unchanged presentation skips re-registration.
   // Publish only committed handlers; abandoned renders must not replace them.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed toolbar handlers to the ref native actions call; discarded renders must not leak
   useLayoutEffect(() => {
     committedHandlers.current = handlers;
     return () => {
@@ -256,6 +257,7 @@ function NativeHeaderToolbarRoot(props: {
     [items],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears this placement's native header items through the navigator when the toolbar unmounts
   useLayoutEffect(() => {
     if (!setOptions) return;
     return () => {

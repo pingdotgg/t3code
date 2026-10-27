@@ -115,6 +115,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     setOptimisticSingleSelect(null);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the auto-advance timer when the question changes, input is disabled, or the panel unmounts
   useEffect(() => {
     const clearAutoAdvance = () => {
       if (autoAdvanceTimerRef.current !== null) {
@@ -146,6 +147,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const selectOptionFromShortcut = useEffectEvent(handleOptionSelection);
   const backgroundThread = use(BackgroundThreadContext);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
   useEffect(() => {
     if (!activeQuestion || responseDisabled || isCollapsed || backgroundThread) return;
     const handler = (event: globalThis.KeyboardEvent) => {

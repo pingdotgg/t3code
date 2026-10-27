@@ -24,10 +24,12 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
   // Video teardown deactivates the shared iOS session, which would stop this player.
   useMediaAudioSessionHold(status.playing);
   const fullscreenVideoOpen = useFullscreenVideoOpen();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared audio session in step with the native player status and fullscreen video
   useEffect(() => {
     if (fullscreenVideoOpen || status.didJustFinish || status.error) playback.pause();
     else playback.playingChanged(status.playing);
   }, [fullscreenVideoOpen, status.didJustFinish, status.error, status.playing, playback]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to pause playback in the background, and pauses on cleanup
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") playback.pause();

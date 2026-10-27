@@ -163,6 +163,7 @@ export function DesktopWebLinkCoordinator() {
     });
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop web link opens over the bridge and marks the renderer ready
   useEffect(() => {
     if (!ready || webLinks === undefined) return;
     let subscribed = true;

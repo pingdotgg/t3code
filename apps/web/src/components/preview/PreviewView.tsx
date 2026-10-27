@@ -192,6 +192,7 @@ export function PreviewView({
   const serverToolbarShown =
     snapshot?.runtime === "server" && (snapshot.viewport ?? FILL_PREVIEW_VIEWPORT)._tag !== "fill";
   const serverBodyRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver on the server preview body sizes the viewport toolbar
   useEffect(() => {
     const element = serverBodyRef.current;
     if (!element || !serverToolbarShown) return;
@@ -790,6 +791,7 @@ export function PreviewView({
     }).then(finishPick);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the preview bridge whether an element pick may send annotations
   useEffect(() => {
     if (!pickActive || !previewBridge || !runtimeTabId) return;
     void previewBridge
@@ -797,6 +799,7 @@ export function PreviewView({
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels an in-progress element pick on the preview bridge when the tab changes or on unmount
   useEffect(() => {
     return () => {
       if (!pickActiveRef.current) return;
@@ -833,6 +836,7 @@ export function PreviewView({
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
   useEffect(() => {
     if (!visible) return;
     return subscribePreviewAction((action) => onPreviewAction(action));

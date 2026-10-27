@@ -113,6 +113,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   );
   const missing = wanted.some((path) => !loadedPaths.has(path));
   const { error: diffError, loadMore } = diff;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the next page of the paged diff query until the stop's files have loaded
   useEffect(() => {
     if (state.enabled && missing && !diffError) loadMore();
   }, [state.enabled, missing, diffError, loadMore]);

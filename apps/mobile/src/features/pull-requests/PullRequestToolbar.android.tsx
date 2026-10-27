@@ -41,6 +41,7 @@ export function PullRequestToolbar(props: {
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
   }, [dispatch, recordScrollOffset, tab.searchEntryOffset]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to BackHandler while searching to close the PR search on Android back
   useEffect(() => {
     if (!searching) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {

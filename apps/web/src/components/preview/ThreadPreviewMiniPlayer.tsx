@@ -440,6 +440,7 @@ function MiniPlayerShell({
   const [pillOpen, setPillOpen] = useState(false);
   const handleTappedRef = useRef(false);
   const handleRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointerdown listener closes the open pill on an outside press
   useEffect(() => {
     if (!pillOpen) return;
     const dismiss = (event: PointerEvent) => {

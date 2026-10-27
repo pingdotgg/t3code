@@ -38,6 +38,7 @@ export function GuestHtmlRender({
     () =>
       `${GUEST_RENDER_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&item=${encodeURIComponent(itemId)}${htmlRenderThemeFragment(theme)}`,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the frame box and follows its width with a ResizeObserver before paint
   useLayoutEffect(() => {
     const box = boxRef.current;
     if (!box) return;
@@ -46,9 +47,11 @@ export function GuestHtmlRender({
       if (entry) setWidth(entry.contentRect.width);
     });
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts theme changes to the iframe's window
   useEffect(() => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   }, [theme]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window message listener for the iframe's height reports and link requests
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const frame = frameRef.current;

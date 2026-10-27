@@ -33,11 +33,13 @@ export function DevicePhoneViewport(props: {
   const accessoryRef = useRef(props.accessory);
   const { source, onFrameListener, client, onInputCancel, onResetReady, onUnavailable } = props;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the fold angle into the imperative 3D phone viewer
   useEffect(() => {
     foldAngleRef.current = props.foldAngle;
     viewerRef.current?.setFoldAngle(props.foldAngle);
   }, [props.foldAngle]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes screen, profile, model and accessory changes into the imperative 3D phone viewer
   useEffect(() => {
     screenRef.current = props.screen;
     profileRef.current = props.profile;

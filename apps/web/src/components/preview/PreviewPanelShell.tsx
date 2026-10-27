@@ -79,6 +79,7 @@ function PreviewPanelShellFrame(
       stopObservingRow();
     };
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to the panel toggle if removal dropped it on the body
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host || !collapsible) return;
@@ -92,6 +93,7 @@ function PreviewPanelShellFrame(
       });
     };
   }, [collapsible, hostRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves focus to the toggle and sets inert on the host DOM node before a collapse paints
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;

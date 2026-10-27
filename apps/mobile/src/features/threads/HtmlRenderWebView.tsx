@@ -95,6 +95,7 @@ export function HtmlRenderWebView(props: {
     () => ({ uri: props.uri + htmlRenderThemeFragment(initialTheme) }),
     [props.uri, initialTheme],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts theme changes into the already loaded WebView
   useEffect(() => {
     if (shownTheme.current === null || shownTheme.current === theme) return;
     shownTheme.current = theme;

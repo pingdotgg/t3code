@@ -144,6 +144,7 @@ export function ReopenClosedViewShortcut() {
       });
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown and the desktop menu action for the reopen closed view shortcut
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -178,6 +179,7 @@ export function ReopenClosedViewShortcut() {
     };
   }, [keybindings, previewOpen, terminalOpen]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers forwarded shortcut chords with the desktop preview bridge and clears them on cleanup
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
     if (!preview?.setForwardedShortcuts) return;

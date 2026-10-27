@@ -66,6 +66,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
   const { environmentId, threadId } = props.route.params;
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator when the route link names a blank environment or thread
   useEffect(() => {
     if (isBlankLink) navigation.goBack();
   }, [isBlankLink, navigation]);

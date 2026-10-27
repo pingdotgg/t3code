@@ -50,6 +50,7 @@ export function QuestionAttachments(props: {
   // The caller keys this component by request and question, so unmounting ends any open
   // picker's scope.
   const pickerScope = useRef<{ active: boolean }>({ active: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens a scope that native picker and paste callbacks check, and closes it on unmount
   useEffect(() => {
     const scope = { active: true };
     pickerScope.current = scope;
@@ -61,6 +62,7 @@ export function QuestionAttachments(props: {
   const releaseFocus = useEffectEvent(() => {
     if (focusedRef.current) onInputFocusChange?.(false);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
   const append = (
     key: string,

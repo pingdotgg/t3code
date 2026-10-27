@@ -94,6 +94,7 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
     ? readyPool === workerPool || workerPool.isInitialized() || !workerPool.isWorkingPool()
     : typeof window === "undefined";
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- initializes the diff worker pool and marks it ready when its async startup settles
   useEffect(() => {
     if (ready || !workerPool) return;
 

@@ -694,6 +694,7 @@ export function useComposerStash(input: {
       ).terminalOpen,
     ),
   }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase stash shortcut with the command registry while the composer is mounted
   useEffect(() => {
     if (backgroundThread) return;
     return registerCommands(

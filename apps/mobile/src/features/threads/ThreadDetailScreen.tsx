@@ -406,6 +406,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   // Android can lose IME hide callbacks on backgrounding. Quarantine translation on resume unless focused input retained its keyboard.
   const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
   const ownedInputFocusedRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState on Android to mark keyboard state suspect when the app resumes
   useEffect(() => {
     if (Platform.OS !== "android") {
       return;
@@ -419,6 +420,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       subscription.remove();
     };
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the suspect flag whenever the native keyboard reports a visibility or height change
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- Any native keyboard report clears the suspect flag set when the app resumed.
     setKeyboardStateSuspect(false);
@@ -453,6 +455,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
   const editingRunId = props.queuedRunEdit?.runId ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the composer editor on the next animation frame when a queued run edit starts
   useEffect(() => {
     if (editingRunId === null) return;
     const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
@@ -540,6 +543,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     props.serverConfig?.environment.capabilities.threadSnooze === true &&
     effectiveSnoozed(props.selectedThread, { now: lifecycleNow });
   const snoozedUntil = props.selectedThread.snoozedUntil;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arms a timer that refreshes the lifecycle clock when the thread's snooze expires
   useEffect(() => {
     if (!snoozed || snoozedUntil === null) return;
     const timer = setTimeout(
@@ -743,6 +747,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const loadEarlierForJump = useEffectEvent(() => {
     if (jumpMessageId !== null) historyForJump?.onLoadThrough(jumpMessageId);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests earlier history from the server until the jump target message loads, or ends the jump
   useEffect(() => {
     if (jumpMessageId === null || jumpMessageLoaded || contentPresentationKind !== "ready") return;
     if (historyForJump?.loading) return;
@@ -1007,6 +1012,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     setEndFollowEnabled(enabled);
   };
   // A jump this thread never reached lets go when it closes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the thread scope, clears its timers and ends a pending message jump when the thread changes
   useEffect(() => {
     if (threadScope.current.signal.aborted) threadScope.current = new AbortController();
     const scope = threadScope.current;

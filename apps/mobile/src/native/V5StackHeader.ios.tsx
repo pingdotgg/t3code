@@ -270,6 +270,7 @@ export function V5StackHeader(props: {
   const autofocusRef = searchOptions?.ref ?? searchRef;
   // iOS ignores the native autoFocus prop, and SearchBar's imperative handle changes every
   // commit, so a ref callback would refocus on each render; focus once after the header mounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the native SearchBar once after the header mounts, since iOS ignores autoFocus
   useEffect(() => {
     if (!searchOptions?.autoFocus) return;
     const frame = requestAnimationFrame(() => autofocusRef.current?.focus());

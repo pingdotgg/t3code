@@ -434,11 +434,13 @@ export function ThemeEditorPanel({
     }
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the edited colors to the document as a live theme preview while the editor is open
   useEffect(() => {
     if (!open) return;
     applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
   }, [activeAppearance, colorsByAppearance, open]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the document theme when the editor closes or unmounts
   useEffect(() => {
     if (!open) return;
     return () => {
@@ -510,6 +512,7 @@ export function ThemeEditorPanel({
     : [];
   const selectedHighlightRolesKey = selectedHighlightRoles.join(",");
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- highlights role usage in the DOM, refreshed by a MutationObserver and resize and scroll listeners
   useEffect(() => {
     clearThemeInspectorHighlights();
     if (!open || selectedRole === null || isInspecting) return;
@@ -570,6 +573,7 @@ export function ThemeEditorPanel({
     };
   }, [isInspecting, open, selectedHighlightRolesKey, selectedRole]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointer, click and key listeners that drive the inspect-mode hover overlay
   useEffect(() => {
     if (!open || !isInspecting) {
       clearThemeInspectorHover();

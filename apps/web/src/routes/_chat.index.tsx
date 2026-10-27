@@ -47,6 +47,7 @@ function IndexDraftLanding() {
     sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null;
   const attempt = startState.retryRequest;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a draft thread in the most recent project and navigates to it while still on the index
   useEffect(() => {
     // Starting a draft after the user has left would replace the page they picked.
     if (mostRecentProject === null || startedAttemptRef.current === attempt || !isStillOnIndex()) {

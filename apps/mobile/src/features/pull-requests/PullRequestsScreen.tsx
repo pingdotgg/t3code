@@ -108,6 +108,7 @@ export function PullRequestsScreen(
   // toolbar that cancels has no handle on this list, so the list scrolls itself
   // once it sees the tab come back to resting.
   const previousSearchMode = useRef(tab.searchMode);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to the offset saved when search opened once the tab returns to resting
   useEffect(() => {
     const restoringSearch =
       previousSearchMode.current !== "resting" && tab.searchMode === "resting";

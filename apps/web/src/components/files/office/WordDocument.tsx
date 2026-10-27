@@ -28,7 +28,7 @@ export default function WordDocument(props: {
   const { onError, bytes, onDetails } = props;
   const [opened, setOpened] = useState<Opened>();
   const scroll = useRef<((index: number, y?: number) => void) | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own the document worker and cancel its layout and painting requests when the document changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the document worker and cancel its layout and painting requests when the document changes or unmounts.
   useEffect(() => {
     const controller = new AbortController();
     const worker = new Worker(new URL("./document.worker.ts", import.meta.url), { type: "module" });
@@ -121,7 +121,7 @@ function WordTextLayer(props: {
 }) {
   const { engine, index, page, follow } = props;
   const [spans, setSpans] = useState<readonly WordSpan[]>([]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Request selectable text from the document worker and cancel the request when its page leaves the viewport.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Request selectable text from the document worker and cancel the request when its page leaves the viewport.
   useEffect(() => {
     if (!page) return;
     const controller = new AbortController();

@@ -50,6 +50,7 @@ export function BranchNamingSettings(props: {
   const saveDrafts = useEffectEvent(() =>
     send({ ...take("branchNamePrefix"), ...take("branchNameInstructions") }),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves unsent branch naming drafts to server settings when the section unmounts
   useEffect(() => () => saveDrafts(), []);
   return (
     <SettingsSection
