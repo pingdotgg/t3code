@@ -150,9 +150,7 @@ Required `production` environment secrets:
 
 After changing a variable or secret, run the **Deploy T3 Connect relay** workflow manually from
 `main` with **force** unchecked. Alchemy compares the values the Worker reads and redeploys it when
-one changed. Check **force** only to redeploy resources with no detected change: a forced run also
-replaces the Postgres runtime role and its password
-([alchemy-run/alchemy#1832](https://github.com/alchemy-run/alchemy/issues/1832)).
+one changed. Check **force** only to redeploy resources with no detected change.
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,

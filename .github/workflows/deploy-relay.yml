@@ -5,12 +5,11 @@ on:
     branches:
       - main
   # Redeploys main after a variable or secret change. Alchemy redeploys the
-  # Worker when a value it reads changes, so force is rarely needed, and it
-  # replaces the Postgres runtime role (alchemy-run/alchemy#1832).
+  # Worker when a value it reads changes, so force is rarely needed.
   workflow_dispatch:
     inputs:
       force:
-        description: Redeploy every resource, including ones with no detected changes. Replaces the Postgres runtime role.
+        description: Redeploy every resource, including ones with no detected changes.
         type: boolean
         default: false
 
