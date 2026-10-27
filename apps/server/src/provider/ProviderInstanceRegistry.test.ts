@@ -336,6 +336,67 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("publishes independent instance icons and restores the driver default on reset", () =>
+    Effect.gen(function* () {
+      const firstId = ProviderInstanceId.make("codex_first");
+      const secondId = ProviderInstanceId.make("codex_second");
+      const entry = {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: false,
+        config: makeCodexConfig({}),
+      };
+      const driver = {
+        ...CodexDriver,
+        create: Effect.fn("ProviderInstanceRegistry.test.createIconSource")(function* (input) {
+          const instance = yield* CodexDriver.create(input);
+          return {
+            ...instance,
+            snapshot: {
+              ...instance.snapshot,
+              streamChanges: Stream.fromEffect(instance.snapshot.getSnapshot),
+            },
+            snapshotForCwd: () => instance.snapshot.getSnapshot,
+          };
+        }),
+      } satisfies typeof CodexDriver;
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [driver],
+        configMap: {
+          [firstId]: { ...entry, iconUrl: "https://example.com/first.png" },
+          [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+        },
+      });
+      const first = yield* registry.getInstance(firstId);
+      const second = yield* registry.getInstance(secondId);
+      expect((yield* first!.snapshot.getSnapshot).iconUrl).toBe("https://example.com/first.png");
+      expect((yield* first!.snapshot.refresh).iconUrl).toBe("https://example.com/first.png");
+      const streamed = yield* Stream.runCollect(first!.snapshot.streamChanges);
+      expect(streamed[0]?.iconUrl).toBe("https://example.com/first.png");
+      expect((yield* first!.snapshotForCwd!("/workspace")).iconUrl).toBe(
+        "https://example.com/first.png",
+      );
+      expect((yield* second!.snapshot.getSnapshot).iconUrl).toBe("https://example.com/second.png");
+      yield* mutator.reconcile({ [firstId]: entry });
+      const reset = yield* registry.getInstance(firstId);
+      expect((yield* reset!.snapshot.getSnapshot).iconUrl).toBeUndefined();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves icons for unavailable drivers", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeProviderInstanceRegistry<never>({
+        drivers: [],
+        configMap: {
+          [ProviderInstanceId.make("custom")]: {
+            driver: ProviderDriverKind.make("unregistered"),
+            iconUrl: "https://example.com/custom.png",
+          },
+        },
+      });
+      expect((yield* registry.listUnavailable)[0]?.iconUrl).toBe("https://example.com/custom.png");
+    }).pipe(Effect.scoped),
+  );
+
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");

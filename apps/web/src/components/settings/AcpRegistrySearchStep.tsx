@@ -270,7 +270,7 @@ function AcpRegistryAgentRow({
             driverKind={ProviderDriverKind.make("acpRegistry")}
             displayName={agent.name}
             acpRegistryAgentId={agent.id}
-            acpRegistryIconUrl={agent.icon ?? undefined}
+            iconUrl={agent.icon ?? undefined}
             iconClassName="size-6 rounded-md text-muted-foreground"
           />
           <div className="min-w-0 flex-1">
