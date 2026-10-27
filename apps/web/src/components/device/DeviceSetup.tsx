@@ -103,11 +103,20 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       (host.kind === "local" && state.hostStatus === "ready"),
   );
   if (readyHosts.length > 0 && !hasDevices) {
+    const diagnosticPrefix = platform === "ios" ? "[apple-utils] " : "[android-utils] ";
     if (
-      readyHosts.some(
-        (host) =>
-          state.hostStatuses[host.id]?.detail || (host.kind === "local" && state.hostStatusDetail),
-      )
+      readyHosts.some((host) => {
+        const detail =
+          state.hostStatuses[host.id]?.detail ??
+          (host.kind === "local" ? state.hostStatusDetail : undefined);
+        return detail
+          ?.split("\n")
+          .some(
+            (line) =>
+              line.startsWith(diagnosticPrefix) ||
+              line.startsWith("The device hub did not answer within "),
+          );
+      })
     ) {
       return {
         ready: false,

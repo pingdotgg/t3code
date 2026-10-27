@@ -1264,7 +1264,7 @@ const discoveryFixture = Effect.fn("discoveryFixture")(function* () {
               ? { simulators: [], emulators: [] }
               : {
                   simulators: [],
-                  emulators: hubDevices.slice(1),
+                  emulators: [],
                   errors: [
                     {
                       message: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
@@ -1327,7 +1327,7 @@ it.effect(
 
       hub.mode = "simctl_failed";
       const failed = yield* service.list;
-      expect(failed.devices).toEqual(listed);
+      expect(failed.devices).toEqual(listed.filter((device) => device.platform === "ios"));
       expect(failed.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
         status: "ready",
         detail: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
@@ -1340,30 +1340,27 @@ it.effect(
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
-it.effect(
-  "waits past the hub's own simctl timeout and keeps devices when the hub never answers",
-  () =>
-    Effect.gen(function* () {
-      const { service, hub, listed } = yield* discoveryFixture();
-      yield* service.list;
+it.effect("keeps devices with a warning when the hub never answers within 40 seconds", () =>
+  Effect.gen(function* () {
+    const { service, hub, listed } = yield* discoveryFixture();
+    yield* service.list;
 
-      hub.mode = "hung";
-      const listing = yield* service.list.pipe(Effect.forkScoped);
-      yield* Deferred.await(hub.requested);
-      yield* TestClock.adjust("40 seconds");
-      const timedOut = yield* Fiber.join(listing);
-      expect(timedOut.devices).toEqual(listed);
-      expect(timedOut.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
-        status: "ready",
-        detail:
-          "The device hub did not answer within 40 seconds. Devices found earlier stay listed.",
-      });
+    hub.mode = "hung";
+    const listing = yield* service.list.pipe(Effect.forkScoped);
+    yield* Deferred.await(hub.requested);
+    yield* TestClock.adjust("40 seconds");
+    const timedOut = yield* Fiber.join(listing);
+    expect(timedOut.devices).toEqual(listed);
+    expect(timedOut.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+      status: "ready",
+      detail: "The device hub did not answer within 40 seconds. Devices found earlier stay listed.",
+    });
 
-      hub.mode = "listed";
-      const recovered = yield* service.list;
-      expect(recovered.devices).toEqual(listed);
-      expect(recovered.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({ status: "ready" });
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+    hub.mode = "listed";
+    const recovered = yield* service.list;
+    expect(recovered.devices).toEqual(listed);
+    expect(recovered.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({ status: "ready" });
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
 it.effect("retry keeps device and agent consent unchanged", () =>
