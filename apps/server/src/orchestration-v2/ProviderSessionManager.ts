@@ -633,7 +633,9 @@ export const layerWithOptions = (
               request.status === "pending" &&
               request.responseCapability.type === "live" &&
               request.responseCapability.providerSessionId === providerSessionId &&
-              DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt),
+              DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt) &&
+              // Shutdown reconciliation decides which questions can survive the lost callback.
+              !(input.reason === "server_shutdown" && request.kind === "user_input"),
           );
 
           for (const request of releasedRequests) {
