@@ -1,4 +1,4 @@
-import { documentIconColorForFileName } from "~/pierre-icons";
+import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
@@ -46,7 +46,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
@@ -232,7 +231,7 @@ function resolvedThemeFromDocument(): "light" | "dark" {
 }
 
 const CHIP_NODE_SELECTION_CLASS_NAME =
-  "relative inline-flex select-none items-center align-middle leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+  "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
 const ComposerMentionExtension = Node.create({
   name: "composer-mention",
@@ -260,11 +259,9 @@ const ComposerMentionExtension = Node.create({
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
-  const accent = documentIconColorForFileName(path);
   const chip = (
     <ContextChip
-      kind="mention"
-      style={accent ? ({ "--context-chip-accent": accent } as CSSProperties) : undefined}
+      kind={documentChipKindForFileName(path) ?? "mention"}
       dir="ltr"
       render={<button type="button" />}
       onClick={() => actions.openMention(path)}
@@ -442,7 +439,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
-      className={cn(CHIP_NODE_SELECTION_CLASS_NAME, "min-w-0 max-w-full")}
+      className={CHIP_NODE_SELECTION_CLASS_NAME}
       contentEditable={false}
       spellCheck={false}
       data-composer-citation-chip="true"
