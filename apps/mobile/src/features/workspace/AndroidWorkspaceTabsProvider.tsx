@@ -21,6 +21,8 @@ interface AndroidWorkspaceRoot {
   readonly getState: () => NavigationState;
   /** Settings is derived from navigation rather than kept in the tab reducer. */
   readonly settingsOpen: boolean;
+  readonly settingsRoute: NavigationState["routes"][number] | undefined;
+  readonly settingsPage: string | null;
 }
 
 const AndroidWorkspaceRootContext = createContext<AndroidWorkspaceRoot | null>(null);
@@ -41,7 +43,14 @@ export function AndroidWorkspaceTabsProvider(props: {
   const getState = useCallback(() => stateRef.current, []);
   const key = props.state.key;
   const settingsOpen = Platform.OS === "android" && androidWorkspaceSettingsOpen(props.state);
-  const root = useMemo(() => ({ key, getState, settingsOpen }), [key, getState, settingsOpen]);
+  const settingsIndex = props.state.routes.findIndex((route) => route.name === "Settings");
+  const settingsRoute = settingsIndex < 0 ? undefined : props.state.routes[settingsIndex];
+  const settingsPage =
+    settingsIndex < 0 ? null : (props.state.routes[settingsIndex + 1]?.name ?? null);
+  const root = useMemo(
+    () => ({ key, getState, settingsOpen, settingsRoute, settingsPage }),
+    [key, getState, settingsOpen, settingsRoute, settingsPage],
+  );
   return Platform.OS === "android" ? (
     <WorkspaceTabsProvider>
       <AndroidWorkspaceRootContext value={root}>{props.children}</AndroidWorkspaceRootContext>

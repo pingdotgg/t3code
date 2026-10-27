@@ -1,6 +1,6 @@
 import { isDuoDevice } from "../../lib/device-type";
 import { Platform } from "react-native";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { workspaceUsesColumns } from "./workspace-tabs-state";

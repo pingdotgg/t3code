@@ -118,7 +118,9 @@ export function AndroidWorkspaceNavigation(props: {
           // Reset the root stack even when a nested settings navigator has focus.
           if (root) {
             navigation.dispatch({
-              ...CommonActions.reset(androidWorkspaceTabNavigationState(root.getState(), tab)),
+              ...CommonActions.reset(
+                androidWorkspaceTabNavigationState(root.getState(), tab, rail),
+              ),
               target: root.key,
             });
           }

@@ -95,9 +95,13 @@ import {
   currentWorkspaceSelections,
   workspaceSelectionCheck,
 } from "../workspace/workspace-selection-store";
-import { workspaceTabNavigationState } from "../workspace/workspace-tab-navigation";
+import {
+  workspaceTabColumns,
+  workspaceTabNavigationState,
+} from "../workspace/workspace-tab-navigation";
 import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
+import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 
 export { useAdaptiveWorkspaceLayout };
 
@@ -478,7 +482,7 @@ function AdaptiveWorkspaceLayoutContent(
       tab,
       currentWorkspaceSelections(),
       {
-        columns: Platform.OS === "ios" && (options?.columns ?? layout.usesSplitView),
+        columns: workspaceTabColumns(Platform.OS, tab, options?.columns ?? layout.usesSplitView),
         check: workspaceSelectionCheck,
         overlays,
       },
@@ -908,7 +912,9 @@ function AdaptiveWorkspaceLayoutContent(
                         compactAndroidSettings ? { ...safeAreaInsets, bottom: 0 } : safeAreaInsets
                       }
                     >
-                      <View className="flex-1">{props.children}</View>
+                      <View className="flex-1">
+                        <SettingsWorkspaceLayout>{props.children}</SettingsWorkspaceLayout>
+                      </View>
                     </SafeAreaInsetsContext>
                     {compactAndroidSettings ? (
                       <AndroidWorkspaceNavigation onNewThread={handleStartNewTask} />
