@@ -390,7 +390,8 @@ export function resolveEnvironmentIdentificationMode(input: {
   paletteThemeAllowsArtwork?: boolean;
 }): EnvironmentIdentificationMode {
   if (!input.settingsHydrated) return "none";
-  return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && input.mode === "artwork"
+  const isArtwork = input.mode !== "pill" && input.mode !== "none";
+  return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && isArtwork
     ? "pill"
     : input.mode;
 }

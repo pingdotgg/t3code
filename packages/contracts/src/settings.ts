@@ -153,7 +153,15 @@ export const TerminalFontSize = Schema.Int.check(
 export type TerminalFontSize = typeof TerminalFontSize.Type;
 const DEFAULT_TERMINAL_FONT_SIZE: TerminalFontSize = 12;
 
-export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill", "none"]);
+// "artwork" follows the running channel and shows nothing on Latest. The fixed artwork
+// modes let any channel opt into a specific channel's art.
+export const EnvironmentIdentificationMode = Schema.Literals([
+  "artwork",
+  "nightly-artwork",
+  "dev-artwork",
+  "pill",
+  "none",
+]);
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 

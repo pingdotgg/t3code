@@ -124,9 +124,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
-  const stageBackdropVariant = useSidebarStageBackdropVariant(
-    environmentIdentificationMode === "artwork",
-  );
+  const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <Tooltip key="interrupt">
