@@ -222,6 +222,52 @@ describe("threadHistoryMerge", () => {
     expect(next?.visibleTurnItems[3]?.item).toEqual(liveItem);
   });
 
+  // regression: #25806 a pending question card retained outside the window shows when paged in
+  it("shows a pending request card retained at cold open when its history page arrives", () => {
+    const recent = row(5);
+    const card = {
+      id: "item-question" as never,
+      type: "user_input_request" as const,
+      threadId: v2ThreadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running" as const,
+      title: null,
+      requestId: "request-question" as never,
+      questions: [],
+      startedAt: NOW,
+      completedAt: null,
+      updatedAt: NOW,
+    };
+    const coldOpen = {
+      ...v2Projection,
+      turnItems: [card, recent.item],
+      visibleTurnItems: [{ ...recent, position: 0 }],
+    };
+
+    const merged = mergeOlderHistoryIntoProjection(coldOpen, [
+      { ...row(0), position: 0 },
+      {
+        position: 1,
+        visibility: "local",
+        sourceThreadId: v2ThreadId,
+        sourceItemId: card.id,
+        item: card,
+      },
+    ]);
+
+    expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual([
+      "item-0",
+      "item-question",
+      "item-5",
+    ]);
+  });
+
   it("keeps a history-page interrupt result visible when its request was retained at cold open", () => {
     const runId = "run-interrupt-cold" as never;
     const nodeId = "node-interrupt-cold" as never;
