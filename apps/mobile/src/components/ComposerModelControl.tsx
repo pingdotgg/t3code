@@ -19,6 +19,8 @@ export function ComposerModelControl(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly iconOnly?: boolean;
+  /** Keep the model name readable in a narrow row; the accessibility label still names the traits. */
+  readonly hideTraits?: boolean;
   readonly onPress: () => void;
 }) {
   const descriptors = resolveProviderOptionDescriptors({
@@ -93,9 +95,9 @@ export function ComposerModelControl(props: {
             numberOfLines={1}
           >
             {shortLabel}
-            {summary ? ` · ${summary}` : ""}
+            {summary && !props.hideTraits ? ` · ${summary}` : ""}
           </Text>
-        ) : summary ? (
+        ) : summary && !props.hideTraits ? (
           <Text
             className={
               props.size === "large"
