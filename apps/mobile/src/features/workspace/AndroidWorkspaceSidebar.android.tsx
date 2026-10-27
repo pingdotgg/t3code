@@ -4,7 +4,6 @@ import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -30,17 +29,19 @@ export function AndroidWorkspaceSidebar(props: {
           <View className="flex-1 bg-screen" />
         ) : (
           <WorkspaceTabsContext value={context}>
-            <PullRequestFilterMenuProvider>
-              <View className="flex-1 bg-header">
-                <PullRequestToolbar onRequestVisibility={props.onRequestVisibility} />
-                <ScreenContent insetHorizontal>
-                  <PullRequestsScreen
-                    sidebar
-                    selectedPullRequestKey={props.selectedPullRequestKey}
+            <PullRequestsScreen
+              sidebar
+              selectedPullRequestKey={props.selectedPullRequestKey}
+              renderFrame={(filters, list) => (
+                <View className="flex-1 bg-header">
+                  <PullRequestToolbar
+                    filters={filters}
+                    onRequestVisibility={props.onRequestVisibility}
                   />
-                </ScreenContent>
-              </View>
-            </PullRequestFilterMenuProvider>
+                  <ScreenContent insetHorizontal>{list}</ScreenContent>
+                </View>
+              )}
+            />
           </WorkspaceTabsContext>
         )
       }

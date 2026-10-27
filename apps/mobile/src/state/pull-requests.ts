@@ -4,7 +4,8 @@ import {
 } from "@t3tools/client-runtime/state/pull-requests";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import {
   pullRequestListHead,
@@ -28,6 +29,14 @@ export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =
 );
 
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+  // A new head can change which files GitHub still counts as viewed, so the viewed-files read is
+  // refreshed where the new head lands. The detail atom still holds the previous answer here.
+  detail: (target, value, registry) =>
+    Effect.sync(() => {
+      const previous = AsyncResult.value(registry.get(composerPullRequests.detail(target)));
+      if (Option.isSome(previous) && previous.value.headSha !== value.headSha)
+        registry.refresh(composerPullRequests.filesViewed(target));
+    }),
   list: (target, value, registry) =>
     target.input.cursors === undefined
       ? Effect.sync(() =>

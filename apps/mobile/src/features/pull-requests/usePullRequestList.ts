@@ -1,6 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -156,15 +156,20 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   // Starting one kind of load clears the other, so at most one holds an error.
   const loadError = settledError(refresh) ?? settledError(page);
 
+  // Read from the registry, not the render: a second onEndReached before React re-renders must
+  // see the load the first one started.
   const loadMore = (retry = false) => {
-    if (page.waiting || refresh.waiting || (!retry && loadError)) return;
+    const pageResult = registry.get(pageAtom);
+    const refreshResult = registry.get(refreshAtom);
+    if (pageResult.waiting || refreshResult.waiting) return;
+    if (!retry && (settledError(refreshResult) ?? settledError(pageResult))) return;
     if (!continuations(registry, targets).length) return;
     registry.set(refreshAtom, Atom.Reset);
     registry.set(pageAtom, retry);
   };
 
   const onRefresh = () => {
-    if (!targets.length || refresh.waiting) return;
+    if (!targets.length || registry.get(refreshAtom).waiting) return;
     registry.set(pageAtom, Atom.Reset);
     registry.set(refreshAtom, undefined);
   };
@@ -249,16 +254,13 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   }, [statsKey]);
   const counts = useAtomValue(statsAtom);
   // Server answers land in pullRequestListStatsFamily; these cover a cached answer, which is
-  // all an offline environment has.
+  // all an offline environment has. Scrolling makes a new stats query, which has no answer until
+  // its cached rows load, so each environment keeps the answer it showed until the new one lands.
+  const [shown, setShown] = useState({ counts, answers: answeredStats(counts, []) });
+  if (shown.counts !== counts) setShown({ counts, answers: answeredStats(counts, shown.answers) });
   const entries = useMemo(
-    () =>
-      withShownPullRequestStats(
-        data.entries,
-        counts.flatMap(({ environmentId, result }) =>
-          AsyncResult.isSuccess(result) ? [{ environmentId, stats: result.value.stats }] : [],
-        ),
-      ),
-    [data.entries, counts],
+    () => withShownPullRequestStats(data.entries, shown.answers),
+    [data.entries, shown.answers],
   );
 
   const updateEntry = useCallback(
@@ -331,4 +333,33 @@ function requestErrors(results: readonly PromiseSettledResult<unknown>[]) {
       )
       .join("\n") || null
   );
+}
+
+type StatsAnswer = {
+  readonly environmentId: EnvironmentId;
+  readonly stats: readonly PullRequestDiffStat[];
+};
+
+/** Each environment's newest stats answer, or the one it had while its query has none. */
+function answeredStats(
+  counts: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly result: AsyncResult.AsyncResult<
+      { readonly stats: readonly PullRequestDiffStat[] },
+      unknown
+    >;
+  }[],
+  previous: readonly StatsAnswer[],
+): readonly StatsAnswer[] {
+  const next = counts.flatMap(({ environmentId, result }) => {
+    const kept = previous.find((answer) => answer.environmentId === environmentId);
+    if (!AsyncResult.isSuccess(result)) return kept ? [kept] : [];
+    return kept?.stats === result.value.stats
+      ? [kept]
+      : [{ environmentId, stats: result.value.stats }];
+  });
+  return next.length === previous.length &&
+    next.every((answer, index) => answer === previous[index])
+    ? previous
+    : next;
 }

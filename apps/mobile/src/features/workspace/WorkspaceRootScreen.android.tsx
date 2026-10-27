@@ -11,7 +11,6 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../home/HomeRouteScreen";
-import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -83,12 +82,14 @@ export function WorkspaceRootScreen() {
                 ) : tab !== "pullRequests" ? (
                   <WorkspaceExtraTab tab={tab} />
                 ) : (
-                  <PullRequestFilterMenuProvider>
-                    <PullRequestToolbar />
-                    <ScreenContent>
-                      <PullRequestsScreen />
-                    </ScreenContent>
-                  </PullRequestFilterMenuProvider>
+                  <PullRequestsScreen
+                    renderFrame={(filters, list) => (
+                      <>
+                        <PullRequestToolbar filters={filters} />
+                        <ScreenContent>{list}</ScreenContent>
+                      </>
+                    )}
+                  />
                 )
               }
             />

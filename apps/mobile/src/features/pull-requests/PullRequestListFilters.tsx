@@ -1,10 +1,13 @@
+import { useAtomValue } from "@effect/atom-react";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
+import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
-import { usePublishPullRequestFilterMenu } from "./PullRequestFilterMenuContext";
-import { useProjects, useThreadShells } from "../../state/entities";
+import { environmentProjects } from "../../state/projects";
+import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
 import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
@@ -39,32 +42,58 @@ function choices(field: string, options: Readonly<Record<string, string>>, selec
   }));
 }
 
+type ProjectOrder = readonly { readonly memberProjectRefs: readonly ScopedProjectRef[] }[];
+const sameProjectOrder = (previous: ProjectOrder, next: ProjectOrder) =>
+  previous.length === next.length &&
+  previous.every((group, index) => {
+    const members = next[index]!.memberProjectRefs;
+    return (
+      group.memberProjectRefs.length === members.length &&
+      group.memberProjectRefs.every(
+        (ref, member) =>
+          ref.environmentId === members[member]!.environmentId &&
+          ref.projectId === members[member]!.projectId,
+      )
+    );
+  });
+
+// Thread shells change on every agent tick, but the sidebar order they decide rarely does. The
+// equality check keeps the list screen, which builds these filters, from re-rendering on each tick.
+const sidebarProjectOrderFamily = Atom.family((mode: SidebarProjectGroupingMode) =>
+  Atom.make((get) =>
+    sortHomeProjectScopes({
+      scopes: buildHomeProjectScopes({
+        projects: get(environmentProjects.projectsAtom),
+        environmentId: null,
+        projectGroupingMode: mode,
+      }),
+      threads: get(environmentThreadShells.threadShellsAtom),
+      pendingTasks: [],
+      projectSortOrder: "updated_at",
+    }).map((scope) => ({ memberProjectRefs: scope.projectRefs })),
+  ).pipe(Atom.withEquality(sameProjectOrder)),
+);
+
 function useProjectsInSidebarOrder<Project extends { id: string; environmentId: string }>(
   projects: readonly Project[],
 ) {
-  const allProjects = useProjects();
-  const threads = useThreadShells();
   const { sidebarProjectGroupingMode } = useMobileProjectGroupingSettings();
-  const scopes = useMemo(
-    () =>
-      sortHomeProjectScopes({
-        scopes: buildHomeProjectScopes({
-          projects: allProjects,
-          environmentId: null,
-          projectGroupingMode: sidebarProjectGroupingMode,
-        }),
-        threads,
-        pendingTasks: [],
-        projectSortOrder: "updated_at",
-      }).map((scope) => ({ memberProjectRefs: scope.projectRefs })),
-    [allProjects, sidebarProjectGroupingMode, threads],
-  );
+  const scopes = useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
   return useMemo(() => sortProjectsByGroupOrder(projects, scopes), [projects, scopes]);
 }
 
-export function PullRequestListFilters(props: {
-  /** Android sidebar rows sit further in than full-width rows; the pills follow them. */
-  readonly sidebar?: boolean;
+export interface PullRequestFilterMenu {
+  readonly actions: MenuProps["actions"];
+  readonly onSelect: (id: string) => void;
+  /** Whether any filter, the environment, or a non-default sort is active. */
+  readonly customized: boolean;
+}
+
+/**
+ * Builds the filter pills and, on Android, the header's full filter menu. The list screen owns
+ * the call so both the pills and the header it frames read the same menu.
+ */
+export function usePullRequestListFilters(props: {
   readonly environments: readonly { id: string; label: string }[];
   readonly environmentId: string | null;
   readonly onEnvironmentChange: (id: string | null) => void;
@@ -280,7 +309,7 @@ export function PullRequestListFilters(props: {
   ];
   const customized = count > 0 || value.sort !== "updated" || props.environmentId !== null;
   // The Android header's filter button opens every filter.
-  const headerMenu =
+  const headerMenu: PullRequestFilterMenu | null =
     Platform.OS === "android"
       ? {
           actions: [
@@ -296,7 +325,35 @@ export function PullRequestListFilters(props: {
           customized,
         }
       : null;
-  usePublishPullRequestFilterMenu(headerMenu);
+  return {
+    headerMenu,
+    select,
+    count,
+    more,
+    reset,
+    environmentLabel:
+      props.environments.length > 1
+        ? (props.environments.find((environment) => environment.id === props.environmentId)
+            ?.label ?? "All environments")
+        : null,
+    environmentActions,
+    state: value.state,
+    stateActions,
+    involvement: value.involvement,
+    involvementActions,
+    selectedLabelCount: selectedLabels.length,
+    labelActions,
+    author,
+    authorActions,
+  };
+}
+
+export function PullRequestListFilters(props: {
+  /** Android sidebar rows sit further in than full-width rows; the pills follow them. */
+  readonly sidebar?: boolean;
+  readonly filters: ReturnType<typeof usePullRequestListFilters>;
+}) {
+  const { count, more, reset, select, author, selectedLabelCount } = props.filters;
   return (
     <ScrollView
       horizontal
@@ -319,43 +376,40 @@ export function PullRequestListFilters(props: {
           onSelect={select}
         />
       )}
-      {props.environments.length > 1 ? (
+      {props.filters.environmentLabel !== null ? (
         <ListFilterMenu
-          label={
-            props.environments.find((environment) => environment.id === props.environmentId)
-              ?.label ?? "All environments"
-          }
+          label={props.filters.environmentLabel}
           accessibilityLabel="Choose pull request environment"
-          actions={environmentActions}
+          actions={props.filters.environmentActions}
           onSelect={select}
         />
       ) : null}
       <ListFilterMenu
-        label={STATES[value.state]}
-        active={value.state !== "open"}
+        label={STATES[props.filters.state]}
+        active={props.filters.state !== "open"}
         accessibilityLabel="Filter by state"
-        actions={stateActions}
+        actions={props.filters.stateActions}
         onSelect={select}
       />
       <ListFilterMenu
-        label={INVOLVEMENT[value.involvement]}
-        active={value.involvement !== "all"}
+        label={INVOLVEMENT[props.filters.involvement]}
+        active={props.filters.involvement !== "all"}
         accessibilityLabel="Filter by involvement"
-        actions={involvementActions}
+        actions={props.filters.involvementActions}
         onSelect={select}
       />
       <ListFilterMenu
-        label={selectedLabels.length ? `Labels ${selectedLabels.length}` : "Labels"}
-        active={selectedLabels.length > 0}
+        label={selectedLabelCount ? `Labels ${selectedLabelCount}` : "Labels"}
+        active={selectedLabelCount > 0}
         accessibilityLabel="Filter by label"
-        actions={labelActions}
+        actions={props.filters.labelActions}
         onSelect={select}
       />
       <ListFilterMenu
         label={author === "me" ? "By you" : (author ?? "Author")}
         active={Boolean(author)}
         accessibilityLabel="Filter by author"
-        actions={authorActions}
+        actions={props.filters.authorActions}
         onSelect={select}
       />
     </ScrollView>
