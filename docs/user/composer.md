@@ -190,7 +190,7 @@ The list mixes kinds (built-in, other wired, other Bluetooth, CarPlay) with wire
 Bluetooth devices you have dictated with, listed by name. Drag to rank them together:
 for example, put **Other Bluetooth** above your AirPods so a new headset is preferred
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
-microphone.
+microphone. Swipe a device left to forget it.
 
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
