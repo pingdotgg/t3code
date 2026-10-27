@@ -7,7 +7,8 @@ import type { HomeProjectScope } from "../home/homeThreadList";
 type DraftProjectSelectionResolution =
   | { readonly kind: "preserve" }
   | { readonly kind: "select"; readonly project: EnvironmentProject }
-  | { readonly kind: "pick" };
+  | { readonly kind: "pick" }
+  | { readonly kind: "dismiss" };
 
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
@@ -34,13 +35,6 @@ export function filterProjectScopes(
           project.workspaceRoot.toLowerCase().includes(query),
       ),
   );
-}
-
-function getOnlySelectableProject(
-  projectScopes: ReadonlyArray<HomeProjectScope>,
-): EnvironmentProject | null {
-  const onlyScope = projectScopes.length === 1 ? projectScopes[0] : null;
-  return onlyScope?.representative ?? null;
 }
 
 export function resolveEnvironmentProjectMatch(
@@ -89,6 +83,11 @@ export function resolveDraftProjectSelection(
   selectedProjectKey: string | null,
   projects: ReadonlyArray<EnvironmentProject>,
   projectScopes: ReadonlyArray<HomeProjectScope>,
+  draft: {
+    readonly incomingShareId: string | undefined;
+    /** The draft's first project picker closed and the draft is showing again. */
+    readonly pickerClosed: boolean;
+  },
 ): DraftProjectSelectionResolution {
   const hasExplicitProjectSelection =
     selectedProjectKey !== null &&
@@ -98,30 +97,41 @@ export function resolveDraftProjectSelection(
   if (hasExplicitProjectSelection) {
     return { kind: "preserve" };
   }
+  // A share draft holds content the user sent here, so cancelling the picker must not drop it.
+  if (draft.pickerClosed && selectedProjectKey === null && draft.incomingShareId === undefined) {
+    return { kind: "dismiss" };
+  }
 
-  const onlyProject = getOnlySelectableProject(projectScopes);
-  return onlyProject ? { kind: "select", project: onlyProject } : { kind: "pick" };
+  const onlyScope =
+    draft.incomingShareId !== undefined && projectScopes.length === 1 ? projectScopes[0] : null;
+  return onlyScope ? { kind: "select", project: onlyScope.representative } : { kind: "pick" };
 }
 
-export function newTaskDestination(
-  _usesSplitView: boolean,
-  projects: ReadonlyArray<EnvironmentProject>,
-  currentProject: Pick<EnvironmentProject, "environmentId" | "id"> | undefined,
-  requestId: string,
-) {
+type ProjectRef = { readonly environmentId: string; readonly projectId: string };
+
+export function newTaskDestination(options: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly requestId: string;
+  readonly useLastProject: boolean | undefined;
+  readonly currentProject: ProjectRef | undefined;
+  readonly lastProject: ProjectRef | undefined;
+}) {
+  const find = (ref: ProjectRef | undefined) =>
+    ref &&
+    options.projects.find(
+      (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
+    );
   const project =
-    projects.find(
-      (candidate) =>
-        candidate.environmentId === currentProject?.environmentId &&
-        candidate.id === currentProject.id,
-    ) ?? projects[0];
+    options.useLastProject === false
+      ? undefined
+      : (find(options.currentProject) ?? find(options.lastProject));
   return project
     ? {
         draft: {
-          requestId,
+          requestId: options.requestId,
           environmentId: String(project.environmentId),
           projectId: String(project.id),
         },
       }
-    : { draft: { requestId } };
+    : { draft: { requestId: options.requestId } };
 }

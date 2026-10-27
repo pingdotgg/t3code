@@ -523,24 +523,27 @@ function AdaptiveWorkspaceLayoutContent(
         : undefined;
     const first = (value: string | string[] | undefined) =>
       Array.isArray(value) ? value[0] : value;
-    const thread = appAtomRegistry
-      .get(environmentThreadShells.navigationThreadShellsAtom)
-      .find(
-        (candidate) =>
-          candidate.environmentId === first(params?.environmentId) &&
-          candidate.id === first(params?.threadId),
-      );
-    const draft = params?.draft;
-    const draftEnvironmentId = first(draft?.environmentId);
-    const draftProjectId = first(draft?.projectId);
-    const currentProject = thread
-      ? { environmentId: thread.environmentId, id: thread.projectId }
-      : projects.find(
-          (project) =>
-            project.environmentId === draftEnvironmentId && project.id === draftProjectId,
-        );
+    const environmentId = first(params?.environmentId);
+    const threadId = first(params?.threadId);
+    // The full index, not the sidebar list: subagent and archived threads are current threads too.
+    const projectId =
+      environmentId && threadId
+        ? appAtomRegistry
+            .get(
+              environmentThreadShells.environmentThreadIndexAtom(EnvironmentId.make(environmentId)),
+            )
+            .get(ThreadId.make(threadId))?.projectId
+        : undefined;
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
     handleSelectThreadRoute(
-      newTaskDestination(layout.usesSplitView, projects, currentProject, uuidv4()),
+      newTaskDestination({
+        projects,
+        requestId: uuidv4(),
+        useLastProject: saved?.useLastProjectForNewThreads,
+        currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
+        lastProject: saved?.lastThreadProject,
+      }),
     );
   };
 

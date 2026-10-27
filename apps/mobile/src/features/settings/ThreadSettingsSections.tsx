@@ -195,6 +195,25 @@ export function WorkingSectionSettings() {
   );
 }
 
+export function NewThreadSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const useLastProject =
+    AsyncResult.isSuccess(preferences) && preferences.value.useLastProjectForNewThreads !== false;
+
+  return (
+    <SettingsSection title="New threads">
+      <SettingsSwitchRow
+        icon="square.and.pencil"
+        label="Use last project"
+        subtitle="Start new threads in the last project you used on this device."
+        value={useLastProject}
+        onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
+      />
+    </SettingsSection>
+  );
+}
+
 function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
