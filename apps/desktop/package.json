@@ -7,8 +7,7 @@
   "scripts": {
     "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
     "start": "node scripts/start-electron.mjs",
-    "test": "vp test run --passWithNoTests",
-    "smoke-test": "node scripts/smoke-test.mjs"
+    "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
     "@clerk/electron": "catalog:",

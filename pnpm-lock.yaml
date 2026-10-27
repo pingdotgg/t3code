@@ -2258,6 +2258,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
       plist:
         specifier: 'catalog:'
         version: 3.1.1

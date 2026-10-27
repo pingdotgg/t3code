@@ -619,6 +619,7 @@ jobs:
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: true
+      launch_check: true
 
   desktop_mac_x64:
     name: Desktop macOS x64
@@ -668,6 +669,7 @@ jobs:
       rust_target: x86_64-unknown-linux-gnu
       resource_key: linux-x64
       cli_archive: true
+      launch_check: true
 
   # node-pty has no Linux prebuild and compiles from source, so the arm64 app
   # and archive are built on arm64 hardware rather than cross-built.
