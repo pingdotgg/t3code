@@ -72,6 +72,18 @@ export type ThreadListV2Status =
   | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
+/**
+ * Presets for a row's snooze menu, read at the list's minute instead of the
+ * clock: the compiler keys a row's memo on its inputs, so a clock read inside
+ * it would keep the times from the row's first render.
+ */
+export function resolveThreadListV2SnoozePresets(input: {
+  readonly secondary: "snooze" | null;
+  readonly now: string;
+}): ReadonlyArray<SnoozePreset> {
+  return input.secondary === "snooze" ? resolveSnoozePresets(new Date(input.now)) : [];
+}
+
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
