@@ -93,7 +93,7 @@ import {
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import {
-  resolveNewTaskEnvironmentProject,
+  resolveEnvironmentProjectMatch,
   resolveNewTaskEnvironments,
 } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
@@ -588,13 +588,12 @@ export function NewTaskFlowProvider(
   };
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
-    const match = resolveNewTaskEnvironmentProject({
-      environmentId,
-      projects,
+    const match = resolveEnvironmentProjectMatch(
+      projects.filter((project) => project.environmentId === environmentId),
       selectedProject,
-      pendingProject: null,
-      settings: groupingSettings,
-    });
+      groupingSettings,
+      projects,
+    );
     if (!match) return false;
     updateFlow({
       draftKey: carryDraftContentTo(match),
@@ -778,9 +777,6 @@ export function NewTaskFlowProvider(
         projectId: selectedProject.id,
         projectTitle: selectedProject.title,
         projectCwd: selectedProject.workspaceRoot,
-        ...(selectedProject.groupingIdentity !== undefined
-          ? { groupingIdentity: selectedProject.groupingIdentity }
-          : {}),
         workspaceMode: mode,
         ...(mode === "worktree" && workspaceSelection?.pullRequestReference
           ? { pullRequestReference: workspaceSelection.pullRequestReference }
@@ -820,7 +816,6 @@ export function NewTaskFlowProvider(
       selectedProject,
       settings: groupingSettings,
       savedConnectionsById,
-      pendingTaskEnvironmentId: null,
     });
   })();
 
