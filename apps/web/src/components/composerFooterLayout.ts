@@ -55,11 +55,8 @@ export function resolveComposerTimelineInset(input: {
   overlayHeight: number;
   isResting: boolean;
   restingOnlyHeight?: number;
-  expandedNoticesHeight?: number;
 }): number {
-  // Expanded notices temporarily cover the timeline. Remove their growth before
-  // rounding so fractional measurements reserve exactly the collapsed height.
-  const overlayHeight = Math.ceil(input.overlayHeight - (input.expandedNoticesHeight ?? 0));
+  const overlayHeight = Math.ceil(input.overlayHeight);
   return input.isResting
     ? Math.max(
         input.currentInset,

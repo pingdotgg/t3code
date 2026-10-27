@@ -1,9 +1,8 @@
 # Updating T3 Code
 
 The app you use and the server running your agents can be on different machines.
-When a server is behind your web or desktop app, an update notice appears in the
-conversation and **Settings → Environments**. Update the machine named in that
-notice.
+When a server is behind your web or desktop app, the update button at the bottom
+of the sidebar and **Settings → Environments** offer to update it.
 
 ## Update everything at once
 
@@ -25,8 +24,8 @@ restarts.
 
 Server updates appear only after that version is published to npm. Remote
 desktop apps do not wait for npm. The confirmation lists each machine it skips
-and why, such as a machine that is offline or needs a manual update. Use the
-notice or **Settings → Environments** for those.
+and why, such as a machine that is offline or needs a manual update. Use
+**Settings → Environments** for those.
 
 If a desktop app restarts on its old version, T3 Code tells you the update did
 not apply. It does not install that version again on its own, even when another

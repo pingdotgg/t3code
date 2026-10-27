@@ -167,6 +167,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
   if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
     return "message-circle";
   }
+  if (workEntry.itemType === "todo_list") return "list-todo";
   if (workEntry.toolSurface) return workEntry.toolSurface;
   if (
     workEntry.structuredPayload?.type === "dynamic_tool" &&

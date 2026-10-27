@@ -488,7 +488,11 @@ function GuestThread({
           }
         />
         {follow.showScrollToBottom ? (
-          <ScrollToEndButton bottom={4} onScrollToEnd={() => follow.scrollToEnd(true)} />
+          <ScrollToEndButton
+            summary={null}
+            bottom={4}
+            onScrollToEnd={() => follow.scrollToEnd(true)}
+          />
         ) : null}
       </div>
       <div className={cn(LANE, "shrink-0 pb-4")}>

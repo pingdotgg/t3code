@@ -29,35 +29,6 @@ describe("resolveComposerTimelineInset", () => {
       }),
     ).toBe(expanded);
   });
-
-  it("keeps the timeline reservation stable through notice expansion and collapse", () => {
-    const collapsed = resolveComposerTimelineInset({
-      currentInset: 0,
-      overlayHeight: 172,
-      isResting: false,
-    });
-    const expanded = resolveComposerTimelineInset({
-      currentInset: collapsed,
-      overlayHeight: 532,
-      isResting: false,
-      expandedNoticesHeight: 360,
-    });
-    expect(expanded).toBe(collapsed);
-    const resting = resolveComposerTimelineInset({
-      currentInset: expanded,
-      overlayHeight: 470,
-      isResting: true,
-      expandedNoticesHeight: 360,
-    });
-    expect(resting).toBe(collapsed);
-    expect(
-      resolveComposerTimelineInset({
-        currentInset: resting,
-        overlayHeight: 110,
-        isResting: true,
-      }),
-    ).toBe(collapsed);
-  });
 });
 
 describe("context strip labels and resting composer controls", () => {
