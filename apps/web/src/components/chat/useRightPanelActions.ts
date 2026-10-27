@@ -23,6 +23,7 @@ import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
 import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
+import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
@@ -37,6 +38,7 @@ interface RightPanelActionsInput {
   readonly activeRightPanelSurface: RightPanelSurface | null;
   readonly activePreviewState: ThreadPreviewState;
   readonly deviceState: ReturnType<typeof useDeviceState>["state"];
+  readonly deviceStateLoaded: boolean;
   readonly pullRequestPanelTarget: ReturnType<typeof threadPullRequestPanelTarget> | null;
   readonly threadPanelPresentation: ThreadPanelPresentation;
   readonly isServerThread: boolean;
@@ -69,6 +71,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activeRightPanelSurface,
     activePreviewState,
     deviceState,
+    deviceStateLoaded,
     pullRequestPanelTarget,
     threadPanelPresentation,
     isServerThread,
@@ -164,9 +167,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           .getState()
           .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
       } else if (activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target) {
-        usePreviewMiniPlayerStore
-          .getState()
-          .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
+        floatDeviceSurface(
+          activeThreadRef,
+          { kind: "device", ...activeRightPanelSurface.target },
+          deviceStateLoaded ? deviceState : null,
+        );
       }
       useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);
