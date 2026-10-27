@@ -976,24 +976,27 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
   );
 
   it.effect.each([
-    { before: "running", after: "failed", capture: false },
-    { before: "waiting", after: "completed", capture: true },
+    { command: "acknowledge", before: "running", after: "failed", capture: false },
+    { command: "acknowledge", before: "waiting", after: "completed", capture: true },
+    { command: "accept", before: "waiting", after: "completed", capture: true },
   ] as const)(
-    "keeps a $after run that settled between task_status's acknowledge read and commit",
-    ({ before, after, capture }) =>
+    "keeps a $after run that settled between $command's read and commit",
+    ({ command, before, after, capture }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
         const now = yield* DateTime.now;
-        const threadId = ThreadId.make(`thread:ack-settle-race-${after}`);
-        const runId = RunId.make(`run:ack-settle-race-${after}`);
-        const taskId = NodeId.make(`node:ack-settle-race-${after}-task`);
-        const checkpointId = CheckpointId.make(`checkpoint:ack-settle-race-${after}`);
+        const race = `${command}-settle-race-${after}`;
+        const threadId = ThreadId.make(`thread:${race}`);
+        const runId = RunId.make(`run:${race}`);
+        const taskId = NodeId.make(`node:${race}-task`);
+        const checkpointId = CheckpointId.make(`checkpoint:${race}`);
+        const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
         yield* seedParentWithTerminalTask({
           threadId,
-          projectId: ProjectId.make(`project:ack-settle-race-${after}`),
+          projectId: ProjectId.make(`project:${race}`),
           runId,
-          rootNodeId: NodeId.make(`node:ack-settle-race-${after}-root`),
+          rootNodeId: NodeId.make(`node:${race}-root`),
           taskId,
           deliveryState: "claimed",
           deliveryTaskIds: [taskId],
@@ -1003,12 +1006,34 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         yield* sink.write({
           events: [
             {
-              id: EventId.make(`event:ack-settle-race-${after}-before`),
+              id: EventId.make(`event:${race}-before`),
               type: "run.updated",
               threadId,
               runId,
               occurredAt: now,
               payload: { ...parent, status: before },
+            },
+            {
+              id: EventId.make(`event:${race}-message`),
+              type: "message.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: messageId,
+                threadId,
+                runId,
+                nodeId: parent.rootNodeId,
+                role: "user",
+                text: "Background task finished",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: now,
+                updatedAt: now,
+                delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+              },
             },
           ],
         });
@@ -1021,19 +1046,22 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
               Effect.gen(function* () {
                 if (
                   !settled &&
-                  input.commandType === "delegated_task.completion-delivery.acknowledge"
+                  input.commandType ===
+                    (command === "accept"
+                      ? "notification.delivery.accept"
+                      : "delegated_task.completion-delivery.acknowledge")
                 ) {
                   settled = true;
-                  // The provider turn ends (or its checkpoint lands) after acknowledge read the run.
+                  // The provider turn ends (or its checkpoint lands) after the command read the run.
                   yield* commit({
-                    commandId: CommandId.make(`command:ack-settle-race-${after}`),
+                    commandId: CommandId.make(`command:${race}`),
                     threadId,
                     commandType: capture ? "checkpoint.capture" : "provider.event",
                     acceptedAt: now,
                     effects: [],
                     events: [
                       {
-                        id: EventId.make(`event:ack-settle-race-${after}-settled`),
+                        id: EventId.make(`event:${race}-settled`),
                         type: "run.updated",
                         threadId,
                         runId,
@@ -1053,19 +1081,31 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
             ),
           ),
           () =>
-            orchestrator.dispatch({
-              type: "delegated_task.completion-delivery.acknowledge",
-              commandId: CommandId.make(`command:ack-settle-race-${after}:task-status`),
-              parentThreadId: threadId,
-              taskId,
-              observedByRunId: runId,
-            }),
+            orchestrator.dispatch(
+              command === "accept"
+                ? {
+                    type: "notification.delivery.accept",
+                    commandId: CommandId.make(`command:${race}:accept`),
+                    threadId,
+                    messageId,
+                  }
+                : {
+                    type: "delegated_task.completion-delivery.acknowledge",
+                    commandId: CommandId.make(`command:${race}:task-status`),
+                    parentThreadId: threadId,
+                    taskId,
+                    observedByRunId: runId,
+                  },
+            ),
           (spy) => Effect.sync(() => spy.mockRestore()),
         );
         assert.isTrue(settled);
-        const run = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-          (candidate) => candidate.id === runId,
-        )!;
+        const finished = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          finished.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
+          command === "accept" ? "delivered" : "acknowledged",
+        );
+        const run = finished.runs.find((candidate) => candidate.id === runId)!;
         assert.deepEqual(
           { status: run.status, completedAt: run.completedAt, checkpointId: run.checkpointId },
           { status: after, completedAt: now, checkpointId: capture ? checkpointId : null },
