@@ -115,7 +115,10 @@ export function appendVoiceCaption(
 ): ReadonlyArray<VoiceCaption> {
   const openIndex = captions.findLastIndex((caption) => caption.role === role && !caption.final);
   if (openIndex === -1) {
-    return [...captions, { role, text: delta.trimStart(), final: false }].slice(-MAX_CAPTIONS);
+    return [
+      ...captions,
+      { role, text: delta.trimStart().slice(-MAX_CAPTION_CHARS), final: false },
+    ].slice(-MAX_CAPTIONS);
   }
   const open = captions[openIndex]!;
   const text = (open.text + delta).slice(-MAX_CAPTION_CHARS);
