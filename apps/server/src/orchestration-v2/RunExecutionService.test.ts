@@ -2933,6 +2933,87 @@ it.effect("interrupts open tool items but preserves completed tools on a planned
   }),
 );
 
+it.effect("flushes the latest buffered assistant message on a planned detach", () =>
+  Effect.gen(function* () {
+    const key = "workspace-detach-message";
+    const now = yield* DateTime.now;
+    const { ingested } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.fromIterable(
+            ["partial", "partial final words"].map((text) => ({
+              type: "message.updated" as const,
+              driver,
+              message: {
+                id: MessageId.make(`message:${key}`),
+                threadId: ids.threadId,
+                runId: ids.runId,
+                nodeId: ids.rootNodeId,
+                role: "assistant" as const,
+                text,
+                attachments: [],
+                streaming: true,
+                createdBy: "agent" as const,
+                creationSource: "provider" as const,
+                createdAt: now,
+                updatedAt: now,
+              },
+            })),
+          ),
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterSessionDetached({
+              driver,
+              providerSessionId: ProviderSessionId.make(`session:${key}`),
+              threadId: ids.threadId,
+              reason: "workspace_changed",
+            }),
+          ),
+        ),
+    });
+    const messages = ingested.flatMap((event) =>
+      event.type === "message.updated" ? [event.message] : [],
+    );
+    assert.equal(messages.at(-1)?.text, "partial final words");
+    assert.equal(messages.at(-1)?.streaming, false);
+  }),
+);
+
+it.effect(
+  "ends background items detached after the root has finalized without finalizing twice",
+  () =>
+    Effect.gen(function* () {
+      const key = "workspace-detach-after-root";
+      const { ingested, observed } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.concat(
+            Stream.make(
+              backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+              rootTerminalEvent(ids, "completed"),
+            ),
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterSessionDetached({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                threadId: ids.threadId,
+                reason: "workspace_changed",
+              }),
+            ),
+          ),
+      });
+      assert.equal(
+        ingested.filter(
+          (event) => event.type === "turn_item.updated" && event.turnItem.status === "interrupted",
+        ).length,
+        1,
+      );
+      assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+    }),
+);
+
 it.effect("refreshes pull requests after a provider stream exits with an error", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
