@@ -1,6 +1,5 @@
 import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
-import type { Processor } from "unified";
-import { isWindowsAbsolutePath } from "./path.ts";
+import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import type { PluggableList } from "unified";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -300,52 +299,6 @@ function remarkNormalizeLinksAndTagInlineCode() {
 
     visit(tree, false);
   };
-}
-
-interface DestinationCompileContext {
-  readonly stack: ReadonlyArray<{ readonly type: string; url?: string }>;
-  resume(): string;
-  sliceSerialize(token: unknown): string;
-}
-
-function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
-  const decoded = this.resume();
-  const authored = this.sliceSerialize(token);
-  const node = this.stack.at(-1);
-  // Character references still need decoding, so those destinations keep the parsed URL.
-  if (node)
-    node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
-}
-
-const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
-
-interface EscapeCompileContext {
-  readonly stack: ReadonlyArray<{
-    readonly type: string;
-    children?: Array<{ type: string; value?: string }>;
-  }>;
-}
-
-function keepWindowsPathEscape(this: EscapeCompileContext) {
-  const text = this.stack.at(-1)?.children?.at(-1);
-  if (text?.type !== "text" || text.value === undefined) return;
-  const before = text.value.slice(0, -1);
-  if (UNFINISHED_DRIVE_PATH.test(before)) text.value = `${before}\\${text.value.slice(-1)}`;
-}
-
-/**
- * CommonMark treats backslashes as escapes; preserve them as separators in Windows destinations
- * and drive-path prose. Prose paths end at whitespace so later escapes still work.
- */
-function remarkKeepWindowsPaths(this: Processor) {
-  const data = this.data();
-  (data.fromMarkdownExtensions ??= []).push({
-    exit: {
-      resourceDestinationString: keepWindowsPathDestination,
-      definitionDestinationString: keepWindowsPathDestination,
-      characterEscape: keepWindowsPathEscape,
-    },
-  });
 }
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {

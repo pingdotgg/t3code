@@ -330,3 +330,11 @@ describe("Windows paths in native Markdown", () => {
     expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
   });
 });
+
+it("keeps backslashes in drive paths in mobile Markdown prose", () => {
+  const path = String.raw`Saved to C:\Users\me\.t3\_build\shot.png and C:/work\.config.`;
+
+  expect(parseMarkdownDocument(String.raw`${path} Then \*this\*.`).children).toMatchObject([
+    { type: "paragraph", children: [{ type: "text", value: `${path} Then *this*.` }] },
+  ]);
+});
