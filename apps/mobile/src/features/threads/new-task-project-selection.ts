@@ -80,7 +80,6 @@ export function resolveNewTaskScratchOption(input: {
   return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
 }
 
-
 export function resolveEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
@@ -99,24 +98,6 @@ export function resolveEnvironmentProjectMatch(
   );
 }
 
-export function resolveNewTaskEnvironmentProject(input: {
-  readonly environmentId: EnvironmentId;
-  readonly projects: ReadonlyArray<EnvironmentProject>;
-  readonly selectedProject: EnvironmentProject | null;
-  readonly pendingProject: EnvironmentProject | null;
-  readonly settings: ProjectGroupingSettings;
-}): EnvironmentProject | null {
-  return (
-    resolveEnvironmentProjectMatch(
-      input.projects.filter((project) => project.environmentId === input.environmentId),
-      input.selectedProject,
-      input.settings,
-      input.projects,
-    ) ?? (input.pendingProject?.environmentId === input.environmentId ? input.pendingProject : null)
-  );
-}
-
-/** Keep a queued task's host available even before its project shell loads. */
 export function resolveNewTaskEnvironments(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly selectedProject: EnvironmentProject | null;
@@ -124,7 +105,6 @@ export function resolveNewTaskEnvironments(input: {
   readonly savedConnectionsById: Readonly<
     Record<string, { readonly environmentLabel: string } | undefined>
   >;
-  readonly pendingTaskEnvironmentId: EnvironmentId | null;
 }): Array<{ readonly environmentId: EnvironmentId; readonly environmentLabel: string }> {
   const matchingProjects = input.selectedProject
     ? (resolveProjectGroup(input.selectedProject, input.projects, input.settings)?.members.map(
@@ -132,9 +112,6 @@ export function resolveNewTaskEnvironments(input: {
       ) ?? [])
     : input.projects;
   const candidates = matchingProjects.map((project) => project.environmentId);
-  if (input.pendingTaskEnvironmentId !== null) {
-    candidates.unshift(input.pendingTaskEnvironmentId);
-  }
   return [...new Set(candidates)].flatMap((environmentId) => {
     const environment = input.savedConnectionsById[environmentId];
     return environment ? [{ environmentId, environmentLabel: environment.environmentLabel }] : [];
