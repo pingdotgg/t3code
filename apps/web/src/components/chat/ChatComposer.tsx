@@ -2380,16 +2380,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     settings.composerCollapseOnScroll &&
     !hasMultilinePrompt &&
     !composerHasExpandedChrome;
+  // Clear rather than mask: once eligibility drops, the composer stays expanded until the next
+  // scroll gesture even if it becomes eligible again.
+  if (!canScrollCollapseComposer && isComposerScrollCollapsed) {
+    setIsComposerScrollCollapsed(false);
+  }
   const composerScrollCollapseEligible = canScrollCollapseComposer && !isComposerResting;
   useLayoutEffect(() => {
     composerScrollCollapseEligibleRef.current = composerScrollCollapseEligible;
   });
-
-  useEffect(() => {
-    if (!canScrollCollapseComposer) {
-      setIsComposerScrollCollapsed(false);
-    }
-  }, [canScrollCollapseComposer, setIsComposerScrollCollapsed]);
 
   // Window activation re-fires focus; ignore that frame to keep the composer collapsed.
   useEffect(() => {
