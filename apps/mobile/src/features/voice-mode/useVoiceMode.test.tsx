@@ -42,7 +42,7 @@ beforeEach(() => {
   root = createRoot(document.createElement("div"));
 });
 afterEach(() => act(() => root.unmount()));
-const render = (overlay: boolean) =>
+const render = (overlay: boolean, overlayRoute = "ThreadFiles") =>
   act(() =>
     root.render(
       <>
@@ -50,7 +50,7 @@ const render = (overlay: boolean) =>
           <Lifecycle />
         </RouteName>
         {overlay ? (
-          <RouteName value="ThreadFiles">
+          <RouteName value={overlayRoute}>
             <Lifecycle />
           </RouteName>
         ) : null}
@@ -68,5 +68,11 @@ it("stops the previous thread when navigation selects a different thread", () =>
   render(false);
   fixture.currentThread = "thread-b";
   render(false);
+  expect(fixture.stop).toHaveBeenCalledTimes(1);
+});
+
+it("stops voice when its fullscreen thread closes over the still-mounted thread", () => {
+  render(true, "ThreadInspectorFullscreen");
+  render(false, "ThreadInspectorFullscreen");
   expect(fixture.stop).toHaveBeenCalledTimes(1);
 });

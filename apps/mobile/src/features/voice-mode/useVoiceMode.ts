@@ -48,7 +48,10 @@ export function useVoiceModeThreadLifecycle(target: VoiceSessionTarget): void {
   // oxlint-disable-next-line t3code/react-effect-budget -- Release the native call when its owning thread screen unmounts.
   useEffect(
     () => () => {
-      if (routeName === "Thread" && voiceMode.isActiveFor({ environmentId, threadId }))
+      if (
+        (routeName === "Thread" || routeName === "ThreadInspectorFullscreen") &&
+        voiceMode.isActiveFor({ environmentId, threadId })
+      )
         voiceMode.stop();
     },
     [environmentId, threadId, routeName],

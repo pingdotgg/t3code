@@ -85,11 +85,9 @@ export function makeVoiceSessionValidator(
             (session) => session.id === providerThread?.providerSessionId,
           );
           if (!session || !["ready", "running", "waiting"].includes(session.status)) {
-            return yield* Effect.fail(
-              new VoiceSessionUnavailable({
-                message: "The provider session is no longer running. Send a message first.",
-              }),
-            );
+            return yield* new VoiceSessionUnavailable({
+              message: "The provider session is no longer running. Send a message first.",
+            });
           }
         }).pipe(
           Effect.matchCause({

@@ -173,6 +173,12 @@ describe("VoiceModeController", () => {
 });
 
 describe("voice captions", () => {
+  it("bounds the first streaming caption as well as later deltas", () => {
+    const text = "a".repeat(1500) + "end";
+    expect(appendVoiceCaption([], "user", text)).toEqual([
+      { role: "user", text: text.slice(-1024), final: false },
+    ]);
+  });
   it("interleaves speakers and settles each with its final text", () => {
     let captions = appendVoiceCaption([], "user", "hello");
     captions = appendVoiceCaption(captions, "assistant", "Hi");
