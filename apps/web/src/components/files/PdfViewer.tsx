@@ -15,6 +15,7 @@ import { readBoundedDocument } from "./readBoundedDocument";
 import { openPdf } from "./pdfDocument";
 import {
   currentPdfPage,
+  pdfFindIncludes,
   pdfFindMatchRuns,
   pdfPageOffsets,
   pdfPageScrollTop,
@@ -247,7 +248,7 @@ export default function PdfViewer(props: { src: string; title: string }) {
             throw new Error(
               "This PDF has too much text to search. Save it to search in another app.",
             );
-          if (text.toLowerCase().includes(query.toLowerCase())) found.push(index);
+          if (pdfFindIncludes(text, query)) found.push(index);
         }
         if (cancelled) return;
         setRatios(sizes);

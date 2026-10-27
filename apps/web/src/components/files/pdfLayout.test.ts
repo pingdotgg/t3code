@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   currentPdfPage,
+  pdfFindIncludes,
   pdfFindMatchRuns,
   pdfPageOffsets,
   pdfPageScrollTop,
@@ -103,6 +104,36 @@ describe("pdfFindMatchRuns", () => {
       false,
       true,
     ]);
+  });
+
+  it("matches a space in the query across a line end", () => {
+    expect(
+      pdfFindMatchRuns(["Q3 quarterly", "\n", "outlook", " ahead"], "quarterly outlook"),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it("matches a word hyphenated across a line end", () => {
+    expect(pdfFindMatchRuns(["the quar-", "\n", "terly report"], "quarterly")).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it("drops a line-end hyphen after a letter outside the BMP", () => {
+    expect(pdfFindMatchRuns(["\u{10400}-", "\n", "\u{10401}"], "\u{10400}\u{10401}")).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it("finds the same pages the highlights do", () => {
+    const page = "Q3 quarterly\noutlook ahead, the quar-\nterly report";
+    expect(pdfFindIncludes(page, "Quarterly  OUTLOOK")).toBe(true);
+    expect(pdfFindIncludes(page, "quarterly report")).toBe(true);
+    expect(pdfFindIncludes(page, "bud-get")).toBe(false);
+    expect(pdfFindIncludes(page, " ")).toBe(false);
   });
 
   it("highlights nothing for a blank or missing query", () => {
