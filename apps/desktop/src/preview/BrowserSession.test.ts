@@ -168,12 +168,7 @@ describe("BrowserSession", () => {
         return granted;
       };
 
-      for (const permission of [
-        "clipboard-read",
-        "clipboard-sanitized-write",
-        "geolocation",
-        "fullscreen",
-      ]) {
+      for (const permission of ["clipboard-sanitized-write", "geolocation", "fullscreen"]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
           checkHandler(null, permission) as boolean,
@@ -222,6 +217,55 @@ describe("BrowserSession", () => {
       for (const url of ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x"]) {
         assert.isFalse(yield* request(url), `${url} must never open externally`);
       }
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("asks once per origin before a page reads the clipboard", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+      const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+      assert.isFunction(checkHandler);
+
+      const readClipboard = (requestingUrl: string) =>
+        Effect.callback<boolean>((resume) => {
+          requestHandler(
+            null,
+            "clipboard-read",
+            (granted: boolean) => resume(Effect.succeed(granted)),
+            { requestingUrl, isMainFrame: true },
+          );
+        });
+      const checkClipboard = (origin: string): boolean =>
+        checkHandler(null, "clipboard-read", origin, {}) as boolean;
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+
+      assert.isFalse(checkClipboard("https://allowed.test"));
+      assert.isTrue(yield* readClipboard("https://allowed.test/page"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      assert.strictEqual(
+        showMessageBox.mock.calls[0]?.[0].message,
+        "https://allowed.test wants to see text and images copied to the clipboard",
+      );
+      assert.deepStrictEqual(showMessageBox.mock.calls[0]?.[0].buttons, ["Allow", "Block"]);
+      // Enter must not accept a prompt the page raised while the user was typing.
+      assert.strictEqual(showMessageBox.mock.calls[0]?.[0].defaultId, 1);
+
+      assert.isTrue(yield* readClipboard("https://allowed.test/other"));
+      assert.isTrue(checkClipboard("https://allowed.test"));
+
+      assert.isFalse(yield* readClipboard("https://blocked.test/"));
+      assert.isFalse(yield* readClipboard("https://blocked.test/again"));
+      assert.isFalse(checkClipboard("https://blocked.test"));
+      assert.isTrue(checkClipboard("https://allowed.test"));
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
     }).pipe(Effect.provide(layer)),
   );
