@@ -354,6 +354,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
           break;
+        case "disable_auto_settle":
+        case "enable_auto_settle":
+          command = {
+            ...common,
+            type: "thread.auto-settle.set",
+            enabled: input.action === "enable_auto_settle",
+          };
+          break;
         default:
           command = { ...common, type: `thread.${input.action}` };
       }
