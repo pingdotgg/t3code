@@ -148,4 +148,17 @@ describe("GitHubCredentials", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("never hands a token to a host that is not a plain hostname", () => {
+    vi.stubEnv("GH_TOKEN", "env-token");
+    const { layer, calls } = harness();
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      for (const host of ["evil.com#.ghe.com", "evil.com/.ghe.com", "user@x.ghe.com"]) {
+        expect(GitHubCredentials.environmentToken(host, { GH_TOKEN: "env-token" })).toBeNull();
+        expect((yield* Effect.flip(credentials.get(host)))._tag).toBe("GitHubNotSignedInError");
+      }
+      expect(calls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
 });

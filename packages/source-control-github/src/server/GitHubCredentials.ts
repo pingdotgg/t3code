@@ -96,6 +96,14 @@ function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
 }
 
+const HOSTNAME =
+  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::\d{1,5})?$/;
+
+/** API URLs are built from the host text, so anything but a bare hostname could redirect a token. */
+export function isGitHubHost(host: string): boolean {
+  return HOSTNAME.test(host);
+}
+
 function isGitHubDotCom(host: string): boolean {
   return host === "github.com" || host.endsWith(".ghe.com");
 }
@@ -105,6 +113,7 @@ export function environmentToken(
   host: string,
   env: Readonly<Record<string, string | undefined>>,
 ): string | null {
+  if (!isGitHubHost(host)) return null;
   const names = isGitHubDotCom(host)
     ? ["GH_TOKEN", "GITHUB_TOKEN"]
     : env.GH_HOST?.trim().toLowerCase() === host
@@ -222,6 +231,7 @@ export const make = Effect.gen(function* () {
   return GitHubCredentials.of({
     get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
       const host = normalizeHost(rawHost);
+      if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
       const choice = yield* hostChoice(host);
       if (choice?.enabled === false) {
         return yield* new GitHubHostDisabledError({ host });
