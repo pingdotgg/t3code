@@ -880,7 +880,7 @@ export const layer = Layer.effect(
             : `${active.id}:webhook:${webhook.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
-        // A webhook prompt was rendered from the row when the request arrived.
+        // Webhook prompts already include the framed request data.
         const prompt = webhook?.prompt ?? active.prompt;
 
         // A bound thread can move to another project (No project to a project) while
@@ -2332,9 +2332,10 @@ export const layer = Layer.effect(
               }
               const prepared = yield* Effect.gen(function* () {
                 const task = yield* decodePendingTask(entry.task_json);
+                const current = yield* loadTask(task.id);
                 const request = yield* decodePendingRequest(entry.request_json);
                 const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
-                return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
+                return { task, rendered: renderWebhookPrompt(current.prompt, request, frameId) };
               }).pipe(Effect.exit);
               if (Exit.isFailure(prepared)) {
                 if (Cause.hasInterruptsOnly(prepared.cause))

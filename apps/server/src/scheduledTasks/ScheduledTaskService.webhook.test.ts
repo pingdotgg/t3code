@@ -1031,6 +1031,48 @@ it.effect.each([1, 3])(
   },
 );
 
+it.effect(
+  "dispatches and logs the current prompt after an edit during the coalescing window",
+  () => {
+    const workers = new Map<string, Effect.Effect<void>>();
+    return withService(
+      ({ service, launches }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(
+            yield* webhookTaskInput({
+              prompt: "Use the original instructions.",
+              schedule: {
+                type: "webhook",
+                dedupe: { coalesceKey: "{{body.id}}", coalesceWindowSeconds: 10 },
+              },
+            }),
+          );
+          yield* service.triggerWebhook(
+            requestFor(task, {
+              bodyText: '{"id":"review"}',
+              body: new TextEncoder().encode('{"id":"review"}'),
+            }),
+          );
+          yield* service.upsert(
+            yield* webhookTaskInput({ prompt: "Use the updated instructions." }),
+          );
+          yield* TestClock.adjust("11 seconds");
+          yield* drainPendingDispatch(workers);
+
+          const launched = yield* Queue.take(launches);
+          const { deliveries } = yield* service.listWebhookDeliveries({ id: task.id });
+          const { delivery } = yield* service.getWebhookDelivery({
+            id: task.id,
+            deliveryId: deliveries[0]!.id,
+          });
+          assert.equal(delivery.renderedPrompt, "Use the updated instructions.");
+          assert.equal(launched.initialMessage?.text, "Use the updated instructions.");
+        }),
+      { workers },
+    );
+  },
+);
+
 it.effect("recovers a persisted coalescing window after restarting the service", () => {
   const workers = new Map<string, Effect.Effect<void>>();
   return withService(
