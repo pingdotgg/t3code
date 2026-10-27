@@ -22,14 +22,12 @@ function ExpandableSearch({
   searchValue,
   open,
   onOpenChange,
-  focusToken,
   onFocusWithin,
 }: {
   searchInput: ReactNode;
   searchValue: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  focusToken: number;
   /**
    * An unmount fires no blur, which is the point: whoever unmounted this can still see the reader
    * was mid-typing and move the focus somewhere that continues the sentence.
@@ -41,14 +39,6 @@ function ExpandableSearch({
     if (!open) return;
     containerRef.current?.querySelector("input")?.focus();
   }, [open]);
-  const appliedFocusToken = useRef(focusToken);
-  useEffect(() => {
-    if (appliedFocusToken.current === focusToken) return;
-    appliedFocusToken.current = focusToken;
-    const input = containerRef.current?.querySelector("input");
-    input?.focus();
-    input?.select();
-  }, [focusToken]);
   if (open || searchValue.length > 0) {
     return (
       <div
@@ -134,7 +124,7 @@ export function PullRequestsColumn({
   const topbarSearchFocusedRef = useRef(false);
   const inFlowSearchRef = useRef<HTMLDivElement | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchFocusToken, setSearchFocusToken] = useState(0);
+  const topbarSearchRef = useRef<HTMLDivElement | null>(null);
   const searchExpanded = searchOpen || searchValue.length > 0;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -142,12 +132,9 @@ export function PullRequestsColumn({
       if (event.key.toLowerCase() !== "f" || !(event.metaKey || event.ctrlKey)) return;
       if (event.altKey || event.shiftKey) return;
       event.preventDefault();
-      if (condensed) {
-        setSearchOpen(true);
-        setSearchFocusToken((token) => token + 1);
-        return;
-      }
-      const input = inFlowSearchRef.current?.querySelector("input");
+      // A closed topbar search has no input yet; opening it mounts one that focuses itself.
+      if (condensed) setSearchOpen(true);
+      const input = (condensed ? topbarSearchRef : inFlowSearchRef).current?.querySelector("input");
       input?.focus();
       input?.select();
     };
@@ -217,13 +204,12 @@ export function PullRequestsColumn({
         )}
         <div className="min-w-0 flex-1" />
         {condensed ? (
-          <div className="flex shrink items-center gap-1.5">
+          <div ref={topbarSearchRef} className="flex shrink items-center gap-1.5">
             <ExpandableSearch
               searchInput={searchInput}
               searchValue={searchValue}
               open={searchOpen}
               onOpenChange={setSearchOpen}
-              focusToken={searchFocusToken}
               onFocusWithin={(focused) => {
                 topbarSearchFocusedRef.current = focused;
               }}
