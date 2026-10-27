@@ -40,9 +40,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     // oxlint-disable-next-line react/set-state-in-effect -- Draft reset runs once before first paint; initialized gates the screen until then.
     setInitialized(true);
   }, [reset]);
-  const pendingTaskId = Array.isArray(params.pendingTaskId)
-    ? params.pendingTaskId[0]
-    : params.pendingTaskId;
   const draftId = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
   const projects = useProjects();
   const { state: catalogState } = useWorkspaceState();
@@ -75,7 +72,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   );
   const environmentId = project?.environmentId;
   const workspaceRoot = project?.workspaceRoot;
-  const needsPreparation = Boolean(initialProjectRef.branch && !pendingTaskId && !draftId);
+  const needsPreparation = Boolean(initialProjectRef.branch && !draftId);
 
   const [pendingCheckouts, setPendingCheckouts] = useState(0);
   const checkoutTail = useRef(Promise.resolve());
@@ -200,7 +197,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
               ? params.incomingShareId[0]
               : params.incomingShareId
           }
-          pendingTaskId={pendingTaskId}
           draftId={draftId}
         />
       )}
