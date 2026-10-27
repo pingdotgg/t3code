@@ -62,6 +62,61 @@ const layerTest = Layer.mergeAll(
   ),
 );
 
+it.effect("a same-millisecond auto-settle disable rejects an in-flight settlement", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:auto-settle-disable-race");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-auto-settle-disable-race"),
+      threadId,
+      projectId: ProjectId.make("project:auto-settle-disable-race"),
+      title: "Follow-up work",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const snapshotAt = (yield* projections.getThread(threadId)).updatedAt;
+    yield* orchestrator.dispatch({
+      type: "thread.auto-settle.set",
+      commandId: CommandId.make("disable-auto-settle-race"),
+      threadId,
+      enabled: false,
+    });
+    const disabled = yield* projections.getThread(threadId);
+    assert.equal(DateTime.toEpochMillis(disabled.updatedAt), DateTime.toEpochMillis(snapshotAt));
+    const settlement = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make("in-flight-auto-settle-race"),
+        threadId,
+        snapshotAt,
+      }),
+    );
+    assert.equal(settlement._tag, "Failure");
+    assert.equal((yield* projections.getThread(threadId)).settledOverride, null);
+
+    yield* orchestrator.dispatch({
+      type: "thread.auto-settle.set",
+      commandId: CommandId.make("enable-auto-settle-race"),
+      threadId,
+      enabled: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.auto-settle",
+      commandId: CommandId.make("enabled-auto-settle-race"),
+      threadId,
+      snapshotAt,
+    });
+    assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "records approval feedback and targets only its runtime request without dispatching a parent turn",
   () =>

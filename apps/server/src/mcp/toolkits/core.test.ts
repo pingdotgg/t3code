@@ -666,6 +666,14 @@ it.effect("an agent turns auto-settle off and back on for only the thread it tar
         creationSource: "web",
       });
     }
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("manual-auto-settle-override"),
+      threadId: targetId,
+      reason: "user",
+    });
+    const manualOverride = (yield* threads.getThreadShell(targetId))?.settledOverride;
+    expect(manualOverride).toBe("active");
     const organize = (
       action: string,
       invocation: McpInvocationContext.McpInvocationScope = clientScope("full-access"),
@@ -683,7 +691,7 @@ it.effect("an agent turns auto-settle off and back on for only the thread it tar
     expect(disabled.isError).toBe(false);
     expect(yield* autoSettleDisabled(targetId)).toBe(true);
     expect(yield* autoSettleDisabled(siblingId)).toBe(false);
-    expect((yield* threads.getThreadShell(targetId))?.settledOverride).toBeNull();
+    expect((yield* threads.getThreadShell(targetId))?.settledOverride).toEqual(manualOverride);
 
     const readOnly = yield* organize("enable_auto_settle", clientScope("read-only"));
     expect(declaredFailure(readOnly)).toMatchObject({ code: "capability_denied" });
@@ -692,6 +700,7 @@ it.effect("an agent turns auto-settle off and back on for only the thread it tar
     const enabled = yield* organize("enable_auto_settle");
     expect(enabled.isError).toBe(false);
     expect(yield* autoSettleDisabled(targetId)).toBe(false);
+    expect((yield* threads.getThreadShell(targetId))?.settledOverride).toEqual(manualOverride);
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
