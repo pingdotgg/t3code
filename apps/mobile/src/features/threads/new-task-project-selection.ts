@@ -175,3 +175,48 @@ export function newTaskDestination(options: {
       }
     : { draft: { requestId: options.requestId } };
 }
+
+const NO_PROJECTS: ReadonlyArray<EnvironmentProject> = [];
+
+/**
+ * The selected project's copy on each machine of its logical group, the only
+ * places auto balance may send a draft. Grouping settings decide what counts
+ * as the same project, so a sibling path of the same repository is never one.
+ */
+export function resolveBalancedProjects(
+  projectScopes: ReadonlyArray<HomeProjectScope>,
+  selectedProject: EnvironmentProject | null,
+): ReadonlyArray<EnvironmentProject> {
+  if (selectedProject === null) return NO_PROJECTS;
+  const isSelected = (project: EnvironmentProject) =>
+    project.environmentId === selectedProject.environmentId && project.id === selectedProject.id;
+  const scope = projectScopes.find((candidate) => candidate.projects.some(isSelected));
+  if (!scope) return NO_PROJECTS;
+  const byEnvironment = new Map<EnvironmentId, EnvironmentProject>();
+  for (const project of scope.projects) {
+    if (isSelected(project) || !byEnvironment.has(project.environmentId)) {
+      byEnvironment.set(project.environmentId, project);
+    }
+  }
+  return [...byEnvironment.values()];
+}
+
+export type AutoBalanceStatus = "checking" | "unavailable" | "balanced";
+
+/**
+ * Where an automatically routed draft stands, or null when its machine is the
+ * user's own choice. Attachments keep a draft that has not been routed yet on
+ * its current machine; one that already was stays automatic.
+ */
+export function resolveAutoBalanceStatus(input: {
+  readonly canAutoBalance: boolean;
+  readonly environmentPinned: boolean;
+  readonly hasAttachments: boolean;
+  readonly loadBalancedEnvironmentId: EnvironmentId | null;
+  readonly pending: boolean;
+}): AutoBalanceStatus | null {
+  if (!input.canAutoBalance || input.environmentPinned) return null;
+  if (input.loadBalancedEnvironmentId !== null) return "balanced";
+  if (input.hasAttachments) return null;
+  return input.pending ? "checking" : "unavailable";
+}

@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
+  LoadBalancingWeights,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -79,6 +80,7 @@ export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
+const isLoadBalancingWeights = Schema.is(LoadBalancingWeights);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const ThreadProject = Schema.Struct({
   environmentId: Schema.NonEmptyString,
@@ -118,6 +120,9 @@ export interface Preferences {
   readonly workingShelfEnabled?: boolean;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
+  /** Device-local counterparts of the web load balancing client settings. */
+  readonly loadBalancingEnabled?: boolean;
+  readonly loadBalancingWeights?: Readonly<Record<string, number>>;
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
     readonly model: string;
@@ -198,6 +203,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     workingShelfEnabled?: boolean;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
+    loadBalancingEnabled?: boolean;
+    loadBalancingWeights?: Readonly<Record<string, number>>;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
@@ -329,6 +336,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isThreadProject(parsed.lastThreadProject)) {
     preferences.lastThreadProject = parsed.lastThreadProject;
+  }
+  if (typeof parsed.loadBalancingEnabled === "boolean") {
+    preferences.loadBalancingEnabled = parsed.loadBalancingEnabled;
+  }
+  if (isLoadBalancingWeights(parsed.loadBalancingWeights)) {
+    preferences.loadBalancingWeights = parsed.loadBalancingWeights;
   }
   if (Array.isArray(parsed.modelFavorites)) {
     preferences.modelFavorites = parsed.modelFavorites.filter(

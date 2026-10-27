@@ -25,6 +25,8 @@ export function useComposerAttachmentActions(props: {
   readonly draftKey: string | null;
   readonly serverConfig: ServerConfig | null | undefined;
   readonly locked?: boolean;
+  /** Runs once an attachment is on its way, before the picker or import awaits. */
+  readonly onAttachmentStart?: () => void;
 }) {
   const reservedNames = useRef(new Map<string, Set<string>>());
   const capabilities = props.serverConfig?.environment.capabilities;
@@ -61,6 +63,7 @@ export function useComposerAttachmentActions(props: {
   const onPickDraftMedia = async () => {
     const key = props.draftKey;
     if (!key || props.locked) return;
+    props.onAttachmentStart?.();
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
       const result = await pickComposerMedia({
@@ -82,6 +85,7 @@ export function useComposerAttachmentActions(props: {
       Dialog.alert("Could not attach file", "This server does not support file attachments.");
       return;
     }
+    props.onAttachmentStart?.();
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
       const result = await pickComposerFiles({
@@ -98,6 +102,7 @@ export function useComposerAttachmentActions(props: {
   const onNativePasteImages = async (uris: ReadonlyArray<string>) => {
     const key = props.draftKey;
     if (!key || props.locked || !uris.length) return;
+    props.onAttachmentStart?.();
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
       try {
@@ -119,6 +124,7 @@ export function useComposerAttachmentActions(props: {
     if (!key || props.locked) return;
     const maxBytes = capabilities?.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) return;
+    props.onAttachmentStart?.();
     const names = reservedNames.current.get(key) ?? new Set<string>();
     reservedNames.current.set(key, names);
     for (const attachment of getComposerDraftSnapshot(key).attachments) names.add(attachment.name);
