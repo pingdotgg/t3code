@@ -32,6 +32,9 @@ export const PullRequestMarkdownContext = createContext<{
 export const PullRequestMarkdownPanelContext =
   createContext<ScopedThreadRef>(PULL_REQUESTS_PANEL_REF);
 
+const PULL_REQUEST_VIDEO_CLASS_NAME =
+  "aspect-[var(--video-aspect,16/9)] w-[min(100%,calc(70vh*var(--video-aspect,16/9)))] rounded-lg border border-border/60";
+
 function PullRequestHostVideo({
   environmentId,
   cwd,
@@ -62,7 +65,7 @@ function PullRequestHostVideo({
       originalUrl={url}
       label={gt("Pull request video")}
       className="w-full"
-      videoClassName="rounded-lg border border-border/60"
+      videoClassName={PULL_REQUEST_VIDEO_CLASS_NAME}
       onRetry={refreshAssetUrl}
     />
   );
@@ -166,7 +169,7 @@ function PullRequestBodySegmentView({
         originalUrl={segment.url}
         label={gt("Pull request video")}
         className="w-full"
-        videoClassName="rounded-lg border border-border/60"
+        videoClassName={PULL_REQUEST_VIDEO_CLASS_NAME}
       />
     );
   }
