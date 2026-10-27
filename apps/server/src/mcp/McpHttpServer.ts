@@ -948,6 +948,35 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+/** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
+const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
+  Tools extends Record<string, Tool.Any>,
+  A,
+  E,
+  R,
+>(toolkit: Toolkit.Toolkit<Tools>, registration: Effect.Effect<A, E, R>) {
+  const server = yield* McpServer.McpServer;
+  const tools: Record<string, Tool.Any> = toolkit.tools;
+  const advertisingServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      const tool = tools[options.tool.name];
+      return server.addTool(
+        tool === undefined
+          ? options
+          : {
+              ...options,
+              tool: new McpSchema.Tool({
+                ...options.tool,
+                inputSchema: advertisedJsonSchema(tool),
+              }),
+            },
+      );
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
+});
+
 /**
  * `McpServer.toolkit` asks for every service its tools declare when it
  * registers them, but the auth middleware provides `McpInvocationContext` to
@@ -959,7 +988,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) => {
   const registration = Layer.effectDiscard(
-    withToolAnalytics(McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    withToolAnalytics(
+      withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    ),
   ).pipe(Layer.provide(McpServer.McpServer.layer));
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
   const registered = registration as Layer.Layer<
