@@ -105,6 +105,13 @@ vi.mock("../../state/workspace", () => ({
 }));
 vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
+vi.mock("./use-new-task-auto-balance", () => ({
+  useNewTaskAutoBalance: () => ({
+    canAutoBalance: false,
+    autoBalanceStatus: null,
+    selectAutoBalance: () => false,
+  }),
+}));
 
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
 
