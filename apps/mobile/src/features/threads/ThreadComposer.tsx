@@ -562,7 +562,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
-  const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
+  const usesLargeControls =
+    useSidebarWorkspaceTabs() === "picker" || (Platform.OS === "ios" && Platform.isPad);
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
@@ -768,7 +769,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const modelControl = (
     <View className="min-w-0 shrink">
       <ComposerModelControl
-        size={hasSidebarTabBar ? "large" : "regular"}
+        size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
         selection={currentModelSelection}
         provider={selectedProviderStatus?.driver}
@@ -852,10 +853,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         <ComposerSurface
           animateLayout={false}
           style={{
-            borderRadius: hasSidebarTabBar ? 31 : 27,
+            borderRadius: usesLargeControls ? 31 : 27,
             borderCurve: "circular",
             overflow: "hidden",
-            paddingVertical: hasSidebarTabBar ? 9 : 2,
+            paddingVertical: usesLargeControls ? 9 : 2,
           }}
         >
           {isExpanded ? editingAttachments : null}
@@ -871,7 +872,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               hidden={showsCompactDictation}
             >
               <ComposerAttachmentButton
-                size={hasSidebarTabBar ? "large" : "regular"}
+                size={usesLargeControls ? "large" : "regular"}
                 disabled={isSubmissionLocked}
                 supportsFiles={Boolean(
                   props.serverConfig?.environment.capabilities.fileAttachments,
@@ -924,7 +925,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               >
                 {modelControl}
                 <ComposerDictationStartAction
-                  size={hasSidebarTabBar ? "large" : "regular"}
+                  size={usesLargeControls ? "large" : "regular"}
                   state={voiceInput.state}
                   isAvailable={voiceInput.isAvailable}
                   disabled={isSubmissionLocked}
@@ -933,7 +934,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 />
                 {showStopAction ? (
                   <ComposerActionButton
-                    size={hasSidebarTabBar ? "large" : "regular"}
+                    size={usesLargeControls ? "large" : "regular"}
                     accessibilityLabel="Stop agent"
                     icon="stop.fill"
                     variant="danger"
@@ -942,7 +943,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                 ) : showResumeAction ? (
                   <ComposerActionButton
-                    size={hasSidebarTabBar ? "large" : "regular"}
+                    size={usesLargeControls ? "large" : "regular"}
                     accessibilityLabel="Resume queue"
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
@@ -950,7 +951,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                 ) : (
                   <SendActionButton
-                    size={hasSidebarTabBar ? "large" : "regular"}
+                    size={usesLargeControls ? "large" : "regular"}
                     accessibilityLabel={sendBlockedReason ?? sendLabel}
                     presentation={sendPresentation}
                     disabled={!canSend}
@@ -1106,7 +1107,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             collapsable={false}
             importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
             pointerEvents={isToolbarVisible ? "auto" : "none"}
-            style={{ position: "absolute", bottom: hasSidebarTabBar ? 9 : 2, left: 0, right: 0 }}
+            style={{ position: "absolute", bottom: usesLargeControls ? 9 : 2, left: 0, right: 0 }}
           >
             <ComposerDictationToolbar
               showsDictation={isVoiceInputPresented}
@@ -1119,7 +1120,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={{ gap: 0 }}
               >
                 <ComposerDictationCancelAction
-                  size={hasSidebarTabBar ? "large" : "regular"}
+                  size={usesLargeControls ? "large" : "regular"}
                   presentation={voicePresentation}
                   onCancel={voiceInput.cancel}
                 />
@@ -1134,7 +1135,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : (
                   <View className="min-w-0 flex-1 flex-row items-center justify-between">
                     <ComposerAttachmentButton
-                      size={hasSidebarTabBar ? "large" : "regular"}
+                      size={usesLargeControls ? "large" : "regular"}
                       disabled={isSubmissionLocked}
                       supportsFiles={Boolean(
                         props.serverConfig?.environment.capabilities.fileAttachments,
@@ -1147,7 +1148,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 )}
                 <View className="shrink-0 flex-row items-center">
                   <ComposerDictationPrimaryAction
-                    size={hasSidebarTabBar ? "large" : "regular"}
+                    size={usesLargeControls ? "large" : "regular"}
                     state={voiceInput.state}
                     presentation={voicePresentation}
                     isAvailable={voiceInput.isAvailable}
