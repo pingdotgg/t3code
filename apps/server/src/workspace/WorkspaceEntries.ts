@@ -201,19 +201,41 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const canFollowBrowseLink = Effect.fn("WorkspaceEntries.canFollowBrowseLink")(function* (
+  const resolveBrowseLink = Effect.fn("WorkspaceEntries.resolveBrowseLink")(function* (
     fullPath: string,
   ) {
-    let currentPath = fullPath;
-    for (let hop = 0; hop < 40; hop++) {
-      const target = yield* Effect.tryPromise(() => NodeFSP.readlink(currentPath));
-      // Inspect link targets before following them: UNC paths can trigger Windows NTLM sign-in.
-      if (isNetworkPath(target)) return false;
-      currentPath = path.resolve(path.dirname(currentPath), target);
-      const stats = yield* Effect.tryPromise(() => NodeFSP.lstat(currentPath));
-      if (!stats.isSymbolicLink()) return true;
+    if (isNetworkPath(fullPath)) return undefined;
+    const separators = path.sep === "\\" ? /[\\/]+/ : /\/+/;
+    let currentPath = path.parse(fullPath).root;
+    const remaining = fullPath.slice(currentPath.length).split(separators);
+    let hops = 0;
+    while (remaining.length > 0) {
+      const component = remaining.shift()!;
+      if (component === "" || component === ".") continue;
+      if (component === "..") {
+        currentPath = path.dirname(currentPath);
+        continue;
+      }
+      const nextPath = path.join(currentPath, component);
+      const stats = yield* Effect.tryPromise(() => NodeFSP.lstat(nextPath));
+      if (!stats.isSymbolicLink()) {
+        if (remaining.length > 0 && !stats.isDirectory()) return undefined;
+        currentPath = nextPath;
+        continue;
+      }
+      if (++hops > 40) return undefined;
+      const target = yield* Effect.tryPromise(() => NodeFSP.readlink(nextPath));
+      // Inspect every link before following it: UNC paths can trigger Windows NTLM sign-in.
+      if (isNetworkPath(target)) return undefined;
+      const root = path.parse(target).root;
+      if (root) {
+        if (!path.isAbsolute(target)) return undefined;
+        currentPath = path.parse(path.resolve(currentPath, root)).root;
+      }
+      // Expand before processing '..' so it applies to the resolved directory.
+      remaining.unshift(...target.slice(root.length).split(separators));
     }
-    return false;
+    return currentPath;
   });
 
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
@@ -256,8 +278,9 @@ export const make = Effect.gen(function* () {
           const entry = { name: dirent.name, fullPath: path.join(parentPath, dirent.name) };
           if (dirent.isDirectory()) return Effect.succeed(entry);
           return Effect.gen(function* () {
-            if (!(yield* canFollowBrowseLink(entry.fullPath))) return undefined;
-            const stats = yield* Effect.tryPromise(() => NodeFSP.stat(entry.fullPath));
+            const target = yield* resolveBrowseLink(entry.fullPath);
+            if (target === undefined) return undefined;
+            const stats = yield* Effect.tryPromise(() => NodeFSP.stat(target));
             return stats.isDirectory() ? entry : undefined;
           }).pipe(Effect.orElseSucceed(() => undefined));
         },
