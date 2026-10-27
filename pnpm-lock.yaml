@@ -1473,6 +1473,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       three:
         specifier: 0.180.0
         version: 0.180.0

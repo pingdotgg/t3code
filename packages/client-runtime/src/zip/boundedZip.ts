@@ -1,15 +1,14 @@
 import JSZip from "jszip";
-import { checkZipDirectory } from "./zipDirectory";
+import { checkZipDirectory } from "./zipDirectory.ts";
 
-import {
-  ARCHIVE_MAX_ENTRIES,
-  ARCHIVE_MAX_RATIO,
-  BINARY_PREVIEW_MAX_BYTES,
-} from "./binaryPreviewProtocol";
+export const ARCHIVE_MAX_BYTES = 50 * 1024 * 1024;
+export const ARCHIVE_ENTRY_MAX_BYTES = 10 * 1024 * 1024;
+export const ARCHIVE_MAX_ENTRIES = 2048;
+export const ARCHIVE_MAX_RATIO = 200;
 
 export async function boundedZip(
   bytes: ArrayBuffer,
-  entryLimit = BINARY_PREVIEW_MAX_BYTES,
+  entryLimit = ARCHIVE_MAX_BYTES,
   limits: {
     totalLimit?: number;
     xmlLimit?: number;
@@ -17,7 +16,7 @@ export async function boundedZip(
     markupLimit?: number;
   } = {},
 ) {
-  if (bytes.byteLength > BINARY_PREVIEW_MAX_BYTES)
+  if (bytes.byteLength > ARCHIVE_MAX_BYTES)
     throw new Error("Preview limited to files under 50 MB.");
   checkZipDirectory(bytes, ARCHIVE_MAX_ENTRIES);
   const zip = await JSZip.loadAsync(bytes);
@@ -49,7 +48,7 @@ export async function boundedZip(
             for (const byte of chunk) if (byte === 0x3c) markup++;
           if (
             markup > (limits.markupLimit ?? Infinity) ||
-            total > (limits.totalLimit ?? BINARY_PREVIEW_MAX_BYTES) ||
+            total > (limits.totalLimit ?? ARCHIVE_MAX_BYTES) ||
             total >
               Math.max(limits.ratioFloor ?? 0, Math.max(1, bytes.byteLength) * ARCHIVE_MAX_RATIO) ||
             length > entryLimit ||
