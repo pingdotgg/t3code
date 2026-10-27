@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
+  getProjectScopeSelectionTarget,
   newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
@@ -52,6 +53,26 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
     })),
   };
 }
+
+describe("getProjectScopeSelectionTarget", () => {
+  it("prefers a connected copy of a project that spans environments", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const target = (connected: ReadonlyArray<string>, preferred: string | null = null) =>
+      getProjectScopeSelectionTarget(
+        makeScope([mac, server]),
+        preferred === null ? null : EnvironmentId.make(preferred),
+        new Set(connected.map((id) => EnvironmentId.make(id))),
+      );
+    expect(target(["server"])).toBe(server);
+    expect(target(["server"], "mac")).toBe(server);
+    expect(target(["mac", "server"], "server")).toBe(server);
+    expect(target(["mac", "server"])).toBe(mac);
+    // With nothing connected, the usual order still applies.
+    expect(target([], "server")).toBe(server);
+    expect(target([])).toBe(mac);
+  });
+});
 
 describe("resolveEnvironmentProjectMatch", () => {
   it("follows the same repository onto the target machine", () => {

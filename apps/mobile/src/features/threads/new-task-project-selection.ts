@@ -10,12 +10,21 @@ type DraftProjectSelectionResolution =
   | { readonly kind: "pick" }
   | { readonly kind: "dismiss" };
 
+/**
+ * The copy of a project a new thread starts in: the preferred environment's, then the
+ * representative. A connected copy wins over a disconnected one.
+ */
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,
+  connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
 ): EnvironmentProject {
+  const rank = (project: EnvironmentProject) =>
+    project.environmentId === preferredEnvironmentId ? 0 : project === scope.representative ? 1 : 2;
+  const ordered = [...scope.projects].sort((left, right) => rank(left) - rank(right));
   return (
-    scope.projects.find((project) => project.environmentId === preferredEnvironmentId) ??
+    ordered.find((project) => connectedEnvironmentIds.has(project.environmentId)) ??
+    ordered[0] ??
     scope.representative
   );
 }
