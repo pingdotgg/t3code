@@ -435,6 +435,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "auto-resume-limited-threads",
     title: "Resume after usage limits",
     to: "/settings/threads",
+    scope: "project-defaults",
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {

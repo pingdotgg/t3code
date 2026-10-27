@@ -102,24 +102,27 @@ export function AutoSettleSettingsRows(props: {
 
   return (
     <View className="gap-6">
-      {!projectSelected ? (
-        <SettingsSection title="Usage limits">
-          <SettingsSwitchRow
-            icon="clock"
-            label="Resume after usage limits"
-            value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
-            disabled={disabled}
-            onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
-          />
-          <SettingsSwitchRow
-            icon="clock"
-            label="Snooze until limits reset"
-            value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
-            disabled={disabled}
-            onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
-          />
-        </SettingsSection>
-      ) : null}
+      <SettingsSection title="Usage limits">
+        <SettingsSwitchRow
+          icon="clock"
+          label="Resume after usage limits"
+          value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
+          disabled={disabled}
+          onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
+        />
+        <SettingsSwitchRow
+          icon="clock"
+          label="Snooze until limits reset"
+          subtitle={
+            projectSelected
+              ? "Environment-wide setting. Select All projects to change it."
+              : undefined
+          }
+          value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
+          disabled={disabled || projectSelected}
+          onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
+        />
+      </SettingsSection>
       <SettingsSection title="Auto-settle">
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
