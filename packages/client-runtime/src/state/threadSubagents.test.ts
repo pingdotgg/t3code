@@ -182,4 +182,25 @@ describe("deriveThreadTurnSubagents", () => {
     expect(turn?.settledCount).toBe(1);
     expect(turn?.subagents).toHaveLength(3);
   });
+
+  it("keeps settled workflows reachable without counting idle agents as done", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [
+        subagent({ id: "workflow", status: "completed", workflow: { phases: [], agents: [] } }),
+        subagent({
+          id: "idle",
+          runId: RunId.make("run-2"),
+          status: "idle",
+          updatedAt: at("2026-06-20T00:00:09.000Z"),
+        }),
+      ],
+    });
+
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["idle", "workflow"]);
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: "1 done",
+      accessibilityLabel: "1 agent done",
+    });
+  });
 });

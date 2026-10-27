@@ -26,11 +26,6 @@ function orderKey(subagent: Subagent): number {
   return DateTime.toEpochMillis(subagent.startedAt ?? subagent.updatedAt);
 }
 
-/**
- * The pill and sheet include the active run's agents, or the most recently updated agent's run when idle.
- * Include agents still working from other runs so background work stays counted and reachable.
- * Exclude rolled-back runs, matching the Waiting strip.
- */
 export function deriveThreadTurnSubagents(
   projection: Pick<Projection, "runs" | "subagents">,
 ): ThreadTurnSubagents | null {
@@ -53,7 +48,10 @@ export function deriveThreadTurnSubagents(
   const runId = activeRun?.id ?? latestUpdated.runId;
   const subagents = copySorted(
     eligible.filter(
-      (subagent) => subagent.runId === runId || isActiveSubagentStatus(subagent.status),
+      (subagent) =>
+        subagent.runId === runId ||
+        isActiveSubagentStatus(subagent.status) ||
+        subagent.workflow !== undefined,
     ),
     (left, right) => orderKey(left) - orderKey(right) || left.id.localeCompare(right.id),
   );
@@ -72,7 +70,13 @@ export function resolveSubagentPillSegment(
   turn: ThreadTurnSubagents | null,
 ): SubagentPillSegment | null {
   if (turn === null) return null;
-  if (!turn.turnActive && turn.liveCount === 0) return null;
+  if (
+    !turn.turnActive &&
+    turn.liveCount === 0 &&
+    !turn.subagents.some((subagent) => subagent.workflow !== undefined)
+  ) {
+    return null;
+  }
   const total = turn.subagents.length;
   if (turn.liveCount > 0) {
     return {
@@ -81,7 +85,7 @@ export function resolveSubagentPillSegment(
     };
   }
   return {
-    label: `${total} done`,
-    accessibilityLabel: `${total} ${total === 1 ? "agent" : "agents"} done`,
+    label: `${turn.settledCount} done`,
+    accessibilityLabel: `${turn.settledCount} ${turn.settledCount === 1 ? "agent" : "agents"} done`,
   };
 }
