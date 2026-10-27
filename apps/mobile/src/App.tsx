@@ -52,6 +52,14 @@ import { shouldHandleAppLink, restoreDraftLinkState } from "./lib/appLinking";
 import { hasCloudPublicConfig } from "./features/cloud/publicConfig";
 import { takeScheduledTaskNewLink } from "./features/settings/scheduled-task-editor-state";
 import {
+  resolvePendingNewTaskPromptLink,
+  takeNewTaskPromptLink,
+} from "./features/prompt-links/newTaskPromptLink";
+import {
+  resolvePendingThreadPromptLink,
+  takeThreadPromptLink,
+} from "./features/prompt-links/threadPromptLink";
+import {
   disposeOnFoundationReplace,
   type FoundationHotModule,
 } from "./lib/foundation-fast-refresh";
@@ -93,9 +101,13 @@ const linkingConfig = {
 
 function getAppStateFromPath(path: string, options: Parameters<typeof getStateFromPath>[1]) {
   return takeScheduledTaskNewLink(
-    restoreSettingsLinkState(
-      restoreDraftLinkState(getStateFromPath(path, options), path),
-      settingsLinkPage(),
+    takeNewTaskPromptLink(
+      takeThreadPromptLink(
+        restoreSettingsLinkState(
+          restoreDraftLinkState(getStateFromPath(path, options), path),
+          settingsLinkPage(),
+        ),
+      ),
     ),
   );
 }
@@ -130,6 +142,8 @@ const Navigation = createStaticNavigation(RootStack);
 function handleNavigationStateChange(state: NavigationState | undefined): void {
   recordWorkspaceSelections(state);
   presentPendingIncomingShare();
+  resolvePendingNewTaskPromptLink(state);
+  resolvePendingThreadPromptLink(state);
   if (!state) return;
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);
