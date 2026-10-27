@@ -409,6 +409,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           command = { ...common, type: "thread.pin", ...(orderKey ? { orderKey } : {}) };
           break;
         }
+        case "disable_auto_settle":
+        case "enable_auto_settle":
+          command = {
+            ...common,
+            type: "thread.auto-settle.set",
+            enabled: input.action === "enable_auto_settle",
+          };
+          break;
         default:
           command = { ...common, type: `thread.${input.action}` };
       }
