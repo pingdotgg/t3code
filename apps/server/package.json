@@ -69,7 +69,8 @@
     "stream-json": "3.6.0",
     "undici": "catalog:",
     "yaml": "catalog:",
-    "yauzl": "^3.4.0"
+    "yauzl": "^3.4.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@effect/graphql-generator": "catalog:",

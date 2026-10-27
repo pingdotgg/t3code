@@ -916,6 +916,9 @@ importers:
       yauzl:
         specifier: ^3.4.0
         version: 3.4.0
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
     devDependencies:
       '@effect/graphql-generator':
         specifier: 'catalog:'
