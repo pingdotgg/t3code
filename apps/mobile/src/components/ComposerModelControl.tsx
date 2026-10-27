@@ -1,4 +1,6 @@
 import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
+import { useState } from "react";
+import { View } from "react-native";
 import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
@@ -19,8 +21,10 @@ export function ComposerModelControl(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly iconOnly?: boolean;
-  /** Keep the model name readable in a narrow row; the accessibility label still names the traits. */
-  readonly hideTraits?: boolean;
+  /** Effort abbreviation instead of the full traits, for a row shared with the editor. */
+  readonly compact?: boolean;
+  /** Width the control may fill; falls back to the effort abbreviation plus speed when the full traits overflow it. */
+  readonly fitWidth?: number;
   readonly onPress: () => void;
 }) {
   const descriptors = resolveProviderOptionDescriptors({
@@ -28,15 +32,19 @@ export function ComposerModelControl(props: {
     selections: props.selection?.options,
   });
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
-  const summary = props.provider
+  const traits = props.provider
     ? buildTraitsTriggerDisplay({
         descriptors,
         primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
         ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
         modelSelection: props.selection,
         reportedModelSelection: props.reportedSelection,
-      }).label
-    : "";
+      })
+    : null;
+  const summary = traits?.label ?? "";
+  const [fullWidth, setFullWidth] = useState(0);
+  const overflows = props.fitWidth !== undefined && fullWidth > 0 && fullWidth > props.fitWidth + 1;
+  const compact = props.compact === true || overflows;
   const badge = props.modelOption?.providerBadge;
   const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
   const providerNameLabel = badge
@@ -48,7 +56,12 @@ export function ComposerModelControl(props: {
       })
     : null;
   const shortLabel = props.modelOption?.shortName ?? label;
-  return (
+  const visibleSummary = props.compact
+    ? (traits?.compactEffortLabel ?? "")
+    : overflows
+      ? [traits?.compactEffortLabel, traits?.speedLabel].filter(Boolean).join(" ")
+      : summary;
+  const renderControl = (full: boolean) => (
     <ComposerInlineControl
       accessibilityLabel={[
         "Model and reasoning settings",
@@ -84,8 +97,9 @@ export function ComposerModelControl(props: {
       labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
       iconOnly={props.iconOnly}
       suffixWidth={providerNameLabel ? 96 : undefined}
+      suffixFixed={!full && compact}
       suffix={
-        providerNameLabel ? (
+        providerNameLabel || (full ? summary : visibleSummary) ? (
           <Text
             className={
               props.size === "large"
@@ -94,24 +108,36 @@ export function ComposerModelControl(props: {
             }
             numberOfLines={1}
           >
-            {shortLabel}
-            {summary && !props.hideTraits ? ` · ${summary}` : ""}
-          </Text>
-        ) : summary && !props.hideTraits ? (
-          <Text
-            className={
-              props.size === "large"
-                ? "text-sm text-foreground-muted"
-                : "text-xs text-foreground-muted"
-            }
-            numberOfLines={1}
-          >
-            {summary}
+            {providerNameLabel
+              ? [shortLabel, full ? summary : visibleSummary].filter(Boolean).join(" · ")
+              : full
+                ? summary
+                : visibleSummary}
           </Text>
         ) : undefined
       }
-      maxWidth="100%"
+      maxWidth={full ? 10_000 : "100%"}
       onPress={props.onPress}
     />
+  );
+  if (props.fitWidth === undefined) return renderControl(false);
+  return (
+    <>
+      {/* Unconstrained copy measures whether the full labels fit. */}
+      <View
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{ position: "absolute", left: 0, top: 0, width: 10_000, opacity: 0 }}
+      >
+        <View
+          className="self-start"
+          onLayout={(event) => setFullWidth(event.nativeEvent.layout.width)}
+        >
+          {renderControl(true)}
+        </View>
+      </View>
+      {renderControl(false)}
+    </>
   );
 }

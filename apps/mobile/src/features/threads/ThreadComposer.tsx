@@ -622,6 +622,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const usesLargeControls = sidebarWorkspaceTabs === "picker" || deviceType === "pad";
   const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
+  const [modelToolbarWidth, setModelToolbarWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
   // Android gives focused typing the full-width editor and a toolbar row for the model labels.
   const compactEditor = useCompactComposerEditor(
@@ -828,8 +829,16 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </>
   ) : null;
 
+  const fitsModelToolbar = Platform.OS === "android" && compactEditor.isExpanded;
   const modelControl = (
-    <View className="min-w-0 shrink">
+    <View
+      className={fitsModelToolbar ? "min-w-0 flex-1 flex-row justify-end" : "min-w-0 shrink"}
+      onLayout={
+        fitsModelToolbar
+          ? (event) => setModelToolbarWidth(event.nativeEvent.layout.width)
+          : undefined
+      }
+    >
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -839,7 +848,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         prompt={draftMessage}
         surfaceColor={composerPanel}
         iconOnly={Platform.OS !== "android" && !compactEditor.isExpanded}
-        hideTraits={!compactEditor.isExpanded}
+        compact={Platform.OS === "android" && !compactEditor.isExpanded}
+        fitWidth={fitsModelToolbar && modelToolbarWidth > 0 ? modelToolbarWidth : undefined}
         onPress={openSettings}
       />
     </View>
