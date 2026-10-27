@@ -67,6 +67,13 @@ export class AgentDeviceError extends Error {}
 const TRANSIENT =
   /Remote daemon is unavailable|not connected to the gateway|still finishing a previous command|Invalid daemon response|Daemon request timed out|no worker connected/i;
 
+/** Failures that say the pool could not serve the pose, not that the app misbehaved. */
+export const poolError = (message: string) =>
+  TRANSIENT.test(message) ||
+  /Daemon connection closed|WORKER_UNREACHABLE|xcrun timed out|refused by simlock|is not available on this simlock/i.test(
+    message,
+  );
+
 export class Device {
   readonly pose: Pose;
   readonly session: string;
