@@ -164,6 +164,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: `Driver '${entry.driver}' is not registered in this build.`,
       }),
     };
@@ -186,6 +187,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: `Invalid config for instance '${rawInstanceId}': ${detail}`,
       }),
     };
@@ -255,15 +257,35 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
       }),
     };
   }
 
+  const instance = createResult.success;
+  // Branding belongs to the instance, including local ACP commands whose driver has no icon.
+  const withIcon = <S extends ServerProvider>(snapshot: S): S =>
+    entry.iconUrl ? { ...snapshot, iconUrl: entry.iconUrl } : snapshot;
+
   return {
     kind: "live" as const,
     live: {
-      instance: createResult.success,
+      instance: {
+        ...instance,
+        snapshot: {
+          ...instance.snapshot,
+          getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withIcon)),
+          refresh: instance.snapshot.refresh.pipe(Effect.map(withIcon)),
+          streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(withIcon)),
+        },
+        ...(instance.snapshotForCwd
+          ? {
+              snapshotForCwd: (cwd: string) =>
+                instance.snapshotForCwd!(cwd).pipe(Effect.map(withIcon)),
+            }
+          : {}),
+      },
       scope: childScope,
       entry,
       secrets,

@@ -239,6 +239,7 @@ export interface LimitAccount {
   readonly email: string | undefined;
   readonly plan: string | undefined;
   readonly accentColor: string | undefined;
+  readonly iconUrl?: string | undefined;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly label: string;
@@ -302,6 +303,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       displayName: previous.displayName ?? next.displayName,
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
+      ...((previous.iconUrl ?? next.iconUrl) ? { iconUrl: previous.iconUrl ?? next.iconUrl } : {}),
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
@@ -334,6 +336,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         email: provider.auth.email,
         plan: provider.auth.label,
         accentColor: provider.accentColor,
+        ...(provider.iconUrl ? { iconUrl: provider.iconUrl } : {}),
         environments: [{ environmentId, label }],
         sourceLabel: null,
         redeem: { environmentId, input: { instanceId: provider.instanceId } },
@@ -831,6 +834,7 @@ export function collectProviderUsageLimits(
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+      ...(provider.iconUrl ? { iconUrl: provider.iconUrl } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });

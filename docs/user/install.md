@@ -153,6 +153,11 @@ before sharing.
 
 ## Providers
 
+To distinguish accounts or models running through the same provider, open an instance in
+**Settings → Providers** and set its **Icon** to an HTTPS image URL. The icon is shared with
+all clients connected to that environment, including mobile. Choose **Reset** to restore
+the provider's default icon. The default also appears if the image cannot load.
+
 Open **Settings → Providers** in the web or desktop app, select the environment,
 and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
