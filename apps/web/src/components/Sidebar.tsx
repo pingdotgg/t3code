@@ -288,7 +288,7 @@ function sameSidebarProviderEntries(
       other.displayName !== entry.displayName ||
       other.accentColor !== entry.accentColor ||
       other.acpRegistryAgentId !== entry.acpRegistryAgentId ||
-      other.acpRegistryIconUrl !== entry.acpRegistryIconUrl ||
+      other.iconUrl !== entry.iconUrl ||
       other.models !== entry.models
     ) {
       return false;

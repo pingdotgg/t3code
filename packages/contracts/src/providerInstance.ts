@@ -71,11 +71,30 @@ export type ResolvedProviderInstanceEnvironment = ReadonlyArray<
   Omit<ProviderInstanceEnvironmentVariable, "value"> & { readonly value: string }
 >;
 
+export function normalizeProviderIconUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.length > 2_048) return null;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "https:" && !url.username && !url.password && url.href.length <= 2_048
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+const ProviderIconUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(2_048),
+  Schema.makeFilter((value) => normalizeProviderIconUrl(value) !== null),
+);
+
 /** Drivers decode their own config; unknown-driver envelopes round-trip verbatim across versions. */
 export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
+  iconUrl: Schema.optional(ProviderIconUrl),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),

@@ -186,7 +186,7 @@ describe("deriveProviderEntriesByEnvironment", () => {
       ),
     );
     expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryAgentId).toBe("devin");
-    expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryIconUrl).toBe(
+    expect(byEnvironment.get("devin")?.get(instanceId)?.iconUrl).toBe(
       "https://example.com/devin.svg",
     );
     expect(byEnvironment.get("other-agent")?.get(instanceId)?.acpRegistryAgentId).toBe(
@@ -540,6 +540,37 @@ describe("resolveDefaultProviderModelSelection", () => {
 });
 
 describe("provider icon metadata", () => {
+  it.each(["claudeAgent", "opencode", "acpRegistry"])(
+    "uses independent instance icons for %s",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const instances = ["first", "second"].map((name) => ({
+        ...provider({ provider: driver, instanceId: name }),
+        iconUrl: `https://example.com/${name}.png`,
+      }));
+      const entries = applyProviderInstanceSettings(
+        deriveProviderInstanceEntries(instances),
+        {
+          providerInstances: Object.fromEntries(
+            instances.map((instance) => [
+              instance.instanceId,
+              {
+                driver,
+                iconUrl: instance.iconUrl,
+                config: { source: "local", commandPath: "omp" },
+              },
+            ]),
+          ),
+          projectSettingsOverrides: {},
+        },
+        null,
+      );
+      expect(entries.map((entry) => entry.iconUrl)).toEqual(
+        instances.map((instance) => instance.iconUrl),
+      );
+    },
+  );
+
   it("clears stale registry branding when an instance switches to a local command", () => {
     const instanceId = ProviderInstanceId.make("custom-acp");
     const driver = ProviderDriverKind.make("acpRegistry");
@@ -557,7 +588,7 @@ describe("provider icon metadata", () => {
       null,
     );
     expect(brandedEntries[0]?.acpRegistryAgentId).toBe("swe-agent");
-    expect(brandedEntries[0]?.acpRegistryIconUrl).toBe(iconUrl);
+    expect(brandedEntries[0]?.iconUrl).toBe(iconUrl);
 
     const [localEntry] = applyProviderInstanceSettings(
       brandedEntries,
@@ -574,7 +605,7 @@ describe("provider icon metadata", () => {
       null,
     );
     expect(localEntry?.acpRegistryAgentId).toBeUndefined();
-    expect(localEntry?.acpRegistryIconUrl).toBeUndefined();
+    expect(localEntry?.iconUrl).toBeUndefined();
     expect(localEntry?.enabled).toBe(false);
     expect(localEntry?.snapshot).toBe(snapshots[0]?.snapshot);
 
@@ -587,7 +618,7 @@ describe("provider icon metadata", () => {
       null,
     );
     expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
-    expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
+    expect(restoredEntry?.iconUrl).toBe(iconUrl);
     expect(restoredEntry?.enabled).toBe(true);
   });
 });

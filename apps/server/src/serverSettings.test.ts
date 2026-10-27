@@ -1051,6 +1051,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("persists and resets icons on local ACP instances", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("hermes_local");
+      const instance = {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        config: { source: "local", commandPath: "hermes", args: ["acp"] },
+      };
+      yield* settings.updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: { ...instance, iconUrl: "https://example.com/hermes.png" },
+      });
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.equal(
+        persisted.providerInstances[instanceId]?.iconUrl,
+        "https://example.com/hermes.png",
+      );
+      assert.deepEqual(persisted.providerInstances[instanceId]?.config, instance.config);
+      yield* settings.updateProviderInstance({ operation: "upsert", instanceId, instance });
+      const reset = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
+      assert.isUndefined(reset.providerInstances[instanceId]?.iconUrl);
+      assert.deepEqual(reset.providerInstances[instanceId]?.config, instance.config);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("keeps a default-off provider's new instance disabled and sparse on disk", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

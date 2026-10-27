@@ -306,6 +306,7 @@ export function buildModelOptions(
   };
   const badgeEntries = (config?.providers ?? []).map((provider) => ({
     driverKind: provider.driver,
+    iconUrl: provider.iconUrl,
     enabled: provider.enabled,
     acpRegistryAgentId: registryAgentId(provider.instanceId),
   }));
@@ -327,6 +328,7 @@ export function buildModelOptions(
       showBadge: shouldShowInstanceBadge(
         {
           driverKind: driver,
+          iconUrl: snapshot?.iconUrl ?? instance?.iconUrl,
           accentColor,
           acpRegistryAgentId: registryAgentId(instanceId),
           enabled: snapshot?.enabled ?? instance?.enabled ?? false,
@@ -442,6 +444,9 @@ export function buildModelOptions(
         providerLabel,
         providerDriver,
         providerBadge: providerBadgeFor(fallbackModelSelection.instanceId),
+        ...((provider?.iconUrl ?? instanceConfig?.iconUrl)
+          ? { providerIconUrl: provider?.iconUrl ?? instanceConfig?.iconUrl }
+          : {}),
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||

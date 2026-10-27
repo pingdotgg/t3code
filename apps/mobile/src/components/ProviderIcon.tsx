@@ -7,7 +7,7 @@ import {
   providerInstanceInitials,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useId, useState } from "react";
-import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
+import { normalizeProviderIconUrl, resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
@@ -69,6 +69,33 @@ function AcpRegistryProviderIcon(props: {
 }
 
 export function ProviderIcon(props: ProviderIconProps) {
+  const iconUrl =
+    props.provider === "acpRegistry" && resolveOfficialAcpRegistryIconUrl(props.iconUrl)
+      ? null
+      : normalizeProviderIconUrl(props.iconUrl);
+  const [image, setImage] = useState<{ url: string; loaded: boolean } | null>(null);
+  const currentImage = image?.url === iconUrl ? image : null;
+  const size = props.size ?? 16;
+  if (!iconUrl || currentImage?.loaded === false) return <DefaultProviderIcon {...props} />;
+  const loaded = currentImage?.loaded === true;
+  return (
+    <View style={{ width: size, height: size }}>
+      {!loaded ? <DefaultProviderIcon {...props} /> : null}
+      <Image
+        source={{ uri: iconUrl }}
+        recyclingKey={iconUrl}
+        cachePolicy="memory-disk"
+        contentFit="contain"
+        accessibilityIgnoresInvertColors
+        style={{ position: "absolute", width: size, height: size, opacity: loaded ? 1 : 0 }}
+        onLoad={() => setImage({ url: iconUrl, loaded: true })}
+        onError={() => setImage({ url: iconUrl, loaded: false })}
+      />
+    </View>
+  );
+}
+
+function DefaultProviderIcon(props: ProviderIconProps) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const gradientId = useId();
