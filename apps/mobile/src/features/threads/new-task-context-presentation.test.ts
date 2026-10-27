@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fillNewTaskWorkspaceBranch,
+  resolveWorktreeSwitchBranch,
   resolveNewTaskBranchLabel,
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
@@ -116,6 +117,7 @@ describe("fillNewTaskWorkspaceBranch", () => {
     branches,
     projectCwd: "/repo",
     worktreeDefaultSettled: true,
+    worktreeBaseBranch: "",
   };
 
   it("bases a new worktree on the default branch, even when only the remote has it", () => {
@@ -125,6 +127,32 @@ describe("fillNewTaskWorkspaceBranch", () => {
         selection: { mode: "worktree", branch: null, worktreePath: null },
       }),
     ).toEqual({ mode: "worktree", branch: "origin/main", worktreePath: null });
+  });
+
+  it("bases a new worktree on the configured branch, even when refs have not listed it", () => {
+    expect(
+      fillNewTaskWorkspaceBranch({
+        ...base,
+        branches: [],
+        worktreeBaseBranch: "dev",
+        selection: { mode: "worktree", branch: null, worktreePath: null },
+      }),
+    ).toEqual({ mode: "worktree", branch: "dev", worktreePath: null });
+  });
+
+  it("keeps a configured base out of local selections", () => {
+    expect(
+      fillNewTaskWorkspaceBranch({
+        ...base,
+        worktreeBaseBranch: "dev",
+        selection: {
+          mode: "local",
+          branch: null,
+          worktreePath: null,
+          followsCurrentCheckout: true,
+        },
+      }),
+    ).toMatchObject({ branch: "feature" });
   });
 
   it("waits for the workspace default to settle before picking a base", () => {
@@ -167,5 +195,21 @@ describe("fillNewTaskWorkspaceBranch", () => {
   it("keeps an explicit branch", () => {
     const selection = { mode: "worktree", branch: "release", worktreePath: null } as const;
     expect(fillNewTaskWorkspaceBranch({ ...base, selection })).toBe(selection);
+    expect(fillNewTaskWorkspaceBranch({ ...base, worktreeBaseBranch: "dev", selection })).toBe(
+      selection,
+    );
+  });
+});
+
+describe("resolveWorktreeSwitchBranch", () => {
+  const input = { selectedBranch: "feature", checkoutBranch: "feature", worktreeBaseBranch: "dev" };
+
+  it("drops the checkout branch so the configured base applies", () => {
+    expect(resolveWorktreeSwitchBranch(input)).toBeNull();
+  });
+
+  it("keeps another branch the user chose, and today's behavior without a base", () => {
+    expect(resolveWorktreeSwitchBranch({ ...input, selectedBranch: "release" })).toBe("release");
+    expect(resolveWorktreeSwitchBranch({ ...input, worktreeBaseBranch: "" })).toBe("feature");
   });
 });

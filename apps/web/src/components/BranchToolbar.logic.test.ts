@@ -8,6 +8,7 @@ import {
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
+  resolveWorktreeBaseBranchCandidate,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -40,6 +41,44 @@ describe("resolveBranchToolbarPrBranch", () => {
       resolveBranchToolbarPrBranch({
         activeThreadBranch: "feature/current",
         resolvedActiveBranch: "feature/next",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveWorktreeBaseBranchCandidate", () => {
+  const input = {
+    configuredBaseBranch: "",
+    isRepo: true,
+    defaultBranchName: "main",
+    currentGitBranch: "feature/open-thread",
+  };
+
+  it("uses the repository default, not the open thread's branch, when no base is configured", () => {
+    expect(resolveWorktreeBaseBranchCandidate(input)).toBe("main");
+    expect(resolveWorktreeBaseBranchCandidate({ ...input, defaultBranchName: null })).toBe(
+      "feature/open-thread",
+    );
+  });
+
+  it("uses the configured base even when the loaded refs do not include it", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate({
+        ...input,
+        configuredBaseBranch: "dev",
+        defaultBranchName: null,
+        currentGitBranch: null,
+      }),
+    ).toBe("dev");
+  });
+
+  it("ignores a configured base outside a Git repository", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate({
+        configuredBaseBranch: "dev",
+        isRepo: false,
+        defaultBranchName: null,
+        currentGitBranch: null,
       }),
     ).toBeNull();
   });

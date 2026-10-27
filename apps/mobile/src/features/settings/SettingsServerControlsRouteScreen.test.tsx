@@ -122,6 +122,9 @@ vi.mock("./components/BranchNamingSettings", () => ({
     return null;
   },
 }));
+vi.mock("./components/WorktreeBaseBranchSetting", () => ({
+  WorktreeBaseBranchSetting: () => null,
+}));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
     selectedTargets: mocks.targets,

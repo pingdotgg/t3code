@@ -72,6 +72,17 @@ export function resolveNewTaskLocalWorkspaceSelection(input: {
   };
 }
 
+/** Leaving the checkout for a new worktree drops the checkout's branch when a base is configured. */
+export function resolveWorktreeSwitchBranch(input: {
+  readonly selectedBranch: string | null;
+  readonly checkoutBranch: string | null;
+  readonly worktreeBaseBranch: string;
+}): string | null {
+  return input.worktreeBaseBranch !== "" && input.selectedBranch === input.checkoutBranch
+    ? null
+    : input.selectedBranch;
+}
+
 export function resolveNewTaskBranchLabel(input: {
   readonly branchName: string | null;
   readonly startFromOrigin: boolean;
@@ -113,10 +124,9 @@ export function filterNewTaskBranches<T extends { readonly name: string }>(
 }
 
 /**
- * A worktree with no chosen base starts from the default branch, and a local
- * selection the user just switched to follows the current checkout until refs
- * load. Both are derived, never written back, so a late ref list or t3.json
- * default still wins.
+ * A worktree with no chosen base starts from the configured base, else the default branch,
+ * and a local selection the user just switched to follows the current checkout until refs
+ * load. Both are derived, never written back, so a late ref list or t3.json default still wins.
  */
 export function fillNewTaskWorkspaceBranch(input: {
   readonly selection: ComposerDraftWorkspaceSelection;
@@ -129,17 +139,18 @@ export function fillNewTaskWorkspaceBranch(input: {
   }>;
   readonly projectCwd: string | null;
   readonly worktreeDefaultSettled: boolean;
+  readonly worktreeBaseBranch: string;
 }): ComposerDraftWorkspaceSelection {
   const { selection } = input;
   if (selection.branch !== null) return selection;
   if (selection.mode === "worktree") {
     // The default may only exist as origin/<default>, so search remote refs too.
-    const base =
+    const fallback =
       input.branches.find((branch) => branch.isDefault) ??
-      input.branches.find((branch) => !branch.isRemote && branch.current) ??
-      null;
+      input.branches.find((branch) => !branch.isRemote && branch.current);
+    const base = input.worktreeBaseBranch || fallback?.name;
     return input.worktreeDefaultSettled && base
-      ? { ...selection, branch: base.name, worktreePath: null }
+      ? { ...selection, branch: base, worktreePath: null }
       : selection;
   }
   if (!selection.followsCurrentCheckout || input.projectCwd === null) return selection;
@@ -166,6 +177,7 @@ export function resolveNewTaskDraftWorkspace(input: {
   readonly isGitRepo: boolean;
   readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
   readonly projectCwd: string | null;
+  readonly worktreeBaseBranch: string;
 }): ComposerDraftWorkspaceSelection {
   const selection = input.canChooseWorkspace ? input.selection : undefined;
   return fillNewTaskWorkspaceBranch({
@@ -177,5 +189,6 @@ export function resolveNewTaskDraftWorkspace(input: {
     branches: input.branches,
     projectCwd: input.projectCwd,
     worktreeDefaultSettled: selection?.mode !== undefined || input.defaultModeSettled,
+    worktreeBaseBranch: input.worktreeBaseBranch,
   });
 }

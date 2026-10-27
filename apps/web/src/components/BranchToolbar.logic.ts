@@ -196,6 +196,17 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+/** A configured base is used as typed; it may sit outside the loaded ref page or exist only on a remote. */
+export function resolveWorktreeBaseBranchCandidate(input: {
+  configuredBaseBranch: string;
+  isRepo: boolean;
+  defaultBranchName: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  if (input.isRepo && input.configuredBaseBranch !== "") return input.configuredBaseBranch;
+  return input.defaultBranchName ?? input.currentGitBranch;
+}
+
 export function resolveBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
   effectiveEnvMode: EnvMode;

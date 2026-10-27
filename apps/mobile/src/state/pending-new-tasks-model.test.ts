@@ -13,6 +13,7 @@ const localDefault: PendingDraftProjectDefaults = {
   canChooseWorkspace: true,
   defaultMode: "local",
   defaultModeSettled: true,
+  worktreeBaseBranch: "",
 };
 const worktreeDefault: PendingDraftProjectDefaults = { ...localDefault, defaultMode: "worktree" };
 const resolve = (
@@ -63,6 +64,14 @@ describe("resolvePendingDraftBranch", () => {
     const worktree = draft({ mode: "worktree", branch: null, worktreePath: null });
     expect(pendingDraftBranchNeedsRefs(worktree, localDefault)).toBe(true);
     expect(resolve({ draft: worktree, branches, projectCwd })).toBe("origin/main");
+    expect(
+      resolve({
+        draft: worktree,
+        defaults: { ...localDefault, worktreeBaseBranch: "dev" },
+        branches,
+        projectCwd,
+      }),
+    ).toBe("dev");
   });
 
   it("shows the current branch for a local draft that follows the checkout", () => {

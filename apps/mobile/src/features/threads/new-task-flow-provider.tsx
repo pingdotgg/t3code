@@ -90,6 +90,7 @@ import {
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskDraftWorkspace,
+  resolveWorktreeSwitchBranch,
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
@@ -406,6 +407,7 @@ export function NewTaskFlowProvider(
       isGitRepo,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
+      worktreeBaseBranch: projectSettings.settings.newWorktreesBaseBranch,
     });
   const workspaceSelection = resolveWorkspaceSelection(selectedProjectDraft.workspaceSelection);
   const workspaceMode = workspaceSelection.mode;
@@ -649,7 +651,16 @@ export function NewTaskFlowProvider(
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode,
-        branch: mode === "local" ? localSelection.branch : selectedBranchName,
+        branch:
+          mode === "local"
+            ? localSelection.branch
+            : workspaceMode === "local"
+              ? resolveWorktreeSwitchBranch({
+                  selectedBranch: selectedBranchName,
+                  checkoutBranch: localSelection.branch,
+                  worktreeBaseBranch: projectSettings.settings.newWorktreesBaseBranch,
+                })
+              : selectedBranchName,
         worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         // Refs have not named the current branch yet; the selection follows it.
