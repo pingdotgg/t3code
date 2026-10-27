@@ -48,7 +48,11 @@ vi.mock("@legendapp/list/react-native", async () => {
   };
 });
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: vi.fn() }) }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => fixture.configs }));
+vi.mock("../../state/preferences", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
+});
+vi.mock("../../native/native-layout-metrics", () => ({ useNativeColumnLayoutMetrics: () => null }));
 vi.mock("react-native", () => ({
   View: "div",
   ScrollView: "ScrollView",
@@ -76,11 +80,15 @@ vi.mock("../../native/v5-workspace-context", async () => ({
 }));
 vi.mock("../../state/workspace", () => ({ useWorkspaceState: () => ({ environments: [] }) }));
 vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
-vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentServerConfigsAtom: Atom.make(fixture.configs) };
+});
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: string) => value }));
 vi.mock("./PullRequestListRow", () => ({ PullRequestListRow: "PullRequestListRow" }));
 vi.mock("./PullRequestControls", () => ({ PullRequestCardRow: "PullRequestCardRow" }));
 vi.mock("./PullRequestListFilters", () => ({
+  usePullRequestListFilters: () => ({ headerMenu: null }),
   PullRequestListFilters: ({ savedViewsMenu }: { savedViewsMenu: ReactNode }) => savedViewsMenu,
 }));
 vi.mock("../workspace/ListFilterMenu", () => ({

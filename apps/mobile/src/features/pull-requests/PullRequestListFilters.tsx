@@ -106,7 +106,6 @@ export function usePullRequestListFilters(props: {
   readonly projects: readonly { id: string; title: string; environmentId: string }[];
   /** Opens a picker that searches the host, for a label or author no loaded row carries. */
   readonly onSearch: (kind: "labels" | "authors") => void;
-  readonly savedViewsMenu: ReactNode;
 }) {
   const { value } = props;
   const projects = useProjectsInSidebarOrder(props.projects);
@@ -353,6 +352,7 @@ export function PullRequestListFilters(props: {
   /** Android sidebar rows sit further in than full-width rows; the pills follow them. */
   readonly sidebar?: boolean;
   readonly filters: ReturnType<typeof usePullRequestListFilters>;
+  readonly savedViewsMenu: ReactNode;
 }) {
   const { count, more, reset, select, author, selectedLabelCount } = props.filters;
   return (
