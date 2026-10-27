@@ -18,6 +18,23 @@ const isEffectHookCall = (node: ESTree.CallExpression): boolean => {
   return false;
 };
 
+// Agents read this message and act on it, so it walks the alternatives before it shows the way out.
+const MESSAGE =
+  "Stop and reconsider before keeping this effect. " +
+  "Is it computable from props or state? Compute it during render; the compiler memoizes it. " +
+  "Does it respond to a user action? Do it in that handler. " +
+  "Does it reset state when a prop changes? Key the component on that prop. " +
+  "Does it tell a parent or store that a value changed? Do it where the change happens. " +
+  "Does it load app data? Read it from an atom. " +
+  "Does it read a value from outside React? Use an atom or useSyncExternalStore. " +
+  "An effect that sets state another effect reads is one handler or one derivation. " +
+  "An effect is right only when it keeps something outside React in step with this component while mounted: " +
+  "a DOM node, listener, timer, native module, connection, router, imperative toast, " +
+  "or a registry entry or resource held until unmount. " +
+  "Moving the same logic into a ref or store to dodge this rule is not a fix. " +
+  "If the effect does that, name what it keeps in step on the line above: " +
+  "`// oxlint-disable-next-line t3code/no-unreasoned-state-sync -- <what it syncs with and why>`.";
+
 // Every kept effect carries its reason in the suppression above it; t3code/require-suppression-reason
 // rejects a suppression that does not say why.
 export default defineRule({
@@ -37,10 +54,7 @@ export default defineRule({
         if (!isEffectHookCall(node)) return;
         context.report({
           node,
-          message:
-            "First ask whether this is synchronization that belongs in render or in the handler that causes it. " +
-            "If an effect is the honest model, say why on the line above it: " +
-            "`// oxlint-disable-next-line t3code/no-unreasoned-state-sync -- <why>`.",
+          message: MESSAGE,
         });
       },
     };
