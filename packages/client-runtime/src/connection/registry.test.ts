@@ -413,6 +413,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             Stream.die(new Error("Config is not used by registry tests.")),
           ready: Effect.void,
           probe: Effect.void,
+          inboundFrames: Effect.succeed(0),
           closed: Deferred.await(closed),
         } satisfies RpcSession.RpcSession),
         () => Ref.update(releasedSessions, (count) => count + 1),
@@ -432,6 +433,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     checkRoute: (_entry, route) => checkRoute(route),
     preflight: (_entry, route) =>
       checkRoute(route).pipe(Effect.map((check) => check === "answered")),
+    checkHost: () => Effect.succeed<ConnectionDriver.RouteCheck>("unchecked"),
   });
 
   const layerCache = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
