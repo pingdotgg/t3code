@@ -93,12 +93,14 @@ const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
- * or launch arguments whose appended system prompt cannot be read.
+ * launch arguments whose appended system prompt cannot be read, or MCP registration that never
+ * answers while the query opens.
  */
 const PROMPT_REFUSAL_TAGS = [
   "ClaudeBackgroundWorkBlocksQueryReplacementError",
   "ClaudeAppendSystemPromptFileError",
   "ClaudeAppendSystemPromptMissingValueError",
+  "ClaudeMcpRegistrationTimeoutError",
 ] as const;
 
 const refusedBeforePrompt = (error: unknown): boolean =>
