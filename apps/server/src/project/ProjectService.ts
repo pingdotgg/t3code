@@ -423,22 +423,26 @@ export const make = Effect.gen(function* () {
       commandId: CommandId.make(`${input.commandId}:delete-thread:${threadId}`),
       threadId,
     };
-    const now = yield* DateTime.now;
-    const plan = yield* planThreadDeletion({
-      command,
-      projection,
-      attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
-      now,
-      idAllocator,
-    });
-    const committed = yield* eventSink.commitCommand({
-      commandId: command.commandId,
-      commandType: command.type,
-      threadId,
-      acceptedAt: now,
-      events: plan.events,
-      effects: plan.effects,
-    });
+    const committed = yield* threadCommands.withDeletionLock(
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const plan = yield* planThreadDeletion({
+          command,
+          projection,
+          attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
+          now,
+          idAllocator,
+        });
+        return yield* eventSink.commitCommand({
+          commandId: command.commandId,
+          commandType: command.type,
+          threadId,
+          acceptedAt: now,
+          events: plan.events,
+          effects: plan.effects,
+        });
+      }),
+    );
     if (
       committed.receipt.threadId !== command.threadId ||
       committed.receipt.commandType !== command.type

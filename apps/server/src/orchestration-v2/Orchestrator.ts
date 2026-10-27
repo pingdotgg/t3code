@@ -13491,7 +13491,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           Effect.flatMap((sideChatIds) =>
             sideChatIds.reduce(
               (locked, sideChatId) => threadDispatch.withLock(sideChatId, locked),
-              dispatchWithReceiptEffect(command, sideChatIds),
+              threadDispatch.withDeletionLock(dispatchWithReceiptEffect(command, sideChatIds)),
             ),
           ),
         ),

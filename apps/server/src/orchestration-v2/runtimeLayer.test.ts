@@ -334,6 +334,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
+  ProjectionStore.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(
@@ -807,6 +808,129 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         assert.isNotNull((yield* orchestrator.getThreadProjection(parentId)).thread.deletedAt);
         assert.isNotNull((yield* orchestrator.getThreadProjection(sideChatId)).thread.deletedAt);
       }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+    }),
+  );
+
+  // Deleting a thread reads whether other threads still show its pages, so a second
+  // deletion must not plan against a first one that has not committed yet.
+  it.effect("plans a thread deletion only after an in-flight deletion commits", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const threadProjectId = ProjectId.make("runtime-delete-serial-thread-project");
+      const deletedProjectId = ProjectId.make("runtime-delete-serial-project");
+      const threadId = ThreadId.make("runtime-delete-serial-thread");
+      const projectThreadId = ThreadId.make("runtime-delete-serial-project-thread");
+      const threadDeleteId = CommandId.make("runtime-delete-serial-thread-delete");
+      for (const [projectId, threadIdInProject] of [
+        [threadProjectId, threadId],
+        [deletedProjectId, projectThreadId],
+      ] as const) {
+        yield* projects.create({
+          commandId: CommandId.make(`runtime-delete-serial-create:${projectId}`),
+          projectId,
+          title: "Serial deletion",
+          workspaceRoot: `/work/serial-deletion/${projectId}`,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`runtime-delete-serial-create:${threadIdInProject}`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId: threadIdInProject,
+          projectId,
+          title: "Serial deletion",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+      }
+
+      const threadDeleteReady = yield* Deferred.make<void>();
+      const releaseThreadDelete = yield* Deferred.make<void>();
+      const projectDeleteQueued = yield* Deferred.make<void>();
+      const projectDeletePlanning = yield* Deferred.make<void>();
+      let threadDeleteCommitted = false;
+      const projectDeletePlannedAfterCommit: Array<boolean> = [];
+      const commitCommand = eventSink.commitCommand;
+      const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) =>
+        input.commandId === threadDeleteId
+          ? Deferred.succeed(threadDeleteReady, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseThreadDelete)),
+              Effect.andThen(commitCommand(input)),
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  threadDeleteCommitted = true;
+                }),
+              ),
+            )
+          : commitCommand(input),
+      );
+      const getThreadAttachmentIds = projectionStore.getThreadAttachmentIds;
+      const readSpy = vi
+        .spyOn(projectionStore, "getThreadAttachmentIds")
+        .mockImplementation((id) =>
+          id === projectThreadId
+            ? Effect.sync(() => projectDeletePlannedAfterCommit.push(threadDeleteCommitted)).pipe(
+                Effect.andThen(Deferred.succeed(projectDeletePlanning, undefined)),
+                Effect.andThen(getThreadAttachmentIds(id)),
+              )
+            : getThreadAttachmentIds(id),
+        );
+      const withDeletionLock = executor.withDeletionLock;
+      let deletionLockRequests = 0;
+      const observeDeletionLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
+        (effect) =>
+          ++deletionLockRequests === 2
+            ? Deferred.succeed(projectDeleteQueued, undefined).pipe(
+                Effect.andThen(withDeletionLock(effect)),
+              )
+            : withDeletionLock(effect);
+      const lockSpy = vi
+        .spyOn(executor, "withDeletionLock")
+        .mockImplementation(observeDeletionLock);
+      yield* Effect.gen(function* () {
+        const threadDeleteFiber = yield* orchestrator
+          .dispatch({ type: "thread.delete", commandId: threadDeleteId, threadId })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(threadDeleteReady),
+          Fiber.join(threadDeleteFiber).pipe(
+            Effect.andThen(Effect.die("The thread deletion completed before its commit barrier.")),
+          ),
+        );
+        const projectDeleteFiber = yield* projects
+          .delete({
+            commandId: CommandId.make("runtime-delete-serial-project-delete"),
+            projectId: deletedProjectId,
+            force: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(projectDeleteQueued),
+          Deferred.await(projectDeletePlanning),
+        );
+        yield* Deferred.succeed(releaseThreadDelete, undefined);
+        yield* Fiber.join(threadDeleteFiber);
+        yield* Fiber.join(projectDeleteFiber);
+        assert.deepEqual(projectDeletePlannedAfterCommit, [true]);
+        assert.isNotNull(
+          (yield* orchestrator.getThreadProjection(projectThreadId)).thread.deletedAt,
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            commitSpy.mockRestore();
+            readSpy.mockRestore();
+            lockSpy.mockRestore();
+          }),
+        ),
+      );
     }),
   );
 });
