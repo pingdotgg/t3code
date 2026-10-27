@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as ErrorReporter from "effect/ErrorReporter";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
@@ -30,6 +31,16 @@ import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
 const decodeElicitationRequest = Schema.decodeUnknownEffect(
   Schema.Union([AcpSchemaV2.CreateElicitationRequest, AcpSchemaV1.CreateElicitationRequest]),
+);
+// ACP session notices postdate the pinned v1.21 and v2 alpha.3 schemas, so they arrive as unknown updates.
+const decodeNoticeUpdate = Schema.decodeUnknownOption(
+  Schema.Struct({
+    sessionUpdate: Schema.Literal("notice"),
+    severity: Schema.String,
+    title: Schema.NonEmptyString,
+    description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    _meta: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Json))),
+  }),
 );
 
 export interface AcpClientOptions {
@@ -480,7 +491,9 @@ function normalizeSessionUpdate(
         },
       };
     }
-    default:
+    default: {
+      const notice = decodeNoticeUpdate(update);
+      if (Option.isSome(notice)) return { ...base, update: notice.value };
       return {
         ...base,
         update: {
@@ -489,12 +502,27 @@ function normalizeSessionUpdate(
           raw: update,
         },
       };
+    }
   }
 }
 
 function normalizeV1SessionUpdate(
   notification: AcpSchemaV1.SessionNotification,
 ): AcpSchema.SessionNotification {
+  // v1 passes unknown updates through raw, so a malformed notice must not reach consumers as one.
+  if ((notification.update.sessionUpdate as string) === "notice") {
+    const notice = decodeNoticeUpdate(notification.update);
+    return {
+      ...notification,
+      update: Option.isSome(notice)
+        ? notice.value
+        : {
+            sessionUpdate: "_t3_unknown",
+            originalSessionUpdate: "notice",
+            raw: notification.update,
+          },
+    };
+  }
   if (notification.update.sessionUpdate !== "available_commands_update") {
     return notification as unknown as AcpSchema.SessionNotification;
   }

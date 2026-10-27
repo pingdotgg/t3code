@@ -2058,6 +2058,88 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("advertises ACP session notices and shows them as system notices", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-notice");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: { T3_ACP_EMIT_NOTICE: "1" },
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-notice");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-notice"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+      );
+      const items = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+
+      const initialize = Array.from(yield* Queue.takeAll(protocolEvents)).find(
+        (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
+      );
+      assert.deepEqual(
+        initialize === undefined
+          ? undefined
+          : Reflect.get(
+              Object(rawProtocolRequestParam(initialize, "clientCapabilities")),
+              "session",
+            ),
+        { notices: {} },
+      );
+      const title =
+        "skill discovery warning: candidate was skipped because its metadata is invalid";
+      assert.deepEqual(
+        items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
+        [title],
+      );
+      const replies = new Map(
+        items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
+      );
+      assert.deepEqual(
+        [...replies.values()],
+        ["before the notice, after the notice"],
+        "a notice neither joins the reply nor splits it",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("projects ACP v2 fidelity updates into first-class orchestration items", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

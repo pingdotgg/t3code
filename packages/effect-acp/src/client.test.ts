@@ -1446,6 +1446,55 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       });
     }),
   );
+
+  it.effect("delivers ACP v1 session notices, which the pinned v1 schema predates", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+      const initializeFiber = yield* acp.agent
+        .initialize({ protocolVersion: 1, clientCapabilities: { session: { notices: {} } } })
+        .pipe(Effect.forkScoped);
+      const initializeRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(InitializeResponseV1, {
+          jsonrpc: "2.0",
+          id: initializeRequest.id,
+          result: { protocolVersion: 1 },
+        }),
+      );
+      yield* Fiber.join(initializeFiber);
+
+      const notice = {
+        sessionUpdate: "notice",
+        severity: "warning",
+        title: "MCP server unavailable",
+        description: "Continuing without it.",
+      } as const;
+      const untitled = { sessionUpdate: "notice", severity: "info" } as const;
+      for (const update of [notice, untitled]) {
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { sessionId: "session-1", update },
+          }),
+        );
+      }
+      const received = yield* acp.raw.notifications.pipe(Stream.take(2), Stream.runCollect);
+      assert.deepEqual(
+        Array.from(received, (event) =>
+          event._tag === "SessionUpdate" ? event.params.update : undefined,
+        ),
+        [notice, { sessionUpdate: "_t3_unknown", originalSessionUpdate: "notice", raw: untitled }],
+      );
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
 });
 
 const elicitationForm = {
