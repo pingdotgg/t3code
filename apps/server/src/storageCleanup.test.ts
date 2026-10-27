@@ -682,27 +682,34 @@ const submoduleCleanupFixture = () =>
     return { ...fixture, submodule, child, recordSubmodules };
   });
 
-it.live("inspects repositories even in a pnpm store excluded from reclaimed bytes", () =>
-  runCleanupTest(
-    Effect.gen(function* () {
-      const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
-      setPolicy("tracked-changes");
-      const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-store-" });
-      const nested = `${worktree}/node_modules/.pnpm/nested`;
-      yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
-      yield* fs.writeFileString(`${nested}/uncommitted.txt`, "keep me");
-      yield* fs.writeFileString(
-        `${worktree}/node_modules/.modules.yaml`,
-        JSON.stringify({ storeDir, virtualStoreDir: ".pnpm" }),
-      );
-      const report = yield* service.runNow;
-      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
-        outcome: "kept",
-        reason: "Contains a nested Git repository",
-      });
-      expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
-    }),
-  ),
+it.live.each(["repository", "worktree"] as const)(
+  "inspects a %s in a pnpm store excluded from reclaimed bytes",
+  (kind) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+        setPolicy("tracked-changes");
+        const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-store-" });
+        const nested = `${worktree}/node_modules/.pnpm/nested`;
+        yield* command(
+          repo,
+          kind === "worktree"
+            ? ["worktree", "add", "-b", "nested", nested]
+            : ["clone", "--no-hardlinks", repo, nested],
+        );
+        yield* fs.writeFileString(`${nested}/uncommitted.txt`, "keep me");
+        yield* fs.writeFileString(
+          `${worktree}/node_modules/.modules.yaml`,
+          JSON.stringify({ storeDir, virtualStoreDir: ".pnpm" }),
+        );
+        const report = yield* service.runNow;
+        expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+          outcome: "kept",
+          reason: "Contains a nested Git repository",
+        });
+        expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+      }),
+    ),
 );
 
 it.live("keeps an ignored repository inside a registered submodule", () =>
@@ -2294,11 +2301,13 @@ describe("storage cleanup reports and local file policies", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "pnpm-store-" });
+          const statted: string[] = [];
           const { service, worktree, setPolicy } = yield* cleanupFixture().pipe(
             Effect.provideService(FileSystem.FileSystem, {
               ...fs,
-              stat: (target) =>
-                fs
+              stat: (target) => {
+                statted.push(target);
+                return fs
                   .stat(target)
                   .pipe(
                     Effect.map((info) =>
@@ -2306,7 +2315,8 @@ describe("storage cleanup reports and local file policies", () => {
                         ? { ...info, dev: info.dev + 1n }
                         : info,
                     ),
-                  ),
+                  );
+              },
             }),
           );
           setPolicy("tracked-changes");
@@ -2337,6 +2347,9 @@ describe("storage cleanup reports and local file policies", () => {
           );
           const report = yield* service.runNow;
           expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes });
+          expect(statted.includes(`${nodeModules}/.pnpm/pkg@1.0.0/index.js`)).toBe(
+            store !== "same-device",
+          );
         }),
       ),
   );

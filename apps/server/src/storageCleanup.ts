@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
 import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
@@ -428,7 +430,11 @@ const make = Effect.gen(function* () {
             onSome: (blocks) => Number(blocks * 512n),
           });
         } else if (stat.type === "Directory") {
-          const names = yield* fs.readDirectory(target);
+          const dirents =
+            skipped !== null && (target === skipped || inside(skipped, target))
+              ? yield* Effect.tryPromise(() => NodeFSP.readdir(target, { withFileTypes: true }))
+              : null;
+          const names = dirents?.map((entry) => entry.name) ?? (yield* fs.readDirectory(target));
           const markers = inspectRepositories ? names.map((name) => name.toLowerCase()) : [];
           // Git status omits ignored repositories, and worktree remove deletes them.
           // Registered submodules have their own recursive safety checks below.
@@ -442,7 +448,10 @@ const make = Effect.gen(function* () {
             return { bytes: null, reason: "contains a nested Git repository" };
           entries += names.length;
           if (entries > 2_000_000) return incomplete;
-          for (const name of names) {
+          const directories = dirents
+            ?.filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name);
+          for (const name of directories ?? names) {
             const child = path.join(target, name);
             if (!inside(root, child)) return incomplete;
             pending.push(child);
