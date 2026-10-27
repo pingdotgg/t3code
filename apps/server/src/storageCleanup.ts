@@ -377,6 +377,7 @@ const make = Effect.gen(function* () {
       const skipped = yield* sharedPnpmVirtualStore(root);
       const incomplete = { bytes: null, reason: "worktree could not be fully inspected" };
       const repositories = new Set([pathKey(root)]);
+      const moduleStores: string[] = [];
       if (inspectRepositories && (yield* fs.exists(path.join(root, ".gitmodules")))) {
         const submodules = yield* git.execute({
           operation: "StorageCleanup.nestedRepositories",
@@ -394,6 +395,7 @@ const make = Effect.gen(function* () {
         for (const submodule of submodules.stdout.split("\0").filter(Boolean)) {
           repositories.add(pathKey(path.resolve(submodule)));
           repositories.add(pathKey(path.resolve(submodule, ".git")));
+          moduleStores.push(pathKey(path.resolve(submodule, ".git", "modules")));
         }
       }
       const pending = [root];
@@ -427,13 +429,15 @@ const make = Effect.gen(function* () {
           });
         } else if (stat.type === "Directory") {
           const names = yield* fs.readDirectory(target);
+          const markers = inspectRepositories ? names.map((name) => name.toLowerCase()) : [];
           // Git status omits ignored repositories, and worktree remove deletes them.
           // Registered submodules have their own recursive safety checks below.
           if (
             inspectRepositories &&
             !repositories.has(pathKey(target)) &&
-            (names.includes(".git") ||
-              (names.includes("HEAD") && names.includes("objects") && names.includes("refs")))
+            !moduleStores.some((store) => pathKey(target) === store || inside(store, target)) &&
+            (markers.includes(".git") ||
+              (markers.includes("head") && markers.includes("objects") && markers.includes("refs")))
           )
             return { bytes: null, reason: "contains a nested Git repository" };
           entries += names.length;

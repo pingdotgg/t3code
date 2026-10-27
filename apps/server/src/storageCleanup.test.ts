@@ -608,9 +608,11 @@ const runCleanupTest = <A, E>(
 it.live.each([
   { policy: "tracked-changes", kind: "worktree" },
   { policy: "tracked-changes", kind: "repository" },
+  { policy: "tracked-changes", kind: "uppercase" },
   { policy: "tracked-changes", kind: "bare" },
   { policy: "uncommitted-changes", kind: "worktree" },
   { policy: "uncommitted-changes", kind: "repository" },
+  { policy: "uncommitted-changes", kind: "uppercase" },
   { policy: "uncommitted-changes", kind: "bare" },
 ] as const)("keeps an ignored nested $policy / $kind", ({ policy, kind }) =>
   runCleanupTest(
@@ -618,7 +620,7 @@ it.live.each([
       const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
       setPolicy(policy);
       const nested = `${worktree}/dist/nested`;
-      if (kind === "worktree") {
+      if (kind === "worktree" || kind === "uppercase") {
         yield* command(repo, ["worktree", "add", "-b", "nested", nested]);
       } else {
         yield* command(repo, [
@@ -629,6 +631,7 @@ it.live.each([
           nested,
         ]);
       }
+      if (kind === "uppercase") yield* fs.rename(`${nested}/.git`, `${nested}/.GIT`);
       yield* fs.writeFileString(`${nested}/uncommitted.txt`, "irreplaceable work\n");
       expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
       const report = yield* service.runNow;
@@ -639,6 +642,12 @@ it.live.each([
       expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("irreplaceable work\n");
       expect(
         (yield* command(nested, [
+          ...(kind === "uppercase"
+            ? [
+                `--git-dir=${(yield* fs.readFileString(`${nested}/.GIT`)).trim().slice(8)}`,
+                "--work-tree=.",
+              ]
+            : []),
           "-c",
           "safe.bareRepository=all",
           "rev-parse",
@@ -732,6 +741,33 @@ it.live("removes clean submodules recursively, including deinitialized repositor
       yield* command(repo, ["clone", "--no-hardlinks", repo, legacy]);
       yield* command(worktree, ["submodule", "add", repo, "legacy"]);
       expect((yield* fs.stat(`${legacy}/.git`)).type).toBe("Directory");
+      yield* command(legacy, [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        repo,
+        "child",
+      ]);
+      yield* command(legacy, [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        repo,
+        "stored",
+      ]);
+      yield* command(legacy, [
+        "-c",
+        "user.name=Cleanup test",
+        "-c",
+        "user.email=cleanup@example.test",
+        "commit",
+        "-am",
+        "record legacy children",
+      ]);
+      yield* command(legacy, ["push", "origin", "HEAD:legacy"]);
+      yield* command(legacy, ["submodule", "deinit", "stored"]);
       yield* recordSubmodules();
       yield* command(submodule, ["submodule", "deinit", "stored"]);
       const admin = (yield* command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
