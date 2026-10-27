@@ -9,7 +9,7 @@ import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import { APP_DISPLAY_NAME, DESKTOP_DOWNLOAD_URL } from "~/branding";
+import { DESKTOP_DOWNLOAD_URL } from "~/branding";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { useEnvironments } from "~/state/environments";
@@ -112,21 +112,16 @@ function HostedPromptLinkLanding({
 
   if (!summary.ok) {
     return (
-      <StandalonePage tone="error">
-        <StandalonePageHeader
-          eyebrow={APP_DISPLAY_NAME}
-          title="Could not open the link"
-          description={summary.error}
-        />
+      <StandalonePage>
+        <StandalonePageHeader title="Could not open the link" description={summary.error} />
       </StandalonePage>
     );
   }
 
   const { prompt, details } = summary.value;
   return (
-    <StandalonePage tone="brand">
+    <StandalonePage>
       <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
         title="Open this prompt"
         description="It opens as a draft. Nothing runs until you press Send."
       />
