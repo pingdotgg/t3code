@@ -1176,9 +1176,16 @@ export class AcpSessionRuntime extends Context.Service<
       modelId: string,
       meta?: EffectAcpSchema.SetSessionModelRequest["_meta"],
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Writes a session configuration option. A select value the option does
+     * not list is refused unless `allowUnlistedValue` is set, for agents that
+     * take any value and judge it themselves (a custom model id the agent
+     * does not list).
+     */
     readonly setConfigOption: (
       configId: string,
       value: string | boolean,
+      options?: { readonly allowUnlistedValue?: boolean },
     ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly request: (
@@ -1799,6 +1806,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     function* (
       configId: string,
       value: string | boolean,
+      allowUnlistedValue: boolean,
     ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
       const configOptions = yield* Ref.get(configOptionsRef);
       const configOption = findSessionConfigOption(configOptions, configId);
@@ -1831,7 +1839,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         });
       }
       const allowedValues = collectSessionConfigOptionValues(configOption);
-      if (allowedValues.includes(value)) {
+      if (allowUnlistedValue || allowedValues.includes(value)) {
         return;
       }
       if (
@@ -2004,8 +2012,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const setConfigOption = (
     configId: string,
     value: string | boolean,
+    options?: { readonly allowUnlistedValue?: boolean },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
-    validateConfigOptionValue(configId, value).pipe(
+    validateConfigOptionValue(configId, value, options?.allowUnlistedValue === true).pipe(
       Effect.andThen(getStartedState),
       Effect.flatMap((started) =>
         Ref.get(configOptionsRef).pipe(

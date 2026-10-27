@@ -27,6 +27,7 @@
     "record:cursor-replay": "node --env-file-if-exists=../../.env --experimental-strip-types scripts/record-cursor-agent-sdk-replay-fixture.ts",
     "record:pi-replay": "node scripts/record-pi-rpc-replay-fixture.ts",
     "record:grok-replay": "node scripts/record-grok-acp-replay-fixture.ts",
+    "record:fx-replay": "node scripts/record-fx-acp-replay-fixture.ts",
     "record:muse-replay": "node scripts/record-muse-msp-replay-fixture.ts",
     "generate": "graphqlgen",
     "generate:expo-schema": "node scripts/fetch-expo-schema.ts"
@@ -44,6 +45,7 @@
     "@t3tools/provider-acp-registry": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/provider-cursor": "workspace:*",
+    "@t3tools/provider-fx": "workspace:*",
     "@t3tools/provider-grok": "workspace:*",
     "@t3tools/provider-muse": "workspace:*",
     "@t3tools/provider-opencode": "workspace:*",

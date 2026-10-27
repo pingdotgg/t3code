@@ -95,6 +95,15 @@
         { "range": ">=1.4.2", "status": "supported" },
         { "range": "<1.4.2", "status": "unknown" }
       ]
+    },
+    {
+      "driver": "fx",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.0.13",
+      "ranges": [
+        { "range": ">=0.0.13", "status": "supported" },
+        { "range": "<0.0.13", "status": "unsupported" }
+      ]
     }
   ],
   "currentModels": {
