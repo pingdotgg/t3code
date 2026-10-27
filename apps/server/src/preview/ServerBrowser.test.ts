@@ -473,6 +473,27 @@ it.live.each(["desktop" as const, undefined])(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a tab the desktop does not draw is marked headless, so the desktop streams it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      desktopRendersNext = true;
+      const desktopTab = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      const headlessOf = (id: string | null) =>
+        sessions.find((session) => session.tabId === id)?.headless;
+
+      expect(headlessOf(tabId)).toBe(true);
+      expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live.each([
   { method: "goto" as const, message: { type: "navigate", url: "http://10.255.255.1/" } },
   { method: "goBack" as const, message: { type: "history", delta: -1 } },

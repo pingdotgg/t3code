@@ -47,6 +47,10 @@ export class PreviewManager extends Context.Service<
     readonly reportStatus: (
       input: PreviewReportStatusInput & { readonly serverControlled?: boolean },
     ) => Effect.Effect<void, PreviewError>;
+    /** Records that a server tab runs headless. It stays headless until it closes. */
+    readonly markHeadless: (
+      input: PreviewCloseInput & { readonly tabId: string },
+    ) => Effect.Effect<void, PreviewError>;
     readonly requestReveal: (
       input: PreviewCloseInput & { readonly tabId: string; readonly force: boolean },
     ) => Effect.Effect<void, PreviewError>;
@@ -307,6 +311,34 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     );
   });
 
+  const markHeadless: PreviewManager["Service"]["markHeadless"] = Effect.fn(
+    "PreviewManager.markHeadless",
+  )(function* (input) {
+    return yield* mutateExistingSession(
+      input.threadId,
+      input.tabId,
+      Effect.fn("PreviewManager.markSessionHeadless")(function* (session) {
+        if (session.snapshot.headless) return { next: session, emit: null, result: undefined };
+        const snapshot: PreviewSessionSnapshot = {
+          ...session.snapshot,
+          headless: true,
+          updatedAt: yield* currentIsoTimestamp,
+        };
+        return {
+          next: { ...session, snapshot },
+          emit: {
+            type: "resized",
+            threadId: session.threadId,
+            tabId: session.tabId,
+            createdAt: snapshot.updatedAt,
+            snapshot,
+          },
+          result: undefined,
+        };
+      }),
+    );
+  });
+
   const resize: PreviewManager["Service"]["resize"] = Effect.fn("PreviewManager.resize")(
     function* (input) {
       return yield* mutateExistingSession(
@@ -469,6 +501,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     requestReveal,
     navigate,
     reportStatus,
+    markHeadless,
     resize,
     adjust,
     refresh,
