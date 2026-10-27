@@ -403,19 +403,12 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
 // index.css paints the light bubble a step darker than the shared palette mobile uses.
 const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
   light: { messageSurface: "#ebebed" },
-  dark: {},
+  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
 };
 
 /** The standard theme as index.css paints it, for solves that measure the page. */
-export function getStandardPaintedThemeColors(
-  appearance: ThemeAppearance,
-  redesign = false,
-): ThemeColors {
-  return {
-    ...getStandardThemeColors(appearance),
-    ...STANDARD_WEB_PAINTED_COLORS[appearance],
-    ...(redesign && appearance === "dark" ? { canvas: "#000000", messageSurface: "#1e1e1e" } : {}),
-  };
+export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
+  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
 }
 
 type ThemeRgbColor = {
@@ -1636,8 +1629,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
-  // The redesign's lighter dark bubble is the stricter surface, so this ink also covers legacy UI.
-  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light", true));
+  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
 }
 
 export function resolveThemeAppearance(
