@@ -750,7 +750,9 @@ export const make = Effect.gen(function* () {
       );
 
       yield* Effect.gen(function* () {
-        if (!exists) yield* runGit(input.cwd, "branch", ["branch", "--", localBranch, target.ref]);
+        if (!exists) {
+          yield* git.createBranch({ cwd: input.cwd, branch: localBranch, startPoint: target.ref });
+        }
         yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
         if (exists) {
           yield* runGit(
@@ -891,13 +893,8 @@ export const make = Effect.gen(function* () {
       baseBranch,
     }) {
       return git
-        .execute({
-          operation: "GitHubSourceControlProvider.recordBranchBase",
-          cwd,
-          args: ["config", `branch.${branch}.gh-merge-base`, baseBranch],
-        })
+        .writeConfigValue({ cwd, key: `branch.${branch}.gh-merge-base`, value: baseBranch })
         .pipe(
-          Effect.asVoid,
           Effect.catch((cause) =>
             Effect.logWarning("Could not record the branch base for gh", { cause }),
           ),

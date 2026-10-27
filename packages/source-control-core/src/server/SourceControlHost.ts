@@ -109,6 +109,20 @@ export class SourceControlHost extends Context.Service<
       readonly setBranchUpstream: (
         input: SourceControlGitRemoteBranch & { readonly branch: string },
       ) => Effect.Effect<void, GitCommandError>;
+      /**
+       * Writes to .git/config, which every worktree shares, go through these rather than
+       * `execute`: the host serializes them per repository.
+       */
+      readonly createBranch: (input: {
+        readonly cwd: string;
+        readonly branch: string;
+        readonly startPoint: string;
+      }) => Effect.Effect<void, GitCommandError>;
+      readonly writeConfigValue: (input: {
+        readonly cwd: string;
+        readonly key: string;
+        readonly value: string;
+      }) => Effect.Effect<void, GitCommandError>;
       readonly switchRef: (
         input: VcsSwitchRefInput,
       ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;

@@ -44,6 +44,8 @@ const failingGit: Git = {
   fetchRemoteBranch: unexpectedGit("fetchRemoteBranch"),
   fetchRemoteTrackingBranch: unexpectedGit("fetchRemoteTrackingBranch"),
   setBranchUpstream: unexpectedGit("setBranchUpstream"),
+  createBranch: unexpectedGit("createBranch"),
+  writeConfigValue: unexpectedGit("writeConfigValue"),
   switchRef: unexpectedGit("switchRef"),
 };
 

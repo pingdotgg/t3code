@@ -182,6 +182,8 @@ function harness(input: {
       }),
     fetchRemoteTrackingBranch: (args) => record("fetchRemoteTrackingBranch", undefined)(args),
     setBranchUpstream: (args) => record("setBranchUpstream", undefined)(args),
+    createBranch: (args) => record("createBranch", undefined)(args),
+    writeConfigValue: (args) => record("writeConfigValue", undefined)(args),
     switchRef: (args) => record("switchRef", { refName: args.refName })(args) as never,
     listLocalBranchNames: () =>
       input.gitFailure === undefined
@@ -523,6 +525,19 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
         .pipe(Effect.flip);
       assert.strictEqual(error.detail, "The pull request could not be checked out with git.");
       assert.notInclude(error.message, "secret-path");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("records the branch base for gh through the host's config write", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      yield* gh.recordBranchBase!({ cwd: "/repo", branch: "feature", baseBranch: "main" });
+      assert.deepStrictEqual(git, [
+        ["writeConfigValue", { cwd: "/repo", key: "branch.feature.gh-merge-base", value: "main" }],
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -949,6 +964,11 @@ it.live.each([
         ["github.com", "repos/team/explicit"],
       ],
     );
+    assert.deepStrictEqual(git.find(([name]) => name === "createBranch")?.[1], {
+      cwd: "/repo",
+      branch: "feature",
+      startPoint: "refs/remotes/enterprise/feature",
+    });
     assert.deepStrictEqual(git.find(([name]) => name === "fetchRemoteTrackingBranch")?.[1], {
       cwd: "/repo",
       remoteName: "enterprise",
