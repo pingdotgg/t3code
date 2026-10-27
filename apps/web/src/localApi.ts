@@ -74,11 +74,8 @@ export function createLocalApi(): LocalApi {
         }
         return showContextMenuFallback(items, position);
       },
-      // The DOM fallback needs an explicit dismiss when the state behind it
-      // goes away. A native desktop menu closes itself; dismissing is a
-      // no-op when no fallback menu is open, so this is safe to call always
-      // (including when the styled menu is used on desktop). Bumping the
-      // generation abandons any show still awaiting the preference read.
+      // Dismissing is a no-op unless a DOM menu is open, so it is safe on desktop.
+      // Bumping the generation abandons any show still awaiting the preference read.
       close: async () => {
         contextMenuShowGeneration += 1;
         dismissContextMenu();
