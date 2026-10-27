@@ -1067,18 +1067,21 @@ export function NewTaskDraftScreen(props: {
 
   if (!flow.selectedModel) {
     return (
-      <ThreadScreenFallback>
-        <AppBar
-          title="New thread"
-          sidebar={false}
-          onBack={goBack}
-          options={{
-            ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
-            unstable_headerSubtitle: undefined,
-            unstable_headerRightItems: () => [],
-            unstable_headerToolbarItems: () => [],
-          }}
-        />
+      <ThreadScreenFallback
+        header={
+          <AppBar
+            title="New thread"
+            sidebar={false}
+            onBack={goBack}
+            options={{
+              ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
+              unstable_headerSubtitle: undefined,
+              unstable_headerRightItems: () => [],
+              unstable_headerToolbarItems: () => [],
+            }}
+          />
+        }
+      >
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
