@@ -54,7 +54,7 @@ but keeps package installs. To use an existing local binary, set **Executable ov
 
 Open the agent's account section in **Settings → Providers** on web or desktop. Choose
 **Sign in** and, if the agent offers several methods, select one. For an installed, configured
-provider, mobile also offers **Settings → Provider accounts**.
+provider, mobile also offers **Settings → Providers**.
 
 Browser sign-in shows the agent's URL and waits for you to open or copy it before telling the
 agent to proceed. The page opens on your device, while the agent runs on the environment.

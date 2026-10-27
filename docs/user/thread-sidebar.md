@@ -127,7 +127,7 @@ answer. The Working section lists the thread you last sent work to first. Pinned
 the pinned section.
 
 This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
-or **Settings → Thread behavior → Working section** on iOS and Android. Each device keeps its own
+or **Settings → General → Working section** on iOS and Android. Each device keeps its own
 choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
@@ -170,7 +170,7 @@ choose **Auto-settle behavior**, and pick **Disabled**. The current option is ch
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
 is disabled.
 
-Change these rules in **Settings → Threads** on web and desktop, or **Settings → Thread behavior** on mobile.
+Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
 top to change only its rules, or **All environments** to update connected environments together.
 Mixed values show where the selected environments disagree. Mobile applies these
@@ -219,8 +219,7 @@ the continuation finishes. If the queue was held by a restart, resume it then.
 
 When the provider reports a reset time, choose **Resume at reset** to schedule a
 continuation. You can cancel it from the thread. Enable **Resume after
-usage limits** in **Settings → Threads** on web and desktop, or **Settings → Thread
-behavior** on mobile, to schedule limit stops by default.
+usage limits** in **Settings → Threads** to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Stopping the thread, sending a new message,
 archiving, or settling it prevents a pending continuation from starting.

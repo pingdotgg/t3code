@@ -185,8 +185,8 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
         }}
       >
         {sections.length ? (
-          sections.map((section) => (
-            <SettingsSection key={section.title ?? "tabs"} title={section.title}>
+          sections.map((section, index) => (
+            <SettingsSection key={section.title ?? `untitled-${index}`} title={section.title}>
               {section.rows.map(({ id, ...row }) => (
                 <SettingsRow key={id} {...row} />
               ))}
@@ -229,11 +229,13 @@ function useSettingsIndexSections(): SettingsListSection[] {
   ): SettingsListRow => ({ id: target, icon, label, target, ...extra });
   const serverPage = (target: SettingsPageTarget, icon: SettingsListRow["icon"], label: string) =>
     page(target, icon, label, { disabled: noServerTargets });
+  // The same pages and groups as Settings on web, minus what mobile has no setting for.
   return [
     {
-      title: "Interface",
       rows: [
+        page("SettingsOrganization", "gearshape", "General"),
         page("SettingsAppearance", "paintbrush", "Appearance"),
+        page("SettingsFollowUp", "bubble.left.and.bubble.right", "Chat"),
         ...(navigationCustomizationAvailable()
           ? [page("SettingsNavigation", "line.3.horizontal", "Navigation tabs")]
           : []),
@@ -246,34 +248,33 @@ function useSettingsIndexSections(): SettingsListSection[] {
       ],
     },
     {
-      title: "Automations",
-      rows: [page("SettingsScheduledTasks", "clock", "Scheduled tasks")],
-    },
-    {
-      title: "Projects & threads",
+      title: "Agents",
       rows: [
-        ...(selectedProjectKey !== null
-          ? [page("SettingsProjectOverview", "folder", "Overview", { value: projectLabel })]
-          : []),
-        page("SettingsOrganization", "folder", "Organization"),
-        page("SettingsThreads", "text.bubble", "Thread behavior"),
-        page("SettingsFollowUp", "arrow.turn.left.up", "Follow-ups"),
-        page("SettingsArchive", "archivebox", "Archived Threads"),
+        serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
+        serverPage("SettingsThreads", "text.bubble", "Threads"),
+        page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
       ],
     },
     {
-      title: "Server settings",
+      title: "Code",
       rows: [
-        serverPage("SettingsProviderAccounts", "person.crop.circle", "Provider accounts"),
-        serverPage("SettingsEnvironmentNewThreads", "text.bubble", "New threads"),
+        page(
+          "SettingsProjectOverview",
+          "folder",
+          "Projects",
+          selectedProjectKey !== null ? { value: projectLabel } : undefined,
+        ),
         serverPage("SettingsEnvironmentSourceControl", "arrow.triangle.branch", "Source control"),
-        serverPage("SettingsEnvironmentAgentBehavior", "text.alignleft", "Agent behavior"),
-        serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", "Maintenance"),
+        serverPage("SettingsWorktrees", "square.on.square", "Worktrees"),
       ],
     },
     {
-      title: "App",
-      rows: [page("SettingsAbout", "info.circle", "About T3 Code")],
+      rows: [
+        serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", "Maintenance"),
+        page("SettingsLabs", "sparkles", "Labs"),
+        page("SettingsAbout", "info.circle", "About"),
+        page("SettingsArchive", "archivebox", "Archive"),
+      ],
     },
   ];
 }

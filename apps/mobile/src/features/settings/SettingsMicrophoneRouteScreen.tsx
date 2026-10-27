@@ -19,6 +19,7 @@ import {
   microphoneOrder,
 } from "../../lib/microphonePriority";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
@@ -252,10 +253,9 @@ function MicrophoneRow(props: {
       style={style}
       onLayout={(event) => props.onHeight(event.nativeEvent.layout.height)}
       className={cn(
-        "flex-row items-center gap-4 pl-4",
+        "flex-row items-center",
         props.position > 1 && !lifted && "border-t border-border-subtle",
         lifted && "bg-grouped-card shadow-md",
-        !props.reorderable && "pr-4",
       )}
     >
       {props.editing && props.onForget ? (
@@ -264,7 +264,7 @@ function MicrophoneRow(props: {
           accessibilityLabel={`Forget ${title}`}
           hitSlop={8}
           onPress={props.onForget}
-          className="active:opacity-70"
+          className="pl-4 active:opacity-70"
         >
           <SymbolView
             name="xmark.circle.fill"
@@ -274,28 +274,20 @@ function MicrophoneRow(props: {
           />
         </Pressable>
       ) : props.editing ? (
-        <View style={{ width: REMOVE_SIZE }} />
+        <View className="pl-4">
+          <View style={{ width: REMOVE_SIZE }} />
+        </View>
       ) : null}
       <View
         accessible
         accessibilityLabel={`${title}, ${kind.label}, ${props.position} of ${props.count}`}
-        className="min-w-0 flex-1 flex-row items-center gap-4 py-4"
+        className="min-w-0 flex-1"
       >
-        <SymbolView
-          name={kind.icon}
-          size={22}
-          tintColorClassName="accent-icon"
-          type="monochrome"
-          weight="regular"
+        <ListRowLayout
+          icon={kind.icon}
+          label={title}
+          description={isMicrophoneDevice(entry) ? kind.label : kind.rowDescription}
         />
-        <View className="min-w-0 flex-1 gap-0.5">
-          <Text numberOfLines={1} className="text-lg text-foreground">
-            {title}
-          </Text>
-          <Text numberOfLines={1} className="text-sm text-foreground-muted">
-            {isMicrophoneDevice(entry) ? kind.label : kind.rowDescription}
-          </Text>
-        </View>
       </View>
       {props.reorderable ? (
         <SettingsDragHandle

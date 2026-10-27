@@ -1,11 +1,10 @@
 import { Button } from "../../components/ui/Button";
-import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
+import { AuthSettingsWriteScope, type ServerSettingsPatch } from "@t3tools/contracts";
+import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
-import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -14,71 +13,58 @@ import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
-import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
-import {
-  AndroidSettingsEnvironmentFilter,
-  SettingsEnvironmentFilterHeader,
-} from "./components/SettingsEnvironmentFilterHeader";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { useSettingsWriter } from "./useSettingsWriter";
-import {
-  planMobileScopedSettingsClear,
-  planMobileScopedSettingsPatch,
-  resolveMobileSettingsTargets,
-  uniformMobileSetting,
-  type ScopedMobileSettingsTarget,
-} from "./settings-scoped-server";
+import { resolveMobileSettingsTargets, uniformMobileSetting } from "./settings-scoped-server";
 
-export function SettingsThreadsRouteScreen() {
+export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <>
-      <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Thread behavior" trailing={<AndroidSettingsEnvironmentFilter />}>
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          showsVerticalScrollIndicator={false}
-          className="flex-1"
-          contentContainerClassName="gap-6 px-5 pt-4"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        >
-          <AutoSettleSettingsRows />
-          <BetaSettingsSection />
-          <LegacySettingsSection />
-        </ScrollView>
-      </SettingsScreen>
-    </>
+    <SettingsScreen title="Labs">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+      >
+        <LegacySettingsSection />
+      </ScrollView>
+    </SettingsScreen>
   );
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
-function AutoSettleSettingsRows() {
+/**
+ * Usage-limit and auto-settle rows. The Threads page owns their writes, so they share its queue
+ * with the page's other project overrides, and their project override reset.
+ */
+export function AutoSettleSettingsRows(props: {
+  readonly write: (patch: ServerSettingsPatch) => void;
+  readonly pending: boolean;
+}) {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;
-  const [pendingWrites, setPendingWrites] = useState(0);
-  const writeInFlight = useRef(false);
-  const [pendingTargets, setPendingTargets] = useState<
-    readonly ScopedMobileSettingsTarget[] | null
-  >(null);
-  const writeSettings = useSettingsWriter();
 
-  const syncEnvironments = selectedTargets.filter(supportsSharedSettingsSync);
-  const syncTargets = resolveMobileSettingsTargets(
-    syncEnvironments,
-    projectSelected ? (selectedProject?.members.map((member) => member.project) ?? []) : null,
+  const projectMembers = projectSelected
+    ? (selectedProject?.members.map((member) => member.project) ?? [])
+    : null;
+  const displayTargets = resolveMobileSettingsTargets(
+    selectedTargets.filter(supportsSharedSettingsSync),
+    projectMembers,
   );
+  // The page saves to all its targets, so any read-only one blocks the save.
   const canWriteSettings =
-    syncTargets.length > 0 &&
-    syncTargets.every((target) => writableEnvironments.has(target.environment.environmentId));
-  const displayTargets =
-    pendingWrites > 0 && pendingTargets !== null ? pendingTargets : syncTargets;
+    displayTargets.length > 0 &&
+    resolveMobileSettingsTargets(selectedTargets, projectMembers).every((target) =>
+      writableEnvironments.has(target.environment.environmentId),
+    );
   const reference = displayTargets[0] ?? null;
   const referenceSettings = reference?.settings ?? null;
 
@@ -91,25 +77,7 @@ function AutoSettleSettingsRows() {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
     },
-  ) => {
-    if (
-      writeInFlight.current ||
-      !syncTargets.every((target) =>
-        readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
-      )
-    )
-      return;
-    const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
-    if (writes.length === 0) return;
-    writeInFlight.current = true;
-    setPendingTargets(syncTargets);
-    setPendingWrites((count) => count + 1);
-    void writeSettings(syncTargets, writes).finally(() => {
-      writeInFlight.current = false;
-      setPendingTargets(null);
-      setPendingWrites((count) => count - 1);
-    });
-  };
+  ) => props.write(patch);
 
   const { patch: autoSettlePatch, mismatches } = planAutoSettleSettingsSync(
     {
@@ -125,56 +93,16 @@ function AutoSettleSettingsRows() {
     })),
   );
 
-  const supportsProjectOverrides = syncTargets.every(
+  const supportsProjectOverrides = displayTargets.every(
     (target) =>
       target.environment.serverConfig.environment.capabilities.projectSettingsOverrides === true,
   );
   const disabled =
-    !canWriteSettings || pendingWrites > 0 || (projectSelected && !supportsProjectOverrides);
-  const hasProjectOverrides =
-    projectSelected &&
-    syncTargets.some(
-      (target) =>
-        target.sources.sidebarAutoSettleOnMerge === "project" ||
-        target.sources.sidebarAutoSettleAfterDays === "project",
-    );
-  const clearProjectOverrides = () => {
-    if (
-      writeInFlight.current ||
-      !syncTargets.every((target) =>
-        readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
-      )
-    )
-      return;
-    const writes = planMobileScopedSettingsClear(syncTargets, [
-      "sidebarAutoSettleOnMerge",
-      "sidebarAutoSettleAfterDays",
-    ]);
-    if (writes.length === 0) return;
-    writeInFlight.current = true;
-    setPendingTargets(syncTargets);
-    setPendingWrites((count) => count + 1);
-    void writeSettings(syncTargets, writes).finally(() => {
-      writeInFlight.current = false;
-      setPendingTargets(null);
-      setPendingWrites((count) => count - 1);
-    });
-  };
-
+    !canWriteSettings || props.pending || (projectSelected && !supportsProjectOverrides);
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
 
   return (
     <View className="gap-6">
-      {projectSelected ? (
-        <SettingsProjectOverridesSection
-          projectLabel={selectedProject?.label ?? "Unavailable project"}
-          hasOverrides={hasProjectOverrides}
-          supportsOverrides={supportsProjectOverrides}
-          pending={pendingWrites > 0}
-          disabled={!canWriteSettings}
-          onClear={clearProjectOverrides}
-        />
-      ) : null}
       {!projectSelected ? (
         <SettingsSection title="Usage limits">
           <SettingsSwitchRow
@@ -222,7 +150,7 @@ function AutoSettleSettingsRows() {
           </View>
         ) : null}
       </SettingsSection>
-      {pendingWrites === 0 && mismatches.length > 0 ? (
+      {!props.pending && mismatches.length > 0 ? (
         <SettingsSection title="Across environments">
           <View className="gap-3 p-4">
             <Text className="text-base text-foreground">Auto-settle defaults differ</Text>
@@ -242,7 +170,7 @@ function AutoSettleSettingsRows() {
   );
 }
 
-function BetaSettingsSection() {
+export function WorkingSectionSettings() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
@@ -250,7 +178,7 @@ function BetaSettingsSection() {
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Beta">
+      <SettingsSection title="Sidebar">
         <SettingsSwitchRow
           icon="bolt.circle"
           label="Working section"
