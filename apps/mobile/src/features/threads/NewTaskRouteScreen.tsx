@@ -1,4 +1,4 @@
-import { isDraftThreadRoute } from "./thread-route-state";
+import { isDraftThreadRoute, type NewTaskDraftRouteParams } from "./thread-route-state";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";
@@ -231,7 +231,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     const rootState = root?.getState();
     const threadRoute = rootState?.routes[rootState.index - 1];
     if (isDraftThreadRoute(threadRoute)) {
-      setProject(project);
+      // The draft's shared content is reserved for this project, so it stays on this machine.
+      const draft = (threadRoute?.params as { draft?: NewTaskDraftRouteParams } | undefined)?.draft;
+      setProject(project, {
+        pinEnvironment: incomingShare !== null || draft?.incomingShareId !== undefined,
+      });
       root?.goBack();
       return;
     }

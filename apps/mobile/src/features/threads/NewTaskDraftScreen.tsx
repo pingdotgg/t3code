@@ -473,7 +473,8 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     if (selection.kind === "select") {
-      setProject(selection.project);
+      // Shared content is reserved for the draft's project, so it stays on this machine.
+      setProject(selection.project, { pinEnvironment: props.incomingShareId !== undefined });
       return;
     }
     if (selection.kind === "dismiss") {
