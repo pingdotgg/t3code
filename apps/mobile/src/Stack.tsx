@@ -24,6 +24,11 @@ import { androidWorkspaceDestinationAnimation } from "./lib/android-workspace-na
 import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
 import { WorkspaceConnectionStatusProvider } from "./features/home/WorkspaceConnectionTitle";
 import { WorkspaceRootScreen } from "./features/workspace/WorkspaceRootScreen";
+import {
+  recordHomeFocus,
+  recordHomeTransitionEnd,
+  recordHomeTransitionStart,
+} from "./features/home/home-route-visibility";
 import { AndroidWorkspaceTabsProvider } from "./features/workspace/AndroidWorkspaceTabsProvider";
 import {
   PullRequestRouteScreen,
@@ -41,9 +46,7 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
-import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
-import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
@@ -138,7 +141,6 @@ import {
   SettingsLegalDocumentCloseHeaderButton,
   SettingsLegalDocumentExternalHeaderButton,
 } from "./features/settings/components/SettingsLegalDocumentRouteScreen";
-import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
@@ -473,7 +475,7 @@ const SETTINGS_SCREENS = {
 // iOS 26 header morphing requires one UINavigationBar; nested stacks make the whole screen slide.
 const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 
-function workspaceLocationFromState(state: NavigationState) {
+export function workspaceLocationFromState(state: NavigationState) {
   const routes = state.routes.filter((route) => !isWorkspaceOverlayRoute(route.name));
   const effectiveState =
     routes.length > 0 && routes.length !== state.routes.length
@@ -505,9 +507,6 @@ function RootStackLayout(props: {
   const routeDraftId = Array.isArray(draftParams?.draftId)
     ? draftParams.draftId[0]
     : draftParams?.draftId;
-  useAgentNotificationNavigation(workspaceLocation.pathname);
-  useConnectOnboardingNavigation();
-  useAppShortcuts(props.state);
 
   return (
     <NewTaskFlowProvider active={isDraftThreadRoute(draftRoute)} routeDraftId={routeDraftId}>
@@ -592,6 +591,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     Home: createNativeStackScreen({
       screen: WorkspaceRootScreen,
       linking: "",
+      listeners: {
+        transitionStart: ({ data }) => recordHomeTransitionStart(data.closing),
+        transitionEnd: ({ data }) => recordHomeTransitionEnd(data.closing),
+        focus: recordHomeFocus,
+      },
       options: {
         ...GLASS_HEADER_OPTIONS,
         ...FIXED_DUO_HEADER,
