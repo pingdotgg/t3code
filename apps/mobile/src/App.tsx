@@ -83,6 +83,7 @@ import {
   linkToRootPath,
   rootNavigationRef,
 } from "./lib/rootNavigation";
+import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 
 import "../global.css";
@@ -147,6 +148,7 @@ function handleNavigationStateChange(state: NavigationState | undefined): void {
   if (!state) return;
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);
+  pruneNewTaskFlowStates(state);
   pruneNewTaskBranchCheckouts(state);
   pruneIncomingShareImports(state);
 }

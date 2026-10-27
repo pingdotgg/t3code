@@ -61,7 +61,6 @@ import {
   getComposerDraftSnapshot,
   updateComposerDraftSettings,
   scheduleUnusedComposerAttachmentCleanup,
-  waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useProjectClone } from "../../state/projectClones";
@@ -223,10 +222,6 @@ export function NewTaskDraftScreen(props: {
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
-  const selectedProjectRef = useRef(selectedProject);
-  useEffect(() => {
-    selectedProjectRef.current = selectedProject;
-  }, [selectedProject]);
   const removeClonedProject = async () => {
     if (!selectedProject) return;
     const removed = selectedProject;
@@ -242,8 +237,7 @@ export function NewTaskDraftScreen(props: {
       );
       return;
     }
-    const current = selectedProjectRef.current;
-    if (current?.id === removed.id && current.environmentId === removed.environmentId) {
+    if (flow.getSelectedProjectKey() === scopedProjectKey(removed.environmentId, removed.id)) {
       navigation.dispatch(StackActions.replace("Home"));
     }
   };
@@ -280,8 +274,12 @@ export function NewTaskDraftScreen(props: {
         project.id === props.initialProjectRef?.projectId,
     ),
   );
+  // A route naming a draft that is gone, or whose project is gone, also
+  // returns to the picker.
+  const isRouteDraftMissing =
+    props.draftId !== undefined && flow.missingRouteDraftId === props.draftId;
   const isProjectPickerReturnActive =
-    isReturningToProjectPicker && !requestedInitialProjectAvailable;
+    (isReturningToProjectPicker && !requestedInitialProjectAvailable) || isRouteDraftMissing;
   const isIncomingShareAwaitingServerConfig = Boolean(
     incomingShare?.attachments.some((attachment) => attachment.type === "file") &&
     selectedEnvironmentServerConfig === null,
@@ -373,12 +371,11 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareUnavailable;
   const appliedInitialProjectKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isReturningToProjectPicker) {
-      return;
-    }
-    if (requestedInitialProjectAvailable) {
+    if (isReturningToProjectPicker && requestedInitialProjectAvailable) {
       // oxlint-disable-next-line react/set-state-in-effect -- Ends the return-to-picker flow once the requested project arrives from the catalog.
       setIsReturningToProjectPicker(false);
+    }
+    if (!isProjectPickerReturnActive) {
       return;
     }
     // Wait for usePreventRemove to disable before replacing, or the transfer guard swallows the fallback.
@@ -389,41 +386,12 @@ export function NewTaskDraftScreen(props: {
     });
     return () => cancelAnimationFrame(frame);
   }, [
+    isProjectPickerReturnActive,
     isReturningToProjectPicker,
     navigation,
     props.incomingShareId,
     requestedInitialProjectAvailable,
   ]);
-  const { openDraft } = flow;
-  // Cold launches load drafts and projects separately; wait for hydration and retry while shells load.
-  const attemptedDraftIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!props.draftId) {
-      return;
-    }
-    const draftId = props.draftId;
-    if (attemptedDraftIdRef.current === draftId) {
-      return;
-    }
-    let cancelled = false;
-    void waitForComposerDraftsLoaded().then(() => {
-      if (cancelled || attemptedDraftIdRef.current === draftId) {
-        return;
-      }
-      if (openDraft(draftId)) {
-        attemptedDraftIdRef.current = draftId;
-        return;
-      }
-      if (getComposerDraftSnapshot(draftId).project !== undefined && projects.length === 0) {
-        return;
-      }
-      attemptedDraftIdRef.current = draftId;
-      navigation.dispatch(CommonActions.navigate("NewTaskProject"));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [navigation, openDraft, projects, props.draftId]);
 
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
   const initialPickerRef = useRef<"open" | "dismissed" | null>(null);
