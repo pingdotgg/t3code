@@ -1,4 +1,4 @@
-import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import { use, useCallback, useMemo, useState } from "react";
+import { environmentCatalog } from "../../connection/catalog";
 import {
   composerPullRequests,
   pullRequestListPagesFamily,
@@ -142,6 +143,15 @@ const refreshLoadFamily = Atom.family((scopeKey: string) =>
   ),
 );
 
+// Changes when any of the scope's environments brings up a new session.
+const sessionsFamily = Atom.family((scopeKey: string) =>
+  Atom.make((get) =>
+    (JSON.parse(scopeKey) as readonly ListTarget[])
+      .map(({ environmentId }) => get(environmentCatalog.sessionGenerationAtom(environmentId)))
+      .join(),
+  ),
+);
+
 const settledError = (result: AsyncResult.AsyncResult<string | null, never>) =>
   AsyncResult.isSuccess(result) && !result.waiting ? result.value : null;
 
@@ -155,6 +165,19 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   const refresh = useAtomValue(refreshAtom);
   // Starting one kind of load clears the other, so at most one holds an error.
   const loadError = settledError(refresh) ?? settledError(page);
+
+  // A page or refresh asked for while an environment was unreachable fails at once, and its
+  // error stops loading on scroll. Once it is back, ask for the page again; a refresh's error is
+  // stale by then because the list queries re-run on reconnect.
+  // A listener alone does not compute the atom, so nothing would follow the connections.
+  useAtomMount(sessionsFamily(scopeKey));
+  useAtomSubscribe(sessionsFamily(scopeKey), () => {
+    const pageResult = registry.get(pageAtom);
+    const refreshResult = registry.get(refreshAtom);
+    if (settledError(refreshResult) !== null) registry.set(refreshAtom, Atom.Reset);
+    else if (settledError(pageResult) !== null && !refreshResult.waiting)
+      registry.set(pageAtom, true);
+  });
 
   // Read from the registry, not the render: a second onEndReached before React re-renders must
   // see the load the first one started.

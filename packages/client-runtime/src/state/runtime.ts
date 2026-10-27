@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import type { ConnectionAttemptError } from "../connection/model.ts";
+import type { ConnectionAttemptError, SupervisorConnectionState } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import {
   type EnvironmentRpcInput,
@@ -560,22 +560,28 @@ const refreshEveryUntilFinal =
 export const selectEnvironmentQueryData = <A, E>(result: AsyncResult.AsyncResult<A, E>): A | null =>
   Option.getOrNull(AsyncResult.value(result));
 
-export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
+type EnvironmentConnection = readonly [
+  SupervisorConnectionState,
+  Option.Option<RpcSession.RpcSession>,
+];
+
+const connectionAtomsByRuntime = new WeakMap<
+  object,
+  (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>
+>();
+
+/**
+ * One connection atom per environment for every query on a runtime, so a reader of the session
+ * generation and a query it re-runs see the same connection change at once.
+ */
+function environmentConnectionAtoms<R, ER>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
-  options: EnvironmentQueryAtomOptions<
-    Input,
-    A,
-    E,
-    | EnvironmentSupervisor.EnvironmentSupervisor
-    | EnvironmentRegistry.EnvironmentRegistry
-    | AtomRegistry.AtomRegistry
-    | R
-  >,
-): (target: {
-  readonly environmentId: EnvironmentIdType;
-  readonly input: Input;
-}) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
-  const connectionAtom = Atom.family((environmentId: EnvironmentIdType) =>
+) {
+  const existing = connectionAtomsByRuntime.get(runtime);
+  if (existing !== undefined) return existing;
+  const family = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
       followStreamInEnvironment(
         environmentId,
@@ -591,7 +597,72 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       ),
       { initialValue: null },
     ),
-  );
+  ) as (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>;
+  connectionAtomsByRuntime.set(runtime, family);
+  return family;
+}
+
+const sessionGenerationAtomsByRuntime = new WeakMap<
+  object,
+  (environmentId: EnvironmentIdType) => Atom.Atom<number>
+>();
+
+/**
+ * Counts established sessions; it changes only when a new one comes up, so failed one-shot reads
+ * can watch it to run again. Keyed on the session object because the supervisor's `generation`
+ * restarts when the registry installs a new supervisor (re-pairing, route edits).
+ */
+export function environmentSessionGenerationAtom<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  environmentId: EnvironmentIdType,
+): Atom.Atom<number> {
+  let family = sessionGenerationAtomsByRuntime.get(runtime);
+  if (family === undefined) {
+    const connectionAtom = environmentConnectionAtoms(runtime);
+    const sessionsSeen = Atom.family((id: EnvironmentIdType) =>
+      Atom.make(
+        (get): { readonly session: RpcSession.RpcSession | null; readonly count: number } => {
+          const previous = Option.getOrElse(
+            get.self<{ readonly session: RpcSession.RpcSession | null; readonly count: number }>(),
+            () => ({ session: null, count: 0 }),
+          );
+          const connection = Option.getOrNull(AsyncResult.value(get(connectionAtom(id))));
+          if (connection === null || connection[0].phase !== "connected") return previous;
+          const session = Option.getOrNull(connection[1]);
+          return session === null || session === previous.session
+            ? previous
+            : { session, count: previous.count + 1 };
+        },
+      ),
+    );
+    family = Atom.family((id: EnvironmentIdType) =>
+      Atom.make((get) => get(sessionsSeen(id)).count).pipe(
+        Atom.withLabel(`environment-session-generation:${id}`),
+      ),
+    );
+    sessionGenerationAtomsByRuntime.set(runtime, family);
+  }
+  return family(environmentId);
+}
+
+export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: EnvironmentQueryAtomOptions<
+    Input,
+    A,
+    E,
+    | EnvironmentSupervisor.EnvironmentSupervisor
+    | EnvironmentRegistry.EnvironmentRegistry
+    | AtomRegistry.AtomRegistry
+    | R
+  >,
+): (target: {
+  readonly environmentId: EnvironmentIdType;
+  readonly input: Input;
+}) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
+  const connectionAtom = environmentConnectionAtoms(runtime);
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
@@ -647,7 +718,18 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                 : Effect.never;
             case "connecting":
             case "backoff":
-              return Effect.never;
+              // A retry can take minutes. A query with an answer keeps showing it while it
+              // waits; one with nothing to show reports the failure the retry is recovering
+              // from, so its reader stops loading, and re-runs when the connection settles.
+              return connectionState.lastFailure !== null &&
+                Option.isNone(
+                  Option.flatMap(
+                    get.self<AsyncResult.AsyncResult<A, unknown>>(),
+                    AsyncResult.value,
+                  ),
+                )
+                ? Effect.fail(connectionState.lastFailure)
+                : Effect.never;
             case "available":
             case "offline":
             case "blocked":
