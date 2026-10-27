@@ -258,7 +258,7 @@ describe("followPreviewSessions", () => {
     useRightPanelStore
       .getState()
       .byThreadKey[threadKey]?.surfaces.filter((surface) => surface.kind === "preview")
-      .map((surface) => surface.id);
+      .map((surface) => surface.id) ?? [];
 
   it("adds visible sessions as tabs and drops tabs whose session ended", () => {
     setup();
