@@ -534,6 +534,41 @@ describe("GitCafePullRequestProvider", () => {
     );
   });
 
+  it.effect("follows a renumbered pull request's redirect only within the host's API", () =>
+    Effect.gen(function* () {
+      const moved = (location: string) =>
+        new Response(null, { status: 301, headers: { location } });
+      const renumbered = fakeGitCafe({
+        "GET /repos/owner/repo/pulls/7/stack": moved("/api/repos/owner/repo/pulls/8/stack"),
+        "GET /repos/owner/repo/pulls/8/stack": { stack: null },
+      });
+      yield* GitCafePullRequestProvider.make.pipe(
+        Effect.flatMap((provider) => provider.getChangeRequestStack!(target)),
+        Effect.provide(renumbered.layer),
+      );
+      assert.deepStrictEqual(
+        renumbered.sent.map((r) => `${r.host}${r.path}`),
+        ["git.cafe/repos/owner/repo/pulls/7/stack", "git.cafe/repos/owner/repo/pulls/8/stack"],
+      );
+
+      for (const location of [
+        "https://evil.example/api/repos/owner/repo/pulls/8/stack",
+        "//evil.example/api/repos/owner/repo/pulls/8/stack",
+        "https://staging.git.cafe/api/repos/owner/repo/pulls/8/stack",
+        "/repos/owner/repo/pulls/8/stack",
+      ]) {
+        const elsewhere = fakeGitCafe({ "GET /repos/owner/repo/pulls/7/stack": moved(location) });
+        const error = yield* GitCafePullRequestProvider.make.pipe(
+          Effect.flatMap((provider) => provider.getChangeRequestStack!(target)),
+          Effect.flip,
+          Effect.provide(elsewhere.layer),
+        );
+        assert.strictEqual(error.detail, "GitCafe answered HTTP 301.");
+        assert.strictEqual(elsewhere.sent.length, 1);
+      }
+    }),
+  );
+
   it.effect("reads the stack a pull request belongs to, with each open layer's head", () => {
     const { "GET /repos/owner/repo/pulls/6": _merged, ...routes } = stack([
       { number: 6, headOid: baseOid, state: "merged" },
