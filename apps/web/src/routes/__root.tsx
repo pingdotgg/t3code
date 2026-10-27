@@ -143,6 +143,8 @@ function RootRouteBranch() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+  // A sync IPC read; the setting only changes across a relaunch.
+  const [localEnvironmentDisabled] = useState(isLocalEnvironmentDisabled);
   // Once true, stays true: a visit to /welcome means the bootstrap already chose a route.
   const [returningFromWelcome, setReturningFromWelcome] = useState(pathname === "/welcome");
   if (pathname === "/welcome" && !returningFromWelcome) setReturningFromWelcome(true);
@@ -195,7 +197,9 @@ function RootRouteBranch() {
         hostedStatic={authGateState.status === "hosted-static"}
       >
         {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
-        {primaryEnvironmentAuthenticated ? <DesktopWebLinkCoordinator /> : null}
+        {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
+          <DesktopWebLinkCoordinator />
+        ) : null}
         {isElectron ? <RunningThreadKeepAlive /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
