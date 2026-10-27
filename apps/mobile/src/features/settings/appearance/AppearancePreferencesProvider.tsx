@@ -111,7 +111,7 @@ function resolveThemeVariablesByAppearance(
 }
 
 /** The appearance whose theme is on screen, read from the native scheme. */
-function resolveThemeAppearance(stored: Preferences | null): MobileThemeAppearance {
+export function resolveThemeAppearance(stored: Preferences | null): MobileThemeAppearance {
   const themeMode = normalizeMobileThemeMode(stored?.themeMode);
   if (themeMode !== "system") return themeMode;
   return Appearance.getColorScheme() === "dark" ? "dark" : "light";
