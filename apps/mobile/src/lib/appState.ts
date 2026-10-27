@@ -3,12 +3,12 @@ import { AccessibilityInfo, AppState } from "react-native";
 
 type Listener = () => void;
 
-function subscribeAppState(onChange: Listener): () => void {
+export function subscribeAppState(onChange: Listener): () => void {
   const subscription = AppState.addEventListener("change", () => onChange());
   return () => subscription.remove();
 }
 
-function isAppActive(): boolean {
+export function isAppActive(): boolean {
   return AppState.currentState === "active";
 }
 

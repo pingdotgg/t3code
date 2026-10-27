@@ -7,7 +7,6 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "../state/presentation";
 import { publishSubscriptionUsage } from "./publishSubscriptionUsage";
-import { useSubscriptionUsage } from "./useSubscriptionUsage";
 import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 import { createWidgetTheme } from "./widgetTheme";
 
@@ -29,7 +28,6 @@ export function SubscriptionUsageCoordinator() {
   } = useAppearancePreferences();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const snapshot = useAtomValue(snapshotAtom);
-  useSubscriptionUsage(catalog.isReady);
   const androidAppearance = Platform.OS === "android" ? themeAppearance : null;
   useEffect(() => {
     if (!catalog.isReady || !appearanceReady) return;
