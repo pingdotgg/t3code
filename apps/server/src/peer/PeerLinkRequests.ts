@@ -63,7 +63,8 @@ export class PeerLinkRequests extends Context.Service<
   {
     /**
      * Shows a link card in the calling thread and returns at once. A retry
-     * with the same clientRequestId returns the card's current outcome.
+     * with the same clientRequestId and MCP credential returns the card's
+     * current outcome.
      */
     readonly request: (
       scope: McpInvocationContext.McpInvocationScope,

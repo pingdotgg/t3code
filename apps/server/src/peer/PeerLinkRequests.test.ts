@@ -567,7 +567,7 @@ it.live("a retry of a pending request returns pending and shows no second card",
   ),
 );
 
-it.live("a later provider session reusing a clientRequestId gets a card of its own", () =>
+it.live("a new MCP credential reusing a clientRequestId gets a card of its own", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
       yield* seedThread(a);
