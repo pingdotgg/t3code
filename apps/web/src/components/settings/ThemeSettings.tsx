@@ -191,7 +191,7 @@ function ThemeLibraryCard({
                                 : `Use ${mode} variant, currently ${selected.option.label}`
                             }
                             aria-pressed={isActive}
-                            className="absolute left-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring redesign:focus-visible:-outline-offset-5 redesign:focus-visible:outline-foreground/60"
+                            className="absolute left-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60"
                             style={{
                               transform: `translateX(calc(-50% + ${rootOffsetX}px))`,
                             }}
@@ -678,9 +678,9 @@ export function ThemeLibrary({
             aria-pressed={isActive}
             className={cn(
               // The accent ring marks the picked tile; focus is a neutral ring set inside it with a gap.
-              "flex cursor-pointer flex-col items-stretch gap-1.5 rounded-xl border p-2 outline-none transition-colors focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring redesign:focus-visible:-outline-offset-7 redesign:focus-visible:outline-foreground/60",
+              "flex cursor-pointer flex-col items-stretch gap-1.5 rounded-xl border p-2 outline-none transition-colors focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-7 focus-visible:outline-foreground/60",
               isActive
-                ? "border-transparent bg-accent/30 ring-1 ring-inset ring-ring redesign:ring-2"
+                ? "border-transparent bg-accent/30 ring-2 ring-inset ring-ring"
                 : "border-border/70 bg-card/60 hover:bg-accent/10",
             )}
             key={mode}
@@ -827,12 +827,12 @@ export function ThemeLibrary({
 
   return (
     <div className="space-y-3">
-      <h3 className="flex min-h-7 items-center px-3 text-sm font-normal text-foreground/70 sm:px-4 redesign:text-base redesign:font-semibold redesign:text-foreground">
+      <h3 className="flex min-h-7 items-center px-3 text-base font-semibold text-foreground sm:px-4">
         {searchableSetting("color-scheme").title}
       </h3>
       {renderModeTiles()}
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4 redesign:pt-5">
-        <h3 className="text-sm font-normal text-foreground/70 redesign:text-base redesign:font-semibold redesign:text-foreground">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-5 sm:px-4">
+        <h3 className="text-base font-semibold text-foreground">
           {searchableSetting("theme").title}
         </h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
