@@ -1,5 +1,5 @@
 import type { NavigationState, PartialState } from "@react-navigation/native";
-import { StackActions } from "@react-navigation/native";
+import { CommonActions, StackActions } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -96,4 +96,23 @@ export function startDevAutoConnect(
     appAtomRegistry.set(devAutoConnectAttemptAtom, null);
   }
   return state;
+}
+
+/**
+ * A pairing link that lands on an open pairing form fills that form. React Navigation would push
+ * `ConnectionsNew` over the Settings page's `SettingsEnvironmentNew`, stacking two copies of the
+ * same form. The form keys on the link's pairing URL, so new params remount it with the prefill.
+ */
+export function pairingFormLinkAction(
+  link: PartialState<NavigationState>,
+  current: NavigationState | undefined,
+) {
+  const linked = findLinkedRoute(link, PAIRING_FORM_ROUTES);
+  const open = current?.routes[current.index];
+  if (!linked || !current || !open || !PAIRING_FORM_ROUTES.includes(open.name)) return undefined;
+  return {
+    ...CommonActions.replaceParams(linked.params ?? {}),
+    source: open.key,
+    target: current.key,
+  };
 }
