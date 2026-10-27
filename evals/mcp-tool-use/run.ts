@@ -28,6 +28,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { taskPrompt } from "../../apps/server/src/mcp/OrchestratorMcpService.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
+import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } from "@t3tools/contracts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -39,7 +40,10 @@ import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestr
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "../../apps/server/src/mcp/toolkits/project/tools.ts";
-import { PullRequestsToolkit } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
+import {
+  CHILD_PULL_REQUEST_REPORT_NEXT,
+  PullRequestsToolkit,
+} from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
@@ -301,7 +305,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
 const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
   name: `${T3_PREFIX}${tool.name}`,
   description: Tool.getDescription(tool) ?? "",
-  input_schema: Tool.getJsonSchema(tool),
+  input_schema: advertisedJsonSchema(tool),
 }));
 // T3 does not offer these to a delegated child, so its harness never lists them.
 const hiddenFromSubagents = new Set(
@@ -869,7 +873,7 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
 };
 
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
-const withProductFields = (name: string, value: unknown): unknown => {
+const withProductFields = (name: string, value: unknown, child: boolean): unknown => {
   if (!isRecord(value)) return value;
   const linked = (thread: unknown, idKey = "threadId") => {
     if (!isRecord(thread) || thread.link !== undefined) return thread;
@@ -896,6 +900,8 @@ const withProductFields = (name: string, value: unknown): unknown => {
       return listed("threads");
     case "t3_thread_search":
       return listed("matches");
+    case "link_pull_request":
+      return child ? { ...value, next: CHILD_PULL_REQUEST_REPORT_NEXT } : value;
     default:
       return value;
   }
@@ -1084,7 +1090,7 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
       call.id,
       name === "orchestrator_capabilities"
         ? capabilities(sample, mock)
-        : withProductFields(name, mock),
+        : withProductFields(name, mock, testCase.setup.role === "delegated-child"),
     );
   if (isT3Name(call.name)) {
     // T3 refuses a watch from a delegated child.
@@ -1096,7 +1102,7 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
       call.id,
       name === "orchestrator_capabilities"
         ? capabilities(sample, value)
-        : withProductFields(name, value),
+        : withProductFields(name, value, testCase.setup.role === "delegated-child"),
     );
   }
   if (call.name === "clock__curr_time")
