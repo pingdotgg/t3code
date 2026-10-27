@@ -3,7 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -41,6 +41,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -311,9 +312,6 @@ function PullRequestCodeTab({
     readonly cursor: string | null;
     readonly slices: ReadonlyArray<DiffSlice>;
   }>({ key: "", cursor: null, slices: NO_SLICES });
-  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
-    null,
-  );
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
@@ -452,10 +450,8 @@ function PullRequestCodeTab({
     refreshFilesViewed();
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
-  // The viewer mounts its footer later; state ensures the observer sees the sentinel.
-  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
-  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
-  const answeredReveal = useRef<number | null>(null);
+  const codeViewReveal = useCodeViewFileReveal();
+  const answeredRevealNonce = useRef<number | null>(null);
 
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
@@ -667,6 +663,16 @@ function PullRequestCodeTab({
     if (nextCursor === null) return;
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   };
+  const sentinelRef = (node: HTMLDivElement | null) => {
+    if (node === null || !canLoadNextSlice) return;
+    return observeIntersection(
+      node,
+      (entry) => {
+        if (entry.isIntersecting) loadNextSlice();
+      },
+      { rootMargin: "240px" },
+    );
+  };
 
   const toggleFile = (fileKey: string) =>
     setToggledFiles((current) => {
@@ -692,8 +698,13 @@ function PullRequestCodeTab({
   const revealFile = (path: string) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
-    if (item.collapsed === true) toggleFile(item.id);
-    requestTreeReveal(item.id);
+    // Unfold only: a second reveal before the unfold renders must not fold the file again.
+    if (item.collapsed === true) {
+      setToggledFiles((current) =>
+        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+      );
+    }
+    codeViewReveal.request(item.id);
   };
 
   const toggleAllFiles = () => {
@@ -762,7 +773,7 @@ function PullRequestCodeTab({
   const renderCodeViewFooter = () =>
     nextCursor === null ? null : (
       <div
-        ref={setSentinel}
+        ref={sentinelRef}
         className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
       >
         {diffQuery.error !== null ? (
@@ -833,6 +844,7 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
+    onPostRender: codeViewReveal.flush,
   };
 
   const runThreadCommand = async (
@@ -1269,25 +1281,15 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
-  // Hooks between diff derivations and their readers break compiler caching.
-  useEffect(() => {
-    if (sentinel === null || !canLoadNextSlice) return;
-    const observer = new IntersectionObserver(
-      (observed) => {
-        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
-      },
-      { rootMargin: "240px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [canLoadNextSlice, loadNextSlice, sentinel]);
+  // A file not loaded yet pages forward each time a slice arrives; once loaded, the viewer
+  // positions it when it renders it.
   const answerReveal = useEffectEvent(() => {
-    if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
+    if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
     if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
       if (canLoadNextSlice) loadNextSlice();
       return;
     }
-    answeredReveal.current = revealRequest.nonce;
+    answeredRevealNonce.current = revealRequest.nonce;
     revealFile(revealRequest.path);
   });
   useEffect(() => {
@@ -1430,7 +1432,7 @@ function PullRequestCodeTab({
             <StyledDiffCodeView<ReviewAnnotationGroup>
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
-              viewerRef={setViewer}
+              viewerRef={codeViewReveal.attach}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}
