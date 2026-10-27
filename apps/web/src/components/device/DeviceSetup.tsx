@@ -103,6 +103,17 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       (host.kind === "local" && state.hostStatus === "ready"),
   );
   if (readyHosts.length > 0 && !hasDevices) {
+    if (
+      readyHosts.some(
+        (host) =>
+          state.hostStatuses[host.id]?.detail || (host.kind === "local" && state.hostStatusDetail),
+      )
+    ) {
+      return {
+        ready: false,
+        message: `No ${platformName(platform)} devices were listed because device discovery reported a problem.`,
+      };
+    }
     return {
       ready: false,
       message:

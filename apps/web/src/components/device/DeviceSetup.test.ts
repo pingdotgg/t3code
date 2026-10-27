@@ -43,6 +43,23 @@ describe("device setup guidance", () => {
     ).toContain("Device Manager");
   });
 
+  it("does not blame a missing runtime when device discovery reported a problem", () => {
+    const failed = deviceState({
+      hostStatusDetail: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
+      hostStatuses: {
+        local: {
+          status: "ready",
+          detail: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
+        },
+      },
+    });
+    expect(platformSetupStatus(failed, "ios")).toEqual({
+      ready: false,
+      message: "No iOS devices were listed because device discovery reported a problem.",
+    });
+    expect(platformSetupStatus(deviceState(), "ios").message).toContain("Xcode Settings");
+  });
+
   it("counts a remote device host when this machine has no simulator tooling", () => {
     const state = deviceState({
       hostStatus: "idle",
