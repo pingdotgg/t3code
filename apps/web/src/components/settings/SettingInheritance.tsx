@@ -126,20 +126,26 @@ function environmentSettingValue(
 
 /**
  * Whether an environment chose its own value. A storage rule also counts when
- * the environment's `worktreeCleanup` policy overrides the raw rule, even if
- * the result happens to match the built-in default.
+ * the environment's `worktreeCleanup` policy decides it, even if the result
+ * happens to match the built-in default.
  */
 export function environmentSettingIsSet(
   settings: ServerSettings,
   key: keyof ServerSettings,
   field?: keyof StorageCleanupSettings,
 ): boolean {
-  const value = environmentSettingValue(settings, key, field);
+  const policy = settings.worktreeCleanup;
   return (
-    !Equal.equals(value, environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, field)) ||
+    !Equal.equals(
+      environmentSettingValue(settings, key, field),
+      environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, field),
+    ) ||
     (key === "storageCleanup" &&
       field !== undefined &&
-      !Equal.equals(value, settings.storageCleanup[field]))
+      policy !== null &&
+      field in resolveWorktreeCleanup(settings, null) &&
+      // An off policy still reads keep-when from `storageCleanup`.
+      !(policy.mode === "off" && field === "worktreeKeepWhen"))
   );
 }
 
