@@ -163,14 +163,11 @@ function ProjectFaviconImage(props: {
     () => createProjectFaviconRequest(props.cacheKey, props.faviconUrl),
     [props.cacheKey, props.faviconUrl],
   );
-  const [activeFaviconRequest, setActiveFaviconRequest] = useState<typeof faviconRequest>(null);
+  // Registers with the module-level loader before the Image's native onLoad/onError can fire,
+  // so stale loads for a superseded URL under the same cacheKey are ignored.
   useLayoutEffect(() => {
     if (faviconRequest === null) return;
-
-    const endRequest = beginProjectFaviconRequest(faviconRequest);
-    // oxlint-disable-next-line react/set-state-in-effect -- Publishes the favicon request registered with the external loader until its cleanup runs.
-    setActiveFaviconRequest(faviconRequest);
-    return endRequest;
+    return beginProjectFaviconRequest(faviconRequest);
   }, [faviconRequest]);
 
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
@@ -179,8 +176,7 @@ function ProjectFaviconImage(props: {
       : "loading",
   );
 
-  const requestIsActive = faviconRequest !== null && activeFaviconRequest === faviconRequest;
-  const showImage = requestIsActive && status === "loaded";
+  const showImage = faviconRequest !== null && status === "loaded";
   const fallbackGlyph = showImage ? null : projectAutoMonogram(props.projectTitle);
 
   return (
@@ -203,7 +199,7 @@ function ProjectFaviconImage(props: {
         />
       )}
 
-      {requestIsActive ? (
+      {faviconRequest !== null ? (
         <Image
           key={faviconRequest.faviconUrl}
           source={
