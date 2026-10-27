@@ -35,6 +35,7 @@ import {
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
+  syncHtmlFullscreen,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -354,6 +355,46 @@ describe("pickProjectFavicon", () => {
       assert.strictEqual(pickFiles.mock.calls.length, 0);
     }),
   );
+});
+
+describe("syncHtmlFullscreen", () => {
+  const fullscreenWindow = (fullscreen: boolean) => {
+    let current = fullscreen;
+    const setFullScreen = vi.fn((next: boolean) => {
+      current = next;
+    });
+    const window = {
+      webContents: { id: 1 },
+      isDestroyed: () => false,
+      isFullScreen: () => current,
+      setFullScreen,
+    } as unknown as Electron.BrowserWindow;
+    const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
+    return { window, setFullScreen, layer };
+  };
+  const fromMainRenderer = { sender: { id: 1 } };
+
+  it.effect("takes the screen for the app's own fullscreen element and gives it back", () => {
+    const { window, layer } = fullscreenWindow(false);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      assert.isTrue(window.isFullScreen());
+
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      assert.isFalse(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a window the user had already made fullscreen", () => {
+    const { window, setFullScreen, layer } = fullscreenWindow(true);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+
+      assert.isTrue(window.isFullScreen());
+      assert.strictEqual(setFullScreen.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(

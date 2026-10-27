@@ -56,6 +56,13 @@ if (clientPlatform === "darwin") {
   window.addEventListener("resize", syncWindowControlInset);
 }
 
+document.addEventListener("fullscreenchange", () => {
+  void ipcRenderer.invoke(
+    IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
+    document.fullscreenElement !== null,
+  );
+});
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&
