@@ -8,6 +8,7 @@ import {
 import {
   appendPullRequestListPage,
   DEFAULT_PR_LIST_CONTROLS,
+  EMPTY_PULL_REQUEST_STATS_CACHE,
   filterPullRequestList,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
@@ -21,6 +22,8 @@ import {
   scopedPullRequestListKey,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
+  withAnsweredPullRequestStats,
+  withListedPullRequests,
   withShownPullRequestStats,
   withoutScratchProjectScope,
 } from "./pullRequestList";
@@ -433,5 +436,39 @@ describe("shown PR diff stats", () => {
       [4, 1],
     ]);
     expect(filled[1]).toBe(rows[1]);
+  });
+});
+
+describe("cached PR diff stats", () => {
+  const stat = (number: number, additions: number) => ({
+    projectId: "project" as PullRequestListEntry["projectId"],
+    repository: "org/repo",
+    number,
+    additions,
+    deletions: 0,
+  });
+
+  it("drops a row's stat and refreshes its stats query when its updatedAt moves", () => {
+    const query = {
+      refs: [1, 2].map((number) => ({
+        projectId: stat(number, 0).projectId,
+        repository: "org/repo",
+        number,
+      })),
+    };
+    const listed = withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [entry(1), entry(2)]);
+    expect(listed.refresh).toEqual([]);
+    const answered = withAnsweredPullRequestStats(listed.cache, query, [stat(1, 5), stat(2, 7)]);
+    expect(withListedPullRequests(answered, [entry(1), entry(2)])).toEqual({
+      cache: answered,
+      refresh: [],
+    });
+
+    const pushed = withListedPullRequests(answered, [
+      entry(1, { updatedAt: "2026-10-20T00:00:00Z" }),
+      entry(2),
+    ]);
+    expect([...pushed.cache.stats.values()]).toEqual([stat(2, 7)]);
+    expect(pushed.refresh).toEqual([query]);
   });
 });
