@@ -1298,6 +1298,14 @@ export function resolveMacPasskeySigningConfiguration(
   };
 }
 
+export function resolveMacPasskeySigningConfigurationIfConfigured(
+  env: Readonly<Record<string, string | undefined>>,
+): MacPasskeySigningConfiguration | undefined {
+  return env.T3CODE_MACOS_PROVISIONING_PROFILE?.trim()
+    ? resolveMacPasskeySigningConfiguration(env)
+    : undefined;
+}
+
 function escapeXml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -3873,13 +3881,15 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
-  const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
-      ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
-          catch: MacPasskeySigningConfigurationResolutionError.fromCause,
-        })
-      : undefined;
+  const macBuildEnv =
+    options.platform === "mac" && options.signed ? loadRepoEnv({ repoRoot }) : undefined;
+  // Developer ID signing needs no profile; passkey entitlements are optional.
+  const configuredMacPasskeySigning = macBuildEnv
+    ? yield* Effect.try({
+        try: () => resolveMacPasskeySigningConfigurationIfConfigured(macBuildEnv),
+        catch: MacPasskeySigningConfigurationResolutionError.fromCause,
+      })
+    : undefined;
   const macPasskeySigning = configuredMacPasskeySigning
     ? {
         ...configuredMacPasskeySigning,

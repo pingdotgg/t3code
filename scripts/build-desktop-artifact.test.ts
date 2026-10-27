@@ -42,6 +42,7 @@ import {
   resolveMacFileExclusions,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
+  resolveMacPasskeySigningConfigurationIfConfigured,
   resolveMergedStageDependencies,
   pinStageDependenciesToPatchedVersions,
   resolveBuildOptions,
@@ -1570,6 +1571,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
     });
+  });
+
+  it("omits macOS passkey entitlements when no provisioning profile is configured", () => {
+    assert.equal(
+      resolveMacPasskeySigningConfigurationIfConfigured({
+        T3CODE_CLERK_PUBLISHABLE_KEY: `pk_live_${btoa("clerk.example.com$")}`,
+      }),
+      undefined,
+    );
   });
 
   it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {
