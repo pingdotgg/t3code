@@ -485,6 +485,11 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/** For shortcuts and other handlers outside React that read the theme at event time. */
+export function getThemeSnapshot(): ThemeSnapshot {
+  return getSnapshot();
+}
+
 /** For code outside React (worker pools) that follows the rendered appearance. */
 export function subscribeRenderedAppearance(listener: () => void): () => void {
   const unsubscribeTheme = subscribe(listener);
