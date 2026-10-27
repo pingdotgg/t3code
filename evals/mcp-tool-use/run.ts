@@ -26,7 +26,7 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
-import { taskPrompt } from "../../apps/server/src/mcp/OrchestratorMcpService.ts";
+import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } from "@t3tools/contracts";

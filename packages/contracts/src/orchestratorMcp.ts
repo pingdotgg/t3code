@@ -111,6 +111,18 @@ export const OrchestratorMcpTarget = Schema.Struct({
         "Options from `orchestrator_capabilities`, such as {effort:'max'}. Given values override inherited. [] or {} clears.",
     }),
   ),
+  environmentId: Schema.optional(
+    EnvironmentId.annotate({
+      description:
+        "Linked environment to run in. Provider and model default to yours; others come from `orchestrator_capabilities` with this `environmentId`.",
+    }),
+  ),
+  projectId: Schema.optional(
+    ProjectId.annotate({
+      description:
+        "With `environmentId`: its project to run in. Default: the one with this project's repository.",
+    }),
+  ),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
@@ -191,7 +203,12 @@ const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_T
 
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
-  childThreadId: ThreadId,
+  /** Null for a task that runs in a linked environment; see `remoteChild`. */
+  childThreadId: Schema.NullOr(ThreadId),
+  /** The linked environment and thread a remote task runs as. */
+  remoteChild: Schema.optional(
+    Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId, label: Schema.String }),
+  ),
   link: Schema.optional(Schema.String),
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
@@ -503,6 +520,12 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Finite),
+  untilDelegatedWorkSettled: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Also wait for its delegated and background tasks and their completions to settle. `resultRun` then names the run with its final answer.",
+    }),
+  ),
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 
@@ -512,6 +535,8 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   status: OrchestratorMcpThreadStatus,
   timedOut: Schema.Boolean,
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
+  /** With untilDelegatedWorkSettled, once settled: the run whose reply is the thread's result. */
+  resultRun: Schema.optional(Schema.Struct({ runId: RunId, status: OrchestrationV2RunStatus })),
 });
 export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
 

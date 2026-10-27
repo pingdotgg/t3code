@@ -64,7 +64,7 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
     const current = appAtomRegistry.get(pendingThreadOrderAtom);
     if (current === null) return;
     const configs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const threads = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+    const threads = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
     const nowMs = Date.now();
     const ordered = getThreadListV2OrderedSection({
       threads,
@@ -95,13 +95,16 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
   teardownPendingOrder = teardown;
   appAtomRegistry.set(pendingThreadOrderAtom, pending);
   unsubscribers.push(
-    appAtomRegistry.subscribe(environmentThreadShells.threadShellsAtom, refresh),
+    appAtomRegistry.subscribe(environmentThreadShells.navigationThreadShellsAtom, refresh),
     appAtomRegistry.subscribe(environmentServerConfigsAtom, refresh),
     appAtomRegistry.subscribe(queuedThreadKeysAtom, refresh),
     minuteTick.subscribe(refresh),
   );
   armWake(
-    nextSnoozeWakeAfter(appAtomRegistry.get(environmentThreadShells.threadShellsAtom), Date.now()),
+    nextSnoozeWakeAfter(
+      appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom),
+      Date.now(),
+    ),
   );
   return {
     isPending: () => {

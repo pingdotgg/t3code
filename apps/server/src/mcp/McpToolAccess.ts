@@ -23,7 +23,7 @@ import {
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
   assertFullAccess,
   assertLiveCaller,

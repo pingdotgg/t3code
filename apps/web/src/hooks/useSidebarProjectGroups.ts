@@ -2,7 +2,7 @@ import { orderItemsByPreferredIds, sortSidebarV2ProjectGroups } from "../compone
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useQuietThreadShells } from "../state/entities";
+import { useDelegatedUnderParent, useProjects, useQuietThreadShells } from "../state/entities";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
@@ -11,6 +11,7 @@ export function useSidebarProjectGroups() {
   // Activity order lags a running thread's streaming ticks until its next
   // real change; reading every tick re-rendered the whole sidebar with it.
   const threads = useQuietThreadShells();
+  const delegatedUnderParent = useDelegatedUnderParent();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const sortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -35,5 +36,5 @@ export function useSidebarProjectGroups() {
     primaryEnvironmentId,
     resolveEnvironmentLabel: (environmentId) => labels.get(environmentId) ?? null,
   });
-  return sortSidebarV2ProjectGroups(unsortedGroups, threads, sortOrder);
+  return sortSidebarV2ProjectGroups(unsortedGroups, threads, sortOrder, delegatedUnderParent);
 }
